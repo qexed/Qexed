@@ -171,7 +171,7 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                     None => "系统",
                 };
                 let target_player = &help_args[0];
-                let message = &help_args[1];
+                let message = &help_args[1..].join(" ");
                 if let qexed_player_list::Message::GetPlayerIsOnline {
                     name: _,
                     is_true,
