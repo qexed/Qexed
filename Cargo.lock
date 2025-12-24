@@ -2737,6 +2737,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_time"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "dashmap",
+ "log",
+ "qexed_config",
+ "qexed_packet",
+ "qexed_protocol",
+ "qexed_task",
+ "qexed_tcp_connect",
+ "serde",
+ "thiserror 1.0.69",
+ "tklog",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "qexed_warden"
 version = "0.1.0"
 dependencies = [

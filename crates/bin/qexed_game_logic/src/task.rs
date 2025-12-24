@@ -487,6 +487,11 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 UnReturnMessage::build(qexed_heartbeat::message::TaskCommand::Start)
                     .post(&heartbeat_api)
                     .await?;
+                // Test:Set Title
+                packet_write.send(PacketSend::build_send_packet(qexed_protocol::to_client::play::set_title_text::SetTitleText{
+                    text:create_text_nbt("测试title"),
+                }).await?)?;
+                
                 // let api_ping = match &self.qexed_ping_api {
                 //     Some(p) => p,
                 //     None => {

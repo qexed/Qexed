@@ -46,6 +46,7 @@ impl TaskManageEvent<uuid::Uuid, ReturnMessage<ManagerCommand>, UnReturnMessage<
                 _task_api,
                 mut packet_send,
             ) => {
+
                 if task_map.contains_key(&uuid) {
                     let _ = send.send(ManagerCommand::NewPlayerConnect(
                         uuid.clone(),

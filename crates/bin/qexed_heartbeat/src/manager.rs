@@ -95,13 +95,21 @@ impl TaskManageEvent<uuid::Uuid, ReturnMessage<ManagerCommand>, UnReturnMessage<
             
             ManagerCommand::PlayerClose(uuid) => {
                 // 移除心跳任务
-                task_map.remove(&uuid.clone());
-                let _ = send.send(ManagerCommand::PlayerClose(uuid));
+                task_map.remove(&uuid);
+                let _ = send.send(data.data);
                 Ok(false)
             }
             
             ManagerCommand::HeartbeatStatus(uuid, status) => {
-                // 转发心跳状态
+                match status {
+                    crate::message::HeartbeatStatus::Alive(_, heartbeat_phase) => {},
+                    crate::message::HeartbeatStatus::Timeout(uuid, heartbeat_phase) => {
+                        task_map.remove(&uuid);
+                    },
+                    crate::message::HeartbeatStatus::Disconnected(uuid, heartbeat_phase) => {
+                        task_map.remove(&uuid);
+                    },
+                }
                 let _ = send.send(ManagerCommand::HeartbeatStatus(uuid, status));
                 Ok(false)
             }
