@@ -510,6 +510,9 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         return Ok(false);
                     }
                 };
+                    let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SystemEvent(qexed_chat::message::SystemEvent::PlayerJoin))
+                        .post(&chat_api)
+                        .await;                
                 ReturnMessage::build(qexed_packet_split::message::TaskMessage::Start(
                     player,
                     Some(packet_read),
@@ -544,6 +547,9 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         .await;
                 }
                 if let Some(api_ping) = &self.qexed_chat_api {
+                    let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SystemEvent(qexed_chat::message::SystemEvent::PlayerLevel))
+                        .post(&api_ping)
+                        .await;
                     let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::Close)
                         .post(&api_ping)
                         .await;

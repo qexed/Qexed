@@ -26,10 +26,16 @@ pub enum TaskMessage {
         Option<UnboundedSender<Bytes>>, // 数据包发送器
     ), // 传递数据包收发器
     ChatEvent(qexed_protocol::to_server::play::chat_message::ChatMessage),// 数据包分割器传递聊天数据包
+    SystemEvent(SystemEvent),
     SendMessage(qexed_protocol::to_client::play::system_chat::SystemChat),// 广播事件数据包
     Close,// 连接关闭
 }
 
+#[derive(Debug)]
+pub enum SystemEvent{
+    PlayerJoin,
+    PlayerLevel,
+}
 #[derive(Error, Debug, Clone)]
 pub enum NewPlayerConnectError {
     #[error("玩家未离开服务器")]

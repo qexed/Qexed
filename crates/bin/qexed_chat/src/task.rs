@@ -60,8 +60,6 @@ impl TaskEvent<UnReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for 
             }
             TaskMessage::ChatEvent(chat_message) => {
                 log::info!("<{}> {}",&self.name,chat_message.message);
-
-
                 ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_chat(&self.name,chat_message.message)))
                     .get(manage_api)
                     .await?;
@@ -83,7 +81,24 @@ impl TaskEvent<UnReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for 
                 }
                 return Ok(false);
             },
-
+            TaskMessage::SystemEvent(system_event) => {
+                match system_event {
+                    crate::message::SystemEvent::PlayerJoin => {
+                        log::info!("§e{}§e 进入了服务器",&self.name);
+                        ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_system_message(format!("{} 进入了服务器",&self.name))))
+                            .get(manage_api)
+                            .await?;
+                        return Ok(false);
+                    },
+                    crate::message::SystemEvent::PlayerLevel =>{
+                        log::info!("§e{}§e 退出了服务器",&self.name);
+                        ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_system_message(format!("{} 退出了服务器",&self.name))))
+                            .get(manage_api)
+                            .await?;
+                        return Ok(false);
+                    },
+                }
+            }
             TaskMessage::Close => {
                 // 向父级发送关闭消息
                 ReturnMessage::build(ManagerMessage::PlayerClose(self.uuid))
@@ -116,7 +131,27 @@ fn build_chat(player:&str,message:String) -> SystemChat {
         overlay: false,
     }
 }
+fn build_system_message(message:String) -> SystemChat {
+    // 1. 创建文本组件的 Compound
+    let mut chat_component = HashMap::new();
+    // Minecraft 文本组件的基础格式：{"text": "实际内容"}
+    chat_component.insert(
+        "text".to_string(),
+        Tag::String(message.into()) // 使用 `into()` 转为 Arc<str>
+    );
 
+    // 2. 可选：添加样式（例如颜色）
+    // chat_component.insert("color".to_string(), Tag::String("red".into()));
+
+    // 3. 将 HashMap 包装为 Tag::Compound
+    let content_nbt = Tag::Compound(Arc::new(chat_component));
+
+    // 4. 构建 SystemChat（overlay = false 表示显示在普通聊天框）
+    SystemChat {
+        content: content_nbt,
+        overlay: false,
+    }
+}
 pub fn build_dirt_from_4_stones_recipe() -> qexed_protocol::to_client::play::recipe_book_add::RecipeBookAdd {
     // 假设的物品ID
     let stone_id = qexed_packet::net_types::VarInt(1);      // 石头
