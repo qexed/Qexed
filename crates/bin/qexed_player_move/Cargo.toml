@@ -6,9 +6,6 @@ edition = "2024"
 default = []
 distributed = []
 
-[[bin]]
-name = "qexed_player_move"
-path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 dashmap.workspace = true
