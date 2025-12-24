@@ -1,13 +1,13 @@
 .VSCodeCounter
-config
-assets
-target
-run
-log
-doc
-deploy
-tmp
-tool
+/config
+/assets
+/target
+/run
+/log
+/doc
+/deploy
+/tmp
+/tool
 # will have compiled files and executables
 debug
 target
