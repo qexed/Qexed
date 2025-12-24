@@ -2152,6 +2152,7 @@ dependencies = [
  "qexed_nbt",
  "qexed_packet",
  "qexed_player",
+ "qexed_player_list",
  "qexed_protocol",
  "qexed_task",
  "qexed_tcp_connect",

@@ -42,7 +42,7 @@ impl Api {
         let server_status = qexed_status::run(config.server_status, player_list.clone()).await?;
         let ping = qexed_ping::run(config.ping).await?;
         let heartbeat = qexed_heartbeat::run(config.heartbeat).await?;
-        let chat = qexed_chat::run(config.chat).await?;
+        let chat = qexed_chat::run(config.chat,player_list.clone()).await?;
         let packet_split = qexed_packet_split::run(config.packet_split).await?;
         let chunk = qexed_chunk::run(config.chunk).await?;
         let game_logic = qexed_game_logic::run(
@@ -91,6 +91,7 @@ impl Api {
     }
     pub async fn register(&self) -> anyhow::Result<()> {
         qexed_player_list::register_list_command(&self.command, self.player_list.clone()).await?;
+        qexed_chat::command::register_tell_command(&self.command, self.chat.clone()).await?;
         Ok(())
     }
 }

@@ -16,6 +16,7 @@ pub enum Message {
     CheckPlayeIsInList(uuid::Uuid, bool),
     LoadData(i32, i32),
     Command(CommandData),
+    GetPlayerIsOnline{name:String,is_true:bool,player_uuid:uuid::Uuid},
 }
 
 #[derive(Debug)]
@@ -23,6 +24,7 @@ pub struct Task {
     pub player: i32,
     pub max_player: i32,
     pub player_map: DashMap<uuid::Uuid, String>,
+    pub player_name_map: DashMap<String,uuid::Uuid>,
 }
 impl Task {
     pub fn new(config: PlayerList) -> Self {
@@ -30,6 +32,7 @@ impl Task {
             player: 0,
             max_player: config.max_player,
             player_map: Default::default(),
+            player_name_map: Default::default(),
         }
     }
     // 获取玩家列表分页
@@ -125,6 +128,7 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
             Message::PlayerJoin(ref uuid, ref name) => {
                 self.player += 1;
                 self.player_map.insert(*uuid, name.clone());
+                self.player_name_map.insert(name.clone(), *uuid);
                 if let Some(send) = data.get_return_send().await? {
                     let _ = send.send(data.data);
                 }
@@ -132,7 +136,9 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
             }
             Message::PlayerLeft(uuid) => {
                 self.player -= 1;
-                self.player_map.remove(&uuid);
+                if let Some(name) = self.player_map.remove(&uuid) {
+                    self.player_name_map.remove(&name.1);
+                }
                 if let Some(send) = data.get_return_send().await? {
                     let _ = send.send(data.data);
                 }
@@ -155,6 +161,16 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
                 }
                 return Ok(false);
             }
+            Message::GetPlayerIsOnline{ref name,ref mut is_true,ref mut player_uuid}=>{
+                if let Some(playeruuid) = self.player_name_map.get(name){
+                    *is_true = true;
+                    *player_uuid = playeruuid.value().clone();
+                };
+                if let Some(send) = data.get_return_send().await? {
+                    let _ = send.send(data.data);
+                }
+                return Ok(false);
+            }
             Message::Command(ref cmd) => {
                 // 解析页码参数
                 let args = cmd.parse_args();
@@ -170,7 +186,7 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
                     }
                     _ => {
                         // 多个参数：错误用法
-                        cmd.send_chat_message("§c用法: /list [页码]\n§7例如: /list 或 /list 1");
+                        cmd.send_chat_message("§c用法: /list [页码]\n§7例如: /list 或 /list 1").await?;
                         if let Some(send) = data.get_return_send().await? {
                             let _ = send.send(data.data);
                         }

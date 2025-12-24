@@ -83,9 +83,7 @@ impl TaskEvent<UnReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for 
                 }
                 return Ok(false);
             },
-            TaskMessage::Command(mesg) =>{
-                return Ok(false);
-            },
+
             TaskMessage::Close => {
                 // 向父级发送关闭消息
                 ReturnMessage::build(ManagerMessage::PlayerClose(self.uuid))
