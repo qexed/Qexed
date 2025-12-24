@@ -1,0 +1,16 @@
+[package]
+name = "qexed_data_serde"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true 
+serde = { workspace = true, features = ["derive"] }
+qexed_nbt = { workspace = true}
+qexed_protocol.workspace = true
+uuid = { workspace = true, features = ["serde","v4"] }
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+flate2 = "1.0"  # 添加 flate2 用于解压缩 GZip 文件

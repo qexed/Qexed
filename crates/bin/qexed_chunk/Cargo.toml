@@ -1,0 +1,20 @@
+[package]
+name = "qexed_chunk"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+qexed_nbt.workspace = true
+qexed_protocol.workspace = true
+qexed_packet.workspace = true
+qexed_task.workspace = true
+qexed_config.workspace = true
+
+anyhow.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+dashmap.workspace = true
+log.workspace = true
+tokio.workspace = true
+bitflags.workspace = true
+serde.workspace = true
+futures.workspace = true

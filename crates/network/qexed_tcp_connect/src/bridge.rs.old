@@ -1,0 +1,141 @@
+use crate::{PacketRead, PacketSend};
+use tokio_util::sync::CancellationToken;
+
+pub struct ConnectionBridge {
+    left_read: Option<PacketRead>,
+    left_write: Option<PacketSend>,
+    right_read: Option<PacketRead>, 
+    right_write: Option<PacketSend>,
+    cancel_token: Option<CancellationToken>,
+    is_running: bool,
+}
+
+impl ConnectionBridge {
+    pub fn new(
+        left_read: PacketRead,
+        left_write: PacketSend,
+        right_read: PacketRead,
+        right_write: PacketSend,
+    ) -> Self {
+        Self {
+            left_read: Some(left_read),
+            left_write: Some(left_write),
+            right_read: Some(right_read),
+            right_write: Some(right_write),
+            cancel_token: None,
+            is_running: false,
+        }
+    }
+
+    pub async fn start_bridging(&mut self) {
+        if self.is_running {
+            return;
+        }
+
+        let cancel_token = CancellationToken::new();
+        self.cancel_token = Some(cancel_token.clone());
+        self.is_running = true;
+
+        // 取出所有权用于桥接
+        let left_read = self.left_read.take().unwrap();
+        let left_write = self.left_write.take().unwrap();
+        let right_read = self.right_read.take().unwrap();
+        let right_write = self.right_write.take().unwrap();
+
+        let cancel_token1 = cancel_token.clone();
+        let cancel_token2 = cancel_token.clone();
+
+        let left_to_right = async move {
+            let mut left_read = left_read;
+            let mut right_write = right_write;
+            
+            loop {
+                tokio::select! {
+                    _ = cancel_token1.cancelled() => break,
+                    result = left_read.read() => {
+                        match result {
+                            Ok(data) => {
+                                if right_write.send_raw(data.into()).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+            (left_read, right_write)
+        };
+
+        let right_to_left = async move {
+            let mut right_read = right_read;
+            let mut left_write = left_write;
+            
+            loop {
+                tokio::select! {
+                    _ = cancel_token2.cancelled() => break,
+                    result = right_read.read() => {
+                        match result {
+                            Ok(data) => {
+                                if left_write.send_raw(data.into()).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+            (right_read, left_write)
+        };
+
+        // 使用join!而不是try_join!
+        let ((left_read, right_write), (right_read, left_write)) = 
+            tokio::join!(left_to_right, right_to_left);
+
+        // 将资源放回结构体
+        self.left_read = Some(left_read);
+        self.left_write = Some(left_write);
+        self.right_read = Some(right_read);
+        self.right_write = Some(right_write);
+        self.is_running = false;
+    }
+
+    pub fn stop_bridging(&mut self) {
+        if let Some(cancel_token) = &self.cancel_token {
+            cancel_token.cancel();
+        }
+        self.is_running = false;
+    }
+
+    pub fn separate(mut self) -> (PacketRead, PacketSend, PacketRead, PacketSend) {
+        self.stop_bridging();
+        (
+            self.left_read.take().unwrap(),
+            self.left_write.take().unwrap(),
+            self.right_read.take().unwrap(),
+            self.right_write.take().unwrap(),
+        )
+    }
+
+    pub fn is_bridging(&self) -> bool {
+        self.is_running
+    }
+}
+
+impl Drop for ConnectionBridge {
+    fn drop(&mut self) {
+        self.stop_bridging();
+    }
+}
+
+// 独立的兼容函数
+pub async fn bridge_connections(
+    left_read: PacketRead,
+    left_write: PacketSend,
+    right_read: PacketRead, 
+    right_write: PacketSend,
+) {
+    let mut bridge = ConnectionBridge::new(left_read, left_write, right_read, right_write);
+    bridge.start_bridging().await;
+}

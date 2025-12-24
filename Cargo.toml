@@ -1,0 +1,158 @@
+[workspace]
+resolver = "3"
+members = [
+    # 可执行文件
+    "crates/bin/qexed_tcp_connect_app",
+    "crates/bin/qexed_entity_id_allocator",
+    "crates/bin/qexed_one",
+    "crates/bin/qexed_player_list",
+    "crates/bin/qexed_status",
+    "crates/bin/qexed_game_logic",
+    "crates/bin/qexed_whitelist",
+    "crates/bin/qexed_blacklist",
+    "crates/bin/qexed_guard",
+    "crates/bin/qexed_warden",
+    "crates/bin/qexed_ping",
+    "crates/bin/qexed_packet_split",
+    "crates/bin/qexed_heartbeat",
+    "crates/bin/qexed_chat",
+    "crates/bin/qexed_command",
+    "crates/bin/qexed_world_mini",
+    "crates/bin/qtunnel_one",
+    "crates/bin/qtunnel_tcp_connect_app",
+    "crates/bin/qtunnel_server_logic",
+    "crates/bin/qexed_chunk",
+    "crates/bin/qexed_rule",
+    "crates/bin/qexed_player",
+    "crates/bin/qexed_player_move",
+    
+    # 依赖库
+    "crates/network/qexed_tcp_connect",
+    "crates/network/qexed_mojang_auth",
+    "crates/packet/qexed_packet",
+    "crates/packet/qexed_protocol",
+    "crates/macros/qexed_packet_macros",
+    "crates/macros/qexed_config_macros",
+    "crates/tool/qexed_random",
+    "crates/tool/qexed_nbt",
+    
+    "crates/async/qexed_task",
+    "crates/async/qexed_shared",
+    
+    "crates/data/qexed_config",
+    
+    "crates/data/qexed_data_serde",
+    "crates/data/qexed_region",
+    
+    "crates/ui/qexed_cli",
+    "crates/ui/qexed_gui",
+    "crates/ui/qexed_web",
+    # 插件运行时
+    "crates/wasm/qexed_api",
+    "crates/wasm/qexed_plugin_manage",
+    "crates/wasm/qexed_wasm_runtime",
+    # 插件
+    "crates/plugins/hello_world",
+]
+
+[workspace.dependencies]
+# 项目执行包
+qexed_entity_id_allocator = { path = "crates/bin/qexed_entity_id_allocator" }
+qexed_tcp_connect_app = { path = "crates/bin/qexed_tcp_connect_app" }
+qexed_one = { path = "crates/bin/qexed_one" }
+qexed_player_list = { path = "crates/bin/qexed_player_list" }
+qexed_status = { path = "crates/bin/qexed_status" }
+qexed_game_logic = { path = "crates/bin/qexed_game_logic" }
+qexed_whitelist =  { path = "crates/bin/qexed_whitelist" }
+qexed_blacklist =  { path = "crates/bin/qexed_blacklist" }
+qexed_guard = {path ="crates/bin/qexed_guard"}
+qexed_warden = {path ="crates/bin/qexed_warden"}
+qexed_ping = {path ="crates/bin/qexed_ping"}
+qexed_packet_split ={ path = "crates/bin/qexed_packet_split"}
+qexed_heartbeat = {path ="crates/bin/qexed_heartbeat"}
+qexed_chat = {path ="crates/bin/qexed_chat"}
+qexed_command = {path ="crates/bin/qexed_command"}
+qexed_world_mini ={ path = "crates/bin/qexed_world_mini"}
+qtunnel_one.path = "crates/bin/qtunnel_one"
+qtunnel_tcp_connect_app.path = "crates/bin/qtunnel_tcp_connect_app"
+qtunnel_server_logic.path = "crates/bin/qtunnel_server_logic"
+qexed_chunk.path = "crates/bin/qexed_chunk"
+qexed_rule.path = "crates/bin/qexed_rule"
+qexed_player = { path = "crates/bin/qexed_player" }
+qexed_player_move.path = "crates/bin/qexed_player_move"
+# 项目内部包
+qexed_tcp_connect = { path = "crates/network/qexed_tcp_connect" }
+qexed_mojang_auth = { path = "crates/network/qexed_mojang_auth" }
+qexed_packet = { path = "crates/packet/qexed_packet" }
+qexed_protocol = { path = "crates/packet/qexed_protocol" }
+qexed_random = { path = "crates/tool/qexed_random" }
+qexed_task = { path = "crates/async/qexed_task" }
+qexed_shared.path = "crates/async/qexed_shared"
+qexed_config = { path = "crates/data/qexed_config" }
+qexed_data_serde =  { path = "crates/data/qexed_data_serde" }
+qexed_packet_macros = { path = "crates/macros/qexed_packet_macros" }
+qexed_config_macros.path = "crates/macros/qexed_config_macros"
+qexed_nbt = { path = "crates/tool/qexed_nbt" }
+qexed_cli = { path = "crates/ui/qexed_cli" }
+qexed_gui = { path = "crates/ui/qexed_gui" }
+qexed_web = { path = "crates/ui/qexed_web" }
+
+qexed_api = { path = "crates/wasm/qexed_api" }
+qexed_plugin_manage = { path = "crates/wasm/qexed_plugin_manage" }
+qexed_wasm_runtime = { path = "crates/wasm/qexed_wasm_runtime" }
+# 外部包
+thiserror = "1.0"
+anyhow = "1.0"                                         # 用于简化错误处理
+byteorder = "1.5.0"
+tokio = { version = "1.48.0", features = ["full"] }
+tklog = "0.3.0"
+log = "0.4.27"
+chrono = "0.4.41"
+serde = { version = "1.0.219", features = ["derive"] }
+toml = "0.9.5"
+once_cell = "1.21.3"
+futures = "0.3.31"
+tracing = "0.1.41"
+typename = "0.1.2"
+rand = "0.8.5"
+async-stream = "0.3.6"
+bytes = "1.10.1"
+flate2 = "1.1.2"
+serde_json = "1.0.142"
+uuid = { version = "1.17.0", features = ["v3", "v4","serde"] }
+reqwest = { version = "0.12.22", features = ["json"] }
+fmt = "0.1.0"
+aes = "0.8.4"
+cfb8 = { version = "0.8.1", features = ["aes"] }
+cfb-mode = "0.8.2"
+# rust_event = "0.1.2"
+crab_nbt = { version = "0.2.11", features = ["serde"] }
+mongodb = "3.2.4"
+bson = "2.15.0"
+simdnoise = "3.1.6"
+async-trait = "0.1.88"
+tokio-stream = "0.1.17"
+phf = "0.12.1"
+flume = "0.11.1"
+paste = "1.0.15"
+ctor = "0.4.3"
+ctr = "0.9.2"
+futures-util = "0.3.31"
+rayon = "1.11.0"
+fastrand = "2.3.0"
+bitflags = "2.9.3"
+moka = { version = "0.12.10", features = ["sync"] }
+lazy_static = "1.5.0"
+dyn-clone = "1.0.20"
+tempfile = "3.23.0"
+midly = "0.5.3"
+cached = "0.42"                                         # 缓存功能
+rsa = "0.9"
+dashmap = "6.1.0"
+wasmtime = "39.0.1"
+schemars = { version = "1" }
+tokio-util = "0.7.17"
+humantime-serde = "1.1.1"
+hex = "0.4.3"
+sha1 = "0.10.6"
+tinytemplate = "1.2.1"

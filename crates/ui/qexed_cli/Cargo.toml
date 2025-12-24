@@ -1,0 +1,26 @@
+[package]
+name = "qexed_cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_config.workspace = true
+color-eyre = "0.6.2"
+crossterm = "0.27.0"
+ratatui = { version = "0.28.0", features = ["all-widgets"] }
+sysinfo = "0.29.10"
+tui-big-text = "0.3.0"
+tui-textarea = "0.4.0"  # 如果需要更好的文本输入
+unicode-segmentation = "1.12.0"
+unicode-width = "0.1.10"
+
+# 第三方依赖 - 从工作区继承版本
+anyhow.workspace = true
+tokio.workspace = true
+log.workspace = true
+chrono.workspace = true
+once_cell.workspace = true
+
+# 如果需要 tklog 的某些功能
+tklog.workspace = true
+regex = "1.12.2"

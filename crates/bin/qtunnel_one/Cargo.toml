@@ -1,0 +1,40 @@
+[package]
+name = "qtunnel_one"
+version = "0.1.0"
+edition = "2024"
+
+
+[package.metadata.android]
+# 应用的唯一标识（通常使用反向域名格式）
+package = "com.qexed.qtunnel_one"
+# 指定编译的架构（可同时编译多个）
+build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
+# 应用在桌面上显示的名称
+label = "Qexed One"
+
+[[bin]]
+name = "qtunnel_one"
+path = "src/main.rs"
+[dependencies]
+lazy_static = "1.4"
+# 程序级依赖
+qexed_player_list = { workspace = true }
+qexed_status = {workspace = true}
+qexed_whitelist = {workspace = true}
+qexed_blacklist = {workspace = true}
+qexed_packet_split.workspace = true
+qexed_command.workspace = true
+qexed_heartbeat.workspace = true
+qtunnel_tcp_connect_app.workspace = true
+qtunnel_server_logic.workspace = true
+# 内部库依赖
+qexed_tcp_connect = { workspace = true }
+qexed_task = {workspace = true}
+qexed_config = {workspace = true}
+qexed_cli = {workspace = true}
+# 第三方依赖
+anyhow = { workspace = true }
+tokio  = { workspace = true }
+log.workspace = true
+tklog.workspace = true
+chrono.workspace = true

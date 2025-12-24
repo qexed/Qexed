@@ -1,0 +1,20 @@
+[package]
+name = "qexed_task"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+[dependencies]
+anyhow = { workspace = true }
+tokio  = { workspace = true } 
+thiserror.workspace = true
+dashmap.workspace = true
+async-trait.workspace = true
+log.workspace = true
+tklog.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4.4"
+uuid.workspace = true

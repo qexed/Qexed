@@ -1,0 +1,30 @@
+[package]
+name = "qexed_status"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[[bin]]
+name = "qexed_status"
+path = "src/main.rs"
+[dependencies]
+# 微服务
+qexed_player_list.workspace = true
+# 内部库
+qexed_config.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_protocol = { workspace = true }
+# 第三方库+标准库
+rand= { workspace = true }
+anyhow = { workspace = true }
+dashmap.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+serde.workspace= true
+serde_json.workspace= true
+bytes.workspace= true
+log.workspace = true
+tklog.workspace = true

@@ -1,0 +1,31 @@
+use qexed_config::{app::qexed_one::One, tool::AppConfigTrait};
+use qexed_task::message::{MessageType, return_message::ReturnMessage};
+use tklog::{ASYNC_LOG, Format, MODE};
+mod api;
+mod server;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // 先启动一点点的微服务
+    log_init().await;
+    log::info!("读取配置文件中");
+    let config: One = One::load_or_create_default()?;
+    log::info!("读取配置文件完成");
+    log::info!("服务初始化");
+    let _server = server::Server::init(config).await?;
+    log::info!("服务初始化完成");
+    loop {
+        // 已经没啥事做了，等待就行
+        tokio::time::sleep(tokio::time::Duration::from_secs(100)).await;
+    }
+    
+}
+async fn log_init() {
+    //初始化
+    ASYNC_LOG
+        .set_console(true)
+        // .set_level(LEVEL::Trace)
+        .set_cutmode_by_time("./log/server.log", MODE::DAY, 30, true)
+        .await
+        .set_format(Format::LevelFlag | Format::Time | Format::ShortFileName)
+        .uselog(); //启用官方log库
+}

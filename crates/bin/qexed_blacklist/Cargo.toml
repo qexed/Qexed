@@ -1,0 +1,23 @@
+[package]
+name = "qexed_blacklist"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[dependencies]
+anyhow = { workspace = true }
+dashmap.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+uuid.workspace = true
+bytes.workspace = true
+qexed_config.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tklog.workspace = true

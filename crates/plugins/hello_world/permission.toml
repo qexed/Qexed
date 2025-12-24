@@ -1,0 +1,39 @@
+# 配置文件版本号
+version = 0
+# Qexed Plugin SDK版本号(请勿手动修改,引擎更新时会自动更新的)
+sdk-version = 0
+[modern]
+# Qexed 模块配置
+# 启用后插件将自动分发到对应的微服务进行调用(意味着跨模块共享变量你就别想了)
+# 注:各模块可使用的权限都不一样,比如 tcp_connect 模块你无法使用 网络权限
+[modern.tcp_connect.permission]
+# 日志权限
+log = true
+# 数据包监听权限:高风险
+packet_listen = false
+# 数据包注入权限:高风险
+packet_replace = false
+# 数据包写入权限:高风险
+packet_write = false
+# 数据包拦截权限:高风险
+packet_interception = false
+# Redis 使用权限
+reids = false
+# MongoDB 使用权限
+mongodb =false
+# Mongodb IP
+mongodb_ip = "127.0.0.1"
+# Mongodb 用户名
+mongodb_user = "root"
+# Mongodb 密码
+mongodb_password = "123456"
+# Mongodb 表
+mongodb_table = "hello_world"
+# MongoDB 读权限
+mongodb_read = false
+# MongoDB 写权限
+mongodb_write = false
+# Mysql 使用权限
+mysql = false
+# 其他权限
+# ......

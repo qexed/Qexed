@@ -1,0 +1,17 @@
+[package]
+name = "qexed_player"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[dependencies]
+anyhow.workspace = true
+uuid.workspace = true
+qexed_protocol.workspace = true
+qexed_nbt.workspace = true
+qexed_data_serde.workspace = true
+qexed_task.workspace = true
+qexed_shared.workspace = true
+tokio.workspace = true

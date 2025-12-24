@@ -1,0 +1,26 @@
+[package]
+name = "qexed_heartbeat"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[dependencies]
+anyhow = { workspace = true }
+bytes.workspace = true
+dashmap.workspace = true
+log.workspace = true
+tklog.workspace = true
+tokio = { workspace = true }
+serde.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_config = { workspace = true }
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+tokio-util.workspace = true

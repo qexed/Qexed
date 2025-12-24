@@ -1,0 +1,18 @@
+[package]
+name = "qexed_region"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_data_serde.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+serde = { workspace = true, features = ["derive"] }
+qexed_nbt.workspace = true
+uuid = { workspace = true, features = ["serde","v4"] }
+flate2 = "1.0"
+byteorder = "1.5"
+thiserror.workspace = true
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+tempfile = "3.4"

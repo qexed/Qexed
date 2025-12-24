@@ -1,0 +1,52 @@
+# # 在项目根目录创建 .cargo/config.toml
+
+# [build]
+# # Windows 上建议使用更少的并行任务
+# jobs = 4  # 根据你的 CPU 核心数调整，Windows 上过多并行可能导致内存不足
+
+# # 增量编译
+# incremental = true
+# rustc-wrapper = ""  # Windows 上通常不使用 sccache
+
+# # Windows 专用优化
+# [target.'cfg(windows)']
+# # 使用 MSVC 工具链的优化（默认）
+# rustflags = [
+#     "-C", "target-cpu=native",
+#     "-C", "link-args=/OPT:REF",  # 移除未引用数据
+#     "-C", "link-args=/OPT:ICF",  # 相同 COMDAT 折叠
+#     "-C", "link-args=/DEBUG:NONE",  # 不生成调试信息
+#     "-C", "panic=abort",  # 减小二进制大小
+# ]
+
+# # 如果是 GNU 工具链
+# [target.'cfg(target_env = "gnu")']
+# rustflags = [
+#     "-C", "target-cpu=native",
+#     "-C", "link-arg=-Wl,--strip-all",
+#     "-C", "link-arg=-Wl,--gc-sections",
+# ]
+
+# # Profile 配置
+# [profile.dev]
+# opt-level = 1  # 开发模式使用 O1 优化
+# split-debuginfo = "packed"  # Windows 上的调试信息处理
+# incremental = true
+# debug = true  # 保留调试信息用于调试
+
+# [profile.release]
+# opt-level = 3
+# lto = "thin"  # Windows 上 thin LTO 通常更好
+# codegen-units = 1
+# panic = "abort"  # 减小二进制大小
+# strip = true  # 移除调试信息
+# debug = false
+
+# # Windows 上的测试配置
+# [profile.test]
+# opt-level = 0
+# debug = true
+
+# # 网络代理设置（如果需要）
+# [net]
+# git-fetch-with-cli = true  # Windows 上使用 git CLI 而不是 libgit2

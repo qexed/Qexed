@@ -1,0 +1,18 @@
+[package]
+name = "qexed_mojang_auth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex = "0.4.3"
+sha1 = "0.10.6"
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+[dev-dependencies]
+mockito = "1.7.1"

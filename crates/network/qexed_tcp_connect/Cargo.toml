@@ -1,0 +1,37 @@
+[package]
+name = "qexed_tcp_connect"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+anyhow.workspace = true
+futures.workspace = true 
+tracing.workspace = true
+typename.workspace = true
+log.workspace = true
+tklog.workspace = true
+tokio.workspace = true
+rand.workspace = true
+async-stream.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+once_cell.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+ctr.workspace = true
+aes.workspace = true
+crab_nbt.workspace = true
+bitflags.workspace = true
+dyn-clone.workspace = true
+cfb-mode.workspace = true
+tokio-util = "0.7.17"
+openssl = "0.10.75"
+
+
+
+

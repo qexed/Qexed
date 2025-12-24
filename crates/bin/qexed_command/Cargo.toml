@@ -1,0 +1,27 @@
+[package]
+name = "qexed_command"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+distributed = []
+[dependencies]
+anyhow = { workspace = true }
+bytes.workspace = true
+tokio  = { workspace = true }
+log.workspace = true
+tklog.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+dashmap.workspace = true
+async-trait.workspace = true
+qexed_tcp_connect.workspace = true
+qexed_config.workspace = true
+qexed_task = { workspace = true }
+qexed_api.workspace = true
+qexed_protocol.workspace = true
+qexed_nbt.workspace = true
+qexed_packet.workspace = true
+shlex = "1.3.0"

@@ -1,0 +1,43 @@
+[package]
+name = "qexed_game_logic"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[[bin]]
+name = "qexed_game_logic"
+path = "src/main.rs"
+[dependencies]
+anyhow = { workspace = true }
+bytes.workspace = true
+dashmap.workspace = true
+log.workspace = true
+tklog.workspace = true
+tokio = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+rsa.workspace = true
+rand.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_config = { workspace = true }
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+qexed_nbt.workspace = true
+qexed_player.workspace = true
+qexed_ping.workspace = true
+qexed_heartbeat.workspace = true
+qexed_chat.workspace = true
+qexed_packet_split.workspace = true
+qexed_command.workspace = true
+qexed_player_list.workspace = true
+qexed_chunk.workspace = true
+hex = "0.4.3"
+sha1 = "0.10.6"
+tokio-util.workspace = true

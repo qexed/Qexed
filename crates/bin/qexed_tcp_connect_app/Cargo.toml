@@ -1,0 +1,42 @@
+[package]
+name = "qexed_tcp_connect_app"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[[bin]]
+name = "qexed_connect"
+path = "src/main.rs"
+[dependencies]
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_config = { workspace = true }
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+qexed_status.workspace = true
+qexed_player.workspace = true
+qexed_mojang_auth.workspace = true
+qexed_player_list = { workspace = true }
+qexed_blacklist.workspace = true
+qexed_whitelist.workspace = true
+qexed_game_logic.workspace = true
+
+anyhow = { workspace = true }
+bytes.workspace = true
+dashmap.workspace = true
+log.workspace = true
+tklog.workspace = true
+tokio = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+rsa.workspace = true
+rand.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+hex.workspace = true
+sha1.workspace = true
+tinytemplate.workspace = true
+chrono.workspace = true

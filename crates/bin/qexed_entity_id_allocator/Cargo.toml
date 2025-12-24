@@ -1,0 +1,21 @@
+[package]
+name = "qexed_entity_id_allocator"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+distributed = []
+[[bin]]
+name = "qexed_entity_id"
+path = "src/main.rs"
+[dependencies]
+anyhow = { workspace = true }
+tokio  = { workspace = true }
+log.workspace = true
+tklog.workspace = true
+dashmap.workspace = true
+async-trait.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_config.workspace = true
+qexed_task = { workspace = true }

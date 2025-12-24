@@ -1,0 +1,23 @@
+[package]
+name = "qexed_player_list"
+version = "0.1.0"
+edition = "2024"
+[features]
+default = []
+distributed = []
+
+[[bin]]
+name = "qexed_player_list"
+path = "src/main.rs"
+[dependencies]
+anyhow = { workspace = true }
+dashmap.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+uuid.workspace = true
+qexed_config.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+log.workspace = true
+tklog.workspace = true
+qexed_command.workspace = true
