@@ -357,6 +357,7 @@ impl Chunk {
         // 使用 qexed_nbt 的序列化功能
         let tags = nbt_serde::nbt_serde::to_tag(self)
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
+        tags
         Ok(bytes)
     }
     
