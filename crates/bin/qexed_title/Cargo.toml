@@ -1,0 +1,24 @@
+[package]
+name = "qexed_title"
+edition = "2024"
+
+[dependencies]
+qexed_config.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_player_list.workspace = true
+qexed_player.workspace = true
+qexed_protocol.workspace = true
+qexed_nbt.workspace = true
+qexed_command.workspace = true
+qexed_packet.workspace = true
+
+anyhow = { workspace = true }
+dashmap.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+uuid.workspace = true
+bytes.workspace = true
+log.workspace = true
+tklog.workspace = true
+thiserror.workspace = true

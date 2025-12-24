@@ -22,6 +22,7 @@ pub enum ManagerMessage {
     GetPlayerHeartbeat(Option<qexed_heartbeat::message::ManagerCommand>),
     GetPlayerPacketSplit(Option<qexed_packet_split::message::ManagerMessage>),
     GetPlayerChat(Option<qexed_chat::message::ManagerMessage>),
+    GetTitle(Option<qexed_title::message::ManagerMessage>),
     GetCommand(Option<qexed_command::message::ManagerCommand>),
     GetPlayerListApi(Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>),
     PlayerClose(uuid::Uuid),  // 游戏连接关闭

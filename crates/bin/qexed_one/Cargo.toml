@@ -30,6 +30,7 @@ qexed_packet_split.workspace = true
 qexed_command.workspace = true
 qexed_rule.workspace = true
 qexed_chunk.workspace = true
+qexed_title.workspace = true
 # 内部库依赖
 qexed_tcp_connect = { workspace = true }
 qexed_task = {workspace = true}

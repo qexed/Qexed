@@ -19,3 +19,4 @@ pub mod qtunnel_tcp_connect_app;
 pub mod qtunnel_server_logic;
 pub mod qexed_rule;
 pub mod qexed_chunk;
+pub mod qexed_title;

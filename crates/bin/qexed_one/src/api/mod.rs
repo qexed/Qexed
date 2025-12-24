@@ -32,6 +32,8 @@ pub struct Api {
     pub rule: qexed_shared::Shared<qexed_config::app::qexed_rule::RuleConfig>,
     /// 区块服务
     pub chunk: UnboundedSender<UnReturnMessage<qexed_chunk::message::global::GlobalCommand>>,
+    /// Title指令服务
+    pub title:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
 }
 impl Api {
     pub async fn init(config: One) -> anyhow::Result<Self> {
@@ -43,6 +45,7 @@ impl Api {
         let ping = qexed_ping::run(config.ping).await?;
         let heartbeat = qexed_heartbeat::run(config.heartbeat).await?;
         let chat = qexed_chat::run(config.chat,player_list.clone()).await?;
+        let title = qexed_title::run(config.title, player_list.clone()).await?;
         let packet_split = qexed_packet_split::run(config.packet_split).await?;
         let chunk = qexed_chunk::run(config.chunk).await?;
         let game_logic = qexed_game_logic::run(
@@ -54,6 +57,7 @@ impl Api {
             command.clone(),
             player_list.clone(),
             chunk.clone(),
+            title.clone(),
         )
         .await?;
         let tcp_connect = qexed_tcp_connect_app::run(
@@ -84,6 +88,7 @@ impl Api {
             command: command,
             rule: rule,
             chunk: chunk,
+            title:title,
         })
     }
     pub async fn _listen() -> anyhow::Result<()> {
@@ -95,6 +100,7 @@ impl Api {
         qexed_chat::command::register_me_command(&self.command, self.chat.clone()).await?;
         qexed_chat::command::register_say_command(&self.command, self.chat.clone()).await?;
         qexed_chunk::command::seed::register_seed_command(&self.command, self.chunk.clone()).await?;
+        qexed_title::command::register_title_command_full(&self.command, self.title.clone()).await?;
         Ok(())
     }
 }

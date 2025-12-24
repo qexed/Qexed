@@ -25,6 +25,7 @@ pub struct GameLogicManagerActor {
     qexed_command_api:UnboundedSender<ReturnMessage<qexed_command::message::ManagerCommand>>,
     qexed_player_list_api:UnboundedSender<ReturnMessage<qexed_player_list::Message>>,
     qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::global::GlobalCommand>>,
+    qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
 }
 impl GameLogicManagerActor {
     pub fn new(
@@ -38,6 +39,7 @@ impl GameLogicManagerActor {
         qexed_command_api:UnboundedSender<ReturnMessage<qexed_command::message::ManagerCommand>>,
         qexed_player_list_api:UnboundedSender<ReturnMessage<qexed_player_list::Message>>,
         qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::global::GlobalCommand>>,
+        qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
     ) -> Self {
         Self {
             config,
@@ -50,6 +52,7 @@ impl GameLogicManagerActor {
             qexed_command_api,
             qexed_player_list_api,
             qexed_chunk_api,
+            qexed_title_api,
         }
     }
 
@@ -150,6 +153,16 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, ReturnMessage<TaskMess
                 };
 
                 let data = crate::message::ManagerMessage::GetPlayerChat(Some(ReturnMessage::build(chat).get(&self.qexed_chat_api).await?));
+                let _ = send.send(data);
+                return Ok(false);
+            }
+            ManagerMessage::GetTitle(mut chat_message) =>{
+                let chat = match chat_message.take(){
+                    Some(ping) => ping,
+                    None => return Ok(false)
+                };
+
+                let data = crate::message::ManagerMessage::GetTitle(Some(ReturnMessage::build(chat).get(&self.qexed_title_api).await?));
                 let _ = send.send(data);
                 return Ok(false);
             }

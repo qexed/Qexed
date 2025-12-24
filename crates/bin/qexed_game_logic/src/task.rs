@@ -39,6 +39,7 @@ pub struct GameLogicActor {
     qexed_chat_api:Option<UnboundedSender<UnReturnMessage<qexed_chat::message::TaskMessage>>>,
     qexed_command_api:Option<UnboundedSender<UnReturnMessage<qexed_command::message::TaskCommand>>>,
     qexed_player_list_api:Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>,
+    qexed_title_api:Option<UnboundedSender<UnReturnMessage<qexed_title::message::TaskMessage>>>,
 }
 impl GameLogicActor {
     pub fn new(uuid: Uuid) -> Self {
@@ -53,6 +54,7 @@ impl GameLogicActor {
             qexed_chat_api:None,
             qexed_command_api:None,
             qexed_player_list_api:None,
+            qexed_title_api:None,
         }
     }
 }
@@ -393,6 +395,37 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         return Ok(false);
                     }
                 };
+                // title
+                if let ManagerMessage::GetTitle(Some(
+                    qexed_title::message::ManagerMessage::NewPlayerConnect(
+                        _uuid,
+                        is_true,
+                        err,
+                        chat_api,
+                    ),
+                )) = ReturnMessage::build(ManagerMessage::GetTitle(Some(
+                    qexed_title::message::ManagerMessage::NewPlayerConnect(
+                        self.uuid.clone(),
+                        false,
+                        None,
+                        None,
+                    ),
+                )))
+                .get(&manage_api)
+                .await?
+                {
+                    self.qexed_title_api = chat_api;
+                }
+                let title_api = match &self.qexed_title_api {
+                    Some(p) => p,
+                    None => {
+                        if let Some(send) = data.get_return_send().await? {
+                            let _ = send.send(data.data);
+                        }
+                        return Ok(false);
+                    }
+                };
+                
                 // 指令
                 if let ManagerMessage::GetCommand(Some(
                     qexed_command::message::ManagerCommand::NewPlayerConnect(
@@ -454,6 +487,9 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 UnReturnMessage::build(qexed_chat::message::TaskMessage::Start(player.username.clone(),Some(packet_write.clone())))
                     .post(&chat_api)
                     .await?;
+                UnReturnMessage::build(qexed_title::message::TaskMessage::Start(player.username.clone(),Some(packet_write.clone())))
+                    .post(&title_api)
+                    .await?;
                 ReturnMessage::build(qexed_player_list::Message::PlayerJoin(player.uuid.clone(),player.username.clone())).get(&player_list_api).await?;
                 // 区块初始化:
                 packet_write.send(
@@ -487,10 +523,10 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 UnReturnMessage::build(qexed_heartbeat::message::TaskCommand::Start)
                     .post(&heartbeat_api)
                     .await?;
-                // Test:Set Title
-                packet_write.send(PacketSend::build_send_packet(qexed_protocol::to_client::play::set_title_text::SetTitleText{
-                    text:create_text_nbt("测试title"),
-                }).await?)?;
+                // // Test:Set Title
+                // packet_write.send(PacketSend::build_send_packet(qexed_protocol::to_client::play::set_title_text::SetTitleText{
+                //     text:create_text_nbt("测试title"),
+                // }).await?)?;
                 
                 // let api_ping = match &self.qexed_ping_api {
                 //     Some(p) => p,
@@ -551,6 +587,11 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         .post(&api_ping)
                         .await;
                     let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::Close)
+                        .post(&api_ping)
+                        .await;
+                }
+                if let Some(api_ping) = &self.qexed_title_api {
+                    let _ = UnReturnMessage::build(qexed_title::message::TaskMessage::Close)
                         .post(&api_ping)
                         .await;
                 }

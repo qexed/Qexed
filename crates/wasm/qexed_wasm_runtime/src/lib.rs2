@@ -1,4 +1,3 @@
-pub mod modern;
 // src/main.rs
 use wasmtime::{Engine, Instance, Module, Store, Memory, MemoryType, Linker, Extern, Val};
 use wasmtime::AsContextMut;
@@ -43,5 +42,33 @@ fn main() -> anyhow::Result<()> {
         }
     })?;
     
+    // 4. 加载 WASM 模块
+    let wasm_bytes = include_bytes!("a.wasm");
+    let module = Module::from_binary(&engine, wasm_bytes)?;
+    
+    // 5. 创建存储
+    let mut store = Store::new(&engine, ());
+    
+    // 6. 实例化模块，使用链接器
+    let instance = linker.instantiate(&mut store, &module)?;
+    
+    // 7. 获取 print 函数
+    let print_func = instance.get_typed_func::<(), ()>(&mut store, "print")?;
+    
+    // 8. 调用 print 函数
+    println!("准备调用 WASM 模块的 print 函数...");
+    print_func.call(&mut store, ())?;
+    
+    println!("\n成功调用了 WASM 模块的 print 函数!");
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    
+    #[test]
+    fn test() -> anyhow::Result<()> {
+        main()
+    }
 }
