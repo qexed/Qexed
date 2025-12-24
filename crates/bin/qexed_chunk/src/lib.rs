@@ -5,6 +5,7 @@ pub mod event;
 pub mod message;
 pub mod task;
 pub mod data_type;
+pub mod command;
 
 
 pub async fn run(

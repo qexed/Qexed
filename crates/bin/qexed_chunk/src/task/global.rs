@@ -189,6 +189,11 @@ impl TaskManageEvent<uuid::Uuid, UnReturnMessage<GlobalCommand>, UnReturnMessage
                 
                 let _ = result.send(status);
             }
+            GlobalCommand::CommandSeed(cmd)=>{
+                for i in &self.config.world{
+                    cmd.send_chat_message(&format!("§e[世界§7:§3{}§e]§r 种子:[§2{}§r]",i.1.name,i.1.seed)).await?;
+                }
+            }
         }
         Ok(false)
     }

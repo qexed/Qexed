@@ -94,6 +94,7 @@ impl Api {
         qexed_chat::command::register_tell_command(&self.command, self.chat.clone()).await?;
         qexed_chat::command::register_me_command(&self.command, self.chat.clone()).await?;
         qexed_chat::command::register_say_command(&self.command, self.chat.clone()).await?;
+        qexed_chunk::command::seed::register_seed_command(&self.command, self.chunk.clone()).await?;
         Ok(())
     }
 }

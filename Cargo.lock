@@ -2172,6 +2172,7 @@ dependencies = [
  "dashmap",
  "futures",
  "log",
+ "qexed_command",
  "qexed_config",
  "qexed_nbt",
  "qexed_packet",

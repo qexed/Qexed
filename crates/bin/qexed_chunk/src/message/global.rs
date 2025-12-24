@@ -1,3 +1,4 @@
+use qexed_command::message::CommandData;
 use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -83,4 +84,7 @@ pub enum GlobalCommand {
     GetWorldsStatus {
         result: oneshot::Sender<Vec<(Uuid, String)>>, // 世界UUID和状态
     },
+
+    // 指令:seed
+    CommandSeed(CommandData),// 指令事件
 }
