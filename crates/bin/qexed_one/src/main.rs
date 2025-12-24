@@ -77,8 +77,7 @@ async fn main() -> anyhow::Result<()> {
         };
         tokio::spawn(async move {
             // 给任务起个名字，便于日志追踪
-            let task_name = "stop_command_handler";
-            log::debug!("[{}] 任务启动", task_name);
+            log::debug!("[指令] [stop] 服务启动");
 
             while let Some(cmd) = cmd_rx.recv().await {
                 // 权限验证
@@ -98,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
                         Ok(_) => {}
                         Err(e) => {
                             // 发送聊天消息失败，记录日志但继续运行
-                            log::error!("[{}] 无法向玩家发送无权限提示: {}", task_name, e);
+                            log::error!("[指令] [stop] 无法向玩家发送无权限提示: {}", e);
                         }
                     };
                     // 权限不足不代表循环要结束，继续监听下一条指令
@@ -107,10 +106,7 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
 
-            log::info!(
-                "[{}] 任务结束，指令接收通道已关闭或收到退出指令。",
-                task_name
-            );
+            log::debug!("[指令] [stop] 服务关闭");
         });
     } else {
         log::error!("系统命令/stop注册失败关闭");

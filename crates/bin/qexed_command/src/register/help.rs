@@ -32,8 +32,7 @@ pub async fn register(api: &UnboundedSender<ReturnMessage<ManagerCommand>>) -> a
         let api = api.clone();
         tokio::spawn(async move {
             // 给任务起个名字，便于日志追踪
-            let task_name = "help_command_handler";
-            log::debug!("[{}] 任务启动", task_name);
+            log::debug!("[指令] [help] 服务启动");
 
             while let Some(cmd) = cmd_rx.recv().await {
                 // 是否是命令行
@@ -48,10 +47,7 @@ pub async fn register(api: &UnboundedSender<ReturnMessage<ManagerCommand>>) -> a
                 }
             }
 
-            log::info!(
-                "[{}] 任务结束，指令接收通道已关闭或收到退出指令。",
-                task_name
-            );
+            log::debug!("[指令] [help] 服务结束");
         });
     } else {
         log::error!("系统命令/help注册失败关闭");

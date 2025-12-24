@@ -48,12 +48,9 @@ where
         
         // 启动命令处理任务
         tokio::spawn(async move {
-            let task_name = format!("{}_command_handler", name);
-            log::debug!("[{}] 任务启动", task_name);
+            log::debug!("[指令] [{}] 服务启动", name);
             let _ = handler(cmd_rx).await;
-
-            
-            log::info!("[{}] 任务结束", task_name);
+            log::info!("[指令] [{}] 服务结束", name);
         });
     } else {
         anyhow::bail!("命令注册响应格式错误");
