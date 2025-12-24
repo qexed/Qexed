@@ -37,7 +37,7 @@ pub async fn register_tell_command(
                 suggestions: None,
             },
         ],
-        vec![], // 可以添加多个别名
+        vec!["msg","w"], // 可以添加多个别名
         command_api,
         move |mut cmd_rx| {
             let api2 = api2_for_closure.clone();
