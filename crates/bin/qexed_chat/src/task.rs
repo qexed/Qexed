@@ -84,15 +84,15 @@ impl TaskEvent<UnReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for 
             TaskMessage::SystemEvent(system_event) => {
                 match system_event {
                     crate::message::SystemEvent::PlayerJoin => {
-                        log::info!("§e{}§e 进入了服务器",&self.name);
-                        ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_system_message(format!("{} 进入了服务器",&self.name))))
+                        log::info!("{} 进入了服务器",&self.name);
+                        ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_system_message(format!("§e{}§e 进入了服务器",&self.name))))
                             .get(manage_api)
                             .await?;
                         return Ok(false);
                     },
                     crate::message::SystemEvent::PlayerLevel =>{
-                        log::info!("§e{}§e 退出了服务器",&self.name);
-                        ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_system_message(format!("{} 退出了服务器",&self.name))))
+                        log::info!("{} 退出了服务器",&self.name);
+                        ReturnMessage::build(ManagerMessage::BroadCastEvent(self.uuid,build_system_message(format!("§e{}§e 退出了服务器",&self.name))))
                             .get(manage_api)
                             .await?;
                         return Ok(false);
