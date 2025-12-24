@@ -1,0 +1,37 @@
+name: Cross-platform Build
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, x86_64-apple-darwin]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install target
+      run: rustup target add ${{ matrix.target }}
+    
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }}
+    
+    - name: Package artifacts
+      run: |
+        mkdir -p release
+        # 根据平台打包
+        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+          cp target/${{ matrix.target }}/release/*.exe release/ || true
+        else
+          cp target/${{ matrix.target }}/release/* release/ || true
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-${{ matrix.target }}
+        path: release/
