@@ -116,8 +116,9 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                         // build_chat_packet(message:String)
                         other_player_api.send(UnReturnMessage::build(
                             TaskMessage::SendMessage(build_chat_packet(format!(
-                                "§5[私聊] §r[{}§r] §r{}",
+                                "§5[私聊] §r[{}§r->{}§r] §r{}",
                                 player_name,
+                                target_player.clone(),
                                 message.clone()
                             ))),
                         ))?;
