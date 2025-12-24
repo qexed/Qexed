@@ -94,3 +94,43 @@ pub async fn register_me_command(
     )
     .await
 }
+
+pub async fn register_say_command(
+    command_api: &UnboundedSender<ReturnMessage<qexed_command::message::ManagerCommand>>,
+    api2: UnboundedSender<ReturnMessage<ManagerMessage>>,
+) -> anyhow::Result<()> {
+    // 克隆 api2 用于闭包
+    let api2_for_closure = api2.clone();
+
+    qexed_command::register::register_command(
+        "say",
+        "通过聊天框向多个玩家发送消息。",
+        "qexed.say",
+        vec![
+            qexed_command::message::CommandParameter {
+                name: "message".to_string(),
+                description: "指定要显示的消息。".to_string(),
+                required: true,
+                param_type: qexed_command::message::ParameterType::String {
+                    behavior: qexed_command::message::StringBehavior::Greedy,
+                },
+                suggestions: None,
+            },
+        ],
+        vec![], // 可以添加多个别名
+        command_api,
+        move |mut cmd_rx| {
+            let api2 = api2_for_closure.clone();
+            async move {
+                while let Some(cmd) = cmd_rx.recv().await {
+                    // 创建新的命令数据发送给管理器
+                    ReturnMessage::build(ManagerMessage::CommandSay(cmd))
+                    .get(&api2)
+                    .await?;
+                }
+                Ok(())
+            }
+        },
+    )
+    .await
+}

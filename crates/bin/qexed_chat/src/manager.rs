@@ -169,6 +169,33 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                 let _ = send.send(data.data);
                 return Ok(false);
             }
+            ManagerMessage::CommandSay(ref cmd) => {
+                let args = cmd.parse_args();
+                let help_args: Vec<String> = args.into_iter().skip(1).collect();
+                if help_args.len() < 1 {
+                    cmd.send_chat_message("§c用法: /say <消息>").await?;
+                    let _ = send.send(data.data);
+                    return Ok(false);
+                }
+                let player_name = match &cmd.player_name {
+                    Some(name) => name,
+                    None => "系统",
+                };
+                let message = &help_args.join(" ");
+                let system_chat = build_chat_packet(format!(
+                                "[§r{}§r] §r{}",
+                                player_name,
+                                message.clone()
+                            ));
+                for task in task_map {
+                    let _ = task.send(UnReturnMessage::build(TaskMessage::SendMessage(
+                        system_chat.clone(),
+                    )));
+                }
+                let _ = send.send(data.data);
+                return Ok(false);
+            }
+            
             ManagerMessage::PlayerClose(uuid) => {
                 task_map.remove(&uuid);
                 let _ = send.send(data.data);
