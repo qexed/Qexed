@@ -229,10 +229,24 @@ impl TaskEvent<ReturnMessage<TaskCommand>,ReturnMessage<ManagerCommand>> for Tcp
                             // 发送初始任务到游戏逻辑
                             ReturnMessage::build(qexed_game_logic::message::TaskMessage::Start(player, Some(rpr), Some(wpw.clone())))
                                 .get(&logic_api).await?;
-                            ReturnMessage::build(qexed_game_logic::message::TaskMessage::Configuration(false))
-                                .get(&logic_api).await?;
-                            ReturnMessage::build(qexed_game_logic::message::TaskMessage::Play)
-                                .get(&logic_api).await?;
+                            match ReturnMessage::build(qexed_game_logic::message::TaskMessage::Configuration(false))
+                                .get(&logic_api).await{
+                                    Ok(_v)=>{},
+                                    Err(_v)=>{
+                                    let _ = ReturnMessage::build(qexed_game_logic::message::TaskMessage::Close)
+                                        .get(&logic_api)
+                                        .await;
+                                    }
+                                };
+                            match ReturnMessage::build(qexed_game_logic::message::TaskMessage::Play)
+                                .get(&logic_api).await{
+                                    Ok(_v)=>{},
+                                    Err(_v)=>{
+                                    let _ = ReturnMessage::build(qexed_game_logic::message::TaskMessage::Close)
+                                        .get(&logic_api)
+                                        .await;
+                                    }
+                                };
                             // 等待任一任务完成，然后协调关闭
                             tokio::select! {
                                 read_result = &mut read_handle => {

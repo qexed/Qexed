@@ -4,7 +4,6 @@ use qexed_config::app::qexed_game_logic::GameLogicConfig;
 use qexed_task::{
     event::task_manage::TaskManageEvent,
     message::{MessageSender, MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage},
-    task::task::Task,
 };
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
@@ -76,12 +75,14 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, ReturnMessage<TaskMess
                 ref mut err,
                 ref mut task_api,
             ) => {
-                if task_map.contains_key(&uuid) {
+                if let Some(player_api) = task_map.get(&uuid) {
+                    // let _ = ReturnMessage::build(TaskMessage::Close).post(&player_api).await;
+                    // task_map.remove(&uuid);
                     *err = Some(NewPlayerConnectError::PlayerNotAway.into());
                     let _ = send.send(data.data);
                     return Ok(false);
                 }
-                let (task, task_sand) = Task::new(api.clone(), GameLogicActor::new(uuid));
+                let (task, task_sand) = crate::task::Task::new(api.clone(), GameLogicActor::new(uuid));
                 task.run().await?;
                 task_map.insert(uuid, task_sand.clone());
                 *task_api = Some(task_sand);

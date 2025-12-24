@@ -850,3 +850,62 @@ fn create_dirt_slot() -> qexed_protocol::types::Slot {
         components_to_remove: Some(vec![]),
     }
 }
+
+
+// TEST
+pub struct Task<ManageMessageType> {
+    api: MessageSender<ReturnMessage<TaskMessage>>,
+    manage_api: MessageSender<ManageMessageType>,
+    other: GameLogicActor,
+    receiver: Option<UnboundedReceiver<ReturnMessage<TaskMessage>>>,
+}
+impl<ManageMessageType> Task<ManageMessageType>
+where
+    ManageMessageType: Send + 'static + std::fmt::Debug + Unpin,
+    GameLogicActor: Send + 'static + std::fmt::Debug + Unpin + TaskEvent<ReturnMessage<TaskMessage>,ManageMessageType>, // 添加 Send
+    
+{
+    pub fn new(
+        manage_api: MessageSender<ManageMessageType>,
+        data: GameLogicActor,
+    ) -> (Self, MessageSender<ReturnMessage<TaskMessage>>) {
+        let (w, r) = tokio::sync::mpsc::unbounded_channel();
+        (
+            Self {
+                api: w.clone(),
+                manage_api: manage_api,
+                other: data,
+                receiver: Some(r),
+            },
+            w,
+        )
+    }
+    // 请注意:下面的所有权转移并不是失误,是刻意的设计
+    pub async fn run(self) -> anyhow::Result<()> {
+        tokio::spawn(self.listen());
+        Ok(())
+    }
+    async fn listen(mut self) -> anyhow::Result<()> {
+        let mut receiver = self
+            .receiver
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("接收管道不存在"))?;
+        let api = self.api;
+        let manage_api = self.manage_api;
+        while let Some(data) = receiver.recv().await {
+            // 这里我们后面修改来实现具体业务逻辑
+            match self.other.event(&api, &manage_api, data).await {
+                Ok(v)=>{
+                    if v{
+                        receiver.close();
+                    }
+                }
+                Err(e)=>{
+                    self.other.event(&api, &manage_api, ReturnMessage::build(TaskMessage::Close)).await?;
+                    receiver.close();
+                }
+            }
+        }
+        Ok(())
+    }
+}
