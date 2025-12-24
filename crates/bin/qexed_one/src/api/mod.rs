@@ -92,6 +92,7 @@ impl Api {
     pub async fn register(&self) -> anyhow::Result<()> {
         qexed_player_list::register_list_command(&self.command, self.player_list.clone()).await?;
         qexed_chat::command::register_tell_command(&self.command, self.chat.clone()).await?;
+        qexed_chat::command::register_me_command(&self.command, self.chat.clone()).await?;
         Ok(())
     }
 }

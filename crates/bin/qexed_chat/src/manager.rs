@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use qexed_nbt::Tag;
-use qexed_protocol::to_client::play::system_chat::SystemChat;
+use qexed_protocol::to_client::play::system_chat::{self, SystemChat};
 use qexed_task::{
     event::task_manage::TaskManageEvent,
     message::{
@@ -81,84 +81,6 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                 return Ok(false);
             }
             ManagerMessage::Command(ref cmd) => {
-                // 解析命令
-                // let args = cmd.parse_args();
-                // match args.get(0).map(|s| s.as_str()) {
-                //     Some("tell") => {
-                //         // 处理 /tell 命令
-                //         if args.len() < 3 {
-                //             cmd.send_chat_message("§c用法: /tell <玩家> <消息>").await?;
-                //             let _ = send.send(ManagerMessage::Command(cmd));
-                //             return Ok(false);
-                //         }
-                //         let target_player = &args[1];
-                //         let message = args[2..].join(" ");
-                //         // 获取发送者信息
-                //         let sender_name = match &cmd.player_name {
-                //             Some(name) => name.clone(),
-                //             None => "系统".to_string(),
-                //         };
-                //         // if let qexed_player_list::Message::GetPlayerIsOnline {
-                //         //     name,
-                //         //     is_true,
-                //         //     player_uuid,
-                //         // } = ReturnMessage::build(qexed_player_list::Message::GetPlayerIsOnline {
-                //         //     name: sender_name.clone(),
-                //         //     is_true: false,
-                //         //     player_uuid: uuid::Uuid::nil(),
-                //         // })
-                //         // .get(&self.player_list_api)
-                //         // .await?
-                //         // {
-                //         //     if is_true == false {
-                //         //         cmd.send_chat_message(&format!("§c玩家 {} 不在线", target_player))
-                //         //             .await?;
-                //         //         return Ok(false);
-                //         //     }
-                //         //     // 构建私聊消息
-                //         //     let to_sender = format!("§7[我 -> {}] §f{}", target_player, message);
-                //         //     let to_target = format!("§7[{} -> 我] §f{}", sender_name, message);
-                //         //     if let Some(other_player_api) = task_map.get(&player_uuid) {
-                //         //         // 记录日志
-                //         //         log::info!(
-                //         //             "私聊: {} -> {}: {}",
-                //         //             sender_name,
-                //         //             target_player,
-                //         //             message
-                //         //         );
-                //         //         // // 1. 创建文本组件的 Compound
-                //         //         // let mut chat_component = HashMap::new();
-                //         //         // // Minecraft 文本组件的基础格式：{"text": "实际内容"}
-                //         //         // chat_component.insert(
-                //         //         //     "text".to_string(),
-                //         //         //     Tag::String(to_target) // 使用 `into()` 转为 Arc<str>
-                //         //         // );
-                //         //         // // 2. 可选：添加样式（例如颜色）
-                //         //         // // chat_component.insert("color".to_string(), Tag::String("red".into()));
-                //         //         // // 3. 将 HashMap 包装为 Tag::Compound
-                //         //         // let content_nbt = Tag::Compound(Arc::new(chat_component));
-                //         //         // // 4. 构建 SystemChat（overlay = false 表示显示在普通聊天框）
-                //         //         // let _ = other_player_api.send(UnReturnMessage::build(TaskMessage::SendMessage(
-                //         //         //     SystemChat {
-                //         //         //     content: content_nbt,
-                //         //         //     overlay: false,
-                //         //         // }
-                //         //         // )));
-                //         //         cmd.send_chat_message(&to_sender).await?;
-                //         //     } else {
-                //         //         cmd.send_chat_message(&format!("§c玩家 {} 不在线", target_player))
-                //         //             .await?;
-                //         //         return Ok(false);
-                //         //     }
-                //         //     return Ok(false);
-                //         // } else {
-                //         //     cmd.send_chat_message(&format!("§c玩家 {} 不在线", target_player))
-                //         //         .await?;
-                //         //     return Ok(false);
-                //         // }
-                //     }
-                //     _ => {}
-                // }
                 let args = cmd.parse_args();
                 let help_args: Vec<String> = args.into_iter().skip(1).collect();
                 if help_args.len() < 2 {
@@ -220,6 +142,32 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                     let _ = send.send(data.data);
                     return Ok(false);
                 }
+            }
+            ManagerMessage::CommandMe(ref cmd) => {
+                let args = cmd.parse_args();
+                let help_args: Vec<String> = args.into_iter().skip(1).collect();
+                if help_args.len() < 1 {
+                    cmd.send_chat_message("§c用法: /me <消息>").await?;
+                    let _ = send.send(data.data);
+                    return Ok(false);
+                }
+                let player_name = match &cmd.player_name {
+                    Some(name) => name,
+                    None => "系统",
+                };
+                let message = &help_args.join(" ");
+                let system_chat = build_chat_packet(format!(
+                                "* §r{}§r §r{}",
+                                player_name,
+                                message.clone()
+                            ));
+                for task in task_map {
+                    let _ = task.send(UnReturnMessage::build(TaskMessage::SendMessage(
+                        system_chat.clone(),
+                    )));
+                }
+                let _ = send.send(data.data);
+                return Ok(false);
             }
             ManagerMessage::PlayerClose(uuid) => {
                 task_map.remove(&uuid);

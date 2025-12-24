@@ -13,6 +13,7 @@ pub enum ManagerMessage {
         Option<UnboundedSender<UnReturnMessage<TaskMessage>>>,// 任务api
     ), // Qexed Login阶段完成后进入配置阶段，配置阶段开始前会传递进服阶段前的所有数据包进行处理
     Command(CommandData),// 指令事件
+    CommandMe(CommandData),// 指令事件
     BroadCastEvent(uuid::Uuid,qexed_protocol::to_client::play::system_chat::SystemChat),// 广播聊天数据包
     PlayerClose(uuid::Uuid),  // 游戏连接关闭
     ConnectClose(uuid::Uuid), // 连接关闭
