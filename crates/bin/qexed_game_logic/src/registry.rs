@@ -663,3 +663,7 @@ fn read_packet(data: Vec<u8>)->anyhow::Result<RegistryData>{
     VarInt::default().deserialize(&mut reader)?;
     return decode_packet::<RegistryData>(&mut reader);
 }
+#[test]
+fn test(){
+    println!("{:?}",get_registry_data_packets());
+}

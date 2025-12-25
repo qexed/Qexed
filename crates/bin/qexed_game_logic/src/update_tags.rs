@@ -12,3 +12,8 @@ pub fn get_update_tags_packet() -> anyhow::Result<Tags> {
     VarInt::default().deserialize(&mut reader)?;
     return decode_packet::<Tags>(&mut reader);
 }
+#[test]
+fn test()->anyhow::Result<()>{
+    println!("{:#?}",get_update_tags_packet()?);
+    Ok(())
+}

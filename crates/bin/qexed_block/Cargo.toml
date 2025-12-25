@@ -1,0 +1,31 @@
+[package]
+name = "qexed_block"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"  # 启用构建脚本
+
+[features]
+default = []
+distributed = []
+
+[dependencies]
+anyhow = { workspace = true }
+dashmap.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+uuid.workspace = true
+qexed_config.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+log.workspace = true
+tklog.workspace = true
+qexed_command.workspace = true
+serde.workspace = true
+once_cell.workspace = true
+lazy_static.workspace = true
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+heck = "0.4"
+phf = { version = "0.11", features = ["macros"] }
+phf_codegen = "0.11"

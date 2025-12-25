@@ -1,13 +1,16 @@
 .VSCodeCounter
 /config
-/assets
+/assets/server.jar
+/assets/server
+/assets/minecraft
 /target
 /run
 /log
 /doc
 /deploy
 /tmp
-/tool
+/tool/
+/
 # will have compiled files and executables
 debug
 target
