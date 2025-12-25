@@ -28,6 +28,8 @@ members = [
     "crates/bin/qexed_time",
     "crates/bin/qexed_title",
     "crates/bin/qexed_block",
+    "crates/bin/qexed_item",
+    
     # 依赖库
     "crates/network/qexed_tcp_connect",
     "crates/network/qexed_mojang_auth",
@@ -85,6 +87,7 @@ qexed_player_move.path = "crates/bin/qexed_player_move"
 qexed_time.path = "crates/bin/qexed_time"
 qexed_title.path = "crates/bin/qexed_title"
 qexed_block.path = "crates/bin/qexed_block"
+qexed_item.path = "crates/bin/qexed_item"
 # 项目内部包
 qexed_tcp_connect = { path = "crates/network/qexed_tcp_connect" }
 qexed_mojang_auth = { path = "crates/network/qexed_mojang_auth" }
