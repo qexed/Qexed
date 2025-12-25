@@ -9,12 +9,11 @@ use uuid::Uuid;
 use std::path::PathBuf;
 
 use crate::{
-    event::global::GlobalManage,
-    message::{
+    engine::original::event::{global::GlobalManage, world::WorldManage}, message::{
         global::GlobalCommand, 
         region::RegionCommandResult,
         world::WorldCommand
-    },
+    }
 };
 
 #[async_trait]
@@ -39,10 +38,10 @@ impl TaskManageEvent<uuid::Uuid, UnReturnMessage<GlobalCommand>, UnReturnMessage
                     // 世界已加载
                     let _ = result.send(true);
                 } else {
-                    if let Some(world_info) = self.config.world.get(&uuid).cloned(){
+                    if let Some(world_info) = self.config.engine_setting.original.world.get(&uuid).cloned(){
                         
                         let (world_task, world_sender) = qexed_task::task::task_manage::TaskManage::new(
-                            crate::event::world::WorldManage::new(world_info,self.worlds_root.clone(),uuid.clone(),api.clone())
+                            WorldManage::new(world_info,self.worlds_root.clone(),uuid.clone(),api.clone())
                         );
                         task_map.insert(uuid, world_sender.clone());
                         let _ = result.send(true);
@@ -190,7 +189,7 @@ impl TaskManageEvent<uuid::Uuid, UnReturnMessage<GlobalCommand>, UnReturnMessage
                 let _ = result.send(status);
             }
             GlobalCommand::CommandSeed(cmd)=>{
-                for i in &self.config.world{
+                for i in &self.config.engine_setting.original.world{
                     cmd.send_chat_message(&format!("§e[世界§7:§3{}§e]§r 种子:[§2{}§r]",i.1.name,i.1.seed)).await?;
                 }
             }

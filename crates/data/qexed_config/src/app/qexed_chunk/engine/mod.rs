@@ -1,3 +1,5 @@
+pub mod original;
+pub mod mini_lobby;
 use qexed_config_macros::AutoEnum;
 use serde::{Deserialize, Serialize};
 

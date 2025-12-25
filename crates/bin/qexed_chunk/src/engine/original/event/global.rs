@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
 use uuid::Uuid;
 
-use crate::{event::world::WorldManage, message::{global::GlobalCommand, world::WorldCommand}};
+use crate::{ message::{global::GlobalCommand, world::WorldCommand}};
 #[derive(Debug)]
 pub struct GlobalManage {
     pub config: qexed_config::app::qexed_chunk::ChunkConfig,
@@ -16,7 +16,7 @@ pub struct GlobalManage {
 }
 impl GlobalManage {
     pub fn new(config: qexed_config::app::qexed_chunk::ChunkConfig) -> Self {
-        let worlds_root = Path::new(&config.world_dir).to_path_buf();
+        let worlds_root = Path::new(&config.engine_setting.original.world_dir).to_path_buf();
         Self {
             config,
             worlds_root,
