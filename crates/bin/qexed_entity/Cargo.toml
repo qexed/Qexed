@@ -1,0 +1,34 @@
+[package]
+name = "qexed_entity"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"  # 启用构建脚本
+
+[dependencies]
+anyhow = { workspace = true }
+dashmap.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+uuid.workspace = true
+qexed_config.workspace = true
+qexed_tcp_connect = { workspace = true }
+qexed_task = { workspace = true }
+qexed_packet = { workspace = true }
+log.workspace = true
+tklog.workspace = true
+qexed_command.workspace = true
+serde.workspace = true
+once_cell.workspace = true
+lazy_static.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+strum = {version = "0.27.2", features = ["derive"]}
+phf = { version = "0.11", features = ["macros"] }
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+heck = "0.4"
+phf = { version = "0.11", features = ["macros"] }
+phf_codegen = "0.11"
+fs-err = "3.2.2"  # 更好的文件系统错误处理
+anyhow.workspace = true

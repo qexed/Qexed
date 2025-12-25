@@ -2235,6 +2235,7 @@ dependencies = [
  "qexed_block",
  "qexed_command",
  "qexed_config",
+ "qexed_entity",
  "qexed_item",
  "qexed_nbt",
  "qexed_packet",
@@ -2354,6 +2355,34 @@ dependencies = [
  "qexed_nbt",
  "qexed_protocol",
  "serde",
+ "uuid",
+]
+
+[[package]]
+name = "qexed_entity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dashmap",
+ "fs-err",
+ "heck 0.4.1",
+ "lazy_static",
+ "log",
+ "once_cell",
+ "phf",
+ "phf_codegen",
+ "qexed_command",
+ "qexed_config",
+ "qexed_packet",
+ "qexed_task",
+ "qexed_tcp_connect",
+ "serde",
+ "serde_json",
+ "strum 0.27.2",
+ "thiserror 1.0.69",
+ "tklog",
+ "tokio",
  "uuid",
 ]
 

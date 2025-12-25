@@ -18,6 +18,7 @@ qexed_command.workspace = true
 qexed_player_list.workspace = true
 qexed_block.workspace = true # 这里只是随便测试用的，实际用不到这个模块
 qexed_item.workspace = true # 这里只是随便测试用的，实际用不到这个模块
+qexed_entity.workspace = true # 这里只是随便测试用的，实际用不到这个模块
 # 第三方依赖
 anyhow = { workspace = true }
 tokio  = { workspace = true }
