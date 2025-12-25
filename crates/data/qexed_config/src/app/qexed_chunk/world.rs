@@ -8,8 +8,6 @@ pub struct World {
     pub name:String,
     // 世界命名空间(例如主世界)
     pub namespace:String,
-    // 世界区块计算引擎
-    pub engine:Engine,
     // 随机种子
     pub seed: i64,
     // ===== 游戏规则 =====
@@ -27,7 +25,6 @@ impl Default for World {
             version: 0,
             name:"未命名的世界".to_string(),
             namespace:"minecraft:overworld".to_string(),
-            engine:Engine::Original,
             seed:rand::random(),
             raid:false,
             poi:false,
@@ -40,7 +37,6 @@ impl World {
         let mut world : Self = Default::default();
         world.name = "主世界".to_string();
         world.namespace = "minecraft:overworld".to_string();
-        world.engine=Engine::Original;
         world.raid=true;
         world.poi=true;
         world.entitie=true;
@@ -50,7 +46,6 @@ impl World {
         let mut world : Self = Default::default();
         world.name = "下界".to_string();
         world.namespace = "minecraft:the_nether".to_string();
-        world.engine=Engine::Original;
         world.raid=false;
         world.poi=true;
         world.entitie=true;
@@ -60,7 +55,6 @@ impl World {
         let mut world : Self = Default::default();
         world.name = "末地".to_string();
         world.namespace = "minecraft:the_end".to_string();
-        world.engine=Engine::Original;
         world.raid=false;
         world.poi=true;
         world.entitie=true;

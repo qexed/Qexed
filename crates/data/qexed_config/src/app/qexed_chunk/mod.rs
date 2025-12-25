@@ -3,12 +3,14 @@ pub mod engine;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::tool::AppConfigTrait;
+use crate::{app::qexed_chunk::engine::Engine, tool::AppConfigTrait};
 #[derive(Debug, Serialize, Deserialize,Clone)]
 pub struct ChunkConfig {
     pub version: i32,
     pub world_dir:String,
     pub world:HashMap<Uuid,world::World>,
+    // 世界管理引擎(注意子服需要保持一致)
+    pub engine:Engine,
     // 主世界（进服后的世界，不是说主世界维度)
     pub main_world:Uuid,
     // 进服位置
@@ -32,6 +34,7 @@ impl Default for ChunkConfig {
             main_world:main_world,
             join_pos:qexed_random::pos::pos_join_spawn_area(),
             view_distance:12,
+            engine:Engine::Original,
         }
     }
 }
