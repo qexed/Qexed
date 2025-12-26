@@ -8,11 +8,13 @@ use qexed_task::{
 use tokio::sync::oneshot;
 
 use crate::{
-    data_type::direction::{Direction, DirectionMap}, engine::original::event::{chunk::ChunkTask, region::RegionManage}, message::{
+    data_type::direction::{Direction, DirectionMap},
+    engine::mini_lobby::event::{chunk::ChunkTask, region::RegionManage},
+    message::{
         chunk::ChunkCommand,
         region::{RegionCommand, RegionCommandResult},
         world::WorldCommand,
-    }
+    },
 };
 
 #[async_trait]
@@ -26,7 +28,10 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
         data: UnReturnMessage<RegionCommand>,
     ) -> anyhow::Result<bool> {
         match data.data {
-            RegionCommand::Init=>{Ok(false)},
+            RegionCommand::Init => {
+                self.init(api, task_map).await?;
+                Ok(false)
+            }
             RegionCommand::GetChunkApi { pos, result } => {
                 // 计算 pos 是否在本区域范围
                 if self.is_chunk_in_region(pos) {
@@ -264,7 +269,7 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
                                 self.pos.clone(),
                             ),
                         );
-                        chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init));
+                        chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init))?;
                         task_map.insert(pos, chunk_sender.clone());
                         result
                             .send(
@@ -379,7 +384,7 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
                 }
                 return Ok(false);
             }
-            RegionCommand::RegionCloseCommand{result} => {
+            RegionCommand::RegionCloseCommand { result } => {
                 // 发动区块强制关闭命令,等待关闭集合
                 // 创建任务向量
                 if task_map.is_empty() {

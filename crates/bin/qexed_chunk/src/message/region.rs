@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::message::chunk::ChunkCommand;
 #[derive(Debug)]
 pub enum RegionCommand {
+    Init,
     // 获取ChunkApi(非创建)
     GetChunkApi {
         pos: [i64; 2],

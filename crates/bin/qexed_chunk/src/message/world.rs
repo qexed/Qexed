@@ -1,3 +1,4 @@
+use qexed_command::message::CommandData;
 use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -6,6 +7,8 @@ use crate::message::{chunk::ChunkCommand, region::{RegionCommand, RegionCommandR
 
 #[derive(Debug)]
 pub enum WorldCommand {
+    // 初始化命令
+    Init,
     // 区域管理
     GetRegionApi {
         pos: [i64; 2],
@@ -77,4 +80,7 @@ pub enum WorldCommand {
     WorldCloseCommand{
         result:oneshot::Sender<()>,
     },
+
+    // 指令:seed
+    CommandSeed(CommandData),// 指令事件
 }

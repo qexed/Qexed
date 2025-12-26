@@ -31,7 +31,7 @@ pub struct Api {
     /// 规则服务
     pub rule: qexed_shared::Shared<qexed_config::app::qexed_rule::RuleConfig>,
     /// 区块服务
-    pub chunk: UnboundedSender<UnReturnMessage<qexed_chunk::message::global::GlobalCommand>>,
+    pub chunk: UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
     /// Title指令服务
     pub title:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
 }

@@ -24,7 +24,7 @@ pub struct GameLogicManagerActor {
     qexed_chat_api:UnboundedSender<ReturnMessage<qexed_chat::message::ManagerMessage>>,
     qexed_command_api:UnboundedSender<ReturnMessage<qexed_command::message::ManagerCommand>>,
     qexed_player_list_api:UnboundedSender<ReturnMessage<qexed_player_list::Message>>,
-    qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::global::GlobalCommand>>,
+    qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
     qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
 }
 impl GameLogicManagerActor {
@@ -38,7 +38,7 @@ impl GameLogicManagerActor {
         qexed_chat_api:UnboundedSender<ReturnMessage<qexed_chat::message::ManagerMessage>>,
         qexed_command_api:UnboundedSender<ReturnMessage<qexed_command::message::ManagerCommand>>,
         qexed_player_list_api:UnboundedSender<ReturnMessage<qexed_player_list::Message>>,
-        qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::global::GlobalCommand>>,
+        qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
         qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
     ) -> Self {
         Self {

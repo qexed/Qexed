@@ -1,48 +1,61 @@
 use std::{fs, path::{Path, PathBuf}};
 
 use anyhow::Context;
-use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
+use dashmap::DashMap;
+use qexed_task::message::{MessageSender, MessageType, unreturn_message::UnReturnMessage};
 
-use crate::message::global::GlobalCommand;
+use crate::{engine::mini_lobby::event::region::RegionManage, message::{region::RegionCommand, world::WorldCommand}};
 
 #[derive(Debug)]
 pub struct WorldManage {
     // 世界配置文件
-    pub config: qexed_config::app::qexed_chunk::world::World,
+    pub config: qexed_config::app::qexed_chunk::engine::mini_lobby::MiniLobbyConfig,
     // 世界目录
     pub world_root: PathBuf,
     // 世界uuid
     pub world_uuid: uuid::Uuid,
-    // 全局api
-    pub master_api:MessageSender<UnReturnMessage<GlobalCommand>>,
 }
 impl WorldManage {
     pub fn new(
-        config: qexed_config::app::qexed_chunk::world::World,
-        worlds_root: PathBuf,
-        world_uuid: uuid::Uuid,
-        master_api:MessageSender<UnReturnMessage<GlobalCommand>>
+        config: qexed_config::app::qexed_chunk::engine::mini_lobby::MiniLobbyConfig,
     ) -> Self {
-        let world_root: PathBuf = Path::new(&worlds_root).join(world_uuid.clone().to_string()).to_path_buf();
+        let world_uuid = config.main_world.clone();
+        let world_root: PathBuf = Path::new(&config.world_dir)
+            .join(world_uuid.clone().to_string())
+            .to_path_buf();
         Self {
             config,
             world_root,
             world_uuid,
-            master_api
         }
     }
-    pub fn init(&self) -> anyhow::Result<()> {
-        log::info!("初始化世界:{}",self.config.name);
+    pub async fn init(&self,
+        api: &MessageSender<UnReturnMessage<WorldCommand>>,
+        task_map: &DashMap<[i64; 2], MessageSender<UnReturnMessage<RegionCommand>>>,
+    ) -> anyhow::Result<()> {
+        log::info!("初始化世界");
         self.ensure_worlds_root()?;
         self.create_world_subdirectories()?;
 
         self.validate_directory_structure()?;
-        log::info!("世界{}初始化完成",self.config.name);
+        
+        //  区域范围加载
+        let regions = self.get_all_regions_between();
+        for pos in regions{
+            
+            let (manager_task, manager_sender) =
+                qexed_task::task::task_manage::TaskManage::new(RegionManage::new(self.config.clone(),self.world_root.clone(), self.world_uuid.clone(), pos.clone(),api.clone()));
+
+            manager_task.run().await?;
+            manager_sender.send(UnReturnMessage::build(RegionCommand::Init))?;
+            task_map.insert(pos, manager_sender);
+        }
+        log::info!("世界初始化完成");
         Ok(())
     }
     fn ensure_worlds_root(&self) -> anyhow::Result<()> {
         if !self.world_root.exists() {
-            log::info!("创建{}世界[类型:{}]目录: {}",&self.config.name,&self.config.namespace,self.world_root.display());
+            log::info!("创建{}世界目录: {}",&self.config.name,self.world_root.display());
             fs::create_dir_all(&self.world_root)
                 .with_context(|| format!("无法创建世界目录: {}", self.world_root.display()))?;
         }
@@ -68,18 +81,10 @@ impl WorldManage {
         log::info!("为世界 {} 创建子目录结构", self.config.name);
         
         // Minecraft 必需的核心目录
-        let mut required_dirs = vec![
+        let required_dirs = vec![
             "region",      // 区域文件 (.mca)
             "data",        // 世界数据 (level.dat, session.lock 等)
         ];
-        if self.config.poi{
-            // "poi",         // 兴趣点
-            required_dirs.push("poi")
-        }
-        if self.config.entitie{
-            // "entities",    // 实体数据
-            required_dirs.push("entities")
-        }
         
         // 创建必需目录
         for dir in &required_dirs {
@@ -104,18 +109,11 @@ impl WorldManage {
         
         // 必需目录列表
         // Minecraft 必需的核心目录
-        let mut required_dirs = vec![
+        let required_dirs = vec![
             "region",      // 区域文件 (.mca)
             "data",        // 世界数据 (level.dat, session.lock 等)
         ];
-        if self.config.poi{
-            // "poi",         // 兴趣点
-            required_dirs.push("poi")
-        }
-        if self.config.entitie{
-            // "entities",    // 实体数据
-            required_dirs.push("entities")
-        }
+
         
         
         for dir_name in required_dirs {
@@ -164,7 +162,7 @@ impl WorldManage {
     pub fn calc_region_pos(&self, chunk_pos: [i64; 2]) -> [i64; 2] {
         // 假设每个区域包含 32x32 个区块
         const REGION_SIZE: i64 = 32;
-        
+
         [
             chunk_pos[0] / REGION_SIZE - if chunk_pos[0] < 0 { 1 } else { 0 },
             chunk_pos[1] / REGION_SIZE - if chunk_pos[1] < 0 { 1 } else { 0 },
@@ -174,11 +172,69 @@ impl WorldManage {
     pub fn calc_region_pos_for_world(&self, chunk_pos: [i64; 2]) -> [i64; 2] {
         // 假设每个区域包含 32x32 个区块
         const REGION_SIZE: i64 = 32;
-        
+
         [
             chunk_pos[0] / REGION_SIZE - if chunk_pos[0] < 0 { 1 } else { 0 },
             chunk_pos[1] / REGION_SIZE - if chunk_pos[1] < 0 { 1 } else { 0 },
         ]
     }
+    pub fn get_all_chunks_in_range(&self) -> Vec<[i64; 2]> {
+        // 获取地图范围
+        let map_range = self.config.map_range;
 
+        // 假设 map_range 的结构是 [[x_min, z_min], [x_max, z_max]]
+        let x_min = map_range[0][0];
+        let z_min = map_range[0][1];
+        let x_max = map_range[1][0];
+        let z_max = map_range[1][1];
+
+        // 计算区块范围
+        // 注意：这里假设坐标是方块坐标，需要转换为区块坐标
+        // 区块坐标 = 方块坐标 / 16（向下取整）
+        let chunk_x_min = x_min.div_euclid(16);
+        let chunk_z_min = z_min.div_euclid(16);
+        let chunk_x_max = x_max.div_euclid(16);
+        let chunk_z_max = z_max.div_euclid(16);
+
+        // 收集所有区块坐标
+        let mut chunks = Vec::new();
+
+        for x in chunk_x_min..=chunk_x_max {
+            for z in chunk_z_min..=chunk_z_max {
+                chunks.push([x, z]);
+            }
+        }
+
+        chunks
+    }
+    /// 计算两个坐标之间的所有区域
+    /// 输入：方块坐标范围 [[x_min, z_min], [x_max, z_max]]
+    /// 输出：区域坐标列表
+    pub fn get_all_regions_between(&self) -> Vec<[i64; 2]> {
+        // 获取地图范围
+        let map_range = self.config.map_range;
+        
+        // 计算区块范围
+        let chunk_x_min = map_range[0][0].div_euclid(16);
+        let chunk_z_min = map_range[0][1].div_euclid(16);
+        let chunk_x_max = map_range[1][0].div_euclid(16);
+        let chunk_z_max = map_range[1][1].div_euclid(16);
+        
+        // 计算区域范围
+        let region_x_min = chunk_x_min.div_euclid(32);
+        let region_z_min = chunk_z_min.div_euclid(32);
+        let region_x_max = chunk_x_max.div_euclid(32);
+        let region_z_max = chunk_z_max.div_euclid(32);
+        
+        // 收集所有区域坐标
+        let mut regions = Vec::new();
+        
+        for rx in region_x_min..=region_x_max {
+            for rz in region_z_min..=region_z_max {
+                regions.push([rx, rz]);
+            }
+        }
+        
+        regions
+    }
 }
