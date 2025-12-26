@@ -9,6 +9,7 @@ qexed_packet.workspace = true
 qexed_task.workspace = true
 qexed_config.workspace = true
 qexed_command.workspace = true
+qexed_region.workspace = true
 
 anyhow.workspace = true
 uuid.workspace = true

@@ -2,7 +2,9 @@ use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub enum ChunkCommand{
-    Init,
+    Init{
+        data:Option<Vec<u8>>
+    },
     // 区块强制关闭命令(要求同步区块数据)
     CloseCommand{
         result:oneshot::Sender<ChunkData>,

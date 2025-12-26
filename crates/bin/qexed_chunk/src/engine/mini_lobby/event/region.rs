@@ -1,10 +1,10 @@
 use std::{collections::HashMap, path::{Path, PathBuf}};
 
 use dashmap::DashMap;
-use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
+use qexed_task::message::{MessageSender, MessageType, unreturn_message::UnReturnMessage};
 use uuid::Uuid;
 
-use crate::{data_type::direction::DirectionMap,message::{chunk::ChunkCommand, region::RegionCommand, world::WorldCommand}};
+use crate::{data_type::direction::DirectionMap, engine::mini_lobby::event::chunk::ChunkTask, message::{chunk::ChunkCommand, region::RegionCommand, world::WorldCommand}};
 
 #[derive(Debug)]
 pub struct RegionManage{
@@ -42,6 +42,29 @@ impl RegionManage {
         api: &MessageSender<UnReturnMessage<RegionCommand>>,
         task_map: &DashMap<[i64; 2], MessageSender<UnReturnMessage<ChunkCommand>>>)->anyhow::Result<()>{
             let chunks = self.get_chunks_in_region();
+            // 读取地图
+            let path = self.world_root.join("region").join(format!("r.{}.{}.mca",self.pos[0].clone(),self.pos[1].clone()));
+            let anvil = match qexed_region::region::anvil::Anvil::from_file(&path){
+                Ok(anvil)=>anvil,
+                Err(_err)=>{
+                    log::debug!("区域不存在");
+                    qexed_region::region::anvil::Anvil::new(&path, self.pos[0].clone() as i32,self.pos[1].clone() as i32)?
+                }
+            };
+            for i in chunks{
+                let chunk = anvil.get_chunk_data(i[0] as i32,i[1] as i32);
+                // 若无数据，则空区块
+                log::info!("{:?}",chunk);
+                
+                // pass
+
+                let (chunk_task, chunk_sender) =
+                    qexed_task::task::task::Task::new(api.clone(),ChunkTask::new(self.config.clone(),self.world_root.clone(), self.world_uuid.clone(), i.clone()));
+
+                chunk_task.run().await?;
+                chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init{data:None}))?;
+                task_map.insert(i, chunk_sender);
+            }
             // log::info!("{:?}",chunks);
             Ok(())
         }

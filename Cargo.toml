@@ -99,6 +99,7 @@ qexed_task = { path = "crates/async/qexed_task" }
 qexed_shared.path = "crates/async/qexed_shared"
 qexed_config = { path = "crates/data/qexed_config" }
 qexed_data_serde =  { path = "crates/data/qexed_data_serde" }
+qexed_region.path = "crates/data/qexed_region"
 qexed_packet_macros = { path = "crates/macros/qexed_packet_macros" }
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_nbt = { path = "crates/tool/qexed_nbt" }

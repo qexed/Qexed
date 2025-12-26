@@ -269,7 +269,7 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
                                 self.pos.clone(),
                             ),
                         );
-                        chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init))?;
+                        chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init{ data: None}))?;
                         task_map.insert(pos, chunk_sender.clone());
                         result
                             .send(

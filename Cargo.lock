@@ -2265,6 +2265,7 @@ dependencies = [
  "qexed_nbt",
  "qexed_packet",
  "qexed_protocol",
+ "qexed_region",
  "qexed_task",
  "serde",
  "tokio",

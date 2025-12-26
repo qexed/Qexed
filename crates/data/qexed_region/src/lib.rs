@@ -1,8 +1,5 @@
-mod region;
-mod chunk;
-
-
-
+pub mod region;
+pub mod chunk;
 pub mod error {
     use thiserror::Error;
 
