@@ -35,6 +35,25 @@ impl TaskEvent<UnReturnMessage<ChunkCommand>, UnReturnMessage<RegionCommand>> fo
                 packet_send,
             } => {
                 let p_q = if self.map_chunk {
+                    
+                    for i in &self.chunk.sections{
+                        if let Some(palette) = &i.block_states.palette{
+                            for block in palette{
+                                if block.name!="minecraft:air"{
+                                    let a = block.get_state_id();
+                                    if let Some(t) = a{
+                                        log::debug!("方块:{:?},全局绘画板ID:{:?}",block,t);
+                                    }
+                                    
+                                    
+                                }
+                                
+                                
+                            }
+                            
+                        }
+                        
+                    }
                     // 暂时旧版空区块
                     qexed_protocol::to_client::play::map_chunk::MapChunk {
                         chunk_x: self.pos[0] as i32,

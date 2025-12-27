@@ -2358,9 +2358,11 @@ dependencies = [
  "anyhow",
  "bytes",
  "flate2",
+ "qexed_block",
  "qexed_nbt",
  "qexed_protocol",
  "serde",
+ "thiserror 1.0.69",
  "uuid",
 ]
 

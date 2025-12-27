@@ -10,7 +10,9 @@ bytes.workspace = true
 serde = { workspace = true, features = ["derive"] }
 qexed_nbt = { workspace = true}
 qexed_protocol.workspace = true
+qexed_block.workspace = true
 uuid = { workspace = true, features = ["serde","v4"] }
+thiserror.workspace = true
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
 flate2 = "1.0"  # 添加 flate2 用于解压缩 GZip 文件
