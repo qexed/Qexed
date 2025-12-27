@@ -259,23 +259,12 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
                                 anyhow::anyhow!("Failed to send RegionCommandResult: {:?}", e)
                             })?;
                     } else {
-                        // 创建区块
-                        let (_chunk_task, chunk_sender) = qexed_task::task::task::Task::new(
-                            api.clone(),
-                            ChunkTask::new(
-                                self.config.clone(),
-                                self.world_root.clone(),
-                                self.world_uuid.clone(),
-                                self.pos.clone(),
-                            ),
-                        );
-                        chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init{ data: None}))?;
-                        task_map.insert(pos, chunk_sender.clone());
+                        // 创建区块(只读模式不允许这么做)
                         result
                             .send(
                                 crate::message::region::RegionCommandResult::CreateChunkResult {
-                                    success: true,
-                                    api: Some(chunk_sender.clone()),
+                                    success: false,
+                                    api: None,
                                 },
                             )
                             .map_err(|e| {

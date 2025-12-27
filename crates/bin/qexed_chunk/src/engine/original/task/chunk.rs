@@ -14,7 +14,7 @@ for ChunkTask{
         data: UnReturnMessage<ChunkCommand>,
     ) -> anyhow::Result<bool>{
         match data.data {
-            ChunkCommand::Init{ data: _ } => {
+            ChunkCommand::Init => {
                 // 初始化函数暂时没写
             },
             ChunkCommand::CloseCommand { result } => {

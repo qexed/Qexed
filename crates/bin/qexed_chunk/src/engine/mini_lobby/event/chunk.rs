@@ -12,6 +12,8 @@ pub struct ChunkTask{
     world_root: PathBuf,
     // 世界uuid
     world_uuid: uuid::Uuid,
+    // 区块数据
+    pub chunk: qexed_region::chunk::nbt::Chunk,
     // 区块坐标 pos
     pub pos:[i64;2],   
     // 相邻区块
@@ -26,13 +28,15 @@ impl ChunkTask {
         config: qexed_config::app::qexed_chunk::engine::mini_lobby::MiniLobbyConfig,
         world_root: PathBuf,
         world_uuid: uuid::Uuid,
-        pos:[i64;2]
+        pos:[i64;2],
+        chunk:qexed_region::chunk::nbt::Chunk
     ) -> Self {
         Self {
             config,
             world_root,
             world_uuid,
             pos,
+            chunk,
             direction_chunk:Default::default(),
             cross_dimension_counterpart_apis:Default::default(),
         }
