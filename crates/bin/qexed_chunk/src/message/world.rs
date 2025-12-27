@@ -1,6 +1,6 @@
 use qexed_command::message::CommandData;
 use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use uuid::Uuid;
 
 use crate::message::{chunk::ChunkCommand, region::{RegionCommand, RegionCommandResult}};
@@ -9,6 +9,12 @@ use crate::message::{chunk::ChunkCommand, region::{RegionCommand, RegionCommandR
 pub enum WorldCommand {
     // 初始化命令
     Init,
+    // 玩家进服
+    PlayerJoin{
+        uuid:Uuid,
+        pos:[i64;3],
+        packet_send:UnboundedSender<bytes::Bytes>
+    },
     // 区域管理
     GetRegionApi {
         pos: [i64; 2],

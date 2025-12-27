@@ -27,6 +27,11 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
     ) -> anyhow::Result<bool> {
         match data.data {
             RegionCommand::Init=>{Ok(false)},
+            RegionCommand::PlayerJoin{pos,packet_send, uuid }=>{
+                for i in task_map{
+                    i.send(ChunkCommand::PlayerJoin { uuid, pos, packet_send })
+                }
+            },
             RegionCommand::GetChunkApi { pos, result } => {
                 // 计算 pos 是否在本区域范围
                 if self.is_chunk_in_region(pos) {

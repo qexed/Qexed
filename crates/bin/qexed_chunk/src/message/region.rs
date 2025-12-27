@@ -1,11 +1,17 @@
 use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use uuid::Uuid;
 
 use crate::message::chunk::ChunkCommand;
 #[derive(Debug)]
 pub enum RegionCommand {
     Init,
+    // 玩家进服
+    PlayerJoin{
+        uuid:Uuid,
+        pos:[i64;3],
+        packet_send:UnboundedSender<bytes::Bytes>
+    },
     // 获取ChunkApi(非创建)
     GetChunkApi {
         pos: [i64; 2],

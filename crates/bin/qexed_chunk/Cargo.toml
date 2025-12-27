@@ -10,7 +10,7 @@ qexed_task.workspace = true
 qexed_config.workspace = true
 qexed_command.workspace = true
 qexed_region.workspace = true
-
+qexed_tcp_connect.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
@@ -20,3 +20,4 @@ tokio.workspace = true
 bitflags.workspace = true
 serde.workspace = true
 futures.workspace = true
+bytes.workspace = true

@@ -98,12 +98,40 @@ impl RegionManage {
                     self.world_uuid.clone(),
                     i.clone(),
                     chunk,
+                    true,
                 ),
             );
 
             chunk_task.run().await?;
             chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init))?;
             task_map.insert(i, chunk_sender);
+        }
+        //暂定12，后续配置文件修改
+        for i in
+            self.get_chunks_in_region_view([self.config.join_pos[0], self.config.join_pos[2]], 12)
+        {
+            // 处理空区块
+            if !task_map.contains_key(&i) {
+                let (chunk_task, chunk_sender) = qexed_task::task::task::Task::new(
+                    api.clone(),
+                    ChunkTask::new(
+                        self.config.clone(),
+                        self.world_root.clone(),
+                        self.world_uuid.clone(),
+                        i.clone(),
+                        qexed_region::chunk::nbt::Chunk::new(
+                            self.pos[0] as i32,
+                            self.pos[1] as i32,
+                            "empty".to_string(),
+                        ),
+                        false,
+                    ),
+                );
+
+                chunk_task.run().await?;
+                chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init))?;
+                task_map.insert(i, chunk_sender);
+            }
         }
         // log::info!("{:?}",chunks);
         Ok(())
@@ -158,5 +186,52 @@ impl RegionManage {
         }
 
         chunks_in_region
+    }
+    /// 计算指定区域内玩家视野范围内的区块列表
+    /// - region_pos: 区域坐标 [region_x, region_z]
+    /// - player_pos: 玩家方块坐标 [x, z]
+    /// - view_distance_chunks: 视野距离（以区块为单位的半径）
+    /// - 返回：该区域内位于玩家视野中的区块坐标列表
+    pub fn get_chunks_in_region_view(
+        &self,
+        player_pos: [i64; 2],
+        view_distance_chunks: i64,
+    ) -> Vec<[i64; 2]> {
+        // 计算玩家所在的区块坐标
+        let player_chunk_x = player_pos[0].div_euclid(16);
+        let player_chunk_z = player_pos[1].div_euclid(16);
+
+        // 计算玩家视野范围内的区块边界
+        let view_min_x = player_chunk_x - view_distance_chunks;
+        let view_max_x = player_chunk_x + view_distance_chunks;
+        let view_min_z = player_chunk_z - view_distance_chunks;
+        let view_max_z = player_chunk_z + view_distance_chunks;
+
+        // 计算当前区域包含的区块范围
+        let region_min_x = self.pos[0] * 32;
+        let region_max_x = self.pos[0] * 32 + 31; // 区域包含32个区块，索引0-31
+        let region_min_z = self.pos[1] * 32;
+        let region_max_z = self.pos[1] * 32 + 31;
+
+        // 计算视野与区域的重叠部分
+        let overlap_min_x = view_min_x.max(region_min_x);
+        let overlap_max_x = view_max_x.min(region_max_x);
+        let overlap_min_z = view_min_z.max(region_min_z);
+        let overlap_max_z = view_max_z.min(region_max_z);
+
+        // 如果没有重叠区域，返回空列表
+        if overlap_min_x > overlap_max_x || overlap_min_z > overlap_max_z {
+            return Vec::new();
+        }
+
+        // 生成重叠区域内的所有区块坐标
+        let mut chunks = Vec::new();
+        for chunk_x in overlap_min_x..=overlap_max_x {
+            for chunk_z in overlap_min_z..=overlap_max_z {
+                chunks.push([chunk_x, chunk_z]);
+            }
+        }
+
+        chunks
     }
 }

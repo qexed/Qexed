@@ -4,6 +4,7 @@ use qexed_task::{
     event::task_manage::TaskManageEvent,
     message::{MessageSender, MessageType, unreturn_message::UnReturnMessage},
 };
+use qexed_tcp_connect::PacketSend;
 use tokio::sync::oneshot;
 
 use crate::{
@@ -27,6 +28,19 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<WorldCommand>, UnReturnMessage<Re
         match data.data {
             WorldCommand::Init=>{
                 self.init(api,task_map).await?;
+            }
+            WorldCommand::PlayerJoin { pos, packet_send, uuid }=>{
+                let pos = self.config.join_pos;// 无视任务端传递的存档的坐标
+                // 所有区块均已加载，直接发送即可、
+                let join_pos_chunk = self.player_pos_to_chunk_pos([pos[0] as i32,pos[1] as i32,pos[2] as i32]);
+                // 构建 SetChunkCacheCenter 数据包
+                packet_send.send(PacketSend::build_send_packet(qexed_protocol::to_client::play::update_view_position::UpdateViewPosition{
+                    chunk_x:qexed_packet::net_types::VarInt(join_pos_chunk[0]),
+                    chunk_z:qexed_packet::net_types::VarInt(join_pos_chunk[1]),
+                }).await?)?;
+                for i in task_map{
+                    let _ = i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: RegionCommand::PlayerJoin { pos, packet_send:packet_send.clone() ,uuid} });
+                }
             }
             WorldCommand::GetRegionApi { pos, result } => {
                 if let Some(region) = task_map.get(&pos) {

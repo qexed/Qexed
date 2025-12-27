@@ -32,6 +32,13 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
                 self.init(api, task_map).await?;
                 Ok(false)
             }
+            RegionCommand::PlayerJoin { pos, packet_send, uuid }=>{
+                // 所有区块均已加载，直接发送即可、
+                for i in task_map{
+                    i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: ChunkCommand::PlayerJoin { pos, packet_send:packet_send.clone() ,uuid} });
+                };
+                Ok(false)
+            }
             RegionCommand::GetChunkApi { pos, result } => {
                 // 计算 pos 是否在本区域范围
                 if self.is_chunk_in_region(pos) {

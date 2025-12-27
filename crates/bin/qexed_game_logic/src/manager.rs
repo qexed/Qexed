@@ -181,6 +181,17 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, ReturnMessage<TaskMess
                 let _ = send.send(data.data);
                 return Ok(false);
             }            
+            ManagerMessage::GetWorld(ref mut chat_message)=>{
+                let chat = match chat_message.take(){
+                    Some(ping) => ping,
+                    None => return Ok(false)
+                };
+
+                let _ = UnReturnMessage::build(chat).post(&self.qexed_chunk_api).await?;
+                let data = crate::message::ManagerMessage::GetCommand(None);
+                let _ = send.send(data);
+                return Ok(false);
+            }
         }
     }
 }

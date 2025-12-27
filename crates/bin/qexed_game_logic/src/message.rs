@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use qexed_player::Player;
-use qexed_task::message::return_message::ReturnMessage;
+use qexed_task::message::{return_message::ReturnMessage, unreturn_message::UnReturnMessage};
 use thiserror::Error;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -24,7 +24,9 @@ pub enum ManagerMessage {
     GetPlayerChat(Option<qexed_chat::message::ManagerMessage>),
     GetTitle(Option<qexed_title::message::ManagerMessage>),
     GetCommand(Option<qexed_command::message::ManagerCommand>),
+    GetWorld(Option<qexed_chunk::message::world::WorldCommand>),
     GetPlayerListApi(Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>),
+    
     PlayerClose(uuid::Uuid),  // 游戏连接关闭
     ConnectClose(uuid::Uuid), // 连接关闭
 }

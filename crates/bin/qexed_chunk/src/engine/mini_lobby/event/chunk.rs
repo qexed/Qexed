@@ -21,6 +21,9 @@ pub struct ChunkTask{
     // 跨维度对应区块API
     cross_dimension_counterpart_apis: HashMap<Uuid, MessageSender<UnReturnMessage<ChunkCommand>>>,
     // 当前区块直属玩家API管道
+
+    // 是否属于地图，否则空区块
+    map_chunk:bool,
 }
 impl ChunkTask {
     pub fn new(
@@ -29,7 +32,8 @@ impl ChunkTask {
         world_root: PathBuf,
         world_uuid: uuid::Uuid,
         pos:[i64;2],
-        chunk:qexed_region::chunk::nbt::Chunk
+        chunk:qexed_region::chunk::nbt::Chunk,
+        map_chunk:bool,
     ) -> Self {
         Self {
             config,
@@ -39,6 +43,7 @@ impl ChunkTask {
             chunk,
             direction_chunk:Default::default(),
             cross_dimension_counterpart_apis:Default::default(),
+            map_chunk,
         }
     }
     
