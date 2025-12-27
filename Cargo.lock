@@ -2735,6 +2735,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "flate2",
+ "log",
  "qexed_data_serde",
  "qexed_nbt",
  "serde",

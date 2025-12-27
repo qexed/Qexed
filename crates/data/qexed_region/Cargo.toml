@@ -13,6 +13,7 @@ uuid = { workspace = true, features = ["serde","v4"] }
 flate2 = "1.0"
 byteorder = "1.5"
 thiserror.workspace = true
+log.workspace = true
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
 tempfile = "3.4"

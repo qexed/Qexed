@@ -13,7 +13,7 @@ pub struct ChunkTask{
     // 世界uuid
     world_uuid: uuid::Uuid,
     // 区块坐标 pos
-    pos:[i64;2],   
+    pub pos:[i64;2],   
     // 相邻区块
     direction_chunk:DirectionMap<MessageSender<UnReturnMessage<ChunkCommand>>>,
     // 跨维度对应区块API

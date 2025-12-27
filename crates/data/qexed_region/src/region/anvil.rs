@@ -319,7 +319,7 @@ impl Anvil {
             match self.read_chunk_from_mcc(global_x, global_z) {
                 Ok(chunk_data) => return Ok(Some(chunk_data)),
                 Err(e) => {
-                    eprintln!("Warning: Failed to read external chunk data from MCC file: {}", e);
+                    log::warn!("Warning: Failed to read external chunk data from MCC file: {}", e);
                     return Ok(None);
                 }
             }
@@ -742,11 +742,11 @@ fn main() -> Result<()> {
             println!("写入功能已实现，但在此演示中未实际执行写入操作");
         },
         Err(e) => {
-            eprintln!("无法读取文件 {}: {}", filename, e);
-            eprintln!("可能的原因:");
-            eprintln!("  1. 文件不存在");
-            eprintln!("  2. 文件格式不正确");
-            eprintln!("  3. 文件已损坏");
+            log::warn!("无法读取文件 {}: {}", filename, e);
+            log::warn!("可能的原因:");
+            log::warn!("  1. 文件不存在");
+            log::warn!("  2. 文件格式不正确");
+            log::warn!("  3. 文件已损坏");
             return Err(e);
         }
     }

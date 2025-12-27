@@ -47,22 +47,27 @@ impl RegionManage {
             let anvil = match qexed_region::region::anvil::Anvil::from_file(&path){
                 Ok(anvil)=>anvil,
                 Err(_err)=>{
-                    log::debug!("区域不存在");
                     qexed_region::region::anvil::Anvil::new(&path, self.pos[0].clone() as i32,self.pos[1].clone() as i32)?
                 }
             };
             for i in chunks{
-                let chunk = anvil.get_chunk_data(i[0] as i32,i[1] as i32);
-                // 若无数据，则空区块
-                log::info!("{:?}",chunk);
-                
-                // pass
-
+                // 区块只读，我们不在乎内容
+                // 有数据就传，没数据就空
+                // 反正是只读，玩家咋搞都没事
+                let chunk = match anvil.get_chunk_data(i[0] as i32,i[1] as i32){
+                    Ok(is_chunk) => match is_chunk{
+                        Some(chunk) => {
+                            qexed_region::region::anvil::Anvil::decompress_chunk_data(&chunk)?
+                        }
+                        None => vec![],
+                    },
+                    Err(_) => vec![],
+                };
                 let (chunk_task, chunk_sender) =
                     qexed_task::task::task::Task::new(api.clone(),ChunkTask::new(self.config.clone(),self.world_root.clone(), self.world_uuid.clone(), i.clone()));
 
                 chunk_task.run().await?;
-                chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init{data:None}))?;
+                chunk_sender.send(UnReturnMessage::build(ChunkCommand::Init{data:Some(chunk)}))?;
                 task_map.insert(i, chunk_sender);
             }
             // log::info!("{:?}",chunks);

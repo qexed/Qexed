@@ -24,13 +24,13 @@ pub struct Chunk {
     
     /// 区块的高度图信息，存储方式见§ 高度图存储格式。
     /// 不存在此标签时游戏将自动重新生成，优化世界时此项会被删除。
-    #[serde(rename = "Heightmaps")]
+    #[serde(rename = "Heightmaps",default)]
     pub heightmaps: Heightmaps,
     
     /// 所有玩家在此区块停留的总时间，以游戏刻计。
     /// 如果有多个玩家在这个区块停留过则分别计时并相加。
     /// 用于区域难度的计算，当此值大于3600000游戏刻（150游戏日）时区域难度达到最大值。
-    #[serde(rename = "InhabitedTime")]
+    #[serde(rename = "InhabitedTime",default)]
     pub inhabited_time: i64,
     
     #[serde(rename = "isLightOn")]
@@ -38,6 +38,7 @@ pub struct Chunk {
     pub is_light_on: bool,
     
     #[serde(rename = "LastUpdate")]
+    #[serde(default)]
     pub last_update: i64,
     
     /// 储区块生成完毕后需要进行更新的位置。对于已生成完毕的世界区块无效。
@@ -214,8 +215,10 @@ pub struct StructurePiece {
 /// 区块子区块
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
-    #[serde(rename = "biomes")]    
+    #[serde(rename = "biomes")]
+    #[serde(default)]    
     pub biome: Biome,
+    #[serde(default)]   
     pub block_states: BlockStates,
 
     #[serde(rename = "BlockLight")]    
@@ -229,21 +232,21 @@ pub struct Section {
 }
 
 /// 生物群系数据
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Biome {
     pub data: Option<Vec<i64>>,
     pub palette: Option<Vec<String>>,
 }
 
 /// 方块状态数据
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct BlockStates {
     pub data: Option<Vec<i64>>,
     pub palette: Option<Vec<qexed_data_serde::block::BlockStates>>,
 }
 
 /// 区块的高度图信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct Heightmaps {
     /// 最高的能阻挡移动或含有液体的方块。在区块生成到features（生成地物）阶段后此项才存在。
     #[serde(rename = "MOTION_BLOCKING")]
@@ -355,16 +358,14 @@ impl Chunk {
     /// 序列化区块为NBT字节
     pub fn to_nbt_bytes(&self) -> Result<Vec<u8>, Box<dyn Error>> {
         // 使用 qexed_nbt 的序列化功能
-        let tags = nbt_serde::nbt_serde::to_tag(self)
-            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
-        tags
-        Ok(bytes)
+        Ok(qexed_nbt::to_vec("",&self.to_nbt_tag()?)?)
     }
     
     /// 从NBT字节反序列化区块
     pub fn from_nbt_bytes(bytes: &[u8]) -> Result<Self, Box<dyn Error>> {
         // 使用 qexed_nbt 的反序列化功能
-        let chunk = nbt_serde::from_nbt_bytes(bytes)
+        let tags = qexed_nbt::from_slice(bytes)?.1;
+        let chunk = nbt_serde::nbt_serde::from_tag(&tags)
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
         Ok(chunk)
     }
@@ -372,15 +373,15 @@ impl Chunk {
     /// 序列化区块为NBT Tag
     pub fn to_nbt_tag(&self) -> Result<Tag, Box<dyn Error>> {
         // 使用 qexed_nbt 的序列化功能
-        let tag = nbt_serde::to_nbt_tag(self)
+        let tags = nbt_serde::nbt_serde::to_tag(self)
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
-        Ok(tag)
+        Ok(tags)
     }
     
     /// 从NBT Tag反序列化区块
     pub fn from_nbt_tag(tag: &Tag) -> Result<Self, Box<dyn Error>> {
         // 使用 qexed_nbt 的反序列化功能
-        let chunk = nbt_serde::from_nbt_tag(tag)
+        let chunk = nbt_serde::nbt_serde::from_tag(tag)
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
         Ok(chunk)
     }
@@ -445,24 +446,25 @@ impl Section {
     }
 }
 
-// 为与区域文件交互添加一些工具函数
-impl Chunk {
-    /// 从区域文件数据创建区块
-    pub fn from_region_data(data: &[u8], chunk_x: i32, chunk_z: i32) -> Result<Self, Box<dyn Error>> {
-        // 使用 qexed_nbt 的 from_nbt_bytes
-        let chunk = nbt_serde::from_nbt_bytes(data)
-            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
-        Ok(chunk)
-    }
+// // 为与区域文件交互添加一些工具函数
+// impl Chunk {
+//     /// 从区域文件数据创建区块
+//     pub fn from_region_data(data: &[u8], chunk_x: i32, chunk_z: i32) -> Result<Self, Box<dyn Error>> {
+//         // 使用 qexed_nbt 的 from_nbt_bytes
+//         qexed_nbt::net::from_net_slice(data,false);
+//         let chunk = nbt_serde::from_nbt_bytes(data)
+//             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
+//         Ok(chunk)
+//     }
     
-    /// 将区块转换为区域文件数据
-    pub fn to_region_data(&self) -> Result<Vec<u8>, Box<dyn Error>> {
-        // 使用 qexed_nbt 的 to_nbt_bytes
-        let bytes = nbt_serde::to_nbt_bytes(self)
-            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
-        Ok(bytes)
-    }
-}
+//     /// 将区块转换为区域文件数据
+//     pub fn to_region_data(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+//         // 使用 qexed_nbt 的 to_nbt_bytes
+//         let bytes = nbt_serde::to_nbt_bytes(self)
+//             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
+//         Ok(bytes)
+//     }
+// }
 
 // 实现默认值
 impl Default for Chunk {

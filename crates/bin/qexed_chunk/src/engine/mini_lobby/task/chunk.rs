@@ -14,8 +14,15 @@ for ChunkTask{
         data: UnReturnMessage<ChunkCommand>,
     ) -> anyhow::Result<bool>{
         match data.data {
-            ChunkCommand::Init{ data: _ } => {
+            ChunkCommand::Init{ data } => {
                 // 初始化函数暂时没写
+                
+                let chunk_data = match data{
+                    Some(datas)=>qexed_region::chunk::nbt::Chunk::from_nbt_bytes(&datas),
+                    None=>Ok(qexed_region::chunk::nbt::Chunk::new(self.pos[0] as i32, self.pos[1] as i32, "empty".to_string()))
+                };
+                log::info!("pos:{:?},data:{:?}",self.pos,chunk_data);
+                
             },
             ChunkCommand::CloseCommand { result } => {
                 // 暂时没写数据读写
