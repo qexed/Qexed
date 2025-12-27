@@ -50,21 +50,7 @@ impl TaskEvent<UnReturnMessage<ChunkCommand>, UnReturnMessage<RegionCommand>> fo
                         light: create_light_data_for_all_sections(),
                     }
                 } else {
-                    // 暂时旧版空区块
-                    qexed_protocol::to_client::play::map_chunk::MapChunk {
-                        chunk_x: self.pos[0] as i32,
-                        chunk_z: self.pos[1] as i32,
-                        data: qexed_protocol::to_client::play::map_chunk::Chunk {
-                            // 高度图 - 使用修复后的高度图
-                            heightmaps: create_heightmaps(),
-                            // 空的区块数据 - 使用修复后的编码函数
-                            data: encode_empty_chunk_data_1_21(),
-                            // 无方块实体
-                            block_entities: vec![],
-                        },
-                        light: create_light_data_for_all_sections(),
-                    }
-                    // // 全屏障区块
+                    // // 暂时旧版空区块
                     // qexed_protocol::to_client::play::map_chunk::MapChunk {
                     //     chunk_x: self.pos[0] as i32,
                     //     chunk_z: self.pos[1] as i32,
@@ -72,12 +58,26 @@ impl TaskEvent<UnReturnMessage<ChunkCommand>, UnReturnMessage<RegionCommand>> fo
                     //         // 高度图 - 使用修复后的高度图
                     //         heightmaps: create_heightmaps(),
                     //         // 空的区块数据 - 使用修复后的编码函数
-                    //         data: encode_barrier_chunk_data_1_21(),
+                    //         data: encode_empty_chunk_data_1_21(),
                     //         // 无方块实体
                     //         block_entities: vec![],
                     //     },
                     //     light: create_light_data_for_all_sections(),
                     // }
+                    // 全屏障区块
+                    qexed_protocol::to_client::play::map_chunk::MapChunk {
+                        chunk_x: self.pos[0] as i32,
+                        chunk_z: self.pos[1] as i32,
+                        data: qexed_protocol::to_client::play::map_chunk::Chunk {
+                            // 高度图 - 使用修复后的高度图
+                            heightmaps: vec![],//create_heightmaps(),
+                            // 空的区块数据 - 使用修复后的编码函数
+                            data: encode_barrier_chunk_data_1_21(),
+                            // 无方块实体
+                            block_entities: vec![],
+                        },
+                        light: create_light_data_for_all_sections(),
+                    }
                 };
                 packet_send.send(PacketSend::build_send_packet(p_q).await?)?;
             }
@@ -279,16 +279,10 @@ fn encode_barrier_chunk_data_1_21() -> Vec<u8> {
         // 1. 非空气方块数量：整个子区块都是屏障，所以是4096个方块均为“非空气”
         data.extend_from_slice(&4096i16.to_be_bytes());
 
-        let bits_per_block = 1; // 只需要1位，因为只有空气
+        let bits_per_block = 0; // 只需要1位，因为只有空气
         data.push(bits_per_block as u8);
-        // 调色板长度 - 只有屏障一种方块
-        data.extend(encode_var_int(1)); // 调色板长度为1
         // 将屏障方块的ID放入调色板，其索引为0
         data.extend(encode_var_int(barrier_block_state_id));
-
-        // ！！！关键修复：当调色板长度为1时，协议规定不包含方块数据数组（即后面的long列表）！！！
-        // 因此，当 palette.len() == 1 时，直接跳过下面写入 data 数组的部分。
-
         // 生物群系数据
         // 使用调色板模式，只有一个生物群系
         let bits_per_biome = 1; // 只需要 1 位，因为只有一种生物群系
