@@ -26,42 +26,69 @@ struct BlockEntry {
     #[serde(rename = "protocol_id")]
     id: u32,
 }
+// 新增：方块状态数据结构
+#[derive(Debug, Deserialize)]
+struct BlocksFile {
+    #[serde(flatten)]
+    blocks: HashMap<String, BlockDefinition>,
+}
 
+#[derive(Debug, Deserialize)]
+struct BlockDefinition {
+    states: Vec<BlockState>,
+    #[serde(default)]
+    properties: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BlockState {
+    id: u32,
+    #[serde(default)]
+    properties: HashMap<String, String>,
+    #[serde(default)]
+    default: bool,
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../../../assets/registries.json");
+    println!("cargo:rerun-if-changed=../../../assets/reports/blocks.json");
     
-    // 获取项目根目录
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
     println!("cargo:info=Manifest dir: {}", manifest_dir);
-    // 构建 JSON 文件路径 (向上3级到项目根目录)
-    let mut json_path = Path::new(&manifest_dir).to_path_buf();
+    
+    // 构建项目根目录路径
+    let mut project_root = Path::new(&manifest_dir).to_path_buf();
     for _ in 0..3 {
-        json_path = json_path.parent().unwrap_or(Path::new("")).to_path_buf();
+        project_root = project_root.parent().unwrap_or(Path::new("")).to_path_buf();
     }
-    json_path = json_path.join("assets").join("registries.json");
     
-    println!("cargo:info=Loading registry from: {:?}", json_path);
-    
-    // 读取和解析 JSON
-    let json_content = fs::read_to_string(&json_path)?;
+    // 读取方块注册表
+    let registry_path = project_root.join("assets").join("registries.json");
+    println!("cargo:info=Loading registry from: {:?}", registry_path);
+    let json_content = fs::read_to_string(&registry_path)?;
     let registry: RegistryFile = serde_json::from_str(&json_content)?;
     
-    // 生成 Rust 代码
-    let code = generate_block_code(&registry.block_registry);
+    // 读取方块状态数据
+    let blocks_path = project_root.join("assets").join("reports").join("blocks.json");
+    println!("cargo:info=Loading blocks from: {:?}", blocks_path);
+    let blocks_content = fs::read_to_string(&blocks_path)?;
+    let blocks_data: HashMap<String, BlockDefinition> = serde_json::from_str(&blocks_content)?;
     
-    // 写入输出目录
+    // 生成 Rust 代码
+    let code = generate_block_code(&registry.block_registry, &blocks_data);
+    
     let out_dir = env::var("OUT_DIR")?;
     let dest_path = Path::new(&out_dir).join("block_registry_generated.rs");
     fs::write(dest_path, code)?;
     
     println!("cargo:info=Generated block registry with {} entries", 
              registry.block_registry.entries.len());
+    println!("cargo:info=Processed {} block definitions", blocks_data.len());
     
     Ok(())
 }
 
 /// 生成方块注册表代码
-fn generate_block_code(registry: &BlockRegistry) -> String {
+fn generate_block_code(registry: &BlockRegistry, blocks_data: &HashMap<String, BlockDefinition>) -> String {
     let mut blocks = Vec::new();
     
     // 收集方块信息
@@ -124,7 +151,90 @@ fn generate_block_code(registry: &BlockRegistry) -> String {
     code.push_str("        id as u32\n");
     code.push_str("    }\n");
     code.push_str("}\n\n");
+
+  // 新增：生成方块状态结构体和映射
+    code.push_str("/// 方块状态信息\n");
+    code.push_str("#[derive(Debug, Clone, PartialEq, Eq)]\n");
+    code.push_str("pub struct BlockStateInfo {\n");
+    code.push_str("    /// 方块状态ID\n");
+    code.push_str("    pub id: u32,\n");
+    code.push_str("    /// 方块名称\n");
+    code.push_str("    pub block_name: &'static str,\n");
+    code.push_str("    /// 状态属性\n");
+    code.push_str("    pub properties: HashMap<&'static str, &'static str>,\n");
+    code.push_str("    /// 是否为默认状态\n");
+    code.push_str("    pub is_default: bool,\n");
+    code.push_str("}\n\n");
     
+    code.push_str("/// 方块状态ID到状态信息的映射\n");
+    code.push_str("pub static BLOCK_STATE_BY_ID: Lazy<HashMap<u32, BlockStateInfo>> = Lazy::new(|| {\n");
+    code.push_str("    let mut map = HashMap::new();\n");
+    
+    // 生成方块状态映射
+    for (block_name, block_def) in blocks_data {
+        for state in &block_def.states {
+            code.push_str(&format!("    map.insert(\n"));
+            code.push_str(&format!("        {},\n", state.id));
+            code.push_str(&format!("        BlockStateInfo {{\n"));
+            code.push_str(&format!("            id: {},\n", state.id));
+            code.push_str(&format!("            block_name: \"{}\",\n", block_name));
+            code.push_str(&format!("            properties: [\n"));
+            
+            for (prop_name, prop_value) in &state.properties {
+                code.push_str(&format!("                (\"{}\", \"{}\"),\n", prop_name, prop_value));
+            }
+            
+            code.push_str(&format!("            ].iter().cloned().collect(),\n"));
+            code.push_str(&format!("            is_default: {},\n", state.default));
+            code.push_str(&format!("        }},\n"));
+            code.push_str(&format!("    );\n"));
+        }
+    }
+    
+    code.push_str("    map\n");
+    code.push_str("});\n\n");
+    
+    // 新增：方块名称到状态列表的映射
+    code.push_str("/// 方块名称到其所有状态的映射\n");
+    code.push_str("pub static BLOCK_STATES_BY_NAME: Lazy<HashMap<&'static str, Vec<u32>>> = Lazy::new(|| {\n");
+    code.push_str("    let mut map = HashMap::new();\n");
+    
+    for (block_name, block_def) in blocks_data {
+        let state_ids: Vec<String> = block_def.states.iter().map(|s| s.id.to_string()).collect();
+        code.push_str(&format!("    map.insert(\"{}\", vec![{}]);\n", block_name, state_ids.join(", ")));
+    }
+    
+    code.push_str("    map\n");
+    code.push_str("});\n\n");
+    
+    // 新增：获取默认状态ID的函数
+    code.push_str("/// 获取方块的默认状态ID\n");
+    code.push_str("pub fn get_default_state_id(block_name: &str) -> Option<u32> {\n");
+    code.push_str("    BLOCK_STATES_BY_NAME.get(block_name).and_then(|states| {\n");
+    code.push_str("        states.iter().find_map(|&state_id| {\n");
+    code.push_str("            BLOCK_STATE_BY_ID.get(&state_id).and_then(|info| {\n");
+    code.push_str("                if info.is_default { Some(state_id) } else { None }\n");
+    code.push_str("            })\n");
+    code.push_str("        })\n");
+    code.push_str("    })\n");
+    code.push_str("}\n\n");
+    
+    // 新增：通过属性查找状态ID的函数
+    code.push_str("/// 通过方块名称和属性查找状态ID\n");
+    code.push_str("pub fn find_state_id_by_properties(block_name: &str, properties: &HashMap<&str, &str>) -> Option<u32> {\n");
+    code.push_str("    BLOCK_STATES_BY_NAME.get(block_name).and_then(|states| {\n");
+    code.push_str("        states.iter().find_map(|&state_id| {\n");
+    code.push_str("            BLOCK_STATE_BY_ID.get(&state_id).and_then(|info| {\n");
+    code.push_str("                if &info.properties == properties {\n");
+    code.push_str("                    Some(state_id)\n");
+    code.push_str("                } else {\n");
+    code.push_str("                    None\n");
+    code.push_str("                }\n");
+    code.push_str("            })\n");
+    code.push_str("        })\n");
+    code.push_str("    })\n");
+    code.push_str("}\n\n");
+
     // 生成get_block_name_by_id函数
     code.push_str("/// 通过ID获取方块名称\n");
     code.push_str("pub fn get_block_name_by_id(id: u32) -> Option<&'static str> {\n");

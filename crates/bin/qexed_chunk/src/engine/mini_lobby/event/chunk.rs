@@ -23,7 +23,7 @@ pub struct ChunkTask{
     // 当前区块直属玩家API管道
 
     // 是否属于地图，否则空区块
-    map_chunk:bool,
+    pub map_chunk:bool,
 }
 impl ChunkTask {
     pub fn new(

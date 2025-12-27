@@ -23,6 +23,7 @@ qexed_command.workspace = true
 serde.workspace = true
 once_cell.workspace = true
 lazy_static.workspace = true
+thiserror.workspace = true
 [build-dependencies]
 serde.workspace = true
 serde_json.workspace = true

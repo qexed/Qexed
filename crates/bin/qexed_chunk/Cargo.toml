@@ -11,6 +11,9 @@ qexed_config.workspace = true
 qexed_command.workspace = true
 qexed_region.workspace = true
 qexed_tcp_connect.workspace = true
+qexed_block.workspace = true
+qexed_packet_macros.workspace = true
+
 anyhow.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
