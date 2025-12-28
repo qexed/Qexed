@@ -36,7 +36,6 @@ qexed_tcp_connect = { workspace = true }
 qexed_task = {workspace = true}
 qexed_shared.workspace = true
 qexed_config = {workspace = true}
-qexed_cli = {workspace = true}
 # 第三方依赖
 anyhow = { workspace = true }
 tokio  = { workspace = true }

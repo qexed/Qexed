@@ -48,7 +48,7 @@ members = [
     "crates/data/qexed_data_serde",
     "crates/data/qexed_region",
     
-    "crates/ui/qexed_cli",
+    # "crates/ui/qexed_cli",
     "crates/ui/qexed_gui",
     "crates/ui/qexed_web",
     # 插件运行时
@@ -103,7 +103,6 @@ qexed_region.path = "crates/data/qexed_region"
 qexed_packet_macros = { path = "crates/macros/qexed_packet_macros" }
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_nbt = { path = "crates/tool/qexed_nbt" }
-qexed_cli = { path = "crates/ui/qexed_cli" }
 qexed_gui = { path = "crates/ui/qexed_gui" }
 qexed_web = { path = "crates/ui/qexed_web" }
 

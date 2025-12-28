@@ -29,15 +29,13 @@ pub struct TcpConnect {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum ForwardingMode {
-    Default,
     QTunnel,
     Victory,
     BungeeCord,
-    None,
 }
 impl Default for ForwardingMode {
     fn default() -> Self {
-        ForwardingMode::Default
+        ForwardingMode::QTunnel
     }
 }
 
@@ -45,11 +43,9 @@ impl Default for ForwardingMode {
 impl std::fmt::Display for ForwardingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ForwardingMode::Default => write!(f, "Default"),
             ForwardingMode::QTunnel => write!(f, "QTunnel"),
             ForwardingMode::Victory => write!(f, "Victory"),
             ForwardingMode::BungeeCord => write!(f, "BungeeCord"),
-            ForwardingMode::None => write!(f, "None"),
         }
     }
 }
@@ -60,11 +56,10 @@ impl std::str::FromStr for ForwardingMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "default" => Ok(ForwardingMode::Default),
+            "default" => Ok(ForwardingMode::QTunnel),
             "qtunnel" => Ok(ForwardingMode::QTunnel),
             "victory" => Ok(ForwardingMode::Victory),
             "bungeecord" => Ok(ForwardingMode::BungeeCord),
-            "none" => Ok(ForwardingMode::None),
             _ => Err(format!("未知的转发模式: {}", s)),
         }
     }

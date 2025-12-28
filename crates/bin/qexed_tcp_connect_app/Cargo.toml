@@ -40,3 +40,6 @@ hex.workspace = true
 sha1.workspace = true
 tinytemplate.workspace = true
 chrono.workspace = true
+thiserror.workspace = true
+hmac = "0.12.1"
+sha2 = "0.10.9"

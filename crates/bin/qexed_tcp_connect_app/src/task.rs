@@ -1,17 +1,21 @@
-use std::{collections::HashMap, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
+use std::{collections::HashMap, net::{IpAddr, SocketAddr}, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 
 use async_trait::async_trait;
+use bytes::{BufMut, BytesMut};
 use chrono::Local;
+use hmac::Mac;
 use qexed_config::app::qexed_tcp_connect_app::ForwardingMode;
-use qexed_packet::{PacketCodec, PacketWriter, net_types::VarInt};
+use qexed_packet::{PacketCodec, PacketWriter, net_types::{RestBuffer, VarInt}};
 use qexed_protocol::to_server::status::{ping::Ping, ping_start::PingStart};
 use qexed_task::{
     event::task::TaskEvent,
     message::{MessageSender, MessageType, return_message::ReturnMessage},
 };
+use qexed_tcp_connect::PacketRead;
 use rand::Rng;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
+use thiserror::Error;
 use tokio::{net::TcpStream, sync::{Mutex, mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}}, time::timeout};
 use tokio_util::sync::CancellationToken;
 
@@ -541,15 +545,91 @@ async fn login_status(
                 }
                 // 检查代理设置
                 if proxy{
-                    let server_info = qexed_protocol::to_client::login::disconnect::Disconnect {
-                        reason: serde_json::json!({
-                            "text": "暂未支持代理功能，开发中",
-                            "color": "red",
-                            "bold": true
-                        }),
-                    };
-                    packet_write.send(server_info).await?;
-                    return Err(anyhow::anyhow!("暂未支持代理功能，开发中"));
+                    match proxy_protocol {
+                        ForwardingMode::QTunnel => {
+                            let server_info = qexed_protocol::to_client::login::disconnect::Disconnect {
+                                reason: serde_json::json!({
+                                    "text": "QTunnel本地都还没出来,支持个屁啊",
+                                    "color": "red",
+                                    "bold": true
+                                }),
+                            };
+                            packet_write.send(server_info).await?;
+                            return Err(anyhow::anyhow!("暂未支持代理功能，开发中"));
+                        },
+                        ForwardingMode::Victory => {
+                            packet_write.send(qexed_protocol::to_client::login::login_plugin_request::LoginPluginRequest{
+                                message_id: VarInt(0),
+                                channel: "velocity:player_info".to_string(),
+                                data: RestBuffer(vec![4]),
+                            }).await?;
+                            let login_plugin_response = qexed_tcp_connect::read_one_packet::<
+                                qexed_protocol::to_server::login::login_plugin_response::LoginPluginResponse,
+                            >(packet_read)
+                            .await?;
+                            if let Some(data) = login_plugin_response.data{
+                                let data = data.0;
+                                let (signature, mut data_without_signature) = data.split_at(32);
+                                if !check_integrity((signature, data_without_signature), &proxy_token) {
+                                    return Err(VelocityError::FailedVerifyIntegrity.into());
+                                }
+                                
+                                let mut buf = BytesMut::new();
+                                buf.extend_from_slice(&data_without_signature);
+                                let mut reader = qexed_packet::PacketReader::new(Box::new(&mut buf));
+                                let mut version: qexed_packet::net_types::VarInt = Default::default();
+                                id.deserialize(&mut reader)?;
+                                // Check velocity version
+                                let version = version.0 as u8;
+                                if version > 4 {
+                                    return Err(VelocityError::UnsupportedForwardVersion(
+                                        version,
+                                        4,
+                                    ).into());
+                                }
+                                let mut addr2:String = Default::default();
+                                addr2.deserialize(&mut reader)?;
+                                let socket_addr: SocketAddr = SocketAddr::new(
+                                    addr2.parse::<IpAddr>()
+                                        .map_err(|_| VelocityError::FailedParseAddress)?,
+                                    addr.port(),
+                                );
+                            
+                                // let profile = read_game_profile(&mut data_without_signature)?;
+                                // let server_info = qexed_protocol::to_client::login::disconnect::Disconnect {
+                                //     reason: serde_json::json!({
+                                //         "text": "暂未支持代理功能，开发中",
+                                //         "color": "red",
+                                //         "bold": true
+                                //     }),
+                                // };
+                                // packet_write.send(server_info).await?;
+                                // return Err(anyhow::anyhow!("暂未支持代理功能，开发中"));
+                            } else {
+                                let server_info = qexed_protocol::to_client::login::disconnect::Disconnect {
+                                    reason: serde_json::json!({
+                                        "text": "代理数据包错误",
+                                        "color": "red",
+                                        "bold": true
+                                    }),
+                                };
+                                packet_write.send(server_info).await?;
+                                return Err(anyhow::anyhow!("代理数据包错误"));
+                            }
+
+                        },
+                        ForwardingMode::BungeeCord => {
+                            let server_info = qexed_protocol::to_client::login::disconnect::Disconnect {
+                                reason: serde_json::json!({
+                                    "text": "暂未支持代理功能，开发中",
+                                    "color": "red",
+                                    "bold": true
+                                }),
+                            };
+                            packet_write.send(server_info).await?;
+                            return Err(anyhow::anyhow!("暂未支持代理功能，开发中"));
+                        },
+                    }
                 }
                 // 检查是否启用压缩
                 if compression_threshold > 0 {
@@ -871,3 +951,64 @@ pub fn calculate_server_hash(server_id: &str, shared_secret: &[u8], public_key: 
         hex
     }
 }
+// 代理来源:pumpkin，MIT许可证
+#[must_use]
+pub fn check_integrity(data: (&[u8], &[u8]), secret: &str) -> bool {
+    let (signature, data_without_signature) = data;
+    let mut mac =
+        hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    mac.update(data_without_signature);
+    mac.verify_slice(signature).is_ok()
+}
+#[derive(Error, Debug)]
+pub enum VelocityError {
+    #[error("No response data received")]
+    NoData,
+    #[error("Unable to verify player details")]
+    FailedVerifyIntegrity,
+    #[error("Failed to read forward version")]
+    FailedReadForwardVersion,
+    #[error("Unsupported forwarding version {0}. Maximum supported version is {1}")]
+    UnsupportedForwardVersion(u8, u8),
+    #[error("Failed to read address")]
+    FailedReadAddress,
+    #[error("Failed to parse address")]
+    FailedParseAddress,
+    #[error("Failed to read game profile name")]
+    FailedReadProfileName,
+    #[error("Failed to read game profile UUID")]
+    FailedReadProfileUUID,
+    #[error("Failed to read game profile properties")]
+    FailedReadProfileProperties,
+}
+// fn read_game_profile(mut reader: qexed_packet::PacketReader<'_>) -> Result<GameProfile, VelocityError> {
+//     let mut read = read;
+//     let id = read
+//         .get_uuid()
+//         .map_err(|_| VelocityError::FailedReadProfileUUID)?;
+
+//     let name = read
+//         .get_string()
+//         .map_err(|_| VelocityError::FailedReadProfileName)?;
+
+//     let properties = read
+//         .get_list(|data| {
+//             let name = data.get_string()?;
+//             let value = data.get_string()?;
+//             let signature = data.get_option(NetworkReadExt::get_string)?;
+
+//             Ok(Property {
+//                 name,
+//                 value,
+//                 signature,
+//             })
+//         })
+//         .map_err(|_| VelocityError::FailedReadProfileProperties)?;
+
+//     Ok(GameProfile {
+//         id,
+//         name,
+//         properties,
+//         profile_actions: None,
+//     })
+// }
