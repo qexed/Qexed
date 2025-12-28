@@ -242,7 +242,7 @@ pub struct Biome {
 #[derive(Debug, Clone, Serialize, Deserialize,Default)]
 pub struct BlockStates {
     pub data: Option<Vec<i64>>,
-    pub palette: Option<Vec<qexed_data_serde::block::BlockStates>>,
+    pub palette: Vec<qexed_data_serde::block::BlockStates>,
 }
 
 /// 区块的高度图信息
@@ -437,7 +437,7 @@ impl Section {
             },
             block_states: BlockStates {
                 data: None,
-                palette: None,
+                palette: vec![],
             },
             block_light: None,
             sky_light: None,
@@ -690,7 +690,7 @@ mod anvil_tests {
         // 设置简单的方块状态
         section.block_states = BlockStates {
             data: Some(vec![0; 1024]), // 简单的空气方块
-            palette: Some(vec![]),
+            palette: vec![],
         };
         
         chunk.add_section(section);
@@ -826,7 +826,7 @@ impl Chunk {
         };
         section.block_states = BlockStates {
             data: Some(vec![0; 256]),
-            palette: None,
+            palette: vec![],
         };
         
         chunk.add_section(section);
