@@ -11,7 +11,8 @@ async fn main() -> anyhow::Result<()> {
     let config: One = One::load_or_create_default()?;
     log::info!("读取配置文件完成");
     log::info!("服务初始化");
-    let _server = server::Server::init(config).await?;
+    let server = server::Server::init(config).await?;
+    server.register().await?;
     log::info!("服务初始化完成");
     loop {
         // 已经没啥事做了，等待就行
