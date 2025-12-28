@@ -196,52 +196,31 @@ impl ChunkTask {
                             return Err(anyhow::anyhow!("区块数据损坏"));
                         }
                     };
-                    let mut bv = bit_vec::BitVec::new();
-                    // 遍历每个block_data中的值
-                    for &block_value in block_data {
-                        for bit_position in 0..64 {
-                            // 提取特定位的值 (从最低位开始)
-                            let bit = (block_value >> bit_position) & 1;
-                            bv.push(bit == 1);
-                        }
-                    }
-                    let mut block_id_list: Vec<u32> = vec![];
-                    // 每次读 bits_per_block bit,转换为u32写入block_id_list
-                    // 例如 5bit是5个
-                    // 注意:大端序
-                    for i in 0..4096 {
-                        let mut value: u32 = 0;
-                        let start_bit = i * bits_per_block as usize;
+                    let total_blocks = 4096;
+                    let block_status_id_vers = block_status_id_vec.clone();
+                    let (air_count, palette_indices): (usize, Vec<u32>) = (0..total_blocks)
+                        .map(|i| get_palette_index(i, block_data, bits_per_block))
+                        .fold(
+                            (0, Vec::with_capacity(total_blocks)),
+                            |(air_count, mut indices), palette_index| {
+                                // 检查索引有效性并统计空气方块
+                                let is_air = if (palette_index as usize) < pcl {
+                                    block_status_id_vers[palette_index as usize] == 0
+                                } else {
+                                    false // 无效索引不视为空气
+                                };
 
-                        if start_bit + bits_per_block as usize > bv.len() {
-                            return Err(anyhow::anyhow!("位向量数据不足，无法读取完整块"));
-                        }
-
-                        // 大端序读取：高位在前
-                        for j in 0..bits_per_block {
-                            let bit_index = start_bit + (bits_per_block as usize - 1 - j as usize);
-                            if bv[bit_index] {
-                                value |= 1 << (bits_per_block - 1 - j); // 注意这里的移位
-                            }
-                        }
-
-                        block_id_list.push(value);
-                    }
-
+                                indices.push(palette_index);
+                                (air_count + if is_air { 1 } else { 0 }, indices)
+                            },
+                        );
                     // 2. 统计空气方块并打包到i64数组
-                    let mut air_count = 0;
                     let mut i64_array = vec![0u64; 1024]; // 1024个i64
-
-                    for (index, &block_index) in block_id_list.iter().enumerate() {
+                    for (index, &block_index) in palette_indices.iter().enumerate() {
                         let block_id: u16 = match block_status_id_vec.get(block_index as usize) {
                             Some(&v) => v as u16,
                             None => 0,
                         };
-
-                        if block_id == 0 {
-                            air_count += 1;
-                        }
-
                         let block_id_masked = block_id & 0x7FFF;
                         let i64_index = index / 4;
                         let position_in_i64 = index % 4;
@@ -260,7 +239,7 @@ impl ChunkTask {
                     // 5. 写入方块数据 (8192字节)
                     for &value in &i64_array {
                         chunk_bytes.extend_from_slice(&value.to_be_bytes());
-                    };
+                    }
 
                     // 生物群系数据
                     // 使用调色板模式，只有一个生物群系

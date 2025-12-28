@@ -17,3 +17,4 @@ pub mod container_set_slot;
 pub mod command_suggestions;
 pub mod set_entity_data;
 pub mod set_title_text;
+pub mod position;
