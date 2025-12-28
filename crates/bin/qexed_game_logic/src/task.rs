@@ -539,6 +539,7 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 //         return Ok(false);
                 //     }
                 // };
+                
                 let packet_split_api = match &self.qexed_packet_split_api {
                     Some(p) => p,
                     None => {
@@ -548,9 +549,19 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         return Ok(false);
                     }
                 };
-                    let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SystemEvent(qexed_chat::message::SystemEvent::PlayerJoin))
-                        .post(&chat_api)
-                        .await;                
+                let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SystemEvent(qexed_chat::message::SystemEvent::PlayerJoin))
+                    .post(&chat_api)
+                    .await;                
+                let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SendMessage(qexed_protocol::to_client::play::system_chat::SystemChat{
+                    content: create_text_nbt("原生 Qexed 大厅正在开发,如需游玩生存请执行指令\n/server survival_vanilla_1"), overlay: true }))
+                    
+                    .post(&chat_api)
+                    .await;         
+                let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SendMessage(qexed_protocol::to_client::play::system_chat::SystemChat{
+                    content: create_text_nbt("原生 Qexed 大厅正在开发,如需游玩生存请执行指令\n/server survival_vanilla_1"), overlay: false }))
+                    
+                    .post(&chat_api)
+                    .await;         
                 ReturnMessage::build(qexed_packet_split::message::TaskMessage::Start(
                     player,
                     Some(packet_read),

@@ -39,8 +39,8 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<WorldCommand>, UnReturnMessage<Re
                     dx:0.0,
                     dy:0.0,
                     dz:0.0,
-                    yaw:0.0,
-                    pitch:0.0,
+                    yaw:self.config.join_yaw.clone(),
+                    pitch:self.config.join_pitch.clone(),
                     flags:Default::default(),
                 }).await?)?;
                 // 所有区块均已加载，直接发送即可、

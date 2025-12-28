@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::{Arc, atomic::{AtomicBool, Ordering}}, tim
 
 use async_trait::async_trait;
 use chrono::Local;
+use qexed_config::app::qexed_tcp_connect_app::ForwardingMode;
 use qexed_packet::{PacketCodec, PacketWriter, net_types::VarInt};
 use qexed_protocol::to_server::status::{ping::Ping, ping_start::PingStart};
 use qexed_task::{
@@ -26,6 +27,9 @@ pub struct TcpConnectActor {
     public_key: RsaPublicKey,
     public_key_der: Vec<u8>,
     status_timeout_secs:i32,
+    proxy:bool,
+    proxy_protocol: ForwardingMode,
+    proxy_token: String,
 }
 impl TcpConnectActor {
     pub fn new(
@@ -37,6 +41,9 @@ impl TcpConnectActor {
         public_key: RsaPublicKey,
         public_key_der: Vec<u8>,
         status_timeout_secs:i32,
+        proxy:bool,
+        proxy_protocol: ForwardingMode,
+        proxy_token: String,
     ) -> Self {
         Self {
             socket: Some(socket),
@@ -47,6 +54,9 @@ impl TcpConnectActor {
             public_key,
             public_key_der,
             status_timeout_secs,
+            proxy,
+            proxy_protocol,
+            proxy_token
         }
     }
 }
@@ -70,6 +80,9 @@ impl TaskEvent<ReturnMessage<TaskCommand>,ReturnMessage<ManagerCommand>> for Tcp
                 let public_key: RsaPublicKey = self.public_key.clone();
                 let public_key_der: Vec<u8> = self.public_key_der.clone();
                 let status_timeout_secs = self.status_timeout_secs.clone();
+                let proxy = self.proxy.clone();
+                let proxy_protocol = self.proxy_protocol.clone();
+                let proxy_token = self.proxy_token.clone();
                 // let 
                 tokio::spawn(async move {
                     if let Some(socket) = socket {
@@ -112,7 +125,9 @@ impl TaskEvent<ReturnMessage<TaskCommand>,ReturnMessage<ManagerCommand>> for Tcp
                             }
                         
                             // 登录阶段
-                            let (player,logic_api) = login_status(&mut packet_read, &mut packet_write, &manage_api,compression_threshold,online_mode,private_key,public_key,public_key_der,addr.clone()).await?;
+                            let (player,logic_api) = login_status(&mut packet_read, &mut packet_write, &manage_api,compression_threshold,online_mode,private_key,public_key,public_key_der,addr.clone(),proxy,proxy_protocol,proxy_token   ,                    
+
+                            ).await?;
                             let logic_api = if let Some(api) = logic_api {
                                 qexed_logic_api = Some(api.clone());
                                 api // 将内部的 api 移出到变量 logic_api
@@ -430,7 +445,10 @@ async fn login_status(
     private_key: RsaPrivateKey,
     public_key: RsaPublicKey,
     public_key_der: Vec<u8>,
-    addr: std::net::SocketAddr
+    addr: std::net::SocketAddr,
+    proxy:bool,
+    proxy_protocol: ForwardingMode,
+    proxy_token: String,
 ) -> anyhow::Result<(qexed_player::Player,Option<UnboundedSender<ReturnMessage<qexed_game_logic::message::TaskMessage>>>)> {
     let mut player: qexed_player::Player = Default::default();
     let mut verify_token: Option<[u8; 16]> = None;
@@ -520,6 +538,18 @@ async fn login_status(
                     };
                     packet_write.send(server_info).await?;
                     return Err(anyhow::anyhow!("玩家在线检查失败"));
+                }
+                // 检查代理设置
+                if proxy{
+                    let server_info = qexed_protocol::to_client::login::disconnect::Disconnect {
+                        reason: serde_json::json!({
+                            "text": "暂未支持代理功能，开发中",
+                            "color": "red",
+                            "bold": true
+                        }),
+                    };
+                    packet_write.send(server_info).await?;
+                    return Err(anyhow::anyhow!("暂未支持代理功能，开发中"));
                 }
                 // 检查是否启用压缩
                 if compression_threshold > 0 {

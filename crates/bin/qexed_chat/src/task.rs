@@ -74,8 +74,8 @@ impl TaskEvent<UnReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for 
             TaskMessage::SendMessage(system_chat) => {
                 if let Some(packet_write) = &self.packet_write {
                     packet_write.send(PacketSend::build_send_packet(system_chat).await?)?;
-                    // Test 给泥土
-                    packet_write.send(PacketSend::build_send_packet(build_item()?).await?)?;
+                    // // Test 给泥土
+                    // packet_write.send(PacketSend::build_send_packet(build_item()?).await?)?;
                     // 初始化配方
                     // packet_write.send(
                     //     PacketSend::build_send_packet(build_dirt_from_4_stones_recipe())

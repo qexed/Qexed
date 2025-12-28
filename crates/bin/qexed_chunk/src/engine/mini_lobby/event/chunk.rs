@@ -15,7 +15,7 @@ pub struct ChunkTask {
     // 世界uuid
     world_uuid: uuid::Uuid,
     // 区块数据
-    pub chunk: qexed_region::chunk::nbt::Chunk,
+    pub chunk: Option<qexed_region::chunk::nbt::Chunk>,
     // 区块坐标 pos
     pub pos: [i64; 2],
     // 相邻区块
@@ -44,7 +44,7 @@ impl ChunkTask {
             world_root,
             world_uuid,
             pos,
-            chunk,
+            chunk: Some(chunk),
             direction_chunk: Default::default(),
             cross_dimension_counterpart_apis: Default::default(),
             map_chunk,
@@ -52,10 +52,14 @@ impl ChunkTask {
         }
     }
     pub async fn init(&mut self) -> anyhow::Result<()> {
+        let chunk = match self.chunk.take() {
+            Some(v) => v,
+            None => return Ok(()),
+        };
         let p_q: qexed_protocol::to_client::play::map_chunk::MapChunk = if self.map_chunk {
             let mut chunk_bytes = vec![];
             // let mut chunk_date = vec![];
-            for i in &self.chunk.sections {
+            for i in &chunk.sections {
                 if (i.y < -4) || (i.y > 19) {
                     // 主世界的区块的高度为-4~19(加起来24)
                     continue;
@@ -171,25 +175,15 @@ impl ChunkTask {
                     chunk_bytes.extend_from_slice(&block_data_bytes);
                     // 生物群系数据
                     // 使用调色板模式，只有一个生物群系
-                    let bits_per_biome = 1; // 只需要 1 位，因为只有一种生物群系
+                    let bits_per_biome = 0; // 只需要 1 位，因为只有一种生物群系
                     chunk_bytes.push(bits_per_biome as u8);
-
-                    // 生物群系调色板长度 - 使用 VarInt 编码
-                    chunk_bytes.extend(encode_var_int(1));
-
                     // 平原生物群系的 ID
                     chunk_bytes.extend(encode_var_int(1));
-
-                    // 计算需要多少个 long 来存储 64 个生物群系 (4x4x4)
-                    let biomes_per_long = 64 / bits_per_biome;
-                    let num_biome_longs = (64 + biomes_per_long - 1) / biomes_per_long;
-
-                    // 所有生物群系都是平原 (调色板索引 0)
-                    for _ in 0..num_biome_longs {
-                        chunk_bytes.extend_from_slice(&0i64.to_be_bytes());
-                    }
                 } else {
-                    let bits_per_block: u32 = (pcl as f64).log2().ceil() as u32;
+                    let mut bits_per_block: u32 = (pcl as f64).log2().ceil() as u32;
+                    if bits_per_block > 8 {
+                        bits_per_block = 15
+                    }
                     let block_data: &Vec<i64> = match &i.block_states.data {
                         Some(v) => v,
                         None => {
@@ -214,28 +208,60 @@ impl ChunkTask {
                                 (air_count + if is_air { 1 } else { 0 }, indices)
                             },
                         );
-                    // 2. 统计空气方块并打包到i64数组
-                    let mut i64_array = vec![0u64; 1024]; // 1024个i64
-                    for (index, &block_index) in palette_indices.iter().enumerate() {
-                        let block_id: u16 = match block_status_id_vec.get(block_index as usize) {
-                            Some(&v) => v as u16,
-                            None => 0,
-                        };
-                        let block_id_masked = block_id & 0x7FFF;
-                        let i64_index = index / 4;
-                        let position_in_i64 = index % 4;
-                        let shift = position_in_i64 * 15;
+                    let i64_array = if bits_per_block == 15 {
+                        // 2. 统计空气方块并打包到i64数组
+                        let mut i64_array = vec![0u64; 1024]; // 1024个i64
+                        for (index, &block_index) in palette_indices.iter().enumerate() {
+                            let block_id: u16 = match block_status_id_vec.get(block_index as usize)
+                            {
+                                Some(&v) => v as u16,
+                                None => 0,
+                            };
+                            let block_id_masked = block_id & 0x7FFF;
+                            let i64_index = index / 4;
+                            let position_in_i64 = index % 4;
+                            let shift = position_in_i64 * 15;
 
-                        i64_array[i64_index] |= (block_id_masked as u64) << shift;
-                    }
+                            i64_array[i64_index] |= (block_id_masked as u64) << shift;
+                        }
+                        i64_array
+                    } else {
+                        // bits_per_block 保证在5-8之间
+                        let blocks_per_long = 64 / bits_per_block as usize; // 每个u64可以存储的方块数
+                        let num_longs = (4096 + blocks_per_long - 1) / blocks_per_long; // 需要的u64数量
+
+                        let mut i64_array = vec![0u64; num_longs];
+
+                        for (index, &palette_index) in palette_indices.iter().enumerate() {
+                            // 计算当前方块在哪个u64中
+                            let long_index = index / blocks_per_long;
+
+                            // 计算在当前u64中的位偏移
+                            let position_in_long = index % blocks_per_long;
+                            let shift = position_in_long * bits_per_block as usize;
+
+                            // 确保索引值在有效范围内
+                            let masked_index = palette_index & ((1 << bits_per_block) - 1);
+
+                            // 将索引值设置到对应的位位置
+                            i64_array[long_index] |= (masked_index as u64) << shift;
+                        }
+
+                        i64_array
+                    };
 
                     // 3. 写入非空气方块数
                     let non_air_count = 4096 - air_count;
                     chunk_bytes.extend_from_slice(&(non_air_count as i16).to_be_bytes());
 
                     // 4. 写入 bits_per_block
-                    chunk_bytes.push(15u8);
-
+                    chunk_bytes.push(bits_per_block as u8);
+                    if bits_per_block != 15 {
+                        chunk_bytes.extend(encode_var_int(pcl as i32));
+                        for id in &block_status_id_vec {
+                            chunk_bytes.extend(encode_var_int(*id as i32));
+                        }
+                    }
                     // 5. 写入方块数据 (8192字节)
                     for &value in &i64_array {
                         chunk_bytes.extend_from_slice(&value.to_be_bytes());
@@ -243,23 +269,10 @@ impl ChunkTask {
 
                     // 生物群系数据
                     // 使用调色板模式，只有一个生物群系
-                    let bits_per_biome = 1; // 只需要 1 位，因为只有一种生物群系
+                    let bits_per_biome = 0; // 只需要 1 位，因为只有一种生物群系
                     chunk_bytes.push(bits_per_biome as u8);
-
-                    // 生物群系调色板长度 - 使用 VarInt 编码
-                    chunk_bytes.extend(encode_var_int(1));
-
                     // 平原生物群系的 ID
                     chunk_bytes.extend(encode_var_int(1));
-
-                    // 计算需要多少个 long 来存储 64 个生物群系 (4x4x4)
-                    let biomes_per_long = 64 / bits_per_biome;
-                    let num_biome_longs = (64 + biomes_per_long - 1) / biomes_per_long;
-
-                    // 所有生物群系都是平原 (调色板索引 0)
-                    for _ in 0..num_biome_longs {
-                        chunk_bytes.extend_from_slice(&0i64.to_be_bytes());
-                    }
                 }
             }
 
@@ -291,6 +304,7 @@ impl ChunkTask {
             }
         };
         self.chunk_packet = Some(PacketSend::build_send_packet(p_q).await?);
+        drop(chunk);
         Ok(())
     }
 }
@@ -483,30 +497,13 @@ fn encode_barrier_chunk_data_1_21() -> Vec<u8> {
     for _chunk_section_index in 0..24 {
         // 1. 非空气方块数量：整个子区块都是屏障，所以是4096个方块均为“非空气”
         data.extend_from_slice(&4096i16.to_be_bytes());
-
-        let bits_per_block = 0; // 只需要1位，因为只有空气
-        data.push(bits_per_block as u8);
+        data.push(0u8);
         // 将屏障方块的ID放入调色板，其索引为0
         data.extend(encode_var_int(barrier_block_state_id));
         // 生物群系数据
-        // 使用调色板模式，只有一个生物群系
-        let bits_per_biome = 1; // 只需要 1 位，因为只有一种生物群系
-        data.push(bits_per_biome as u8);
-
-        // 生物群系调色板长度 - 使用 VarInt 编码
-        data.extend(encode_var_int(1));
-
+        data.push(0u8);
         // 平原生物群系的 ID
         data.extend(encode_var_int(1));
-
-        // 计算需要多少个 long 来存储 64 个生物群系 (4x4x4)
-        let biomes_per_long = 64 / bits_per_biome;
-        let num_biome_longs = (64 + biomes_per_long - 1) / biomes_per_long;
-
-        // 所有生物群系都是平原 (调色板索引 0)
-        for _ in 0..num_biome_longs {
-            data.extend_from_slice(&0i64.to_be_bytes());
-        }
     }
     data
 }

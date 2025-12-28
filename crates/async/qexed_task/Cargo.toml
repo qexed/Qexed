@@ -14,6 +14,7 @@ async-trait.workspace = true
 log.workspace = true
 tklog.workspace = true
 futures.workspace = true
+kanal.workspace = true
 
 [dev-dependencies]
 tokio-test = "0.4.4"

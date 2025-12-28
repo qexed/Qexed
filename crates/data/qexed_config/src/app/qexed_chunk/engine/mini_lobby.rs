@@ -10,6 +10,8 @@ pub struct MiniLobbyConfig {
     pub main_world:Uuid,
     // 进服位置
     pub join_pos:[i64;3],
+    pub join_yaw:f32,
+    pub join_pitch:f32,
     // 地图范围
     pub map_range:[[i64;2];2],
 }
@@ -22,6 +24,8 @@ impl Default for MiniLobbyConfig {
             main_world:uuid::Uuid::new_v4(),
             join_pos:qexed_random::pos::pos_join_spawn_area(),
             map_range:[[-100,-100],[100,100]],
+            join_yaw: 0.0,
+            join_pitch: 0.0,
         }
     }
 }

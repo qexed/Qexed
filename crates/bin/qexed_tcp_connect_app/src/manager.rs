@@ -152,11 +152,17 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, ReturnMessage<Ta
                     self.config.network_compression_threshold.clone();
                 let online_mode = self.config.online_mode.clone();
                 let status_timeout_secs = self.config.status_timeout_secs.clone();
+                let proxy = self.config.proxy.clone();
+                let proxy_protocol = self.config.proxy_protocol.clone();
+                let proxy_token = self.config.proxy_token.clone();
                 tokio::spawn(async move {
                     let api_clone = api_clone.clone();
                     let private_key = private_key.clone();
                     let public_key = public_key.clone();
                     let public_key_der = public_key_der.clone();
+                    let proxy = proxy.clone();
+                    let proxy_protocol = proxy_protocol.clone();
+                    let proxy_token = proxy_token.clone();
                     while let Ok((stream, addr)) = listener.accept().await {
                         let actor = TcpConnectActor::new(
                             stream,
@@ -167,6 +173,9 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, ReturnMessage<Ta
                             public_key.clone(),
                             public_key_der.clone(),
                             status_timeout_secs.clone(),
+                            proxy.clone(),
+                            proxy_protocol.clone(),
+                            proxy_token.clone(),
                         );
                         let (task, task_send) =
                             qexed_task::task::task::Task::new(api_clone.clone(), actor);

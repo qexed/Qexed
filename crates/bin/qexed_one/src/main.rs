@@ -7,6 +7,8 @@ mod server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 监控
+    // console_subscriber::init();
     // 创建日志通道
     let (log_tx, log_rx): (tokio::sync::mpsc::Sender<String>, _) = tokio::sync::mpsc::channel(1000);
 

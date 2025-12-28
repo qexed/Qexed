@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use qexed_packet::PacketCodec;
 use qexed_player::Player;
-use qexed_protocol::to_server::play::{keep_alive::KeepAlive, pong::Pong};
+use qexed_protocol::to_server::play::{keep_alive::KeepAlive, player_action::PlayerAction, pong::Pong};
 use qexed_task::{
     event::task::TaskEvent,
     message::{
@@ -170,6 +170,12 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                             )
                             .post(&qexed_heartbeat_api)
                             .await;
+                        }
+                        0x28 =>{
+                            let pk: PlayerAction = qexed_tcp_connect::decode_packet::<PlayerAction>(&mut reader)?;
+                            // 暂时不搞
+                            // 后续完善
+                            
                         }
                         // 0x2c => {
                         //     let pk =
