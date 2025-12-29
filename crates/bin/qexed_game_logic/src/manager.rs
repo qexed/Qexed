@@ -27,6 +27,7 @@ pub struct GameLogicManagerActor {
     qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
     qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
     qexed_scoreboard_api: UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
+    qexed_entity_api: UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>,
 }
 impl GameLogicManagerActor {
     pub fn new(
@@ -42,6 +43,7 @@ impl GameLogicManagerActor {
         qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
         qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
         qexed_scoreboard_api: UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
+        qexed_entity_api: UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>,
     ) -> Self {
         Self {
             config,
@@ -56,6 +58,7 @@ impl GameLogicManagerActor {
             qexed_chunk_api,
             qexed_title_api,
             qexed_scoreboard_api,
+            qexed_entity_api,
         }
     }
 

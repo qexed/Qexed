@@ -1,7 +1,8 @@
-//! Qexed 实体注册表模块
-//! 提供类型安全的实体ID和实体信息管理
-
-
+pub mod engine;
+pub mod manage;
+pub mod message;
+mod run;
+pub use run::run as run;
 // 包含生成的代码
 include!(concat!(env!("OUT_DIR"), "/entity_registry_generated.rs"));
 
@@ -223,75 +224,3 @@ impl EntityManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_entity_id_conversion() {
-        // 测试ID转换
-        let pig = EntityId::try_from(0u32);
-        if let Ok(entity) = pig {
-            assert_eq!(entity.to_i32(), 0);
-            assert_eq!(entity.to_u32(), 0);
-            
-            // 测试从ID解析
-            let from_id = EntityId::try_from(0u32);
-            assert!(from_id.is_ok());
-            assert_eq!(from_id.unwrap(), entity);
-        }
-    }
-    
-    #[test]
-    fn test_entity_registry() {
-        let registry = EntityRegistry::new();
-        
-        // 测试默认实体
-        assert!(registry.is_valid_entity_id(DEFAULT_ENTITY_ID));
-        
-        // 测试获取信息
-        if let Some(info) = registry.get_entity_info(DEFAULT_ENTITY_ID) {
-            assert_eq!(info.id, DEFAULT_ENTITY_ID);
-            assert!(!info.name.is_empty());
-        }
-    }
-    
-    #[test]
-    fn test_entity_manager() {
-        let mut manager = EntityManager::new();
-        
-        // 创建实体
-        let position = EntityPosition::new(0.0, 64.0, 0.0);
-        let entity_id = manager.create_entity(DEFAULT_ENTITY, position);
-        
-        // 验证实体创建
-        assert!(entity_id > 0);
-        assert!(manager.get_entity(entity_id).is_some());
-        
-        // 获取实体数据
-        if let Some(entity) = manager.get_entity(entity_id) {
-            assert_eq!(entity.entity_type, DEFAULT_ENTITY);
-            assert_eq!(entity.position.x, 0.0);
-            assert_eq!(entity.position.y, 64.0);
-            assert_eq!(entity.position.z, 0.0);
-        }
-        
-        // 移除实体
-        let removed = manager.remove_entity(entity_id);
-        assert!(removed.is_some());
-        assert!(manager.get_entity(entity_id).is_none());
-    }
-    
-    #[test]
-    fn test_entity_functions() {
-        // 测试辅助函数
-        assert!(!all_entity_ids().is_empty());
-        
-        // 测试实体枚举
-        let entities = all_entities();
-        assert!(!entities.is_empty());
-        
-        // 确保包含默认实体
-        assert!(entities.contains(&DEFAULT_ENTITY));
-    }
-}

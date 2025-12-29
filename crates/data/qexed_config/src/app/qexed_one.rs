@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::{
-        qexed_blacklist::BlackList, qexed_chat::ChatConfig, qexed_chunk::ChunkConfig, qexed_command::CommandConfig, qexed_entity_id_allocator::EntityIdAllocator, qexed_game_logic::GameLogicConfig, qexed_heartbeat::HeartbeatConfig, qexed_packet_split::PacketSplitConfig, qexed_ping::PingConfig, qexed_player_list::PlayerList, qexed_rule::RuleConfig, qexed_scoreboard::ScoreBoardConfig, qexed_status::StatusConfig, qexed_tcp_connect_app::TcpConnect, qexed_title::TitleConfig, qexed_whitelist::WhiteList
+        qexed_blacklist::BlackList, qexed_chat::ChatConfig, qexed_chunk::ChunkConfig, qexed_command::CommandConfig, qexed_entity::EntityConfig, qexed_entity_id_allocator::EntityIdAllocator, qexed_game_logic::GameLogicConfig, qexed_heartbeat::HeartbeatConfig, qexed_packet_split::PacketSplitConfig, qexed_ping::PingConfig, qexed_player_list::PlayerList, qexed_rule::RuleConfig, qexed_scoreboard::ScoreBoardConfig, qexed_status::StatusConfig, qexed_tcp_connect_app::TcpConnect, qexed_title::TitleConfig, qexed_whitelist::WhiteList
     },
     tool::AppConfigTrait,
 };
@@ -26,7 +26,7 @@ pub struct One {
     pub chunk:ChunkConfig,
     pub title:TitleConfig,
     pub scoreboard:ScoreBoardConfig,
-    
+    pub entity:EntityConfig,
 }
 impl AppConfigTrait for One {
     const PATH: &'static str = "./config/";

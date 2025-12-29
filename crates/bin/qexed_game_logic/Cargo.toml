@@ -41,6 +41,7 @@ qexed_chunk.workspace = true
 qexed_title.workspace = true
 qexed_block.workspace = true
 qexed_scoreboard.workspace = true
+qexed_entity.workspace = true
 hex = "0.4.3"
 sha1 = "0.10.6"
 tokio-util.workspace = true

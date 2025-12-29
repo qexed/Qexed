@@ -32,6 +32,7 @@ qexed_rule.workspace = true
 qexed_chunk.workspace = true
 qexed_title.workspace = true
 qexed_scoreboard.workspace = true
+qexed_entity.workspace = true
 # 内部库依赖
 qexed_tcp_connect = { workspace = true }
 qexed_task = {workspace = true}
