@@ -18,3 +18,6 @@ pub mod command_suggestions;
 pub mod set_entity_data;
 pub mod set_title_text;
 pub mod position;
+pub mod reset_score;
+pub mod set_display_objective;
+pub mod set_objective;
