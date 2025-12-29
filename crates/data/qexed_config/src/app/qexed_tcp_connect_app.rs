@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::tool::AppConfigTrait;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug,Clone, Serialize, Deserialize)]
 pub struct TcpConnect {
     pub version: i32,
     pub ip: String,
@@ -17,6 +17,7 @@ pub struct TcpConnect {
     /// 认证密钥
     pub proxy_token: String,
     /// 同IP连接频率限制 - 时间窗口（秒）
+    /// 若为0，则无限制
     pub rate_limit_window_secs: u64,
     /// 同IP连接频率限制 - 窗口内最大允许次数
     pub rate_limit_max_attempts: u32,

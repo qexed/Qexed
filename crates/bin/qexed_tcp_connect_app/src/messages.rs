@@ -1,21 +1,18 @@
-use std::net::{IpAddr, SocketAddr};
-
-use bytes::Bytes;
-use qexed_task::message::return_message::ReturnMessage;
-use tokio::sync::mpsc::UnboundedSender;
+use std::net::{SocketAddr};
 #[derive(Debug)]
 pub enum ManagerCommand {
     Start,
-    ConnClose(SocketAddr),
-    GetStatusPackageBytes(Option<Bytes>),
-    CheckPlayeIsInList(uuid::Uuid, bool),
-    LoginCheck(uuid::Uuid, Option<IpAddr>, bool, Option<String>),
-    GetLogicApi(qexed_game_logic::message::ManagerMessage),
-    Shutdown(String),
+    NewConnection(tokio::net::TcpStream, SocketAddr),
 }
 #[derive(Debug)]
-pub enum TaskCommand {
+pub enum ListenCommand {
     Start,
-    ConnClose(SocketAddr),
-    Shutdown(String),
+    NewConnection(tokio::net::TcpStream, SocketAddr),
+    ClearRatelimit(std::net::IpAddr),
+    Close,
+}
+
+#[derive(Debug)]
+pub enum LogicCommand {
+    
 }

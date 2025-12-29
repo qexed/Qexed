@@ -2,10 +2,9 @@ use qexed_task::message::{MessageType, return_message::ReturnMessage};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{manager::TcpConnectManagerActor, messages::ManagerCommand};
-pub mod manager;
+mod manager;
 pub mod messages;
-pub mod logic_task;
-pub mod listen_task;
+mod task;
 pub async fn run(
     config: qexed_config::app::qexed_tcp_connect_app::TcpConnect,
     qexed_status_api: UnboundedSender<ReturnMessage<qexed_status::Message>>,

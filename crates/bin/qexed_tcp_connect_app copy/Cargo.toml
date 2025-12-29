@@ -6,6 +6,9 @@ edition = "2024"
 default = []
 distributed = []
 
+[[bin]]
+name = "qexed_connect"
+path = "src/main.rs"
 [dependencies]
 qexed_tcp_connect = { workspace = true }
 qexed_task = { workspace = true }
