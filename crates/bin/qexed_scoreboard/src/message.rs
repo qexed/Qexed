@@ -22,7 +22,7 @@ pub enum TaskMessage {
         String,
         Option<UnboundedSender<Bytes>>, // 数据包发送器
     ), // 传递数据包收发器
-    SendTitleMessage(qexed_protocol::to_client::play::set_title_text::SetTitleText),// 广播事件数据包
+    UpdatePlayers(i32),
     Close,// 连接关闭
 }
 

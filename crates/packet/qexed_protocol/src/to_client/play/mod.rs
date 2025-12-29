@@ -21,3 +21,4 @@ pub mod position;
 pub mod reset_score;
 pub mod set_display_objective;
 pub mod set_objective;
+pub mod set_score;

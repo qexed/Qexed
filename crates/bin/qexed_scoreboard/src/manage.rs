@@ -69,6 +69,11 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                 *task_api = Some(task_sand);
                 *is_true = true;
                 let _ = send.send(data.data);
+                // 全部对象发送玩家id更新数据包
+                let players = task_map.len() as i32;
+                for i in task_map{
+                    i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: TaskMessage::UpdatePlayers(players.clone()) });
+                }
                 return Ok(false);
             }
             ManagerMessage::Command(ref cmd) => {
@@ -89,13 +94,13 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                 //     }
                 //     
                 // }
-                let title = build_set_title_text_packet(help_args[0].clone());
+                // let title = build_set_title_text_packet(help_args[0].clone());
 
-                for task in task_map {
-                    let _ = task.send(UnReturnMessage::build(TaskMessage::SendTitleMessage(
-                        title.clone(),
-                    )));
-                }
+                // for task in task_map {
+                //     let _ = task.send(UnReturnMessage::build(TaskMessage::SendTitleMessage(
+                //         title.clone(),
+                //     )));
+                // }
                 let _ = send.send(data.data);
                 return Ok(false);
             }
@@ -103,7 +108,11 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
             ManagerMessage::PlayerClose(uuid) => {
                 task_map.remove(&uuid);
                 let _ = send.send(data.data);
-
+                // 全部对象发送玩家id更新数据包
+                let players = task_map.len() as i32;
+                for i in task_map{
+                    i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: TaskMessage::UpdatePlayers(players.clone()) });
+                }
                 return Ok(false);
             }
             ManagerMessage::ConnectClose(uuid) => {
@@ -114,6 +123,11 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, UnReturnMessage<TaskMe
                 }
                 task_map.remove(&uuid);
                 let _ = send.send(data.data);
+                // 全部对象发送玩家id更新数据包
+                let players = task_map.len() as i32;
+                for i in task_map{
+                    i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: TaskMessage::UpdatePlayers(players.clone()) });
+                }
                 return Ok(false);
             }
         }

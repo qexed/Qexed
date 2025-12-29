@@ -40,6 +40,7 @@ pub struct GameLogicActor {
     qexed_command_api:Option<UnboundedSender<UnReturnMessage<qexed_command::message::TaskCommand>>>,
     qexed_player_list_api:Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>,
     qexed_title_api:Option<UnboundedSender<UnReturnMessage<qexed_title::message::TaskMessage>>>,
+    qexed_scoreboard_api:Option<UnboundedSender<UnReturnMessage<qexed_scoreboard::message::TaskMessage>>>,
 }
 impl GameLogicActor {
     pub fn new(uuid: Uuid) -> Self {
@@ -55,6 +56,7 @@ impl GameLogicActor {
             qexed_command_api:None,
             qexed_player_list_api:None,
             qexed_title_api:None,
+            qexed_scoreboard_api:None,
         }
     }
 }
@@ -425,7 +427,36 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         return Ok(false);
                     }
                 };
-                
+                // 计分板
+                if let ManagerMessage::GetScoreBoard(Some(
+                    qexed_scoreboard::message::ManagerMessage::NewPlayerConnect(
+                        _uuid,
+                        is_true,
+                        err,
+                        chat_api,
+                    ),
+                )) = ReturnMessage::build(ManagerMessage::GetScoreBoard(Some(
+                    qexed_scoreboard::message::ManagerMessage::NewPlayerConnect(
+                        self.uuid.clone(),
+                        false,
+                        None,
+                        None,
+                    ),
+                )))
+                .get(&manage_api)
+                .await?
+                {
+                    self.qexed_scoreboard_api = chat_api;
+                }
+                let qexed_scoreboard_api = match &self.qexed_scoreboard_api {
+                    Some(p) => p,
+                    None => {
+                        if let Some(send) = data.get_return_send().await? {
+                            let _ = send.send(data.data);
+                        }
+                        return Ok(false);
+                    }
+                };
                 // 指令
                 if let ManagerMessage::GetCommand(Some(
                     qexed_command::message::ManagerCommand::NewPlayerConnect(
@@ -490,6 +521,10 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 UnReturnMessage::build(qexed_title::message::TaskMessage::Start(player.username.clone(),Some(packet_write.clone())))
                     .post(&title_api)
                     .await?;
+                UnReturnMessage::build(qexed_scoreboard::message::TaskMessage::Start(player.username.clone(),Some(packet_write.clone())))
+                    .post(&qexed_scoreboard_api)
+                    .await?;
+                
                 ReturnMessage::build(qexed_player_list::Message::PlayerJoin(player.uuid.clone(),player.username.clone())).get(&player_list_api).await?;
                 // 区块初始化:
                 packet_write.send(
@@ -559,7 +594,6 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                     .await;         
                 let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::SendMessage(qexed_protocol::to_client::play::system_chat::SystemChat{
                     content: create_text_nbt("原生 Qexed 大厅正在开发,如需游玩生存请执行指令\n/server survival_vanilla_1"), overlay: false }))
-                    
                     .post(&chat_api)
                     .await;         
                 ReturnMessage::build(qexed_packet_split::message::TaskMessage::Start(
@@ -605,6 +639,11 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 }
                 if let Some(api_ping) = &self.qexed_title_api {
                     let _ = UnReturnMessage::build(qexed_title::message::TaskMessage::Close)
+                        .post(&api_ping)
+                        .await;
+                }
+                if let Some(api_ping) = &self.qexed_scoreboard_api {
+                    let _ = UnReturnMessage::build(qexed_scoreboard::message::TaskMessage::Close)
                         .post(&api_ping)
                         .await;
                 }

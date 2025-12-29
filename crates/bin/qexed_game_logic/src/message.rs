@@ -23,6 +23,7 @@ pub enum ManagerMessage {
     GetPlayerPacketSplit(Option<qexed_packet_split::message::ManagerMessage>),
     GetPlayerChat(Option<qexed_chat::message::ManagerMessage>),
     GetTitle(Option<qexed_title::message::ManagerMessage>),
+    GetScoreBoard(Option<qexed_scoreboard::message::ManagerMessage>),
     GetCommand(Option<qexed_command::message::ManagerCommand>),
     GetWorld(Option<qexed_chunk::message::world::WorldCommand>),
     GetPlayerListApi(Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>),

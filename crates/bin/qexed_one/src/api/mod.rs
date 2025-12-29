@@ -34,6 +34,8 @@ pub struct Api {
     pub chunk: UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
     /// Title指令服务
     pub title:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
+    /// 计分板服务
+    pub scoreboard:UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
 }
 impl Api {
     pub async fn init(config: One) -> anyhow::Result<Self> {
@@ -46,8 +48,10 @@ impl Api {
         let heartbeat = qexed_heartbeat::run(config.heartbeat).await?;
         let chat = qexed_chat::run(config.chat,player_list.clone()).await?;
         let title = qexed_title::run(config.title, player_list.clone()).await?;
+        let scoreboard = qexed_scoreboard::run(config.scoreboard, player_list.clone()).await?;
         let packet_split = qexed_packet_split::run(config.packet_split).await?;
         let chunk = qexed_chunk::run(config.chunk).await?;
+        
         let game_logic = qexed_game_logic::run(
             config.game_logic,
             ping.clone(),
@@ -58,6 +62,7 @@ impl Api {
             player_list.clone(),
             chunk.clone(),
             title.clone(),
+            scoreboard.clone(),
         )
         .await?;
         let tcp_connect = qexed_tcp_connect_app::run(
@@ -89,6 +94,7 @@ impl Api {
             rule: rule,
             chunk: chunk,
             title:title,
+            scoreboard:scoreboard,
         })
     }
     pub async fn _listen() -> anyhow::Result<()> {
