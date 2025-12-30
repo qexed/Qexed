@@ -3,6 +3,7 @@ use std::net::{SocketAddr};
 pub enum ManagerCommand {
     Start,
     NewConnection(tokio::net::TcpStream, SocketAddr),
+    NewConnectionFinish,
 }
 #[derive(Debug)]
 pub enum ListenCommand {
@@ -14,5 +15,5 @@ pub enum ListenCommand {
 
 #[derive(Debug)]
 pub enum LogicCommand {
-    
+    Start,
 }

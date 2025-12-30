@@ -5,7 +5,7 @@ use qexed_config::app::qexed_tcp_connect_app::TcpConnect;
 use qexed_task::{event::task_manage::TaskManageEvent, message::{MessageSender, MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage}};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{listen_task::ListenTask, messages::{ListenCommand, LogicCommand, ManagerCommand}};
+use crate::{listen_task::ListenTask, logic_task::LogicTask, messages::{ListenCommand, LogicCommand, ManagerCommand}};
 
 #[derive(Debug)]
 pub struct TcpConnectManagerActor {
@@ -41,13 +41,20 @@ impl TcpConnectManagerActor {
 
 }
 #[async_trait::async_trait]
-impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, ReturnMessage<LogicCommand>> for TcpConnectManagerActor {
+impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, UnReturnMessage<LogicCommand>> for TcpConnectManagerActor {
     async fn event(
         &mut self,
         api: &MessageSender<ReturnMessage<ManagerCommand>>,
-        task_map: &DashMap<SocketAddr, MessageSender<ReturnMessage<LogicCommand>>>,
+        task_map: &DashMap<SocketAddr, MessageSender<UnReturnMessage<LogicCommand>>>,
         mut data: ReturnMessage<ManagerCommand>,
     ) -> anyhow::Result<bool> {
+        let send = match data.get_return_send().await?{
+            Some(v) =>v,
+            None=>{
+                log::error!("非法TCP管理命令");
+                return Ok(false)
+            }
+        };
         match data.data {
             ManagerCommand::Start => {
                 let task_data = ListenTask::new(self.config.clone(), api.clone());
@@ -55,15 +62,25 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, ReturnMessage<Lo
                 task.run().await?;
                 task_send.send(UnReturnMessage::build(ListenCommand::Start))?;
                 self.listen_task = Some(task_send);
-                if let Some(send)=data.get_return_send().await?{
-                    let _ = send.send(data.data);
-                }
+                let _ = send.send(data.data);
             },
-            ManagerCommand::NewConnection(ref tcp_stream, ref socket_addr) => {
+            ManagerCommand::NewConnection(tcp_stream, socket_addr) => {
                 log::debug!("新TCP连接:{:?},Addr:{:?}",tcp_stream,socket_addr.ip());
-                if let Some(send)=data.get_return_send().await?{
-                    let _ = send.send(data.data);
-                }
+                // 创建逻辑任务,他将用于初始化阶段
+                let actor = LogicTask::new(
+                    tcp_stream,socket_addr
+                );
+                let (task, task_send) =
+                    qexed_task::task::task::Task::new(api.clone(), actor);
+                task.run().await?;
+                UnReturnMessage::build(LogicCommand::Start)
+                    .post(&task_send)
+                    .await?;
+                task_map.insert(socket_addr, task_send);
+                let _ = send.send(ManagerCommand::NewConnectionFinish);
+            },
+            ManagerCommand::NewConnectionFinish => {
+                // 此命令理论不会触发,因为这tm是给ListenTask看的
             },
         }
         Ok(false)
