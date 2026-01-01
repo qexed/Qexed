@@ -27,17 +27,15 @@ pub enum LogicCommand {
 }
 
 #[derive(Debug)]
-pub enum WriteCommand<T: Packet> {
+pub enum WriteCommand {
     Start,
-    Packet(T),
     RawPacket(Bytes),
     Close,
 }
 #[derive(Debug)]
-pub enum ReadCommand<T: Packet> {
+pub enum ReadCommand{
     Start,
-    Packet(ReturnMessage<T>),
     RawPacket(ReturnMessage<Vec<u8>>),
-    RawPacketSteam(SteamMessage<Vec<u8>>),
+    // RawPacketSteam(SteamMessage<Vec<u8>>),
     Close,
 }

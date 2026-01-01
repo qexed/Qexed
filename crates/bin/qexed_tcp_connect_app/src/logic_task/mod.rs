@@ -6,7 +6,7 @@ use qexed_task::{
     },
 };
 
-use crate::messages::{LogicCommand, ManagerCommand};
+use crate::{logic_task::{read_task::ReadTask, write_task::WriteTask}, messages::{LogicCommand, ManagerCommand, ReadCommand, WriteCommand}};
 
 pub mod hyproxy;
 pub mod read_task;
@@ -21,6 +21,8 @@ pub struct LogicTask {
     proxy_protocol: qexed_config::app::qexed_tcp_connect_app::ForwardingMode,
     proxy_token: String,
     haproxy_protocol: bool,
+    packet_read:Option<MessageSender<ReadCommand>>,
+    packet_send:Option<MessageSender<WriteCommand>>,
 }
 impl LogicTask {
     pub fn new(
@@ -42,6 +44,8 @@ impl LogicTask {
             proxy_protocol,
             proxy_token,
             haproxy_protocol,
+            packet_read: None,
+            packet_send: None,
         }
     }
 }
@@ -67,7 +71,7 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                 return Ok(false);
             }
             LogicCommand::HaProxy => {
-                let mut owned_stream: tokio::net::TcpStream = match self.stream.take() {
+                let owned_stream: tokio::net::TcpStream = match self.stream.take() {
                     Some(stream) => stream,
                     None => return Ok(true), // 直接关闭
                 };
@@ -80,7 +84,7 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
             }
             LogicCommand::ConnectionInit => {
                 // 你的连接不再属于你自己了
-                let mut stream: tokio::net::TcpStream = match self.stream.take() {
+                let stream: tokio::net::TcpStream = match self.stream.take() {
                     Some(stream) => stream,
                     None => return Ok(true), // 直接关闭
                 };
@@ -90,8 +94,20 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                     ws,
                     self.network_compression_threshold,
                 );
-                let (mut packet_read, mut packet_write) = packet_socket.split();
-                // 拆分连接任务至
+                let (packet_read, packet_write) = packet_socket.split();
+                // 拆分连接任务至子任务
+                let (task, task_send) =
+                    read_task::TaskFinish::new(api.clone(), ReadTask::new(self.addr.clone(), packet_read));
+                task.run().await?;
+                task_send.send(ReadCommand::Start)?;
+                self.packet_read = Some(task_send);
+                let (task, task_send) =
+                    write_task::TaskFinish::new(api.clone(), WriteTask::new(self.addr.clone(), packet_write));
+                task.run().await?;
+                task_send.send(WriteCommand::Start)?;
+                self.packet_send = Some(task_send);
+                // 读写任务分割完成,下一阶段:心跳包
+                api.send(LogicCommand::Handshaking)?;
             }
             LogicCommand::Handshaking => {}
             LogicCommand::ListenClose(_) => {},
