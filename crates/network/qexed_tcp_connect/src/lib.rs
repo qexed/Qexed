@@ -3,6 +3,7 @@ use bytes::{Buf, BytesMut};
 use flate2::Compression;
 use flate2::bufread::{ZlibDecoder, ZlibEncoder};
 use qexed_packet::PacketCodec;
+use std::fmt::Debug;
 use std::io::Cursor;
 use std::io::ErrorKind;
 use std::io::Read;
@@ -86,6 +87,11 @@ pub struct PacketSend {
     compression_enabled: Arc<AtomicBool>,
     encryption_enabled: Arc<AtomicBool>,
     encrypter: Option<Crypter>,
+}
+impl Debug for PacketSend{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PacketSend").field("socket_write", &self.socket_write).field("compression_threshold", &self.compression_threshold).field("compression_enabled", &self.compression_enabled).field("encryption_enabled", &self.encryption_enabled).field("encrypter", &"?").finish()
+    }
 }
 
 impl PacketSend {
@@ -282,7 +288,11 @@ pub struct PacketRead {
     decrypter: Option<Crypter>,
     encryption_buffer: BytesMut,
 }
-
+impl Debug for PacketRead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PacketRead").field("socket_read", &self.socket_read).field("buffer", &self.buffer).field("compression_enabled", &self.compression_enabled).field("encryption_enabled", &self.encryption_enabled).field("decrypter", &"?").field("encryption_buffer", &self.encryption_buffer).finish()
+    }
+}
 impl PacketRead {
     pub async fn read(&mut self) -> Result<Vec<u8>> {
         loop {

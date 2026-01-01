@@ -21,6 +21,8 @@ pub struct TcpConnect {
     pub rate_limit_window_secs: u64,
     /// 同IP连接频率限制 - 窗口内最大允许次数
     pub rate_limit_max_attempts: u32,
+    // haproxy代理协议支持
+    pub haproxy_protocol:bool, 
     /// Status数据包检测延迟
     pub status_timeout_secs:i32,
 
@@ -79,6 +81,7 @@ impl Default for TcpConnect {
             rate_limit_window_secs: 60,
             rate_limit_max_attempts: 6,
             status_timeout_secs: 5,
+            haproxy_protocol:false,
             
         }
     }

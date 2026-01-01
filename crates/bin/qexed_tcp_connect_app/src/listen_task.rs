@@ -27,7 +27,7 @@ impl ListenTask {
     }
     pub fn clear_task(
         &self,
-        api :MessageSender<UnReturnMessage<ListenCommand>>,
+        api :MessageSender<ListenCommand>,
         rate_limit_window_secs: u64,
         ip: std::net::IpAddr,
     ){
@@ -35,9 +35,7 @@ impl ListenTask {
             async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(rate_limit_window_secs)).await;
-                    let _ = api.send(UnReturnMessage::build(
-                        ListenCommand::ClearRatelimit(ip)
-                    ));
+                    let _ = api.send(ListenCommand::ClearRatelimit(ip));
                 }
 
             }
@@ -46,13 +44,13 @@ impl ListenTask {
     
 }
 #[async_trait::async_trait]
-impl TaskEasyEvent<UnReturnMessage<ListenCommand>> for ListenTask {
+impl TaskEasyEvent<ListenCommand> for ListenTask {
     async fn event(
         &mut self,
-        api: &MessageSender<UnReturnMessage<ListenCommand>>,
-        mut data: UnReturnMessage<ListenCommand>,
+        api: &MessageSender<ListenCommand>,
+        mut data: ListenCommand,
     ) -> anyhow::Result<bool> {
-        match data.data{
+        match data {
             ListenCommand::Start => {
                 let listener = tokio::net::TcpListener::bind(&self.config.ip).await?;
                 let api = api.clone();
@@ -60,13 +58,9 @@ impl TaskEasyEvent<UnReturnMessage<ListenCommand>> for ListenTask {
                     async move {
                         log::info!("[服务] TCP连接入口-数据包监听子任务 激活");
                         while let Ok((stream, addr)) = listener.accept().await {
-                            let _ = api.send(UnReturnMessage::build(
-                                ListenCommand::NewConnection(stream, addr)
-                            ));
+                            let _ = api.send(ListenCommand::NewConnection(stream, addr));
                         };
-                        let _ = api.send(UnReturnMessage::build(
-                            ListenCommand::Close
-                        ));
+                        let _ = api.send( ListenCommand::Close);
                     }
                 );
             },

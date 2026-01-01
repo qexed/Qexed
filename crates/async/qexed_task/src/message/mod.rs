@@ -3,6 +3,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub mod return_message;
 pub mod unreturn_message;
+pub mod steam_message;
 pub type MessageSender<MessageType> = UnboundedSender<MessageType>;
 pub type MessageReceiver<MessageType> = UnboundedReceiver<MessageType>;
 
