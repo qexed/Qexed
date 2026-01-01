@@ -23,3 +23,4 @@ pub mod qexed_title;
 pub mod qexed_scoreboard;
 pub mod qexed_entity;
 pub mod qexed_guard;
+pub mod qexed_wardon;

@@ -14,9 +14,11 @@ async-trait.workspace = true
 uuid.workspace = true
 bytes.workspace = true
 qexed_config.workspace = true
+qexed_command.workspace = true
 qexed_tcp_connect = { workspace = true }
 qexed_task = { workspace = true }
 qexed_protocol.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true

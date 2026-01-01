@@ -38,10 +38,16 @@ pub struct Api {
     pub scoreboard:UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
     // 实体服务
     pub entity:UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>,
+    // 守卫(反作弊)服务
+    pub guard:UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
+    // 典狱长(封禁)服务
+    pub warden:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
 }
 impl Api {
     pub async fn init(config: One) -> anyhow::Result<Self> {
         let command = qexed_command::run(config.command).await?;
+        let warden = qexed_warden::run(config.wardon).await?;
+        let guard = qexed_guard::run(config.guard, warden.clone()).await?;
         let player_list = qexed_player_list::run(config.player_list).await?;
         let black_list = qexed_blacklist::run(config.black_list).await?;
         let white_list = qexed_whitelist::run(config.white_list).await?;
@@ -99,6 +105,8 @@ impl Api {
             title:title,
             scoreboard:scoreboard,
             entity:entity,
+            warden:warden,
+            guard:guard,
         })
     }
     pub async fn _listen() -> anyhow::Result<()> {

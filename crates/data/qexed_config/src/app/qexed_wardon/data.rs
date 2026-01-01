@@ -29,7 +29,7 @@ impl Default for Mysql {
     fn default() -> Self {
         Self {
             data: Default::default(),
-            table_prefix: "guard".to_string(),
+            table_prefix: "wardon".to_string(),
         }
     }
 }
@@ -50,7 +50,7 @@ impl Default for Pika {
     fn default() -> Self {
         Self {
             data: Default::default(),
-            key_prefix: "white_list".to_string(),
+            key_prefix: "wardon".to_string(),
         }
     }
 }
@@ -68,7 +68,7 @@ impl Default for Data {
     }
 }
 impl AppConfigTrait for Data {
-    const PATH: &'static str = "./config/qexed_whilelist/";
+    const PATH: &'static str = "./config/qexed_wardon/database/";
 
     const NAME: &'static str = "config";
 }

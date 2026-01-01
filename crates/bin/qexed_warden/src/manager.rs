@@ -1,19 +1,17 @@
-use qexed_config::app::qexed_guard::GuardConfig;
+use qexed_config::app::{qexed_wardon::WardonConfig};
 use qexed_task::{event::task::TaskEasyEvent, message::{MessageSender, return_message::ReturnMessage}};
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::message::ManagerMessage;
 
 #[derive(Debug)]
 pub struct TaskManager {
-    config: GuardConfig,
-    qexed_warden_api:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
+    config: WardonConfig
 
 }
 impl TaskManager {
-    pub fn new(config: GuardConfig,qexed_warden_api:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>) -> Self {
+    pub fn new(config: WardonConfig) -> Self {
         Self {
-            config,qexed_warden_api
+            config
         }
     }
 }
