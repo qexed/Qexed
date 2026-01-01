@@ -28,14 +28,14 @@ struct EntityEntry {
 }
 
 fn main() -> Result<()> {
-    println!("cargo:rerun-if-changed=../../../assets/registries.json");
+    println!("cargo:rerun-if-changed=../../../../../assets/registries.json");
     
     // 获取项目根目录
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
     
     // 构建 JSON 文件路径
     let mut json_path = Path::new(&manifest_dir).to_path_buf();
-    for _ in 0..3 {
+    for _ in 0..5 {
         if let Some(parent) = json_path.parent() {
             json_path = parent.to_path_buf();
         }

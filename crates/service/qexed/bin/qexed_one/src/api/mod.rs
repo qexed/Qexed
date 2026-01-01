@@ -18,8 +18,6 @@ pub struct Api {
     pub ping: UnboundedSender<ReturnMessage<qexed_ping::message::ManagerCommand>>,
     /// 玩家核心逻辑服务
     pub game_logic: UnboundedSender<ReturnMessage<qexed_game_logic::message::ManagerMessage>>,
-    /// 实体id分配器服务
-    pub entity_id_allocator: UnboundedSender<ReturnMessage<qexed_entity_id_allocator::Message>>,
     /// 数据包分流服务
     pub packet_split: UnboundedSender<ReturnMessage<qexed_packet_split::message::ManagerMessage>>,
     /// 心跳服务
@@ -83,8 +81,6 @@ impl Api {
             game_logic.clone(),
         )
         .await?;
-        let entity_id_allocator =
-            qexed_entity_id_allocator::run(config.entity_id_allocator).await?;
         let rule = qexed_rule::run(config.rule).await?;
         
         Ok(Self {
@@ -95,7 +91,6 @@ impl Api {
             tcp_connect: tcp_connect,
             game_logic: game_logic,
             ping: ping,
-            entity_id_allocator: entity_id_allocator,
             packet_split: packet_split,
             heartbeat: heartbeat,
             chat: chat,

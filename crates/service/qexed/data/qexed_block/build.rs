@@ -50,15 +50,15 @@ struct BlockState {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=../../../assets/registries.json");
-    println!("cargo:rerun-if-changed=../../../assets/reports/blocks.json");
+    println!("cargo:rerun-if-changed=../../../../../assets/registries.json");
+    println!("cargo:rerun-if-changed=../../../../../assets/reports/blocks.json");
     
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
     println!("cargo:info=Manifest dir: {}", manifest_dir);
     
     // 构建项目根目录路径
     let mut project_root = Path::new(&manifest_dir).to_path_buf();
-    for _ in 0..3 {
+    for _ in 0..5 {
         project_root = project_root.parent().unwrap_or(Path::new("")).to_path_buf();
     }
     
