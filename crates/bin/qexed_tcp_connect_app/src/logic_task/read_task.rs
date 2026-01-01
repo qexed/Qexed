@@ -35,11 +35,9 @@ impl TaskEvent<ReadCommand, LogicCommand> for ReadTask {
             ReadCommand::Start => {}
             ReadCommand::RawPacket(mut pk) => {
                 if let Some(packet_send) = &mut self.packet_read {
-                    if let Some(send) = pk.get_return_send().await? {
-                        if let Err(_) = send.send(packet_send.read().await?){
-                            return Ok(true);
-                        };
-                    }
+                    if let Err(_) = pk.send(packet_send.read().await?){
+                        return Ok(true);
+                    };
                 }
             }
             // ReadCommand::RawPacketSteam(steam) => {
@@ -102,7 +100,7 @@ impl TaskFinish
         while let Some(data) = receiver.recv().await {
             // 这里我们后面修改来实现具体业务逻辑
             if let Ok(is_true)=self.other.event(&api, &manage_api, data).await {
-                if is_true{
+                if !is_true{
                     continue;
                 }
             }

@@ -35,6 +35,7 @@ pub enum ForwardingMode {
     QTunnel,
     Victory,
     BungeeCord,
+    BungeeGuard,
 }
 impl Default for ForwardingMode {
     fn default() -> Self {
@@ -49,6 +50,7 @@ impl std::fmt::Display for ForwardingMode {
             ForwardingMode::QTunnel => write!(f, "QTunnel"),
             ForwardingMode::Victory => write!(f, "Victory"),
             ForwardingMode::BungeeCord => write!(f, "BungeeCord"),
+            ForwardingMode::BungeeGuard => write!(f, "BungeeGuard")
         }
     }
 }
@@ -63,6 +65,7 @@ impl std::str::FromStr for ForwardingMode {
             "qtunnel" => Ok(ForwardingMode::QTunnel),
             "victory" => Ok(ForwardingMode::Victory),
             "bungeecord" => Ok(ForwardingMode::BungeeCord),
+            "bungeeguard" => Ok(ForwardingMode::BungeeGuard),
             _ => Err(format!("未知的转发模式: {}", s)),
         }
     }

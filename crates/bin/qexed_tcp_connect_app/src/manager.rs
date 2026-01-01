@@ -74,17 +74,36 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, LogicCommand> fo
                     self.config.proxy_protocol.clone(),
                     self.config.proxy_token.clone(),
                     self.config.haproxy_protocol.clone(),
+                    self.config.status_timeout_secs.clone(),
                 );
                 let (task, task_send) =
-                    qexed_task::task::task::Task::new(api.clone(), actor);
+                    crate::logic_task::TaskFinish::new(api.clone(), actor);
                 task.run().await?;
                 task_send.send(LogicCommand::Start)?;
                 task_map.insert(socket_addr, task_send);
                 let _ = send.send(ManagerCommand::NewConnectionFinish);
             },
+            ManagerCommand::GetStatusPackageBytes(ref mut value) => {
+                // 客户端请求查询服务器状态,这里进行转发处理
+                if let Some(respon) = ReturnMessage::build(qexed_status::Message::default())
+                    .get(&self.qexed_status_api)
+                    .await?
+                    .data
+                {
+                    *value = Some(respon)
+                }
+
+                let _ = send.send(data.data);
+            }
             ManagerCommand::NewConnectionFinish => {
                 // 此命令理论不会触发,因为这tm是给ListenTask看的
             },
+            // 关闭事件流(C->S)
+            ManagerCommand::TaskClose(socket_addr) =>{
+                task_map.remove(&socket_addr);
+                let _ = send.send(data.data);
+
+            }
         }
         Ok(false)
     }

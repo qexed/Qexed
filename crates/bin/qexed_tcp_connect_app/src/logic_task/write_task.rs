@@ -93,7 +93,7 @@ impl TaskFinish
             // 这里我们后面修改来实现具体业务逻辑
             // 这里我们后面修改来实现具体业务逻辑
             if let Ok(is_true)=self.other.event(&api, &manage_api, data).await {
-                if is_true{
+                if !is_true{
                     continue;
                 }
             }

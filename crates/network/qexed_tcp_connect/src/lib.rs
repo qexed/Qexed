@@ -533,6 +533,11 @@ pub async fn read_one_packet<T: qexed_packet::Packet>(
     packet_read: &mut PacketRead,
 ) -> anyhow::Result<T> {
     let data = packet_read.read().await?;
+    Ok(read_one_packet_byvec(data).await?)
+}
+pub async fn read_one_packet_byvec<T: qexed_packet::Packet>(
+    data: Vec<u8>
+) -> anyhow::Result<T> {
     let mut buf = BytesMut::new();
     buf.extend_from_slice(&data);
     let mut reader = qexed_packet::PacketReader::new(Box::new(&mut buf));

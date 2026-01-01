@@ -41,3 +41,4 @@ thiserror.workspace = true
 hmac = "0.12.1"
 sha2 = "0.10.9"
 haproxy-protocol = "0.0.3"
+base64.workspace = true

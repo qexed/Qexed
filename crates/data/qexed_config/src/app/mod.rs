@@ -22,3 +22,4 @@ pub mod qexed_chunk;
 pub mod qexed_title;
 pub mod qexed_scoreboard;
 pub mod qexed_entity;
+pub mod qexed_guard;

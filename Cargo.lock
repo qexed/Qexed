@@ -2320,6 +2320,7 @@ dependencies = [
  "bytes",
  "dashmap",
  "log",
+ "qexed_command",
  "qexed_config",
  "qexed_protocol",
  "qexed_task",
@@ -2756,6 +2757,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "dashmap",
