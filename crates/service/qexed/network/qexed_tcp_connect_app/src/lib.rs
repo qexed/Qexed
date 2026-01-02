@@ -1,4 +1,4 @@
-use qexed_task::message::{MessageType, return_message::ReturnMessage};
+use qexed_task::message::{MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{manager::TcpConnectManagerActor, messages::ManagerCommand};
@@ -16,7 +16,7 @@ pub async fn run(
     qexed_game_logic:UnboundedSender<ReturnMessage<qexed_game_logic::message::ManagerMessage>>,
     qexed_guard_api: UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
     qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-    qexed_database_api: UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
+    qexed_database_api: UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
 ) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerCommand>>> {
     let manager_actor = TcpConnectManagerActor::new(
         config,

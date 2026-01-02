@@ -1,7 +1,7 @@
 use qexed_config::app::qexed_guard::GuardConfig;
 use qexed_task::{
     event::task::TaskEasyEvent,
-    message::{MessageSender, MessageType, return_message::ReturnMessage},
+    message::{MessageSender, MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage},
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -11,7 +11,7 @@ use crate::{message::ManagerMessage, task::tcp_connect_start};
 pub struct TaskManager {
     config: GuardConfig,
     qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-    qexed_database_api: UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
+    qexed_database_api: UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
 
     // 子任务表
     sub_task_tcp_connect_start:Option<MessageSender<crate::message::TcpConnectStartMessage>>,
@@ -20,7 +20,7 @@ impl TaskManager {
     pub fn new(
         config: GuardConfig,
         qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-        qexed_database_api:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>
+        qexed_database_api:UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>
     ) -> Self {
         Self {
             config,

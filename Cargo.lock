@@ -2739,10 +2739,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bb8",
+ "bb8-redis",
  "bytes",
  "dashmap",
  "log",
  "qexed_config",
+ "qexed_database",
  "qexed_protocol",
  "qexed_task",
  "qexed_tcp_connect",

@@ -27,7 +27,7 @@ pub struct TcpConnectManagerActor {
     qexed_game_logic_api: UnboundedSender<ReturnMessage<qexed_game_logic::message::ManagerMessage>>,
     qexed_guard_api: UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
     qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-    qexed_database_api: UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
+    qexed_database_api: UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
     listen_task: Option<UnboundedSender<ListenCommand>>,
 }
 impl TcpConnectManagerActor {
@@ -42,7 +42,7 @@ impl TcpConnectManagerActor {
         >,
         qexed_guard_api: UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
         qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-        qexed_database_api: UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
+        qexed_database_api: UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
     ) -> Self {
         Self {
             config,
@@ -92,9 +92,17 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, LogicCommand>
                     return Err(anyhow::anyhow!("反作弊服务初始化失败"));
 
                 }
-                
-                
-
+            }
+            ManagerCommand::CheckIsInBlockList(player_uuid,_) => {
+                let result = ReturnMessage::build(qexed_blacklist::Message::CheckPlayerBan(player_uuid,None)).post(&self.qexed_black_list_api).await?;
+                tokio::spawn(async move {
+                    if let qexed_blacklist::Message::CheckPlayerBan(player_uuid,ban) = ReturnMessage::get_return_data(result).await?{
+                        let _ = send.send(ManagerCommand::CheckIsInBlockList(player_uuid,ban));
+                    } else {
+                        let _ = send.send(ManagerCommand::CheckIsInBlockList(player_uuid,Some("黑名单功能检查失败,以防万一,暂时无法进入".to_string())));
+                    }
+                    return anyhow::Ok(())
+                });
             }
             ManagerCommand::NewConnection(tcp_stream, socket_addr) => {
                 // 创建逻辑任务,他将用于初始化阶段

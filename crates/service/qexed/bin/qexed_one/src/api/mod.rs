@@ -41,7 +41,7 @@ pub struct Api {
     // 典狱长(封禁)服务
     pub warden:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
     // 数据库服务(特殊)
-    pub database:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
+    pub database:UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
 }
 impl Api {
     pub async fn init(config: One) -> anyhow::Result<Self> {
@@ -50,7 +50,7 @@ impl Api {
         let warden = qexed_warden::run(config.wardon,database.clone()).await?;
         let guard = qexed_guard::run(config.guard, warden.clone(),database.clone()).await?;
         let player_list = qexed_player_list::run(config.player_list).await?;
-        let black_list = qexed_blacklist::run(config.black_list).await?;
+        let black_list = qexed_blacklist::run(config.black_list,database.clone()).await?;
         let white_list = qexed_whitelist::run(config.white_list).await?;
         let server_status = qexed_status::run(config.server_status, player_list.clone()).await?;
         let ping = qexed_ping::run(config.ping).await?;

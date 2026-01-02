@@ -2,8 +2,9 @@ use tokio::sync::oneshot;
 #[derive(Debug)]
 pub enum ManageCommand {
     Command(qexed_command::message::CommandData),
-    GetPikaConnect(qexed_config::public::pika::PikaConfig,oneshot::Sender<bb8::Pool<bb8_redis::RedisConnectionManager>>),
+    GetPikaConnect(qexed_config::public::pika::PikaConfig,oneshot::Sender<anyhow::Result<bb8::Pool<bb8_redis::RedisConnectionManager>>>),
 }
+
 // pub async fn redis_pool() {
 //     // 1. 创建连接管理器
 //     let manager = bb8_redis::RedisConnectionManager::new("redis://127.0.0.1/")

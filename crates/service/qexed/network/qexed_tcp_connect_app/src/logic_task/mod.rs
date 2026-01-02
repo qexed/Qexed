@@ -107,15 +107,21 @@ impl LogicTask {
         packet_send: &tokio::sync::mpsc::UnboundedSender<WriteCommand>,
         text: String,
     ) -> anyhow::Result<()> {
-        let server_info =
-            qexed_protocol::to_client::login::disconnect::Disconnect {
-                reason: serde_json::json!({
-                    "text": text,
-                    "color": "red",
-                    "bold": true
-                }),
-            };
-        self.send_packet(packet_send, server_info).await?;
+        match self.part {
+            1=>{
+                let server_info =
+                    qexed_protocol::to_client::login::disconnect::Disconnect {
+                        reason: serde_json::json!({
+                            "text": text,
+                            "color": "red",
+                            "bold": true
+                        }),
+                    };
+                self.send_packet(packet_send, server_info).await?;
+            }
+            _=>{}
+        }
+
         Ok(())
     }
 }
@@ -193,12 +199,13 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                 };
                 let set_protocol: qexed_protocol::to_server::handshaking::set_protocol::SetProtocol = self.read_the_packet::<qexed_protocol::to_server::handshaking::set_protocol::SetProtocol>(packet_read).await?;
                 self.server_host = set_protocol.server_host.clone();
-                self.part = 1;
+                
                 match set_protocol.next_state.0 {
                     1 => {
                         api.send(LogicCommand::Status(set_protocol))?;
                     }
                     2 => {
+                        self.part = 1;
                         if self.proxy{
                             if self.proxy_protocol == qexed_config::app::qexed_tcp_connect_app::ForwardingMode::BungeeCord || 
                                self.proxy_protocol == qexed_config::app::qexed_tcp_connect_app::ForwardingMode::BungeeGuard
@@ -210,6 +217,7 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                         api.send(LogicCommand::Login(set_protocol))?;
                     }
                     _ => {
+                        self.part = 1;
                         self.disconnect(packet_send,format!("您的游戏版本与服务器版本不兼容\n目前服务器版本:{}",qexed_config::MC_VERSION)).await?;
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         return Ok(true);
@@ -276,7 +284,7 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                 let text = set_protocol.server_host.split("\0");
                 // log::info!("set_protocol:{:?}",set_protocol);
                 self.server_host = set_protocol.server_host.clone();
-                // log::info!("text:{:?}",text);
+                
                 let mut l = 0;
                 for i in text{
                     l+=1;
@@ -291,7 +299,7 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                             self.player_uuid = i.parse().context("玩家uuid解析失败")?;
                         }
                         4=>{
-                            self.handle_bungeecord_properties(i).await.context("BC代理心跳包数组解析失败")?;
+                            self.handle_bungeecord_properties(i).await?;
                         }
                         _=>{
                             return Err(anyhow::anyhow!("非法BC字段"))
@@ -300,7 +308,58 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                 }
                 api.send(LogicCommand::Login(set_protocol))?;
             }
-            LogicCommand::Login(set_protocol) => {}
+            LogicCommand::Login(set_protocol) => {
+                let packet_read = match &self.packet_read {
+                    Some(v) => v,
+                    None => return Ok(true),
+                };
+                let packet_send = match &self.packet_send {
+                    Some(v) => v,
+                    None => return Ok(true),
+                };
+                let timeout_duration =
+                    std::time::Duration::from_secs(self.status_timeout_secs.max(0) as u64);
+                loop {
+                    let data = if timeout_duration.as_secs() > 0 {
+                        anyhow::Context::context(
+                            tokio::time::timeout(
+                                timeout_duration,
+                                self.read_one_packet(packet_read),
+                            )
+                            .await,
+                            "读取数据包超时",
+                        )?
+                    } else {
+                        self.read_one_packet(packet_read).await
+                    }?;
+                    let mut buf: bytes::BytesMut = bytes::BytesMut::new();
+                    buf.extend_from_slice(&data);
+                    let mut reader = qexed_packet::PacketReader::new(Box::new(&mut buf));
+                    let mut id: qexed_packet::net_types::VarInt = Default::default();
+                    id.deserialize(&mut reader)?;
+                    
+                    match id.0 {
+                        0x00 => {
+                            let pk = qexed_tcp_connect::decode_packet::<qexed_protocol::to_server::login::login_start::LoginStart>(&mut reader)?;
+                            if self.proxy==false{
+                                self.player_uuid = pk.player_uuid;
+                            }
+                            // 检测是否在黑名单
+                            if let ManagerCommand::CheckIsInBlockList(_,ban) = ReturnMessage::build(ManagerCommand::CheckIsInBlockList(self.player_uuid.clone(), None)).get(&manage_api).await?{
+                                if let Some(ban) = ban{
+                                    return Err(anyhow::anyhow!(ban));
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!("黑名单检查失败,请联系管理员"));
+                            }
+                        }
+
+                        _ => {
+
+                        }
+                    }
+                }
+            }
             LogicCommand::ListenClose(is_read) => {
                 if !self.is_run_close {
                     if is_read {
@@ -320,17 +379,22 @@ impl TaskEvent<LogicCommand, ReturnMessage<ManagerCommand>> for LogicTask {
                     return Ok(true);
                 }
             }
-            LogicCommand::Close => {
+            LogicCommand::Close(close_why,s) => {
+                
+                if let Some(sub_task_api) = &self.packet_send {
+
+                    let _ = self.disconnect(sub_task_api, close_why).await;
+
+                    let _ = sub_task_api.send(WriteCommand::Close);
+                }
                 // 执行关闭命令
                 if let Some(sub_task_api) = &self.packet_read {
                     let _ = sub_task_api.send(ReadCommand::Close);
                 }
-                if let Some(sub_task_api) = &self.packet_send {
-                    let _ = sub_task_api.send(WriteCommand::Close);
-                }
                 let _ = ReturnMessage::build(ManagerCommand::TaskClose(self.addr))
                     .get(&manage_api)
                     .await;
+                let _ = s.send(());
                 return Ok(true);
             }
         }
@@ -374,16 +438,20 @@ impl TaskFinish {
         let manage_api = self.manage_api;
         while let Some(data) = receiver.recv().await {
             // 这里我们后面修改来实现具体业务逻辑
-            if let Ok(is_true) = self.other.event(&api, &manage_api, data).await {
-                if !is_true {
-                    continue;
-                }
-            }
+            let close_why = match self.other.event(&api, &manage_api, data).await {
+                Ok(false)=>continue,
+                Ok(true)=>"".to_string(),
+                Err(err)=>err.to_string(),
+
+            };
+            let (w,r) = oneshot::channel();
             let _ = self
                 .other
-                .event(&api, &manage_api, LogicCommand::Close)
+                .event(&api, &manage_api, LogicCommand::Close(close_why,w))
                 .await;
+            let _ = r.await;
             receiver.close();
+            break;
         }
         Ok(())
     }

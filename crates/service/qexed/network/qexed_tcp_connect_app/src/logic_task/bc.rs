@@ -133,19 +133,29 @@ impl super::LogicTask {
             if let Some(cape) = &textures.textures.cape {
                 log::debug!("Cape URL: {}", cape.url);
             }
+        } else if self.online_mode{
+            return Err(anyhow::anyhow!("Minecraft 正版验证失败"));
         }
         
         // 处理BungeeGuard令牌
         if let Some(token) = &processed_data.bungeeguard_token {
+            if self.proxy_protocol == ForwardingMode::BungeeCord{
+                return Err(anyhow::anyhow!("代理模式配置错误"));
+            }
+            if self.proxy_token==""{
+                return Err(anyhow::anyhow!("BungeeGuard Token 未配置"));
+            }
             if *token != self.proxy_token{
                 return Err(anyhow::anyhow!("BungeeGuard Token 验证失败"));
             }
+            
             // 这里可以添加令牌验证逻辑
         } else {
             if self.proxy && self.proxy_protocol == ForwardingMode::BungeeGuard{
                 // 这里我们塞一下反作弊模块来封禁IP
                 return Err(anyhow::anyhow!("BungeeGuard 验证失败"));
             }
+
         }
         
         // // 处理其他属性

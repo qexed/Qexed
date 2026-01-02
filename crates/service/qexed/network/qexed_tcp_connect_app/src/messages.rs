@@ -1,6 +1,7 @@
 use std::net::{SocketAddr};
 
 use bytes::Bytes;
+use qexed_task::message::return_message::ReturnMessage;
 use tokio::sync::oneshot;
 #[derive(Debug)]
 pub enum ManagerCommand {
@@ -8,6 +9,7 @@ pub enum ManagerCommand {
     NewConnection(tokio::net::TcpStream, SocketAddr),
     NewConnectionFinish,
     GetStatusPackageBytes(Option<Bytes>),
+    CheckIsInBlockList(uuid::Uuid,Option<String>),
     TaskClose(SocketAddr),
 }
 #[derive(Debug)]
@@ -28,7 +30,7 @@ pub enum LogicCommand {
     BungeeCordProxyHandshaking(qexed_protocol::to_server::handshaking::set_protocol::SetProtocol),
     Login(qexed_protocol::to_server::handshaking::set_protocol::SetProtocol),
     ListenClose(bool),// True:读关闭,False:写关闭
-    Close,// 全局关闭
+    Close(String,oneshot::Sender<()>),// 全局关闭
 }
 
 #[derive(Debug)]

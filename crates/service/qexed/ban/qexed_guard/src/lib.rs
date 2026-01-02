@@ -1,13 +1,8 @@
-use async_trait::async_trait;
-use dashmap::DashMap;
-use qexed_command::message::CommandData;
-use qexed_config::app::qexed_player_list::PlayerList;
+
 use qexed_task::{
-    event::task::TaskEasyEvent,
-    message::{MessageSender, MessageType, return_message::ReturnMessage},
+    message::{return_message::ReturnMessage, unreturn_message::UnReturnMessage},
 };
 use tokio::sync::mpsc::UnboundedSender;
-use uuid::Uuid;
 
 use crate::message::ManagerMessage;
 pub mod manager;
@@ -17,7 +12,7 @@ pub mod task;
 pub async fn run(
     config: qexed_config::app::qexed_guard::GuardConfig,
     qexed_warden_api:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-    qexed_database_api:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>
+    qexed_database_api:UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>
     
 ) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerMessage>>> {
     let task_data = manager::TaskManager::new(config,qexed_warden_api,qexed_database_api);

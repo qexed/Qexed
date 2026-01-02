@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use dashmap::DashMap;
-use qexed_task::{event::task::TaskEvent, message::{MessageSender, return_message::ReturnMessage}};
+use qexed_task::{event::task::TaskEvent, message::{MessageSender, return_message::ReturnMessage, unreturn_message::UnReturnMessage}};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::message::{ManagerMessage, TcpConnectStartMessage};
@@ -10,7 +10,7 @@ use crate::message::{ManagerMessage, TcpConnectStartMessage};
 pub struct TcpConnectStartSubActor {
     config: qexed_config::app::qexed_guard::qexed_tcp_connect_app_start::TcpConnectStart,
     qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-    qexed_database_api: UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
+    qexed_database_api: UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
 
     ban_ip:DashMap<IpAddr,i64>,
 }
@@ -18,7 +18,7 @@ impl TcpConnectStartSubActor {
     pub fn new(
         config: qexed_config::app::qexed_guard::qexed_tcp_connect_app_start::TcpConnectStart,
         qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
-        qexed_database_api:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>
+        qexed_database_api:UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>
     ) -> Self {
         Self {
             config,

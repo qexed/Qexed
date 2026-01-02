@@ -276,23 +276,23 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, ReturnMessage<Ta
                         return Ok(self.is_shutdown);
                     }
                 }
-                // 验证层 4: 黑名单检查
-                let qexed_blacklist::Message::CheckPlayerBan(_uuid, ban_text) =
-                    ReturnMessage::build(qexed_blacklist::Message::CheckPlayerBan(uuid, None))
-                        .get(&self.qexed_black_list_api)
-                        .await?;
-                {
-                    // log::debug!("正在检测UUID:{}",_uuid);
-                    // log::debug!("封禁文本:{:?}",ban_text);
-                    if let Some(ban_text) = ban_text {
-                        *reject_reason = Some(ban_text);
-                        // 发送响应
-                        if let Some(send) = data.get_return_send().await? {
-                            let _ = send.send(data.data);
-                        };
-                        return Ok(self.is_shutdown);
-                    }
-                }
+                // // 验证层 4: 黑名单检查
+                // let qexed_blacklist::Message::CheckPlayerBan(_uuid, ban_text) =
+                //     ReturnMessage::build(qexed_blacklist::Message::CheckPlayerBan(uuid, None))
+                //         .get(&self.qexed_black_list_api)
+                //         .await?;
+                // {
+                //     // log::debug!("正在检测UUID:{}",_uuid);
+                //     // log::debug!("封禁文本:{:?}",ban_text);
+                //     if let Some(ban_text) = ban_text {
+                //         *reject_reason = Some(ban_text);
+                //         // 发送响应
+                //         if let Some(send) = data.get_return_send().await? {
+                //             let _ = send.send(data.data);
+                //         };
+                //         return Ok(self.is_shutdown);
+                //     }
+                // }
                 // 验证层 5: 白名单检查
                 // 请注意:Qexed 的白名单无法让你绕过反作弊,他仅仅只能限制进服
                 let qexed_whitelist::Message::CheckPlayerCanJoinServer(_uuid, ban_text) =
