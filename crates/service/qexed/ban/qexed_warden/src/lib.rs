@@ -13,7 +13,9 @@ use crate::message::ManagerMessage;
 pub mod manager;
 pub mod command;
 pub mod message;
-pub async fn run(config: qexed_config::app::qexed_wardon::WardonConfig ) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerMessage>>> {
+pub async fn run(config: qexed_config::app::qexed_wardon::WardonConfig,
+    qexed_database_api:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>
+) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerMessage>>> {
     let task_data = manager::TaskManager::new(config);
     let (task, task_send) = qexed_task::task::task::TaskEasy::new(task_data);
     task.run().await?;

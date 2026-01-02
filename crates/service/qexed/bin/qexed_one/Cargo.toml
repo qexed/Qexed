@@ -34,6 +34,7 @@ qexed_scoreboard.workspace = true
 qexed_entity.workspace = true
 qexed_guard.workspace = true
 qexed_warden.workspace = true
+qexed_database.workspace = true
 # 内部库依赖
 qexed_tcp_connect = { workspace = true }
 qexed_task = {workspace = true}

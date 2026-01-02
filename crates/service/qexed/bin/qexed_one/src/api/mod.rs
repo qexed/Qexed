@@ -40,12 +40,15 @@ pub struct Api {
     pub guard:UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
     // 典狱长(封禁)服务
     pub warden:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
+    // 数据库服务(特殊)
+    pub database:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
 }
 impl Api {
     pub async fn init(config: One) -> anyhow::Result<Self> {
+        let database = qexed_database::run().await?;
         let command = qexed_command::run(config.command).await?;
-        let warden = qexed_warden::run(config.wardon).await?;
-        let guard = qexed_guard::run(config.guard, warden.clone()).await?;
+        let warden = qexed_warden::run(config.wardon,database.clone()).await?;
+        let guard = qexed_guard::run(config.guard, warden.clone(),database.clone()).await?;
         let player_list = qexed_player_list::run(config.player_list).await?;
         let black_list = qexed_blacklist::run(config.black_list).await?;
         let white_list = qexed_whitelist::run(config.white_list).await?;
@@ -79,6 +82,9 @@ impl Api {
             black_list.clone(),
             white_list.clone(),
             game_logic.clone(),
+            guard.clone(),
+            warden.clone(),
+            database.clone(),
         )
         .await?;
         let rule = qexed_rule::run(config.rule).await?;
@@ -102,6 +108,7 @@ impl Api {
             entity:entity,
             warden:warden,
             guard:guard,
+            database:database,
         })
     }
     pub async fn _listen() -> anyhow::Result<()> {

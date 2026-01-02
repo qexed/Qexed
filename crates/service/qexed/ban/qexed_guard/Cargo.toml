@@ -19,7 +19,9 @@ qexed_task = { workspace = true }
 qexed_protocol.workspace = true
 qexed_command.workspace = true
 qexed_warden.workspace = true
+qexed_database.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
 tklog.workspace = true
+chrono.workspace = true

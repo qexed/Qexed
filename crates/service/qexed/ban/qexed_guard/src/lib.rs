@@ -13,11 +13,14 @@ use crate::message::ManagerMessage;
 pub mod manager;
 pub mod command;
 pub mod message;
+pub mod task;
 pub async fn run(
     config: qexed_config::app::qexed_guard::GuardConfig,
     qexed_warden_api:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
+    qexed_database_api:UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>
+    
 ) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerMessage>>> {
-    let task_data = manager::TaskManager::new(config,qexed_warden_api);
+    let task_data = manager::TaskManager::new(config,qexed_warden_api,qexed_database_api);
     let (task, task_send) = qexed_task::task::task::TaskEasy::new(task_data);
     task.run().await?;
     log::info!("[服务] 守卫 已启用");

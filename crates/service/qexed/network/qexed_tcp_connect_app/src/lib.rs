@@ -6,6 +6,7 @@ pub mod manager;
 pub mod messages;
 pub mod logic_task;
 pub mod listen_task;
+pub mod tool;
 pub async fn run(
     config: qexed_config::app::qexed_tcp_connect_app::TcpConnect,
     qexed_status_api: UnboundedSender<ReturnMessage<qexed_status::Message>>,
@@ -13,6 +14,9 @@ pub async fn run(
     qexed_black_list_api: UnboundedSender<ReturnMessage<qexed_blacklist::Message>>,
     qexed_white_list_api: UnboundedSender<ReturnMessage<qexed_whitelist::Message>>,
     qexed_game_logic:UnboundedSender<ReturnMessage<qexed_game_logic::message::ManagerMessage>>,
+    qexed_guard_api: UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
+    qexed_warden_api: UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
+    qexed_database_api: UnboundedSender<ReturnMessage<qexed_database::message::ManageCommand>>,
 ) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerCommand>>> {
     let manager_actor = TcpConnectManagerActor::new(
         config,
@@ -21,6 +25,9 @@ pub async fn run(
         qexed_black_list_api,
         qexed_white_list_api,
         qexed_game_logic,
+        qexed_guard_api,
+        qexed_warden_api,
+        qexed_database_api,
     )
     .await;
     let (manager_task, manager_sender) =

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use std::hash::{Hash, Hasher};
 
 /// Pika (Redis协议兼容) 配置
 /// 支持单节点、哨兵和集群模式（通过`mode`字段指定）
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct PikaConfig {
     // 连接模式
     #[serde(default)]
@@ -18,10 +19,10 @@ pub struct PikaConfig {
     
     // 认证
     #[serde(default)]
-    pub password: Option<String>, // 序列化时通常不跳过，因为Redis配置常以明文存储
+    pub password: Option<String>,
     
     #[serde(default)]
-    pub database: i64, // Redis/Pika 的数据库索引，默认为 0
+    pub database: i64,
     
     // 连接池与超时设置
     #[serde(default = "default_pool_size")]
@@ -50,17 +51,17 @@ pub struct PikaConfig {
 }
 
 /// 连接模式
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash, Default)]
 pub enum ConnectionMode {
     #[default]
-    Standalone, // 单节点
-    Sentinel,   // 哨兵模式
-    Cluster,    // 集群模式
+    Standalone,
+    Sentinel,
+    Cluster,
 }
 
 // 默认值函数
 fn default_redis_host() -> String { "127.0.0.1".to_string() }
-fn default_redis_port() -> u16 { 9221 } // Pika 默认端口，Redis 通常是 6379
+fn default_redis_port() -> u16 { 9221 }
 fn default_pool_size() -> u32 { 10 }
 fn default_pool_idle_size() -> u32 { 2 }
 fn default_timeout_secs() -> Duration { Duration::from_secs(5) }
@@ -99,29 +100,24 @@ impl PikaConfig {
                 )
             }
             ConnectionMode::Sentinel => {
-                // 哨兵模式连接字符串格式
                 let mut params = format!("redis+sentinel://");
                 if let Some(pass) = &self.password {
                     params.push_str(&format!(":{}@", pass));
                 }
-                // 哨兵节点
                 if !self.nodes.is_empty() {
                     params.push_str(&self.nodes.join(","));
                 } else {
-                    params.push_str(&format!("{}:{}", self.host, 26379)); // 哨兵默认端口
+                    params.push_str(&format!("{}:{}", self.host, 26379));
                 }
-                // 主节点名称
                 if let Some(name) = &self.master_name {
                     params.push_str(&format!("/{}", name));
                 }
-                // 数据库索引
                 if self.database != 0 {
                     params.push_str(&format!("?db={}", self.database));
                 }
                 params
             }
             ConnectionMode::Cluster => {
-                // 集群模式：节点列表是必须的
                 if self.nodes.is_empty() {
                     format!("redis://{}:{}", self.host, self.port)
                 } else {
@@ -137,17 +133,14 @@ impl PikaConfig {
     }
     
     pub fn validate(&self) -> Result<(), String> {
-        // 验证端口范围
-        if self.port == 0{
+        if self.port == 0 {
             return Err("Pika 配置错误：端口号无效".to_string());
         }
         
-        // 验证连接池设置
         if self.pool_max_size < self.pool_min_idle {
             return Err("Pika 配置错误：连接池最大大小不能小于最小空闲连接数".to_string());
         }
         
-        // 模式特定验证
         match self.mode {
             ConnectionMode::Sentinel => {
                 if self.master_name.is_none() {

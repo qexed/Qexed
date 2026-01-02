@@ -182,5 +182,5 @@ sha1 = "0.10.6"
 tinytemplate = "1.2.1"
 kanal = "0.1.1"
 base64 = "0.22.1"
-redis = "1.0.2"
+redis = {version = "1.0.2",features = ["tokio-comp", "r2d2", "tls-rustls"]}
 mysql_async = "0.36.1"
