@@ -38,6 +38,7 @@ members = [
     "crates/service/qexed/qexed_player",
     "crates/service/qexed/qexed_player_move",
     "crates/service/qexed/qexed_time",
+    "crates/service/qexed/qexed_player_info",
     
 
     
@@ -56,6 +57,7 @@ members = [
     "crates/macros/qexed_config_macros",
     "crates/tool/qexed_random",
     "crates/tool/qexed_nbt",
+    "crates/message/qexed_chunk_message",
     
     "crates/async/qexed_task",
     "crates/async/qexed_shared",
@@ -100,7 +102,8 @@ qexed_item.path = "crates/service/qexed/data/qexed_item"
 qexed_entity.path  = "crates/service/qexed/data/qexed_entity"
 qexed_scoreboard.path  = "crates/service/qexed/player_interaction/qexed_scoreboard"
 qexed_database.path = "crates/service/qexed/qexed_database"
-
+qexed_player_info.path = "crates/service/qexed/qexed_player_info"
+qexed_chunk_message.path = "crates/message/qexed_chunk_message"
 qtunnel_one.path = "crates/service/qtunnel/qtunnel_one"
 qtunnel_tcp_connect_app.path = "crates/service/qtunnel/qtunnel_tcp_connect_app"
 qtunnel_server_logic.path = "crates/service/qtunnel/qtunnel_server_logic"

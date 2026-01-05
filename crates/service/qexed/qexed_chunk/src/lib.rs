@@ -1,7 +1,7 @@
 use qexed_task::message::{MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage};
 use tokio::sync::mpsc::UnboundedSender;
-
-pub mod message;
+pub use qexed_chunk_message as message;
+// pub mod message;
 pub mod engine;
 pub mod data_type;
 pub mod command;
@@ -9,10 +9,11 @@ pub mod command;
 
 pub async fn run(
     config: qexed_config::app::qexed_chunk::ChunkConfig,
+    qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
 ) -> anyhow::Result<UnboundedSender<UnReturnMessage<message::world::WorldCommand>>> {
     let app = match config.engine {
         // qexed_config::app::qexed_chunk::engine::Engine::Original => {},
-        qexed_config::app::qexed_chunk::engine::Engine::MiniLobby => engine::mini_lobby::run(config.engine_setting.minilobby).await?,
+        qexed_config::app::qexed_chunk::engine::Engine::MiniLobby => engine::mini_lobby::run(config.engine_setting.minilobby,qexed_entity_api).await?,
         // qexed_config::app::qexed_chunk::engine::Engine::OpenLobby => {},
         // qexed_config::app::qexed_chunk::engine::Engine::VoidOnlyRead => {},
         // qexed_config::app::qexed_chunk::engine::Engine::BedWar => {},

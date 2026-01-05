@@ -71,7 +71,7 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
                     }
                     StorageEngine::Pika => {
                         if let Some(db) = &self.pika_db {
-                            let redis_key = format!("{}:blacklist", self.config.pika.key_prefix);
+                            let redis_key = format!("{}:{}", self.config.pika.key_prefix,&uuid);
 
                             // 修正1: 使用 .get() 方法从连接池获取连接
                             match db.get().await {
@@ -87,13 +87,11 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
                                     match is_banned {
                                         Ok(true) => {
                                             *bytes = Some(format!("{}", self.config.kick_message));
-                                            log::debug!("玩家 {} 在黑名单中，已被踢出", uuid);
                                         }
                                         Ok(false) => {
-                                            log::debug!("玩家 {} 不在黑名单中，允许连接", uuid);
+                                            // log::debug!("玩家 {} 不在黑名单中，允许连接", uuid);
                                         }
                                         Err(e) => {
-                                            log::error!("查询黑名单失败 (UUID: {}): {}", uuid, e);
                                             *bytes = Some(
                                                 "黑名单系统暂时不可用，请稍后重试".to_string(),
                                             );

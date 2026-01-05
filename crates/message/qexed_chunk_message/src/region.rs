@@ -2,7 +2,7 @@ use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use uuid::Uuid;
 
-use crate::message::chunk::ChunkCommand;
+use crate::chunk::ChunkCommand;
 #[derive(Debug)]
 pub enum RegionCommand {
     Init,
@@ -15,21 +15,21 @@ pub enum RegionCommand {
     // 获取ChunkApi(非创建)
     GetChunkApi {
         pos: [i64; 2],
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     GetOtherWorldChunkApi {
         pos: [i64; 2],
         world: Uuid,
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     GetRegionApi{
         pos: [i64; 2],
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     GetOtherWorldRegionApi {
         pos: [i64; 2],
         world: Uuid,
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     // 跨区块命令
     SendChunkCommand {
@@ -55,21 +55,21 @@ pub enum RegionCommand {
     // 创建区块并返回Api（如已创建直接返回API)
     CreateChunk{
         pos: [i64; 2],
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     CreateOtherWorldChunk {
         pos: [i64; 2],
         world: Uuid,
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     CreateRegion{
         pos: [i64; 2],
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     CreateOtherWorldRegion {
         pos: [i64; 2],
         world: Uuid,
-        result: oneshot::Sender<crate::message::region::RegionCommandResult>,
+        result: oneshot::Sender<crate::region::RegionCommandResult>,
     },
     // 区块关闭事件通知
     ChunkClose{

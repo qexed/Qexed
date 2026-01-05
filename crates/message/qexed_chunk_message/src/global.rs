@@ -3,7 +3,7 @@ use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::message::{chunk::ChunkCommand, region::RegionCommandResult, world::WorldCommand};
+use crate::{chunk::ChunkCommand, region::RegionCommandResult, world::WorldCommand};
 
 #[derive(Debug)]
 pub enum GlobalCommand {

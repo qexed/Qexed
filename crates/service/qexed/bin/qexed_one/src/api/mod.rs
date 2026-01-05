@@ -35,13 +35,15 @@ pub struct Api {
     /// 计分板服务
     pub scoreboard:UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
     // 实体服务
-    pub entity:UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>,
+    pub entity:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
     // 守卫(反作弊)服务
     pub guard:UnboundedSender<ReturnMessage<qexed_guard::message::ManagerMessage>>,
     // 典狱长(封禁)服务
     pub warden:UnboundedSender<ReturnMessage<qexed_warden::message::ManagerMessage>>,
     // 数据库服务(特殊)
     pub database:UnboundedSender<UnReturnMessage<qexed_database::message::ManageCommand>>,
+    // 玩家信息
+    pub player_info:UnboundedSender<qexed_player_info::Message>,
 }
 impl Api {
     pub async fn init(config: One) -> anyhow::Result<Self> {
@@ -51,7 +53,7 @@ impl Api {
         let guard = qexed_guard::run(config.guard, warden.clone(),database.clone()).await?;
         let player_list = qexed_player_list::run(config.player_list).await?;
         let black_list = qexed_blacklist::run(config.black_list,database.clone()).await?;
-        let white_list = qexed_whitelist::run(config.white_list).await?;
+        let white_list = qexed_whitelist::run(config.white_list,database.clone()).await?;
         let server_status = qexed_status::run(config.server_status, player_list.clone()).await?;
         let ping = qexed_ping::run(config.ping).await?;
         let heartbeat = qexed_heartbeat::run(config.heartbeat).await?;
@@ -59,8 +61,9 @@ impl Api {
         let title = qexed_title::run(config.title, player_list.clone()).await?;
         let scoreboard = qexed_scoreboard::run(config.scoreboard, player_list.clone()).await?;
         let packet_split = qexed_packet_split::run(config.packet_split).await?;
-        let chunk = qexed_chunk::run(config.chunk).await?;
-        let entity = qexed_entity::run(config.entity,chunk.clone()).await?;
+        let entity = qexed_entity::run(config.entity).await?;
+        let chunk = qexed_chunk::run(config.chunk,entity.clone()).await?;
+        let player_info = qexed_player_info::run().await?;
         let game_logic = qexed_game_logic::run(
             config.game_logic,
             ping.clone(),
@@ -73,6 +76,7 @@ impl Api {
             title.clone(),
             scoreboard.clone(),
             entity.clone(),
+            player_info.clone(),
         )
         .await?;
         let tcp_connect = qexed_tcp_connect_app::run(
@@ -109,6 +113,7 @@ impl Api {
             warden:warden,
             guard:guard,
             database:database,
+            player_info:player_info,
         })
     }
     pub async fn _listen() -> anyhow::Result<()> {

@@ -27,7 +27,8 @@ pub enum ManagerMessage {
     GetCommand(Option<qexed_command::message::ManagerCommand>),
     GetWorld(Option<qexed_chunk::message::world::WorldCommand>),
     GetPlayerListApi(Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>),
-    
+    GetPlayerEntity(Option<Player>,Option<UnboundedSender<qexed_entity::message::TaskCommand>>),
+    GetPlayerInfo(Option<qexed_player_info::Message>),
     PlayerClose(uuid::Uuid),  // 游戏连接关闭
     ConnectClose(uuid::Uuid), // 连接关闭
 }

@@ -31,25 +31,7 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<WorldCommand>, UnReturnMessage<Re
             }
             WorldCommand::PlayerJoin { pos, packet_send, uuid }=>{
                 let pos = self.config.join_pos;// 无视任务端传递的存档的坐标
-                packet_send.send(PacketSend::build_send_packet(qexed_protocol::to_client::play::position::Position{
-                    teleport_id:qexed_packet::net_types::VarInt(0),
-                    x:pos[0] as f64,
-                    y:pos[1] as f64,
-                    z:pos[2] as f64,
-                    dx:0.0,
-                    dy:0.0,
-                    dz:0.0,
-                    yaw:self.config.join_yaw.clone(),
-                    pitch:self.config.join_pitch.clone(),
-                    flags:Default::default(),
-                }).await?)?;
-                // 所有区块均已加载，直接发送即可、
-                let join_pos_chunk = self.player_pos_to_chunk_pos([pos[0] as i32,pos[1] as i32,pos[2] as i32]);
-                // 构建 SetChunkCacheCenter 数据包
-                packet_send.send(PacketSend::build_send_packet(qexed_protocol::to_client::play::update_view_position::UpdateViewPosition{
-                    chunk_x:qexed_packet::net_types::VarInt(join_pos_chunk[0]),
-                    chunk_z:qexed_packet::net_types::VarInt(join_pos_chunk[1]),
-                }).await?)?;
+
                 for i in task_map{
                     let _ = i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: RegionCommand::PlayerJoin { pos, packet_send:packet_send.clone() ,uuid} });
                 }

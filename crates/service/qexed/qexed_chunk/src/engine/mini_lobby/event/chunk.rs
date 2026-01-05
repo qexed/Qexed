@@ -1,8 +1,10 @@
 use std::{collections::HashMap, path::PathBuf};
 
+use dashmap::DashMap;
 use qexed_packet::net_types::{Bitset, VarInt};
-use qexed_task::message::{MessageSender, unreturn_message::UnReturnMessage};
+use qexed_task::message::{MessageSender, return_message::ReturnMessage, unreturn_message::UnReturnMessage};
 use qexed_tcp_connect::PacketSend;
+use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 use crate::{data_type::direction::DirectionMap, message::chunk::ChunkCommand};
@@ -28,6 +30,8 @@ pub struct ChunkTask {
     pub map_chunk: bool,
     // 当前区块信息
     pub chunk_packet: Option<bytes::Bytes>,
+    pub now_chunk_player:DashMap<Uuid,(UnboundedSender<qexed_entity::message::TaskCommand>,UnboundedSender<bytes::Bytes>)>,
+    pub qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
 }
 impl ChunkTask {
     pub fn new(
@@ -38,6 +42,7 @@ impl ChunkTask {
         pos: [i64; 2],
         chunk: qexed_region::chunk::nbt::Chunk,
         map_chunk: bool,
+        qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
     ) -> Self {
         Self {
             config,
@@ -47,8 +52,10 @@ impl ChunkTask {
             chunk: Some(chunk),
             direction_chunk: Default::default(),
             cross_dimension_counterpart_apis: Default::default(),
+            now_chunk_player:Default::default(),
             map_chunk,
             chunk_packet: None,
+            qexed_entity_api
         }
     }
     pub async fn init(&mut self) -> anyhow::Result<()> {
@@ -306,6 +313,20 @@ impl ChunkTask {
         self.chunk_packet = Some(PacketSend::build_send_packet(p_q).await?);
         drop(chunk);
         Ok(())
+    }
+    pub fn player_pos_to_chunk_pos(&self, player_pos: [i32; 3]) -> [i32; 2] {
+        let chunk_x = player_pos[0] >> 4; // 等同于 player_pos[0] / 16
+        let chunk_z = player_pos[2] >> 4; // 等同于 player_pos[2] / 16
+        [chunk_x, chunk_z]
+    }
+    pub fn isinthischunk(&self, player_pos_chunk: [i32; 2])->bool{
+        if (self.pos[0] as i32)!=player_pos_chunk[0]{
+            return false;
+        }
+        if (self.pos[1] as i32)!=player_pos_chunk[1]{
+            return false;
+        }
+        return true;
     }
 }
 

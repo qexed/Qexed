@@ -5,7 +5,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::message::{ManagerCommand, SpiltIDCommand};
 
-
+#[derive(Debug)]
 pub struct SplitIDActor{
     pub max_id:i32,
     pub unuse_ids:UnboundedReceiver<i32>,
@@ -33,7 +33,7 @@ impl TaskEvent<SpiltIDCommand,ReturnMessage<ManagerCommand>>
 
             },
             SpiltIDCommand::New(sender) => {
-                if let Some(id) = self.unuse_ids.recv().await{
+                if let Ok(id) = self.unuse_ids.try_recv(){
                     let _ = sender.send(id);
                     return Ok(false);
                 }

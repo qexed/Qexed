@@ -8,7 +8,7 @@ pub struct Success {
 }
 
 #[qexed_packet_macros::substruct]
-#[derive(Debug,Default,PartialEq,Clone)]
+#[derive(Debug,Default,PartialEq,Clone,serde::Deserialize,serde::Serialize)]
 pub struct Properties{
     pub name:String,
     pub value:String,

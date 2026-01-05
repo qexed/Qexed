@@ -6,7 +6,8 @@ use std::{
 
 use anyhow::Context;
 use dashmap::DashMap;
-use qexed_task::message::{MessageSender, MessageType, unreturn_message::UnReturnMessage};
+use qexed_task::message::{MessageSender, MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     engine::mini_lobby::event::region::RegionManage,
@@ -21,10 +22,13 @@ pub struct WorldManage {
     pub world_root: PathBuf,
     // 世界uuid
     pub world_uuid: uuid::Uuid,
+
+    qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
 }
 impl WorldManage {
     pub fn new(
         config: qexed_config::app::qexed_chunk::engine::mini_lobby::MiniLobbyConfig,
+        qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
     ) -> Self {
         let world_uuid = config.main_world.clone();
         let world_root: PathBuf = Path::new(&config.world_dir)
@@ -34,6 +38,7 @@ impl WorldManage {
             config,
             world_root,
             world_uuid,
+            qexed_entity_api
         }
     }
     pub async fn init(
@@ -66,6 +71,7 @@ impl WorldManage {
                     self.world_uuid.clone(),
                     pos.clone(),
                     api.clone(),
+                    self.qexed_entity_api.clone(),
                 ));
 
             manager_task.run().await?;

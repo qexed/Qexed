@@ -4,7 +4,8 @@ use std::{
 };
 
 use dashmap::DashMap;
-use qexed_task::message::{MessageSender, MessageType, unreturn_message::UnReturnMessage};
+use qexed_task::message::{MessageSender, MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage};
+use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 use crate::{
@@ -27,6 +28,8 @@ pub struct RegionManage {
     pub direction_region: DirectionMap<MessageSender<UnReturnMessage<RegionCommand>>>,
     // 世界api
     pub master_api: MessageSender<UnReturnMessage<WorldCommand>>,
+
+    qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
 }
 impl RegionManage {
     pub fn new(
@@ -35,6 +38,7 @@ impl RegionManage {
         world_uuid: uuid::Uuid,
         pos: [i64; 2],
         master_api: MessageSender<UnReturnMessage<WorldCommand>>,
+        qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
     ) -> Self {
         Self {
             config,
@@ -43,6 +47,7 @@ impl RegionManage {
             pos,
             direction_region: Default::default(),
             master_api,
+            qexed_entity_api
         }
     }
     pub async fn init(
@@ -99,6 +104,7 @@ impl RegionManage {
                     i.clone(),
                     chunk,
                     true,
+                    self.qexed_entity_api.clone(),
                 ),
             );
 
@@ -125,6 +131,7 @@ impl RegionManage {
                             "empty".to_string(),
                         ),
                         false,
+                        self.qexed_entity_api.clone(),
                     ),
                 );
 

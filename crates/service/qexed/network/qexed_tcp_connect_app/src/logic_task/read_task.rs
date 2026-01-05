@@ -13,13 +13,13 @@ use crate::messages::{LogicCommand, ReadCommand};
 #[derive(Debug)]
 pub struct ReadTask {
     addr: std::net::SocketAddr,
-    packet_read: Option<qexed_tcp_connect::PacketRead>,
+    packet_read: qexed_tcp_connect::PacketRead,
 }
 impl ReadTask {
     pub fn new(addr: std::net::SocketAddr, packet_read: qexed_tcp_connect::PacketRead) -> Self {
         Self {
             addr,
-            packet_read: Some(packet_read),
+            packet_read: packet_read,
         }
     }
 }
@@ -34,11 +34,13 @@ impl TaskEvent<ReadCommand, LogicCommand> for ReadTask {
         match data {
             ReadCommand::Start => {}
             ReadCommand::RawPacket(mut pk) => {
-                if let Some(packet_send) = &mut self.packet_read {
-                    if let Err(_) = pk.send(packet_send.read().await?){
-                        return Ok(true);
-                    };
-                }
+                if let Err(_) = pk.send(self.packet_read.read().await?){
+                    return Ok(true);
+                };
+            }
+            ReadCommand::SetCompression(is_use,finish)=>{
+                self.packet_read.set_compression(is_use);
+                let _ = finish.send(());
             }
             // ReadCommand::RawPacketSteam(steam) => {
             //     if let Some(mut packet_send) = self.packet_read.take() {

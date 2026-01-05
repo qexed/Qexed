@@ -20,6 +20,7 @@ use crate::{
 #[derive(Debug)]
 pub struct TcpConnectManagerActor {
     config: TcpConnect,
+    player_uuid_to_addr:DashMap<uuid::Uuid,SocketAddr>,
     qexed_status_api: UnboundedSender<ReturnMessage<qexed_status::Message>>,
     qexed_player_list_api: UnboundedSender<ReturnMessage<qexed_player_list::Message>>,
     qexed_black_list_api: UnboundedSender<ReturnMessage<qexed_blacklist::Message>>,
@@ -46,6 +47,7 @@ impl TcpConnectManagerActor {
     ) -> Self {
         Self {
             config,
+            player_uuid_to_addr:Default::default(),
             qexed_status_api,
             qexed_player_list_api,
             qexed_black_list_api,
@@ -103,7 +105,43 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, LogicCommand>
                     }
                     return anyhow::Ok(())
                 });
+                return Ok(false)
             }
+            ManagerCommand::CheckIsInWhiteList(player_uuid,_) => {
+                let result = ReturnMessage::build(qexed_whitelist::Message::CheckPlayerCanJoinServer(player_uuid,None)).post(&self.qexed_white_list_api).await?;
+                tokio::spawn(async move {
+                    if let qexed_whitelist::Message::CheckPlayerCanJoinServer(player_uuid,ban) = ReturnMessage::get_return_data(result).await?{
+                        let _ = send.send(ManagerCommand::CheckIsInWhiteList(player_uuid,ban));
+                    } else {
+                        let _ = send.send(ManagerCommand::CheckIsInWhiteList(player_uuid,Some("白名单功能检查失败,以防万一,暂时无法进入".to_string())));
+                    }
+                    return anyhow::Ok(())
+                });
+                return Ok(false)
+            }
+            ManagerCommand::CheckPlayeIsOnline(uuid,ref mut ishave)=>{
+                
+                // 客户端请求查询服务器状态,这里进行转发处理
+                if let qexed_player_list::Message::CheckPlayeIsInList(_uuid, is_have) =
+                    ReturnMessage::build(qexed_player_list::Message::CheckPlayeIsInList(uuid, true))
+                        .get(&self.qexed_player_list_api)
+                        .await?
+                {
+                    *ishave = is_have
+                }
+                let _ = send.send(data.data);
+                return Ok(false)
+            }
+            ManagerCommand::KickPlayer(ref uuid,ref kick_message)=>{
+                // TODO:正在开发
+                let _ = send.send(data.data);
+                return Ok(false)
+            }
+            ManagerCommand::GetLogicApi(message) => {
+                data.data = crate::messages::ManagerCommand::GetLogicApi(ReturnMessage::build(message).get(&self.qexed_game_logic_api).await?);
+                let _ = send.send(data.data);
+                return Ok(false)
+            },
             ManagerCommand::NewConnection(tcp_stream, socket_addr) => {
                 // 创建逻辑任务,他将用于初始化阶段
                 let actor = LogicTask::new(
@@ -122,6 +160,12 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, LogicCommand>
                 task_send.send(LogicCommand::Start)?;
                 task_map.insert(socket_addr, task_send);
                 let _ = send.send(ManagerCommand::NewConnectionFinish);
+                return Ok(false)
+            }
+            ManagerCommand::UpdatePlayerUUID(addr,player_uuid)=>{
+                self.player_uuid_to_addr.insert(player_uuid, addr);
+                let _ = send.send(data.data);
+                return Ok(false)
             }
             ManagerCommand::GetStatusPackageBytes(ref mut value) => {
                 // 客户端请求查询服务器状态,这里进行转发处理
@@ -134,14 +178,19 @@ impl TaskManageEvent<SocketAddr, ReturnMessage<ManagerCommand>, LogicCommand>
                 }
 
                 let _ = send.send(data.data);
+                return Ok(false)
             }
             ManagerCommand::NewConnectionFinish => {
                 // 此命令理论不会触发,因为这tm是给ListenTask看的
             }
             // 关闭事件流(C->S)
-            ManagerCommand::TaskClose(socket_addr) => {
+            ManagerCommand::TaskClose(socket_addr,player_uuid) => {
                 task_map.remove(&socket_addr);
+                if let Some(player) = player_uuid {
+                    self.player_uuid_to_addr.remove(&player);
+                }
                 let _ = send.send(data.data);
+
             }
         }
         Ok(false)

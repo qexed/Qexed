@@ -5,14 +5,14 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
 impl super::LogicTask {
-    pub fn bungeecord_decode_json(&self, data: &str) -> Result<Vec<PlayerProperty>> {
-        let properties: Vec<PlayerProperty> = serde_json::from_str(data)
+    pub fn bungeecord_decode_json(&self, data: &str) -> Result<Vec<qexed_protocol::to_client::login::success::Properties>> {
+        let properties: Vec<qexed_protocol::to_client::login::success::Properties> = serde_json::from_str(data)
             .context("Failed to parse BungeeCord properties JSON")?;
         Ok(properties)
     }
     
     /// 解码纹理数据（针对name为"textures"的属性）
-    pub fn decode_textures_data(&self, property: &PlayerProperty) -> Result<Option<TexturesData>> {
+    pub fn decode_textures_data(&self, property: &qexed_protocol::to_client::login::success::Properties) -> Result<Option<TexturesData>> {
         if property.name != "textures" {
             return Ok(None);
         }
@@ -33,9 +33,9 @@ impl super::LogicTask {
     }
     
     /// 完整的BungeeCord数据处理流程
-    pub fn process_bungeecord_data(&self, data: &str) -> Result<ProcessedBungeeCordData> {
+    pub fn process_bungeecord_data(&mut self, data: &str) -> Result<ProcessedBungeeCordData> {
         let properties = self.bungeecord_decode_json(data)?;
-        
+        self.player_properties = properties.clone();
         let mut textures_data = None;
         let mut bungeeguard_token = None;
         
@@ -60,14 +60,6 @@ impl super::LogicTask {
             bungeeguard_token,
         })
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PlayerProperty {
-    pub name: String,
-    pub value: String,
-    #[serde(default)] 
-    pub signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,31 +90,32 @@ pub struct Texture {
 /// 处理后的BungeeCord数据结果
 #[derive(Debug)]
 pub struct ProcessedBungeeCordData {
-    pub properties: Vec<PlayerProperty>,
+    pub properties: Vec<qexed_protocol::to_client::login::success::Properties>,
     pub textures_data: Option<TexturesData>,
     pub bungeeguard_token: Option<String>,
 }
 
-// 为PlayerProperty添加一些实用方法
-impl PlayerProperty {
-    /// 检查是否是纹理属性
-    pub fn is_textures(&self) -> bool {
-        self.name == "textures"
-    }
+// // 为qexed_protocol::to_client::login::success::Properties添加一些实用方法
+// impl qexed_protocol::to_client::login::success::Properties {
+//     /// 检查是否是纹理属性
+//     pub fn is_textures(&self) -> bool {
+//         self.name == "textures"
+//     }
     
-    /// 检查是否是BungeeGuard令牌属性
-    pub fn is_bungeeguard_token(&self) -> bool {
-        self.name == "bungeeguard-token"
-    }
-}
+//     /// 检查是否是BungeeGuard令牌属性
+//     pub fn is_bungeeguard_token(&self) -> bool {
+//         self.name == "bungeeguard-token"
+//     }
+// }
 
 // 使用示例
 impl super::LogicTask {
-    pub async fn handle_bungeecord_properties(&self, properties_json: &str) -> Result<()> {
+    pub async fn handle_bungeecord_properties(&mut self, properties_json: &str) -> Result<()> {
         let processed_data = self.process_bungeecord_data(properties_json)?;
         
         // 处理纹理数据
         if let Some(textures) = &processed_data.textures_data {
+            self.player_name = textures.profile_name.clone();
             log::info!("Player textures - Name: {}, ID: {}", 
                       textures.profile_name, textures.profile_id);
             
@@ -133,6 +126,7 @@ impl super::LogicTask {
             if let Some(cape) = &textures.textures.cape {
                 log::debug!("Cape URL: {}", cape.url);
             }
+            self.proxy_is_login = true;
         } else if self.online_mode{
             return Err(anyhow::anyhow!("Minecraft 正版验证失败"));
         }

@@ -44,6 +44,10 @@ impl TaskEvent<WriteCommand, LogicCommand> for WriteTask {
                     }
                 }
             },
+            WriteCommand::SetCompression(is_use,finish)=>{
+                self.packet_write.set_compression(is_use);
+                finish.send(());
+            }
             WriteCommand::Close => {
                 // 由上层逻辑处理触发
                 let _ = manage_api.send(LogicCommand::ListenClose(false));

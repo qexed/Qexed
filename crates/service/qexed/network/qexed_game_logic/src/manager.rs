@@ -27,7 +27,8 @@ pub struct GameLogicManagerActor {
     qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
     qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
     qexed_scoreboard_api: UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
-    qexed_entity_api: UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>,
+    qexed_entity_api: UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
+    qexed_player_info:UnboundedSender<qexed_player_info::Message>,
 }
 impl GameLogicManagerActor {
     pub fn new(
@@ -43,7 +44,8 @@ impl GameLogicManagerActor {
         qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
         qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
         qexed_scoreboard_api: UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
-        qexed_entity_api: UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>,
+        qexed_entity_api: UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
+        qexed_player_info:UnboundedSender<qexed_player_info::Message>,
     ) -> Self {
         Self {
             config,
@@ -59,6 +61,7 @@ impl GameLogicManagerActor {
             qexed_title_api,
             qexed_scoreboard_api,
             qexed_entity_api,
+            qexed_player_info,
         }
     }
 
@@ -197,6 +200,38 @@ impl TaskManageEvent<Uuid, ReturnMessage<ManagerMessage>, ReturnMessage<TaskMess
                 let _ = send.send(data.data);
                 return Ok(false);
             }            
+            ManagerMessage::GetPlayerInfo(ref mut cmd)=>{
+                let chat = match cmd.take(){
+                    Some(ping) => ping,
+                    None => return Ok(false)
+                };
+                if let Some(api) = Some(self.qexed_player_info.clone()){
+                    let _ = api.send(chat);
+                }
+                let _ = send.send(data.data);
+                return Ok(false);
+            }
+            ManagerMessage::GetPlayerEntity(ref mut player,ref mut entity_api)=>{
+                let player  = match player.take(){
+                    Some(v)=>v,
+                    None=>{
+                        let _ = send.send(data.data);
+                        return Ok(false);
+                    }
+                };
+                let player_uuid = player.uuid.clone();
+                let (task,task_api) = qexed_task::task::task::Task::new(self.qexed_entity_api.clone(),
+                    qexed_entity::engine::player::PlayerActor::new(player)
+                );
+                task.run().await?;
+                ReturnMessage::build(
+                    qexed_entity::message::ManagerCommand::Register(player_uuid, task_api.clone())
+                ).get(&self.qexed_entity_api).await?;
+                *entity_api = Some(task_api);
+                //self.qexed_entity_api
+                let _ = send.send(data.data);
+                return Ok(false);
+            }
             ManagerMessage::GetWorld(ref mut chat_message)=>{
                 let chat = match chat_message.take(){
                     Some(ping) => ping,

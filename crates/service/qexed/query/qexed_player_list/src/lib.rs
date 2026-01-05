@@ -126,7 +126,10 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
     ) -> anyhow::Result<bool> {
         match data.data {
             Message::PlayerJoin(ref uuid, ref name) => {
-                self.player += 1;
+                
+                if !self.player_map.contains_key(&uuid) {
+                    self.player += 1;
+                }
                 self.player_map.insert(*uuid, name.clone());
                 self.player_name_map.insert(name.clone(), *uuid);
                 if let Some(send) = data.get_return_send().await? {
@@ -135,8 +138,9 @@ impl TaskEasyEvent<ReturnMessage<Message>> for Task {
                 return Ok(false);
             }
             Message::PlayerLeft(uuid) => {
-                self.player -= 1;
+                
                 if let Some(name) = self.player_map.remove(&uuid) {
+                    self.player -= 1;
                     self.player_name_map.remove(&name.1);
                 }
                 if let Some(send) = data.get_return_send().await? {

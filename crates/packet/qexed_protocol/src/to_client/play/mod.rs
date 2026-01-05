@@ -22,3 +22,8 @@ pub mod reset_score;
 pub mod set_display_objective;
 pub mod set_objective;
 pub mod set_score;
+pub mod disconnect;
+pub mod add_entity;
+pub mod player_info;
+pub mod player_info_remove;
+pub mod remove_entities;

@@ -35,7 +35,7 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<RegionCommand>, UnReturnMessage<C
             RegionCommand::PlayerJoin { pos, packet_send, uuid }=>{
                 // 所有区块均已加载，直接发送即可、
                 for i in task_map{
-                    i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: ChunkCommand::PlayerJoin { pos, packet_send:packet_send.clone() ,uuid} });
+                    let _ = i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: ChunkCommand::PlayerJoin { pos, packet_send:packet_send.clone() ,uuid} });
                 };
                 Ok(false)
             }

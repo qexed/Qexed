@@ -1,6 +1,7 @@
 pub mod engine;
 pub mod manage;
 pub mod message;
+pub mod spilt_id_task;
 mod run;
 pub use run::run as run;
 // 包含生成的代码

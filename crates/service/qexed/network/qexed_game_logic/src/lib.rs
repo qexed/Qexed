@@ -19,7 +19,8 @@ pub async fn run(
     qexed_chunk_api:UnboundedSender<UnReturnMessage<qexed_chunk::message::world::WorldCommand>>,
     qexed_title_api:UnboundedSender<ReturnMessage<qexed_title::message::ManagerMessage>>,
     qexed_scoreboard_api: UnboundedSender<ReturnMessage<qexed_scoreboard::message::ManagerMessage>>,
-    qexed_entity_api: UnboundedSender<UnReturnMessage<qexed_entity::message::ManagerCommand>>
+    qexed_entity_api: UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
+    qexed_player_info:UnboundedSender<qexed_player_info::Message>,
 
 ) -> anyhow::Result<UnboundedSender<ReturnMessage<ManagerMessage>>> {
     let registry_data: Vec<qexed_protocol::to_client::configuration::registry_data::RegistryData> = get_registry_data_packets()?;
@@ -38,6 +39,7 @@ pub async fn run(
         qexed_title_api,
         qexed_scoreboard_api,
         qexed_entity_api,
+        qexed_player_info,
     );
     let (manager_task, manager_sender) =
         qexed_task::task::task_manage::TaskManage::new(manager_actor);

@@ -1,0 +1,11 @@
+[package]
+name = "qexed_chunk_message"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio.workspace = true
+uuid.workspace = true
+bytes.workspace = true
+qexed_task.workspace = true
+qexed_command.workspace = true

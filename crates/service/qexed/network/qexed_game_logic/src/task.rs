@@ -1,6 +1,10 @@
+use std::{collections::HashMap, sync::Arc};
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
+use qexed_chat::task::build_item;
+use qexed_nbt::Tag;
 use qexed_packet::{PacketCodec, net_types::{Bitset, VarInt}};
 use qexed_player::Player;
 use qexed_protocol::{
@@ -20,7 +24,7 @@ use qexed_task::{
 };
 use qexed_tcp_connect::PacketSend;
 use rsa::pkcs8::der::asn1::Null;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::{mpsc::{UnboundedReceiver, UnboundedSender}, oneshot};
 use uuid::Uuid;
 
 use crate::message::{ManagerMessage, TaskMessage};
@@ -41,6 +45,7 @@ pub struct GameLogicActor {
     qexed_player_list_api:Option<UnboundedSender<ReturnMessage<qexed_player_list::Message>>>,
     qexed_title_api:Option<UnboundedSender<UnReturnMessage<qexed_title::message::TaskMessage>>>,
     qexed_scoreboard_api:Option<UnboundedSender<UnReturnMessage<qexed_scoreboard::message::TaskMessage>>>,
+    player_entity:Option<UnboundedSender<qexed_entity::message::TaskCommand>>
 }
 impl GameLogicActor {
     pub fn new(uuid: Uuid) -> Self {
@@ -57,6 +62,7 @@ impl GameLogicActor {
             qexed_player_list_api:None,
             qexed_title_api:None,
             qexed_scoreboard_api:None,
+            player_entity:None,
         }
     }
 }
@@ -320,9 +326,33 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         return Ok(false);
                     }
                 };
+                let properties = qexed_protocol::to_client::login::success::Success{ uuid: self.uuid.clone(), username: player.username.clone(), properties: player.properties.clone() };
+                ReturnMessage::build(ManagerMessage::GetPlayerInfo(Some(
+                    qexed_player_info::Message::PlayerJoin(self.uuid.clone(), build_system_message(player.username.clone()), properties, packet_write.clone())
+                ))).get(&manage_api).await?;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // 获取实体对象
+
+                if let ManagerMessage::GetPlayerEntity(_,Some(player_entity)) = ReturnMessage::build(ManagerMessage::GetPlayerEntity(Some(player.clone()), None)).get(manage_api).await?{
+                    self.player_entity = Some(player_entity);
+                }
+                let mut player_entity = match &self.player_entity {
+                    Some(p) => p.clone(),
+                    None => {
+                        if let Some(send) = data.get_return_send().await? {
+                            let _ = send.send(data.data);
+                        }
+                        return Ok(false);
+                    }
+                };
+                let (s,r) = oneshot::channel();
+                player_entity.send(qexed_entity::message::TaskCommand::GetentityID(s))?;
+                let entity_id = r.await?;
+                log::info!("测试实体ID:{}",entity_id);
+                // 玩家进服
                 packet_write.send(
                     PacketSend::build_send_packet(qexed_protocol::to_client::play::login::Login {
-                        entity_id: 1,
+                        entity_id: entity_id,
                         is_hardcore: false,
                         dimension_names: vec![
                             "minecraft:overworld".to_string(),
@@ -657,6 +687,12 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         .post(&api_ping)
                         .await;
                 }
+                if let Some( player_entity) = &self.player_entity{
+                    let _ = player_entity.send(qexed_entity::message::TaskCommand::Close);
+                }
+                let _ = ReturnMessage::build(ManagerMessage::GetPlayerInfo(Some(
+                    qexed_player_info::Message::PlayerLeft(self.uuid)
+                ))).get(&manage_api).await;
                 // 向父级发送关闭消息
                 ReturnMessage::build(ManagerMessage::PlayerClose(self.uuid))
                     .get(manage_api)
@@ -828,4 +864,19 @@ where
         }
         Ok(())
     }
+}
+fn build_system_message(message: String) -> qexed_nbt::Tag {
+    // 1. 创建文本组件的 Compound
+    let mut chat_component = HashMap::new();
+    // Minecraft 文本组件的基础格式：{"text": "实际内容"}
+    chat_component.insert(
+        "text".to_string(),
+        Tag::String(message.into()), // 使用 `into()` 转为 Arc<str>
+    );
+
+    // 2. 可选：添加样式（例如颜色）
+    // chat_component.insert("color".to_string(), Tag::String("red".into()));
+
+    // 3. 将 HashMap 包装为 Tag::Compound
+    return Tag::Compound(Arc::new(chat_component));
 }

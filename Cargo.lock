@@ -2821,8 +2821,10 @@ dependencies = [
  "futures",
  "log",
  "qexed_block",
+ "qexed_chunk_message",
  "qexed_command",
  "qexed_config",
+ "qexed_entity",
  "qexed_nbt",
  "qexed_packet",
  "qexed_packet_macros",
@@ -2831,6 +2833,17 @@ dependencies = [
  "qexed_task",
  "qexed_tcp_connect",
  "serde",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "qexed_chunk_message"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "qexed_command",
+ "qexed_task",
  "tokio",
  "uuid",
 ]
@@ -2942,10 +2955,12 @@ dependencies = [
  "once_cell",
  "phf",
  "phf_codegen",
- "qexed_chunk",
  "qexed_command",
  "qexed_config",
+ "qexed_data_serde",
  "qexed_packet",
+ "qexed_player",
+ "qexed_protocol",
  "qexed_task",
  "qexed_tcp_connect",
  "serde",
@@ -2979,6 +2994,7 @@ dependencies = [
  "qexed_packet_split",
  "qexed_ping",
  "qexed_player",
+ "qexed_player_info",
  "qexed_player_list",
  "qexed_protocol",
  "qexed_scoreboard",
@@ -3121,6 +3137,7 @@ dependencies = [
  "qexed_heartbeat",
  "qexed_packet_split",
  "qexed_ping",
+ "qexed_player_info",
  "qexed_player_list",
  "qexed_rule",
  "qexed_scoreboard",
@@ -3222,6 +3239,27 @@ dependencies = [
  "qexed_protocol",
  "qexed_shared",
  "qexed_task",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "qexed_player_info"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitflags",
+ "bytes",
+ "dashmap",
+ "futures",
+ "log",
+ "qexed_nbt",
+ "qexed_packet",
+ "qexed_protocol",
+ "qexed_task",
+ "qexed_tcp_connect",
+ "serde",
  "tokio",
  "uuid",
 ]
@@ -3567,10 +3605,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bb8",
+ "bb8-redis",
  "bytes",
  "dashmap",
  "log",
  "qexed_config",
+ "qexed_database",
  "qexed_protocol",
  "qexed_task",
  "qexed_tcp_connect",
