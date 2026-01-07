@@ -10,6 +10,7 @@ const fn make_qtunnel_name() -> &'static str {
     "QTunnel 0.1.0a"
 }
 pub const QTUNNEL_NAME: &'static str = make_qtunnel_name();
+
 pub mod app;
 pub mod tool;
 pub mod public;

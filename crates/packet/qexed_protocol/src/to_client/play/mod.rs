@@ -27,3 +27,7 @@ pub mod add_entity;
 pub mod player_info;
 pub mod player_info_remove;
 pub mod remove_entities;
+pub mod move_entity_rot;
+pub mod rotate_head;
+pub mod move_entity_pos;
+pub mod move_entity_pos_rot;

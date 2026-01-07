@@ -1,8 +1,10 @@
 use qexed_config::{app::qexed_one::One, tool::AppConfigTrait};
 use qexed_task::message::{MessageType, return_message::ReturnMessage};
 use tklog::{ASYNC_LOG, Format, MODE};
+use shadow_rs::shadow;
 mod api;
 mod server;
+shadow!(build);
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 先启动一点点的微服务

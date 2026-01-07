@@ -23,7 +23,7 @@ pub struct WorldManage {
     // 世界uuid
     pub world_uuid: uuid::Uuid,
 
-    qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
+    pub qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
 }
 impl WorldManage {
     pub fn new(

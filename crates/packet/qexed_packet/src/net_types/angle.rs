@@ -16,69 +16,63 @@ impl Angle {
     /// 平角（180度）
     pub const STRAIGHT_ANGLE: Angle = Angle(128);  // 256/2 = 128
     
-    /// 从度数创建角度
+    /// 从度数创建角度（修复版）
     pub fn from_degrees(degrees: f32) -> Self {
-        let units = (degrees * Self::FULL_CIRCLE as f32 / 360.0).round() as u16;
+        // 将度数归一化到 [0, 360) 范围
+        let normalized_degrees = degrees.rem_euclid(360.0);
+        // 转换为256分度
+        let units = (normalized_degrees * Self::FULL_CIRCLE as f32 / 360.0).round() as u16;
         Angle((units % Self::FULL_CIRCLE) as u8)
     }
     
-    /// 从弧度创建角度
-    pub fn from_radians(radians: f32) -> Self {
-        let degrees = radians * 180.0 / std::f32::consts::PI;
-        Self::from_degrees(degrees)
+    /// 从Minecraft协议的标准偏航角创建（处理-180°到180°范围）
+    pub fn from_minecraft_yaw(yaw: f32) -> Self {
+        // Minecraft偏航角：-180°（北）到180°（北）[1](@ref)
+        let normalized_degrees = if yaw < 0.0 { yaw + 360.0 } else { yaw };
+        Self::from_degrees(normalized_degrees)
     }
     
-    /// 转换为度数
+    /// 从Minecraft协议的标准俯仰角创建（处理-90°到90°范围）
+    pub fn from_minecraft_pitch(pitch: f32) -> Self {
+        // Minecraft俯仰角：-90°（上看）到90°（下看）[1](@ref)
+        let normalized_pitch = pitch.clamp(-90.0, 90.0);
+        // 转换为0°到360°等效表示
+        let normalized_degrees = if normalized_pitch < 0.0 { 
+            normalized_pitch + 360.0 
+        } else { 
+            normalized_pitch 
+        };
+        Self::from_degrees(normalized_degrees)
+    }
+    
+    /// 转换为Minecraft标准偏航角（-180°到180°）
+    pub fn to_minecraft_yaw(&self) -> f32 {
+        let degrees = self.to_degrees();
+        if degrees > 180.0 { degrees - 360.0 } else { degrees }
+    }
+    
+    /// 转换为Minecraft标准俯仰角（-90°到90°）
+    pub fn to_minecraft_pitch(&self) -> f32 {
+        let degrees = self.to_degrees();
+        // 将360°表示映射回-90°到90°
+        if degrees > 270.0 { degrees - 360.0 } 
+        else if degrees > 90.0 { 180.0 - degrees } 
+        else { degrees }
+    }
+    
+    /// 转换为度数（0°到360°范围）
     pub fn to_degrees(&self) -> f32 {
         self.0 as f32 * 360.0 / Self::FULL_CIRCLE as f32
     }
     
     /// 转换为弧度
     pub fn to_radians(&self) -> f32 {
-        self.to_degrees() * std::f32::consts::PI / 180.0
+        self.to_degrees().to_radians()
     }
     
     /// 获取原始字节值
     pub fn as_byte(&self) -> u8 {
         self.0
-    }
-    
-    /// 计算两个角度之间的最短差异（考虑循环）
-    pub fn angle_to(&self, other: &Self) -> Self {
-        let diff = other.0 as i16 - self.0 as i16;
-        let mut shortest = diff % Self::FULL_CIRCLE as i16;
-        
-        // 确保结果在 [-128, 127] 范围内，对应最短路径
-        if shortest > 128 {
-            shortest -= Self::FULL_CIRCLE as i16;
-        } else if shortest < -128 {
-            shortest += Self::FULL_CIRCLE as i16;
-        }
-        
-        // 转换为无符号字节（自动处理负数）
-        Angle(shortest as u8)
-    }
-    
-    /// 线性插值（考虑角度的循环特性）
-    pub fn lerp(&self, other: &Self, t: f32) -> Self {
-        let diff = self.angle_to(other);
-        *self + Angle((diff.0 as f32 * t).round() as u8)
-    }
-    
-    /// 正弦值（近似计算）
-    pub fn sin(&self) -> f32 {
-        self.to_radians().sin()
-    }
-    
-    /// 余弦值（近似计算）
-    pub fn cos(&self) -> f32 {
-        self.to_radians().cos()
-    }
-    
-    /// 规范化角度到 [0, 255] 范围
-    pub fn normalize(&self) -> Self {
-        // 由于使用u8，值自动在0-255范围内，无需额外规范化
-        *self
     }
 }
 

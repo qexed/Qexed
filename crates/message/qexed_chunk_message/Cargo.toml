@@ -9,3 +9,4 @@ uuid.workspace = true
 bytes.workspace = true
 qexed_task.workspace = true
 qexed_command.workspace = true
+qexed_protocol.workspace = true

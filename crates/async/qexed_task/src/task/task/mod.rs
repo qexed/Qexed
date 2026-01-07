@@ -2,7 +2,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{event::task::{TaskEasyEvent, TaskEvent}, message::MessageSender};
 
-
+pub mod tcp;
 
 // TEST
 pub struct Task<MessageType,ManageMessageType, Task> {

@@ -25,7 +25,8 @@ pub enum TaskMessage {
         // Option<UnboundedSender<UnReturnMessage<qexed_ping::message::TaskCommand>>>,// Ping服务:由上层服务 qexed_game_logic 提供
         Option<UnboundedSender<UnReturnMessage<qexed_heartbeat::message::TaskCommand>>>,// 心跳服务
         Option<UnboundedSender<UnReturnMessage<qexed_chat::message::TaskMessage>>>,// 聊天服务
-        Option<UnboundedSender<UnReturnMessage<qexed_command::message::TaskCommand>>>
+        Option<UnboundedSender<UnReturnMessage<qexed_command::message::TaskCommand>>>,
+        Option<UnboundedSender<qexed_entity::message::TaskCommand>> // 玩家实体
     ), // 传递数据包收发器
     Run, // 暂时没实现数据包分割器
     Close,                           // 连接关闭

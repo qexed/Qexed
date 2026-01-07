@@ -15,7 +15,7 @@ log.workspace = true
 tklog.workspace = true
 futures.workspace = true
 kanal.workspace = true
-
+serde.workspace = true
 [dev-dependencies]
 tokio-test = "0.4.4"
 uuid.workspace = true

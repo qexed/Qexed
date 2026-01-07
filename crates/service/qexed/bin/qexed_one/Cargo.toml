@@ -2,7 +2,7 @@
 name = "qexed_one"
 version = "0.1.0"
 edition = "2024"
-# build = "build.rs"
+build = "build.rs"
 [package.metadata.android]
 # 应用的唯一标识（通常使用反向域名格式）
 package = "com.qexed.qexed_one"
@@ -48,6 +48,9 @@ log.workspace = true
 tklog.workspace = true
 chrono.workspace = true
 console-subscriber = "0.5.0"
+shadow-rs.workspace = true
+
 [build-dependencies]
 vergen = "8"  # 用于注入构建信息
 chrono.workspace = true
+shadow-rs.workspace = true

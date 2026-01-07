@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use qexed_packet::PacketCodec;
 use qexed_player::Player;
-use qexed_protocol::to_server::play::{keep_alive::KeepAlive, player_action::PlayerAction, pong::Pong};
+use qexed_protocol::to_server::play::{keep_alive::KeepAlive, move_player::{MovePlayerPos, MovePlayerPosRot, MovePlayerRot}, player_action::PlayerAction, pong::Pong};
 use qexed_task::{
     event::task::TaskEvent,
     message::{
@@ -26,6 +26,7 @@ pub struct QexedPacketSplitActor {
         Option<UnboundedSender<UnReturnMessage<qexed_heartbeat::message::TaskCommand>>>,
     qexed_chat_api:Option<UnboundedSender<UnReturnMessage<qexed_chat::message::TaskMessage>>>,
     qexed_command_api:Option<UnboundedSender<UnReturnMessage<qexed_command::message::TaskCommand>>>,
+    qexed_player_entity_api:Option<MessageSender<qexed_entity::message::TaskCommand>>,
 }
 impl QexedPacketSplitActor {
     pub fn new(uuid: Uuid) -> Self {
@@ -38,6 +39,7 @@ impl QexedPacketSplitActor {
             qexed_heartbeat_api: None,
             qexed_chat_api:None,
             qexed_command_api:None,
+            qexed_player_entity_api:None,
         }
     }
 }
@@ -60,6 +62,7 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                 ref mut qexed_heartbeat_api,
                 ref mut qexed_chat_api,
                 ref mut qexed_command_api,
+                ref mut player_entity_api
             ) => {
                 // 玩家进入了服务器
                 self.player = Some(player.clone());
@@ -69,6 +72,7 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                 self.qexed_heartbeat_api = qexed_heartbeat_api.take();
                 self.qexed_chat_api = qexed_chat_api.take();
                 self.qexed_command_api = qexed_command_api.take();
+                self.qexed_player_entity_api = player_entity_api.take();
                 let _packet_write = match self.packet_write.clone() {
                     Some(p) => p,
                     None => {
@@ -140,6 +144,15 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                         return Ok(false);
                     }
                 };
+                let qexed_player_entity_api = match self.qexed_player_entity_api.take() {
+                    Some(p) => p,
+                    None => {
+                        if let Some(send) = data.get_return_send().await? {
+                            let _ = send.send(data.data);
+                        }
+                        return Ok(false);
+                    }
+                };
                 
                 // UnReturnMessage::build(qexed_ping::message::TaskCommand::UpdatePart(qexed_ping::message::Part::Play)).post(&qexed_ping_api).await?;
                 // UnReturnMessage::build(qexed_ping::message::TaskCommand::Start).post(&qexed_ping_api).await?;
@@ -163,6 +176,9 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                             >(&mut reader)?;
                             let _ = UnReturnMessage::build(qexed_chat::message::TaskMessage::ChatEvent(pk)).post(&qexed_chat_api).await;
                         }
+                        0x0B =>{
+                            // 暂时没想好干啥
+                        }
                         0x1b => {
                             let pk = qexed_tcp_connect::decode_packet::<KeepAlive>(&mut reader)?;
                             let _ = UnReturnMessage::build(
@@ -171,10 +187,26 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                             .post(&qexed_heartbeat_api)
                             .await;
                         }
+                        0x1d =>{
+                            let pk =qexed_tcp_connect::decode_packet::<MovePlayerPos>(&mut reader)?;
+
+                            let _ = qexed_player_entity_api.send(qexed_entity::message::TaskCommand::UpdatePlayerPos(pk));
+                        },
+                        0x1e =>{
+                            let pk =qexed_tcp_connect::decode_packet::<MovePlayerPosRot>(&mut reader)?;
+                            
+                            let _ = qexed_player_entity_api.send(qexed_entity::message::TaskCommand::UpdatePlayerPosRot(pk));
+                        },
+                        0x1f =>{
+                            let pk =qexed_tcp_connect::decode_packet::<MovePlayerRot>(&mut reader)?;
+
+                            let _ = qexed_player_entity_api.send(qexed_entity::message::TaskCommand::UpdatePlayerRot(pk));                      
+                        },
                         0x28 =>{
                             let pk: PlayerAction = qexed_tcp_connect::decode_packet::<PlayerAction>(&mut reader)?;
                             // 暂时不搞
                             // 后续完善
+                            log::info!("pk:{:?}",pk);
                             
                         }
                         // 0x2c => {
@@ -183,7 +215,10 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>>
                         //         let _ = UnReturnMessage::build(qexed_ping::message::TaskCommand::Pong(pk.id)).post(&qexed_ping_api).await;
                         // }
                         _ => {
-                            // log::info!("数据包测试:{:?}",raw_data);
+                            // if id.0 !=12{
+                            //     log::info!("数据包测试:[ID:{}]{:?}",id,raw_data);
+                            // }
+                            
                         }
                     }
                 }

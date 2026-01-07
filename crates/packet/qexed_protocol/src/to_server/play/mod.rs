@@ -3,3 +3,4 @@ pub mod keep_alive;
 pub mod chat_message;
 pub mod chat_command;
 pub mod player_action;
+pub mod move_player;

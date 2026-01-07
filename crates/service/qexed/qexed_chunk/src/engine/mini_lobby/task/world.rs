@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
+use qexed_protocol::to_server::play::move_player::MovePlayerPos;
 use qexed_task::{
     event::task_manage::TaskManageEvent,
-    message::{MessageSender, MessageType, unreturn_message::UnReturnMessage},
+    message::{MessageSender, MessageType, return_message::ReturnMessage, unreturn_message::UnReturnMessage},
 };
 use qexed_tcp_connect::PacketSend;
 use tokio::sync::oneshot;
@@ -31,7 +32,23 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<WorldCommand>, UnReturnMessage<Re
             }
             WorldCommand::PlayerJoin { pos, packet_send, uuid }=>{
                 let pos = self.config.join_pos;// 无视任务端传递的存档的坐标
+                // 保存玩家对象到当前区块
+                if let qexed_entity::message::ManagerCommand::GetEntity(_, Some(player_api)) =
+                    ReturnMessage::build(qexed_entity::message::ManagerCommand::GetEntity(
+                        uuid.clone(),
+                        None,
+                    ))
+                    .get(&self.qexed_entity_api)
+                    .await?
+                {
 
+                    let _ = player_api.send(qexed_entity::message::TaskCommand::UpdatePlayerPos(MovePlayerPos{
+                        x:pos[0] as f64,
+                        feed_y:pos[1] as f64,
+                        z:pos[2] as f64,
+                        flags:0,
+                    }));
+                }
                 for i in task_map{
                     let _ = i.send(qexed_task::message::unreturn_message::UnReturnMessage { data: RegionCommand::PlayerJoin { pos, packet_send:packet_send.clone() ,uuid} });
                 }
@@ -170,10 +187,12 @@ impl TaskManageEvent<[i64; 2], UnReturnMessage<WorldCommand>, UnReturnMessage<Re
 
                 // 清空task_map
                 task_map.clear();
-                result.send(());
+                let _ = result.send(());
                 return Ok(true); // 世界关闭完成
             }
-            WorldCommand::CommandSeed(command_data) => {}
+            WorldCommand::CommandSeed(command_data) => {
+                command_data.send_chat_message(&format!("§e当前服务器未使用种子")).await?;
+            }
         }
 
         Ok(false)

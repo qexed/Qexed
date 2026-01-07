@@ -30,7 +30,7 @@ pub struct ChunkTask {
     pub map_chunk: bool,
     // 当前区块信息
     pub chunk_packet: Option<bytes::Bytes>,
-    pub now_chunk_player:DashMap<Uuid,(UnboundedSender<qexed_entity::message::TaskCommand>,UnboundedSender<bytes::Bytes>)>,
+    pub now_chunk_player:DashMap<Uuid,(UnboundedSender<qexed_entity::message::TaskCommand>,UnboundedSender<bytes::Bytes>,i32)>,
     pub qexed_entity_api:UnboundedSender<ReturnMessage<qexed_entity::message::ManagerCommand>>,
 }
 impl ChunkTask {

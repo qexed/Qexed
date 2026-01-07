@@ -17,6 +17,7 @@ qexed_packet = { workspace = true }
 qexed_player.workspace = true
 qexed_protocol.workspace = true
 qexed_data_serde.workspace = true
+qexed_chunk_message.workspace = true
 log.workspace = true
 tklog.workspace = true
 qexed_command.workspace = true

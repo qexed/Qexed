@@ -21,7 +21,7 @@ impl ServerVersionInfo {
         let now = SystemTime::now();
         
         // 使用 chrono 获取构建时间
-        let build_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let build_time = crate::build::BUILD_TIME.to_string();
         
         Self {
             server_name: qexed_config::QEXED_NAME.to_string(),
@@ -33,18 +33,15 @@ impl ServerVersionInfo {
             startup_time: now,
         }
     }
-    
+    // [13:26:01 INFO]: This server is running Folia version 1.21.8-6-ver/1.21.8@612d9bd (2025-09-30T14:11:15Z) (Implementing API version 1.21.8-R0.1-SNAPSHOT)
     pub fn format_full_version(&self) -> String {
         format!(
-            "This server is running {} version {}-{} (Implementing API version {})\n\
-             * Qexed version: {}\n\
+            "This server is running Qexed version {}@{} (Implementing API version {})\n\
              * Build time: {}\n\
              * Uptime: {}",
-            self.server_name,
-            self.minecraft_version,
-            self.build_number,
+            qexed_config::QEXED_VERSION,
+            crate::build::SHORT_COMMIT,
             self.api_version,
-            self.qexed_version,
             self.build_time,
             self.format_uptime()
         )

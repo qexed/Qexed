@@ -1,6 +1,7 @@
 
 use async_trait::async_trait;
 use qexed_packet::net_types::{Bitset, VarInt};
+use qexed_protocol::to_client::play;
 use qexed_task::{
     event::task::TaskEvent,
     message::{
@@ -79,7 +80,9 @@ impl TaskEvent<UnReturnMessage<ChunkCommand>, UnReturnMessage<RegionCommand>> fo
                         .get(&self.qexed_entity_api)
                         .await?
                     {
-
+                        let (s,r) = tokio::sync::oneshot::channel();
+                        let _ = player_api.send(qexed_entity::message::TaskCommand::GetentityID(s));
+                        let entity_id = r.await?;
                         let (s,r) = tokio::sync::oneshot::channel();
                         let _ = player_api.send(qexed_entity::message::TaskCommand::GetAddEntityPacket(s));
                         let pk = PacketSend::build_send_packet(
@@ -88,9 +91,63 @@ impl TaskEvent<UnReturnMessage<ChunkCommand>, UnReturnMessage<RegionCommand>> fo
                         .await?;
                         for i in &self.now_chunk_player {
                             let _ = i.value().1.send(pk.clone());
+                            let (s,r) = tokio::sync::oneshot::channel();
+                            let _ = i.value().0.send(qexed_entity::message::TaskCommand::GetAddEntityPacket(s));
+                            let pk2 = PacketSend::build_send_packet(
+                                r.await?
+                            ).await?;
+                            let _ = packet_send.send(pk2);
                         }
+                        let _ = player_api.send(qexed_entity::message::TaskCommand::UpdateChunkApi(api.clone()));
                         self.now_chunk_player
-                            .insert(uuid.clone(), (player_api, packet_send.clone()));
+                            .insert(uuid.clone(), (player_api, packet_send.clone(),entity_id));
+                        
+                    }
+                }
+            } 
+            ChunkCommand::UpdatePlayerPos(uuid, move_player_pos) => {
+                let pk = PacketSend::build_send_packet(
+                    move_player_pos
+                ).await?;
+                for i in &self.now_chunk_player {
+                    let _ = i.value().1.send(pk.clone());
+                }
+            },
+            ChunkCommand::UpdatePlayerRot(uuid, move_player_rot,rotate_head) => {
+                let pk = PacketSend::build_send_packet(
+                    move_player_rot
+                ).await?;
+                let head_pk = PacketSend::build_send_packet(
+                    rotate_head
+                ).await?;
+                for i in &self.now_chunk_player {
+                    let _ = i.value().1.send(pk.clone());
+                    let _ = i.value().1.send(head_pk.clone());
+                }
+                // log::info!("[{:?}] 移动数据包:{:?}",uuid,move_player_rot);
+            },
+            ChunkCommand::UpdatePlayerPosRot(uuid, move_player_pos_rot,rotate_head) => {
+                let pk = PacketSend::build_send_packet(
+                    move_player_pos_rot
+                ).await?;
+                let head_pk = PacketSend::build_send_packet(
+                    rotate_head
+                ).await?;
+                for i in &self.now_chunk_player {
+                    let _ = i.value().1.send(pk.clone());
+                    let _ = i.value().1.send(head_pk.clone());
+                }
+            },
+            ChunkCommand::PlayerLeave { uuid, pos } =>{
+                log::info!("玩家离开区块测试:{},坐标:{:?}",uuid,pos);
+                if let Some(player) = self.now_chunk_player.remove(&uuid){
+                    let player_leave_packet = PacketSend::build_send_packet(qexed_protocol::to_client::play::remove_entities::RemoveEntities{
+                        uuids:vec![VarInt(player.1.2)],
+                    }).await?;
+                    for i in &self.now_chunk_player{
+                        let _ = i.value().1.send(
+                            player_leave_packet.clone()
+                        );
                     }
                 }
             }

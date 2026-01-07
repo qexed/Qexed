@@ -326,17 +326,14 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                         return Ok(false);
                     }
                 };
-                let properties = qexed_protocol::to_client::login::success::Success{ uuid: self.uuid.clone(), username: player.username.clone(), properties: player.properties.clone() };
-                ReturnMessage::build(ManagerMessage::GetPlayerInfo(Some(
-                    qexed_player_info::Message::PlayerJoin(self.uuid.clone(), build_system_message(player.username.clone()), properties, packet_write.clone())
-                ))).get(&manage_api).await?;
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                
                 // 获取实体对象
 
                 if let ManagerMessage::GetPlayerEntity(_,Some(player_entity)) = ReturnMessage::build(ManagerMessage::GetPlayerEntity(Some(player.clone()), None)).get(manage_api).await?{
                     self.player_entity = Some(player_entity);
                 }
-                let mut player_entity = match &self.player_entity {
+                let player_entity = match &self.player_entity {
                     Some(p) => p.clone(),
                     None => {
                         if let Some(send) = data.get_return_send().await? {
@@ -347,8 +344,8 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                 };
                 let (s,r) = oneshot::channel();
                 player_entity.send(qexed_entity::message::TaskCommand::GetentityID(s))?;
+
                 let entity_id = r.await?;
-                log::info!("测试实体ID:{}",entity_id);
                 // 玩家进服
                 packet_write.send(
                     PacketSend::build_send_packet(qexed_protocol::to_client::play::login::Login {
@@ -381,6 +378,12 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                     })
                     .await?,
                 )?;
+                let properties = qexed_protocol::to_client::login::success::Success{ uuid: self.uuid.clone(), username: player.username.clone(), properties: player.properties.clone() };
+                let (s,r2) = oneshot::channel();
+                ReturnMessage::build(ManagerMessage::GetPlayerInfo(Some(
+                    qexed_player_info::Message::PlayerJoin(self.uuid.clone(), build_system_message(player.username.clone()), properties, packet_write.clone(),s)
+                ))).get(&manage_api).await?;
+                r2.await?;
                 // 初始化成就
                 packet_write.send(
                     PacketSend::build_send_packet(create_multiple_advancements_packet())
@@ -634,6 +637,7 @@ impl TaskEvent<ReturnMessage<TaskMessage>, ReturnMessage<ManagerMessage>> for Ga
                     Some(heartbeat_api.clone()),
                     Some(chat_api.clone()),
                     Some(command_api.clone()),
+                    Some(player_entity.clone()),
                 ))
                 .get(&packet_split_api)
                 .await?;
