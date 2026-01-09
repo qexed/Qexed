@@ -26,13 +26,13 @@ once_cell.workspace = true
 lazy_static.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-strum = {version = "0.27.2", features = ["derive"]}
-phf = { version = "0.11", features = ["macros"] }
+strum = { workspace = true, features = ["derive"] }
+phf = { workspace = true, features = ["macros"] }
 [build-dependencies]
 serde.workspace = true
 serde_json.workspace = true
-heck = "0.4"
-phf = { version = "0.11", features = ["macros"] }
-phf_codegen = "0.11"
-fs-err = "3.2.2"  # 更好的文件系统错误处理
+heck = { workspace = true }
+phf = { workspace = true, features = ["macros"] }
+phf_codegen = { workspace = true }
+fs-err = { workspace = true }  # 更好的文件系统错误处理
 anyhow.workspace = true

@@ -15,4 +15,4 @@ uuid = { workspace = true, features = ["serde","v4"] }
 thiserror.workspace = true
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
-flate2 = "1.0"  # 添加 flate2 用于解压缩 GZip 文件
+flate2 = { workspace = true }  # 添加 flate2 用于解压缩 GZip 文件

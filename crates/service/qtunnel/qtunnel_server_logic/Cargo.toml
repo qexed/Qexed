@@ -33,6 +33,6 @@ qexed_nbt.workspace = true
 qexed_player.workspace = true
 qexed_command.workspace = true
 qexed_player_list.workspace = true
-hex = "0.4.3"
-sha1 = "0.10.6"
+hex = { workspace = true }
+sha1 = { workspace = true }
 tokio-util.workspace = true

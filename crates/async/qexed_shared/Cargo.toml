@@ -18,6 +18,6 @@ uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-difference = "2.0"
+difference = { workspace = true }
 [dev-dependencies]
-tokio-test = "0.4.4"
+tokio-test = { workspace = true }

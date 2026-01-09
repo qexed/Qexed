@@ -27,6 +27,6 @@ thiserror.workspace = true
 [build-dependencies]
 serde.workspace = true
 serde_json.workspace = true
-heck = "0.4"
-phf = { version = "0.11", features = ["macros"] }
-phf_codegen = "0.11"
+heck = { workspace = true }
+phf = { workspace = true, features = ["macros"] }
+phf_codegen = { workspace = true }

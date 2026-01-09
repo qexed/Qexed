@@ -133,8 +133,8 @@ where
     T: Send + 'static + Sync + Debug + Unpin + Clone,
 {
     pub async fn new(data: T) -> anyhow::Result<Self> {
-        let manager_actor = TaskSharedManage::new(data.clone());
-        let (manager_task, manager_sender) = TaskManage::new(manager_actor);
+        let manager_actor: TaskSharedManage<T> = TaskSharedManage::new(data.clone());
+        let (manager_task, manager_sender,_cancel_token) = TaskManage::new(manager_actor)?;
         manager_task.run().await?;
         
         let (ts, tr) = unbounded_channel();
@@ -363,7 +363,8 @@ where
     data: T,
     next_id: u64,
     recycled: Vec<u64>,
-    task_senders: DashMap<u64, UnboundedSender<T>>,  // 存储每个任务的发送端
+    task_senders: DashMap<u64, MessageSender<T>>,  // 存储每个任务的发送端
+    task_map: DashMap<u64, MessageSender<ReturnMessage<TaskSharedTaskMessage<T>>>>,
 }
 
 impl<T> TaskSharedManage<T>
@@ -376,6 +377,7 @@ where
             next_id: 0,
             recycled: Vec::new(),
             task_senders: DashMap::new(),
+            task_map:Default::default(),
         }
     }
 
@@ -473,9 +475,7 @@ where
 // 为TaskManageEvent trait实现
 #[async_trait]
 impl<T> TaskManageEvent<
-    u64,
     UnReturnMessage<TaskSharedManageMessage<T>>,
-    ReturnMessage<TaskSharedTaskMessage<T>>,
 > for TaskSharedManage<T>
 where
     T: Send + 'static + Sync + Debug + Unpin + Clone,
@@ -483,7 +483,6 @@ where
     async fn event(
         &mut self,
         _api: &MessageSender<UnReturnMessage<TaskSharedManageMessage<T>>>,
-        task_map: &DashMap<u64, MessageSender<ReturnMessage<TaskSharedTaskMessage<T>>>>,
         mut data: UnReturnMessage<TaskSharedManageMessage<T>>,
     ) -> anyhow::Result<bool> {
         match data.data.mode {
@@ -501,9 +500,9 @@ where
                     pending_updates: false,
                 };
                 
-                let (task, task_sand) = Task::new(_api.clone(), raw_task);
+                let (task, task_sand,_cancel_token) = Task::new(_api.clone(), raw_task)?;
                 task.run().await?;
-                task_map.insert(id, task_sand.clone());
+                self.task_map.insert(id, task_sand.clone());
                 
                 // 保存任务的发送端用于广播
                 if let Some(task_s) = data.data.task_r {
@@ -522,7 +521,7 @@ where
             },
             // 同步数据(发起) - 更新管理器数据并广播给其他任务
             1 => {
-                let id = match data.data.id {
+                let _id = match data.data.id {
                     Some(v) => v,
                     None => { 
                         return Err(anyhow!("同步数据时缺少任务ID"));
@@ -534,8 +533,8 @@ where
                     self.data = new_data.clone();
                     
                     // 向所有任务广播更新
-                    for entry in task_map.iter() {
-                        let task_id = *entry.key();
+                    for entry in self.task_map.iter() {
+                        // let task_id = *entry.key();
                         // if task_id != id {  // 不给自己发
                             let _ = entry.value().send(ReturnMessage::build(TaskSharedTaskMessage {
                                 mode: 2,  // 同步(接受者)
@@ -567,14 +566,14 @@ where
             // 注销子任务
             2 => {
                 if let Some(id) = data.data.id {
-                    task_map.remove(&id);
+                    self.task_map.remove(&id);
                     self.release_id(id);
                 }
             },
             // 关闭管理器
             3 => {
                 // 向所有任务发送关闭消息
-                for entry in task_map.iter() {
+                for entry in self.task_map.iter() {
                     let _ = entry.value().send(ReturnMessage::build(TaskSharedTaskMessage {
                         mode: 4,  // 关闭任务
                         data: None,
@@ -585,7 +584,7 @@ where
                 }
                 
                 // 清理所有资源
-                task_map.clear();
+                self.task_map.clear();
                 self.task_senders.clear();
                 return Ok(true);  // 管理器结束
             },
@@ -594,5 +593,12 @@ where
             }
         }
         Ok(false)
+    }
+    async fn finish(
+        &mut self,
+        _api: &MessageSender<UnReturnMessage<TaskSharedManageMessage<T>>>,
+    ) -> anyhow::Result<()> {
+        // self.event(api, data).await?;
+        Ok(())
     }
 }

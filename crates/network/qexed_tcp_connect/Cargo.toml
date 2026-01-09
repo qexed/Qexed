@@ -29,8 +29,8 @@ crab_nbt.workspace = true
 bitflags.workspace = true
 dyn-clone.workspace = true
 cfb-mode.workspace = true
-tokio-util = "0.7.17"
-openssl = "0.10.75"
+tokio-util = { workspace = true }
+openssl = { workspace = true }
 
 
 

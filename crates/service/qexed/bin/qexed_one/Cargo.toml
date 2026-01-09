@@ -47,10 +47,10 @@ tokio  = { workspace = true }
 log.workspace = true
 tklog.workspace = true
 chrono.workspace = true
-console-subscriber = "0.5.0"
+console-subscriber = { workspace = true }
 shadow-rs.workspace = true
 
 [build-dependencies]
-vergen = "8"  # 用于注入构建信息
+vergen = { workspace = true }  # 用于注入构建信息
 chrono.workspace = true
 shadow-rs.workspace = true
