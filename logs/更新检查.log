@@ -1,2 +1,0 @@
-[更新检查] [WARN] 2026-02-01 14:41:49 lib.rs 22 版本检查失败: error sending request for url (https://api.qexed.com/qexed/version/laster)
-[更新检查] [WARN] 2026-02-01 14:43:28 lib.rs 22 版本检查失败: error sending request for url (https://api.qexed.com/qexed/version/latest)
