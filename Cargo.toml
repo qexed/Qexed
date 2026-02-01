@@ -1,7 +1,12 @@
 [workspace]
 resolver = "3"
-members = []
+members = [
+    "crates/qexed",
+    "crates/qexed_log",
+]
 [workspace.dependencies]
+# 内部包
+qexed_log.path = "crates/qexed_log"
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理
