@@ -12,9 +12,11 @@ keep_days = 7
 max_size = 10
 append = true
 [package.metadata.log_modules]
-qexed_tcp_connect.rename = "Tcp Connect"
-qexed_log.rename = "Log"
-qexed.rename = "main"
+qexed_tcp_connect.rename = "Tcp 连接"
+qexed_log.rename = "日志"
+qexed_update_check.rename ="更新检查"
+qexed.rename = "主程序"
+
 [dependencies]
 colored = "3.1.1"
 log = { workspace = true }

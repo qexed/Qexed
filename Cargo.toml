@@ -3,10 +3,12 @@ resolver = "3"
 members = [
     "crates/qexed",
     "crates/qexed_log",
+    "crates/qexed_update_check",
 ]
 [workspace.dependencies]
 # 内部包
 qexed_log.path = "crates/qexed_log"
+qexed_update_check.path = "crates/qexed_update_check"
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理

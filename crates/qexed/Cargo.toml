@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 qexed_log.workspace = true
+qexed_update_check.workspace = true
 
 log = { workspace = true }
 tklog = { workspace = true }
