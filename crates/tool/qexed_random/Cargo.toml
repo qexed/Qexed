@@ -1,8 +1,0 @@
-[package]
-name = "qexed_random"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-nanoid = { workspace = true }
-rand.workspace = true

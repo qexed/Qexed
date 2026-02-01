@@ -11,6 +11,8 @@
 /tmp
 /tool/
 /
+/crates-old
+/Cargo.old.toml
 # 未使用的代码
 /crates/service/qexed/unuse
 # will have compiled files and executables
