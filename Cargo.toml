@@ -4,11 +4,15 @@ members = [
     "crates/qexed",
     "crates/qexed_log",
     "crates/qexed_update_check",
+    "crates/qexed_config",
+    "crates/macros/qexed_config_macros",
 ]
 [workspace.dependencies]
 # 内部包
 qexed_log.path = "crates/qexed_log"
 qexed_update_check.path = "crates/qexed_update_check"
+qexed_config.path = "crates/qexed_config"
+qexed_config_macros.path = "crates/macros/qexed_config_macros"
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理

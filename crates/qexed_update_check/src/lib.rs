@@ -10,7 +10,11 @@ struct GitHubRelease {
     tag_name: String,// 版本标签（如 "v0.1.0"）
 }
 
-pub async fn check_version() {
+pub async fn check_version(update_check:bool) {
+    if update_check==false{
+        log::info!("跳过本地版本更新检查");
+        return ;
+    }
     // 创建带超时的 HTTP 客户端（5秒超时）
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
