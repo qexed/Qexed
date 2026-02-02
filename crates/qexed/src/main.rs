@@ -20,28 +20,28 @@ async fn main() -> anyhow::Result<()> {
     match qexed_plugin_manage::update_plugins_check(&config.plugin_download).await {
         Ok(v) => {
             if !v {
-                log::error!("插件更新检查失败,错误原因请查看日志");
+                log::error!("{}",t!("qexed.plugim_update_check_error_by_false"));
                 return Ok(());
             }
         }
         Err(err) => {
-            log::error!("插件更新检查失败,错误原因:{:?}", err);
+            log::error!("{}",t!("qexed.plugim_update_check_error", err=err));
             return Err(err);
         }
     }
     // 启动 Tcp 服务器
     let tcp_server = match tokio::net::TcpListener::bind(config.server.ip.clone()).await {
         Ok(v) => {
-            log::info!("监听IP地址:{:}", config.server.ip.clone());
+            log::info!("{}",t!("qexed.listen_ip",ip=config.server.ip.clone()));
             v
         }
         Err(err) => match err.kind() {
             std::io::ErrorKind::AddrInUse => {
-                log::error!("地址已被占用: {}", config.server.ip);
+                log::error!("{}",t!("qexed.address_in_use",ip=config.server.ip));
                 return Err(err.into());
             }
             _ => {
-                log::error!("服务器绑定IP失败: {:?}", err);
+                log::error!("{}",t!("qexed.bind_failed",err=err));
                 return Err(err.into());
             }
         },

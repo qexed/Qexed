@@ -3,24 +3,39 @@ _fallback_language = "zh-CN"
 [qexed.log_init_finish]
 en = "Logging system initialized"
 zh-CN = "日志系统初始化完成"
+[qexed.plugim_update_check_error]
+en = "Plugin update check failed. Error reason: &{err}"
+zh-CN = "插件更新检查失败,错误原因:&{err}"
+[qexed.plugim_update_check_error_by_false]
+en = "Plugin update check failed. Please refer to the log for the error reason."
+zh-CN = "插件更新检查失败,错误原因请查看日志"
+[qexed.listen_ip]
+en ="Listening to IP address: %{ip}"
+zh-CN = "监听IP地址:%{ip}"
+[qexed.address_in_use]
+en = "Address is already in use: %{ip}"
+zh-CN = "地址已被占用: %{ip}"
+[qexed.bind_failed]
+en = "Server failed to bind IP: %{error}"
+zh-CN = "服务器绑定IP失败: %{error}"
 [qexed_update_check.Skip_the_local_version_update_check]
 en = "Skip the local version update check"
 zh-CN = "跳过本地版本更新检查"
 [qexed_update_check.find_new_version]
-en = "A new version is available: {new_version} (Current: {current_version})"
-zh-CN = "发现新版本: {new_version} (当前: {current_version})"
+en = "A new version is available: %{new_version} (Current: %{current_version})"
+zh-CN = "发现新版本: %{new_version} (当前: %{current_version})"
 [qexed_update_check.failed_to_parse_version_information]
-en = "Failed to parse version information: {err}"
-zh-CN = "解析版本信息失败: {err}"
+en = "Failed to parse version information: %{err}"
+zh-CN = "解析版本信息失败: %{err}"
 [qexed_update_check.no_official_version]
 en = "The warehouse has not released any official version yet (404 Not Found)"
 zh-CN = "仓库尚未发布任何正式版本（404 Not Found）"
 [qexed_update_check.github_api_error]
-en = "GitHub API returned an error status code: {err}"
-zh-CN = "GitHub API 返回错误状态码: {err}"
+en = "GitHub API returned an error status code: %{err}"
+zh-CN = "GitHub API 返回错误状态码: %{err}"
 [qexed_update_check.version_check_failed]
-en = "Version check failed:{err}"
-zh-CN = "版本检查失败: {err}"
+en = "Version check failed:%{err}"
+zh-CN = "版本检查失败: %{err}"
 [qexed_log.modern.global]
 en = "Global"
 zh-CN = "全局"
@@ -40,5 +55,5 @@ zh-CN = "主程序"
 en="Plugin Manage"
 zh-CN = "插件管理"
 [qexed_plugin_manage.download_skip]
-en = "Plugin download check skipped. If you need to use it, please read: {url}"
-zh-CN = "插件下载检查跳过,如需使用请阅读:{}"
+en = "Plugin download check skipped. If you need to use it, please read: %{url}"
+zh-CN = "插件下载检查跳过,如需使用请阅读: %{url}"
