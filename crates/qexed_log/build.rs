@@ -75,7 +75,7 @@ fn parse_defaults() -> DefaultConfig {
     // 从表中读取值（带默认值）
     DefaultConfig {
         level: get_string(&defaults_table, "level").unwrap_or_else(|| "INFO".to_string()),
-        console: get_bool(&defaults_table, "console").unwrap_or(true),
+        console: get_bool(&defaults_table, "console").unwrap_or(false),
         formatter: get_string(&defaults_table, "formatter")
             .unwrap_or_else(|| "[{module}] {level} {time} {file}:{line} {message}\n".to_string()),
         file_path: get_string(&defaults_table, "file_path")

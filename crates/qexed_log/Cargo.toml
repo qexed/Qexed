@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 [package.metadata.log_defaults]
 level = "Info"
-console = true
+console = false
 formatter = "{level} [{time}]: [{module}] {file} {message}\n"
 file_path = "./logs/{}.log"
 file_mode = "DAY"
@@ -18,11 +18,12 @@ qexed_update_check.rename ="qexed_log.modern.qexed_update_check"
 qexed.rename = "qexed_log.modern.qexed"
 qexed_plugin_manage.rename = "qexed_log.modern.qexed_plugin_manage"
 [dependencies]
-colored = { workspace = true }
-log = { workspace = true }
-tklog = { workspace = true }
-tokio = { workspace = true }
-rust-i18n = { workspace = true }
+colored.workspace = true
+chrono.workspace = true
+log.workspace = true
+tklog.workspace = true
+tokio.workspace = true
+rust-i18n.workspace = true
 [build-dependencies]
 chrono.workspace = true
 serde.workspace = true

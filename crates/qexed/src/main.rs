@@ -46,7 +46,12 @@ async fn main() -> anyhow::Result<()> {
             }
         },
     };
-    if !config.server.online {}
+    if !config.server.online {
+        log::warn!("{}",t!("qexed.minecraft_warning.offline_mode"));
+        log::warn!("{}",t!("qexed.minecraft_warning.no_authentication"));
+        log::warn!("{}",t!("qexed.minecraft_warning.hacker_risk"));
+        log::warn!("{}",t!("qexed.minecraft_warning.set_online_mode"));
+    }
     let _ = tcp_server;
     loop {}
 }
