@@ -1,0 +1,30 @@
+{
+  "name": "Rust Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "settings": {
+    "rust-analyzer.checkOnSave.command": "clippy",
+    "rust-analyzer.cargo.runBuildScripts": true,
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "extensions": [
+    "rust-lang.rust-analyzer",
+    "ms-azuretools.vscode-docker",
+    "vadimcn.vscode-lldb",
+    "tamasfe.even-better-toml",
+    "serayuzgur.crates"
+  ],
+  "forwardPorts": [5150, 6379],
+  "postCreateCommand": "cargo install loco sea-orm-cli && cargo build",
+  "remoteUser": "rust-dev",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "postForwardPort": "cargo loco start --port 5150"
+}

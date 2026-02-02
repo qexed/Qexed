@@ -5,23 +5,24 @@ edition = "2024"
 [package.metadata.log_defaults]
 level = "Info"
 console = true
-formatter = "[{module}] {level} {time} {file} {message}\n"
+formatter = "{level} [{time}]: [{module}] {file} {message}\n"
 file_path = "./logs/{}.log"
 file_mode = "DAY"
 keep_days = 7
 max_size = 10
 append = true
 [package.metadata.log_modules]
-qexed_tcp_connect.rename = "Tcp 连接"
-qexed_log.rename = "日志"
-qexed_update_check.rename ="更新检查"
-qexed.rename = "主程序"
-
+qexed_tcp_connect.rename = "qexed_log.modern.qexed_tcp_connect"
+qexed_log.rename = "qexed_log.modern.log"
+qexed_update_check.rename ="qexed_log.modern.qexed_update_check"
+qexed.rename = "qexed_log.modern.qexed"
+qexed_plugin_manage.rename = "qexed_log.modern.qexed_plugin_manage"
 [dependencies]
-colored = "3.1.1"
+colored = { workspace = true }
 log = { workspace = true }
 tklog = { workspace = true }
 tokio = { workspace = true }
+rust-i18n = { workspace = true }
 [build-dependencies]
 chrono.workspace = true
 serde.workspace = true

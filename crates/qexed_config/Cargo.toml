@@ -18,3 +18,4 @@ tklog.workspace = true
 uuid.workspace = true
 serde_json.workspace = true
 rand.workspace = true
+sys-locale = { workspace = true }

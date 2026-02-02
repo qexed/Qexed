@@ -119,10 +119,9 @@ fn parse_modules(defaults: &DefaultConfig) -> Vec<ModuleConfig> {
                 .unwrap_or(defaults.console);
             
             // 3. 智能模板替换：formatter 中的 {module} → display_name
-            let formatter_template = get_string(config_table, "formatter")
+            let formatter = get_string(config_table, "formatter")
                 .unwrap_or_else(|| defaults.formatter.clone());
-            let formatter = formatter_template.replace("{module}", &display_name);
-            
+            //let formatter = ""
             // 4. 智能模板替换：file_path 中的 {} → display_name
             let path_template = get_string(config_table, "file_path")
                 .unwrap_or_else(|| defaults.file_path.clone());
@@ -226,8 +225,8 @@ fn generate_module_code(modules: &[ModuleConfig]) -> String {
         code.push_str(&format!("            console: Some({}),\n", module.console));
         code.push_str("            format: None,\n");
         code.push_str(&format!(
-            "            formatter: Some(\"{}\".to_string()),\n",
-            escape_rust_string(&module.formatter)  // 转义特殊字符
+            "            formatter: Some(\"{}\".replace(\"{{module}}\", &rust_i18n::t!(\"{}\"))),\n",
+            escape_rust_string(&module.formatter),&module.display_name  // 转义特殊字符
         ));
         code.push_str(&format!("            fileoption: {},\n", file_option));
         // code.push_str("        }\n    ).await {\n");

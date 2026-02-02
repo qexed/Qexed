@@ -7,8 +7,10 @@ edition = "2024"
 qexed_log.workspace = true
 qexed_config.workspace = true
 qexed_update_check.workspace = true
-
+qexed_safe_check.workspace = true
+qexed_plugin_manage.workspace = true
 log = { workspace = true }
 tklog = { workspace = true }
 tokio = { workspace = true }
 anyhow.workspace = true
+rust-i18n = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "qexed_update_check"
+name = "qexed_safe_check"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,7 @@ log.workspace = true
 serde.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
-rust-i18n = { workspace = true }
+[target.'cfg(target_os = "linux")'.dependencies]
+nix.workspace = true
+regex.workspace = true
+whoami.workspace = true

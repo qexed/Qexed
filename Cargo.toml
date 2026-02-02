@@ -5,14 +5,21 @@ members = [
     "crates/qexed_log",
     "crates/qexed_update_check",
     "crates/qexed_config",
+    "crates/qexed_safe_check",
+    "crates/qexed_plugin_manage",
+
     "crates/macros/qexed_config_macros",
+
 ]
 [workspace.dependencies]
 # 内部包
 qexed_log.path = "crates/qexed_log"
 qexed_update_check.path = "crates/qexed_update_check"
 qexed_config.path = "crates/qexed_config"
+qexed_safe_check.path = "crates/qexed_safe_check"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
+qexed_plugin_manage.path = "crates/qexed_plugin_manage"
+
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理
@@ -93,3 +100,10 @@ strum = "0.27.2"
 syn = "2.0"
 tokio-test = "0.4.4"
 vergen = "8"
+colored = "3.1.1"
+nix = {version = "0.31.1",features = ["user", "poll"]}
+regex = "1.12.2"
+whoami = "2.1.0"
+sys-locale = "0.3.2"
+icu = "2.1.1"
+rust-i18n = "3.1.5"
