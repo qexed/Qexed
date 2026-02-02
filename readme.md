@@ -4,6 +4,7 @@
 [![Status](https://img.shields.io/badge/Status-Developing-yellow)]()
 
 [English](./readme.md)|[简体中文](./readme-cn.md)
+
 A low-performance Minecraft: Java Edition server written in Rust, dedicated to providing a modern, extensible, and stable game server experience.
 
 > ⚠️ **Project is under active development**, APIs and features are subject to change.
