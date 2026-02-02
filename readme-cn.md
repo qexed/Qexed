@@ -1,10 +1,9 @@
 # Qexed | 量子叠加态 (Quantum Existence State)
-[English](./readme.md)|[简体中文](./readme-cn.md)
-
 [![Rust](https://img.shields.io/badge/Rust-1.91+-orange?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Developing-yellow)]()
 
+[English](./readme.md)|[简体中文](./readme-cn.md)
 一个使用 Rust 编写的低性能 Minecraft: Java Edition 服务端，致力于提供现代化、可扩展且稳定的游戏服务器体验。
 
 > ⚠️ **项目处于积极开发阶段**，API 与功能可能发生变动。

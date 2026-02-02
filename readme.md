@@ -1,10 +1,9 @@
 # Qexed | Quantum Existence State
-[English](./readme.md)|[简体中文](./readme-cn.md)
-
 [![Rust](https://img.shields.io/badge/Rust-1.91+-orange?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Developing-yellow)]()
 
+[English](./readme.md)|[简体中文](./readme-cn.md)
 A low-performance Minecraft: Java Edition server written in Rust, dedicated to providing a modern, extensible, and stable game server experience.
 
 > ⚠️ **Project is under active development**, APIs and features are subject to change.
@@ -22,7 +21,7 @@ The Qexed server natively integrates internationalization support. The following
 
 | Language | Locale Code | Status |
 | :--- | :--- | :--- |
-| **Simplified Chinese** | `zh-CN` | ✅ Fully supported |
+| **Simplified Chinese(简体中文)** | `zh-CN` | ✅ Fully supported |
 | **English** | `en` | ✅ Fully supported |
 
 We use the [`rust-i18n`](https://crates.io/crates/rust-i18n) framework to manage translations. All user-visible strings (such as console output, logs, configuration descriptions) are extracted and stored in translation files in the `locales/` directory.
