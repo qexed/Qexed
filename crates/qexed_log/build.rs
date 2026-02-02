@@ -125,7 +125,7 @@ fn parse_modules(defaults: &DefaultConfig) -> Vec<ModuleConfig> {
             // 4. 智能模板替换：file_path 中的 {} → display_name
             let path_template = get_string(config_table, "file_path")
                 .unwrap_or_else(|| defaults.file_path.clone());
-            let file_path = path_template.replace("{}", &display_name);
+            let file_path = path_template;
             
             // 5. 解析其他配置项
             let file_mode = get_string(config_table, "file_mode")
@@ -189,8 +189,9 @@ fn generate_module_code(modules: &[ModuleConfig]) -> String {
         let file_option = if module.file_mode.to_uppercase() == "SIZE" {
             // SIZE 模式：new_size(路径, 最大MB, 保留文件数, 追加模式)
             format!(
-                "Some(::std::boxed::Box::new(::tklog::handle::FileTimeMode::new_size(\n        \"{}\",\n        {},\n        {},\n        {}\n    )))",
+                "Some(::std::boxed::Box::new(::tklog::handle::FileTimeMode::new_size(\n        &format!(\"{}\",&rust_i18n::t!(\"{}\")),\n        {},\n        {},\n        {}\n    )))",
                 escape_rust_string(&module.file_path), 
+                &module.display_name,
                 module.max_size, 
                 module.keep_days, 
                 module.append
@@ -198,8 +199,9 @@ fn generate_module_code(modules: &[ModuleConfig]) -> String {
         } else {
             // DAY/HOUR 模式：new(路径, 模式, 保留天数, 追加模式)
             format!(
-                "Some(::std::boxed::Box::new(::tklog::handle::FileTimeMode::new(\n        \"{}\",\n        {},\n        {},\n        {}\n    )))",
+                "Some(::std::boxed::Box::new(::tklog::handle::FileTimeMode::new(\n        &format!(\"{}\",&rust_i18n::t!(\"{}\")),\n        {},\n        {},\n        {}\n    )))",
                 escape_rust_string(&module.file_path), 
+                &module.display_name,
                 mode_enum, 
                 module.keep_days, 
                 module.append

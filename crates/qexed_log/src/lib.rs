@@ -6,7 +6,7 @@ pub async fn log_init() {
     ASYNC_LOG
         .set_console(true)
         .set_level(LEVEL::Info)
-        .set_cutmode_by_time("./logs/server.log", MODE::DAY, 30, true)
+        .set_cutmode_by_time(&format!("./logs/{}.log",t!("qexed_log.modern.global")), MODE::DAY, 30, true)
         .await
         .set_formatter(&format!("{{level}} [{{time}}]: [{}] {{file}} {{message}}\n",t!("qexed_log.modern.global")));
     module().await;
