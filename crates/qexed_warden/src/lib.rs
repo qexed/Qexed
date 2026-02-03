@@ -1,7 +1,9 @@
 use qexed_config::tool::AppConfigTrait;
+
+pub mod message;
+rust_i18n::i18n!("locales");
 use rust_i18n::t;
-rust_i18n::i18n!("../../locales");
-pub async fn new()->anyhow::Result<()>{
+pub async fn new()->anyhow::Result<tokio::sync::mpsc::UnboundedSender<message::Message>>{
     let _config = match qexed_config::app::qexed_warden::QexedWarden::load_or_create_default(){
         Ok(v)=>v,
         Err(err)=>{
@@ -10,5 +12,6 @@ pub async fn new()->anyhow::Result<()>{
         }
     };
     log::info!("{}",t!("qexed_warden.config_init_finish"));
-    Ok(())
+    let (r,s) = tokio::sync::mpsc::unbounded_channel();
+    Ok(r)
 }
