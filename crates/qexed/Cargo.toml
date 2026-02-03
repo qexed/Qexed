@@ -2,7 +2,7 @@
 name = "qexed"
 version = "0.1.0"
 edition = "2024"
-
+build = "build.rs"
 [dependencies]
 qexed_log.workspace = true
 qexed_config.workspace = true
@@ -15,3 +15,8 @@ tklog = { workspace = true }
 tokio = { workspace = true }
 anyhow.workspace = true
 rust-i18n = { workspace = true }
+shadow-rs.workspace = true
+winapi = "0.3.9"
+os_info = "3.14.0"
+[build-dependencies]
+shadow-rs.workspace = true

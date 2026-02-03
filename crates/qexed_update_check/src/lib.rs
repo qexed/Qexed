@@ -15,7 +15,7 @@ pub async fn check_version(update_check: bool) {
     if update_check == false {
         log::info!(
             "{}",
-            t!("qexed_update_check.Skip_the_local_version_update_check")
+            t!("qexed_update_check.skip_local_version_check")
         );
         return;
     }
