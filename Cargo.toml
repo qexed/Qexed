@@ -7,7 +7,7 @@ members = [
     "crates/qexed_config",
     "crates/qexed_safe_check",
     "crates/qexed_plugin_manage",
-
+    "crates/qexed_warden",
     "crates/macros/qexed_config_macros",
 
 ]
@@ -19,7 +19,7 @@ qexed_config.path = "crates/qexed_config"
 qexed_safe_check.path = "crates/qexed_safe_check"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_plugin_manage.path = "crates/qexed_plugin_manage"
-
+qexed_warden.path = "crates/qexed_warden"
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理
@@ -107,3 +107,4 @@ whoami = "2.1.0"
 sys-locale = "0.3.2"
 icu = "2.1.1"
 rust-i18n = "3.1.5"
+sled = "0.34.7"

@@ -29,6 +29,12 @@ async fn main() -> anyhow::Result<()> {
             return Err(err);
         }
     }
+    // 初始化其他服务
+    let mut set = tokio::task::JoinSet::new();
+    set.spawn(qexed_warden::new());
+    
+    // 一行代码等待所有任务完成并收集结果
+    let results = set.join_all().await;
     // 启动 Tcp 服务器
     let tcp_server = match tokio::net::TcpListener::bind(config.server.ip.clone()).await {
         Ok(v) => {
@@ -52,11 +58,13 @@ async fn main() -> anyhow::Result<()> {
         log::warn!("{}",t!("qexed.minecraft_warning.hacker_risk"));
         log::warn!("{}",t!("qexed.minecraft_warning.set_online_mode"));
     }
-    let _ = tcp_server;
-    loop {}
+    // 读取存档 world 中
+    loop {
+        let (socket, addr) = tcp_server.accept().await?;
+        // 新的TCP连接:{addr}
+        log::debug!("{}",t!("qexed.new_tcp_connection",addr=addr));
+        socket.set_linger(Some(std::time::Duration::from_nanos(1)))?;  // 1秒后强制关闭
+        // socket.set_reuse_address(true)?;
+        socket.set_nodelay(true)?;  // 禁用 Nagle 算法
+    }
 }
-
-// [22:00:44 WARN]: **** SERVER IS RUNNING IN OFFLINE/INSECURE MODE!
-// [22:00:44 WARN]: The server will make no attempt to authenticate usernames. Beware.
-// [22:00:44 WARN]: While this makes the game possible to play without internet access, it also opens up the ability for hackers to connect with any username they choose.
-// [22:00:44 WARN]: To change this, set "online-mode" to "true" in the server.properties file.

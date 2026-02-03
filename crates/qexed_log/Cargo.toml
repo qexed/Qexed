@@ -3,7 +3,7 @@ name = "qexed_log"
 version = "0.1.0"
 edition = "2024"
 [package.metadata.log_defaults]
-level = "Info"
+level = "Debug"
 console = false
 formatter = "{level} [{time}]: [{module}] {file} {message}\n"
 file_path = "./logs/{}.log"

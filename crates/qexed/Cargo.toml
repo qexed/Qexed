@@ -9,6 +9,7 @@ qexed_config.workspace = true
 qexed_update_check.workspace = true
 qexed_safe_check.workspace = true
 qexed_plugin_manage.workspace = true
+qexed_warden.workspace = true
 log = { workspace = true }
 tklog = { workspace = true }
 tokio = { workspace = true }

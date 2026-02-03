@@ -1,0 +1,8 @@
+_version = 2
+_fallback_language = "zh-CN"
+[qexed_warden.config_init_finish]
+en = "Config Load Finish"
+zh-CN = "配置文件初始化完成"
+[qexed_warden.config_load_error]
+en = "failed to load config file:%{err}"
+zh-CN = "配置文件读取报错：%{err}"
