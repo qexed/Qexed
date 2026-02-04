@@ -72,7 +72,12 @@ qexed_log:
     qexed_warden:
       en: "Warden"
       zh-CN: "典狱长"
-
+    qexed_ip_connection_speed_test:
+      en: "IP Speed Test"
+      zh-CN: "IP速率检测"
+    qexed_wasm_runtime:
+      en: "Plugin RunTime"
+      zh-CN: "插件运行环境"
 qexed_plugin_manage:
   download_skip:
     en: "Plugin download check skipped. If you need to use it, please read: %{url}"

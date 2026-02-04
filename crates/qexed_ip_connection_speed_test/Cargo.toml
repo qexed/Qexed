@@ -1,0 +1,11 @@
+[package]
+name = "qexed_ip_connection_speed_test"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+log.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+rust-i18n.workspace = true

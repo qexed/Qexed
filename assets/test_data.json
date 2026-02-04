@@ -1,0 +1,24 @@
+{
+  "performance_stats": [
+    {
+      "label": "区块加载速度",
+      "value": "-10x",
+      "desc": "比原版快"
+    },
+    {
+      "label": "内存使用",
+      "value": "+660%",
+      "desc": "相比 Paper"
+    },
+    {
+      "label": "启动时间",
+      "value": "10s",
+      "desc": "从启动到可连接"
+    },
+    {
+      "label": "网络延迟",
+      "value": "+40%",
+      "desc": "延迟卡死"
+    }
+  ]
+}

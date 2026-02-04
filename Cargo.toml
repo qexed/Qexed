@@ -6,10 +6,13 @@ members = [
     "crates/qexed_update_check",
     "crates/qexed_config",
     "crates/qexed_safe_check",
-    "crates/qexed_plugin_manage",
+    "crates/plugin/qexed_plugin_manage",
     "crates/qexed_warden",
+    "crates/qexed_ip_connection_speed_test",
     "crates/macros/qexed_config_macros",
-
+    "crates/plugin/qexed_wasm_runtime",
+    "crates/plugin/hello_world",
+    "crates/plugin/qexed_plugin_api"
 ]
 [workspace.dependencies]
 # 内部包
@@ -18,8 +21,13 @@ qexed_update_check.path = "crates/qexed_update_check"
 qexed_config.path = "crates/qexed_config"
 qexed_safe_check.path = "crates/qexed_safe_check"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
-qexed_plugin_manage.path = "crates/qexed_plugin_manage"
+qexed_plugin_manage.path = "crates/plugin/qexed_plugin_manage"
 qexed_warden.path = "crates/qexed_warden"
+qexed_ip_connection_speed_test.path = "crates/qexed_ip_connection_speed_test"
+qexed_wasm_runtime.path = "crates/plugin/qexed_wasm_runtime"
+qexed_plugin_api.path = "crates/plugin/qexed_plugin_api"
+# 插件
+# pass
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理
@@ -67,7 +75,7 @@ midly = "0.5.3"
 cached = "0.42"
 rsa = "0.9"
 dashmap = "6.1.0"
-wasmtime = "39.0.1"
+wasmtime = "41.0.2"
 schemars = { version = "1" }
 tokio-util = "0.7.17"
 humantime-serde = "1.1.1"
@@ -108,3 +116,5 @@ sys-locale = "0.3.2"
 icu = "2.1.1"
 rust-i18n = "3.1.5"
 sled = "0.34.7"
+os_info = "3.14.0"
+winapi = "0.3.9"

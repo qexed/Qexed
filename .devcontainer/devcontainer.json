@@ -1,30 +1,43 @@
 {
-  "name": "Rust Dev Container",
-  "build": {
-    "dockerfile": "Dockerfile",
-    "context": ".."
-  },
-  "settings": {
-    "rust-analyzer.checkOnSave.command": "clippy",
-    "rust-analyzer.cargo.runBuildScripts": true,
-    "editor.formatOnSave": true,
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "extensions": [
-    "rust-lang.rust-analyzer",
-    "ms-azuretools.vscode-docker",
-    "vadimcn.vscode-lldb",
-    "tamasfe.even-better-toml",
-    "serayuzgur.crates"
-  ],
-  "forwardPorts": [5150, 6379],
-  "postCreateCommand": "cargo install loco sea-orm-cli && cargo build",
-  "remoteUser": "rust-dev",
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {
-      "moby": true,
-      "dockerDashComposeVersion": "v2"
-    }
-  },
-  "postForwardPort": "cargo loco start --port 5150"
+	"name": "Qexed",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": ".."
+	},
+	"features": {
+		"ghcr.io/devcontainers/features/rust:1": {},
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+			"version": "latest",
+			"moby": true,
+			"dockerDashComposeVersion": "v2.20.0",
+			"installDockerCompose": false
+		}
+	},
+	"mounts": [
+		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh,readonly,type=bind"
+	],
+	"forwardPorts": [
+		25565
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"ms-azuretools.vscode-docker",
+				"vadimcn.vscode-lldb",
+				"tamasfe.even-better-toml",
+				"ms-vscode.cpptools",
+				"golang.go",
+				"llvm-vs-code-extensions.lldb-dap",
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"ms-python.debugpy",
+				"ms-python.vscode-python-envs",
+				"esbenp.prettier-vscode",
+				"MS-CEINTL.vscode-language-pack-zh-hans",
+				"ms-vscode.cpptools-extension-pack",
+				"ms-vscode.makefile-tools"
+			]
+		}
+	}
 }

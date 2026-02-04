@@ -1,40 +1,85 @@
-# 多阶段构建基础镜像
-FROM rust:1.91-slim-bookworm as builder
+# 使用Ubuntu 22.04作为基础镜像（支持docker-in-docker）
+FROM ubuntu:22.04
 
-# 环境变量配置
-ENV RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
-ENV RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup
-ENV CARGO_HOME=/usr/local/cargo
-ENV PATH="$CARGO_HOME/bin:$PATH"
+# 设置非交互式环境变量，避免apt安装时出现交互提示
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH \
+    RUSTUP_UPDATE_ROOT=https://mirrors.aliyun.com/rustup/rustup \
+    RUSTUP_DIST_SERVER=https://mirrors.aliyun.com/rustup
 
-# 系统依赖安装（带缓存优化）
-RUN --mount=type=cache,target=/usr/share/doc \
-    --mount=type=cache,target=/var/cache/apt \
-    apt-get update && apt-get install -y --no-install-recommends \
+# 配置Ubuntu阿里云镜像源
+RUN sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 配置Rust国内镜像源（阿里云）
+RUN mkdir -p $CARGO_HOME/config.d && \
+    echo '[source.crates-io]' > $CARGO_HOME/config.d/mirror.toml && \
+    echo 'replace-with = "aliyun"' >> $CARGO_HOME/config.d/mirror.toml && \
+    echo '[source.aliyun]' >> $CARGO_HOME/config.d/mirror.toml && \
+    echo 'registry = "sparse+https://mirrors.aliyun.com/crates.io-index"' >> $CARGO_HOME/config.d/mirror.toml
+
+# 安装必要的系统包
+RUN apt-get update && apt-get install -y \
+    curl \
     build-essential \
+    git \
+    file \
     pkg-config \
     libssl-dev \
-    libpq-dev \
-    redis-server \
-    sqlite3 \
-    git-lfs \
+    clang \
+    llvm \
+    lld \
+    cmake \
+    ninja-build \
+    python3 \
+    python3-pip \
+    python3-venv \
+    golang \
+    bash \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 用户配置
-RUN useradd -ms /bin/bash rust-dev
-USER rust-dev
+# 创建虚拟环境
+RUN python3 -m venv /opt/venv
+
+# 在虚拟环境中升级pip并设置清华镜像源
+RUN /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+# 在虚拟环境中安装scons
+RUN /opt/venv/bin/pip install --no-cache-dir scons
+
+# 安装Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://mirrors.aliyun.com/repo/rust/rustup-init.sh | sh -s -- -y
+
+# Ubuntu默认使用glibc，如果需要musl target可以安装musl-tools
+# 注意：Ubuntu使用glibc，所以target改为gnu而不是musl
+RUN rustup target add x86_64-unknown-linux-gnu
+RUN rustup target add wasm32-unknown-unknown
+
+# 设置Go代理
+RUN go env -w GO111MODULE=on && go env -w GOPROXY=https://goproxy.cn,direct
+
+# 设置环境变量，确保后续命令使用虚拟环境
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+
+# 清理缓存
+RUN apt-get clean && rm -rf /var/cache/apt/* \
+    && rm -rf /root/.cache/pip
+
+# 验证安装
+RUN rustc --version \
+    && cargo --version \
+    && go version \
+    && scons --version \
+    && python3 --version \
+    && /opt/venv/bin/pip --version
+
+# 设置工作目录
 WORKDIR /workspace
 
-# Cargo 配置
-COPY .cargo/config.toml $CARGO_HOME/config.d/
-
-# 工具链安装
-RUN cargo install --locked \
-    cargo-watch \
-    cargo-edit \
-    loco \
-    sea-orm-cli \
-    cargo-binstall && \
-    cargo binstall cargo-audit cargo-outdated
-
-WORKDIR /project
+# 默认命令改为bash（与原始Dockerfile一致）
+CMD ["/bin/bash"]

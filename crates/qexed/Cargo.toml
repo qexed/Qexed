@@ -10,13 +10,16 @@ qexed_update_check.workspace = true
 qexed_safe_check.workspace = true
 qexed_plugin_manage.workspace = true
 qexed_warden.workspace = true
+qexed_wasm_runtime.workspace = true
+qexed_ip_connection_speed_test.workspace = true
 log = { workspace = true }
 tklog = { workspace = true }
 tokio = { workspace = true }
 anyhow.workspace = true
 rust-i18n = { workspace = true }
 shadow-rs.workspace = true
-winapi = "0.3.9"
-os_info = "3.14.0"
+winapi = { workspace = true }
+os_info = { workspace = true }
+libloading = "0.9.0"
 [build-dependencies]
 shadow-rs.workspace = true

@@ -56,10 +56,12 @@ async fn main() -> anyhow::Result<()> {
             return Err(err);
         }
     }
+    // 初始化 Qexed Wasm运行环境
+    let _sendbox = qexed_wasm_runtime::new()?;
     // 初始化其他服务
     let _api = tokio::join!(
         tokio::spawn(qexed_warden::new()),
-        tokio::spawn(qexed_warden::new2()),
+        tokio::spawn(qexed_ip_connection_speed_test::new()),
     );
     log::info!("{}", t!("qexed.modern_init_start"));
     // let (a,b) = (api.0??,api.1??);
@@ -87,11 +89,11 @@ async fn main() -> anyhow::Result<()> {
         log::warn!("{}", t!("qexed.minecraft_warning.hacker_risk"));
         log::warn!("{}", t!("qexed.minecraft_warning.set_online_mode"));
     }
-    // 读取存档 world 中
+
     loop {
         let (socket, addr) = tcp_server.accept().await?;
-        // 新的TCP连接:{addr}
         log::debug!("{}", t!("qexed.new_tcp_connection", addr = addr));
+        // 提交到速率检测部分
         socket.set_linger(Some(std::time::Duration::from_nanos(1)))?; // 1秒后强制关闭
         // socket.set_reuse_address(true)?;
         socket.set_nodelay(true)?; // 禁用 Nagle 算法

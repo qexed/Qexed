@@ -17,6 +17,8 @@ qexed_log.rename = "qexed_log.modern.log"
 qexed_update_check.rename ="qexed_log.modern.qexed_update_check"
 qexed.rename = "qexed_log.modern.qexed"
 qexed_plugin_manage.rename = "qexed_log.modern.qexed_plugin_manage"
+qexed_ip_connection_speed_test.rename = "qexed_log.modern.qexed_ip_connection_speed_test"
+qexed_wasm_runtime.rename = "qexed_log.modern.qexed_wasm_runtime"
 [dependencies]
 colored.workspace = true
 chrono.workspace = true
