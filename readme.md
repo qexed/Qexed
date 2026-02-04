@@ -26,7 +26,13 @@ The Qexed server natively integrates internationalization support. The following
 | **English** | `en` | ✅ Fully supported |
 
 We use the [`rust-i18n`](https://crates.io/crates/rust-i18n) framework to manage translations. All user-visible strings (such as console output, logs, configuration descriptions) are extracted and stored in translation files in the `locales/` directory.
-
+## Plugin Support
+Although Qexed does not support nms, you can still write plugins using alternative methods. Qexed uses a plugin system based on WASM for its operation, which means you can develop plugins using the language you prefer (if your language is not supported by WASM, just ignore this note)
+| Language | Status | Remarks | | --- | --- | --- |
+| Rust | ❌ Under development | |
+| C++ | ❌ Not supported | The Rust SDK has not been completed yet |
+| Golang | ❌ Not supported | The Rust SDK has not been completed yet |
+| Python | ❌ Not supported | I will support it if you compile it into wasm for me |
 ### 🤝 Welcome to contribute more languages!
 
 We warmly welcome and appreciate the community to add new language support for Qexed.
