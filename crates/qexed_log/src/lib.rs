@@ -13,7 +13,10 @@ pub async fn log_init() {
             true,
         )
         .await
-        .set_formatter(&format!("{{level}} [{{time}}]: [{}] {{file}} {{message}}\n",t!("qexed_log.modern.global")))
+        .set_formatter(&format!(
+            "{{level}} [{{time}}]: [{}] {{file}} {{message}}\n",
+            t!("qexed_log.modern.global")
+        ))
         .set_custom_handler(log_handler);
     module().await;
     ASYNC_LOG.uselog(); //启用官方log库
@@ -22,14 +25,26 @@ fn log_handler(log: &tklog::LogContext) -> bool {
     if log.level == tklog::LEVEL::Off {
         return false;
     }
-    // INFO time
-    println!(
-        "{} [{}] [{}] {}",
-        chrono::Local::now().format("%H:%M:%S"),
-        format_level(&log.level),
-        t!(format!("qexed_log.modern.{}", log.modname)),
-        log.log_body
-    );
+
+    if log.modname == "qexed_wasm_runtime::modern::log" {
+        // 插件部分log由对应模块字段调用
+        println!(
+            "{} [{}] {}",
+            chrono::Local::now().format("%H:%M:%S"),
+            format_level(&log.level),
+            log.log_body
+        );
+    } else {
+        let package_name = log.modname.split("::").next().unwrap_or(&log.modname);
+        println!(
+            "{} [{}] [{}] {}",
+            chrono::Local::now().format("%H:%M:%S"),
+            format_level(&log.level),
+            t!(format!("qexed_log.modern.{}", package_name)),
+            log.log_body
+        );
+    }
+
     true
 }
 fn format_level(level: &tklog::LEVEL) -> colored::ColoredString {

@@ -42,9 +42,12 @@ async fn main() -> anyhow::Result<()> {
     ));
     // 安全性检测(暂时没那么高级)
     thread::spawn(qexed_safe_check::root_check::root_check);
+    // 插件初始化
+    let plugin_manage = qexed_plugin_manage::new().await?;
+    
     // 插件更新检查
     // 适用于群组服预配置插件列表的服务，也适用于插件更新
-    match qexed_plugin_manage::update_plugins_check(&config.plugin_download).await {
+    match plugin_manage.update_plugins_check(&config.plugin_download).await {
         Ok(v) => {
             if !v {
                 log::error!("{}", t!("qexed.plugin_update_check_error_by_false"));
@@ -56,8 +59,6 @@ async fn main() -> anyhow::Result<()> {
             return Err(err);
         }
     }
-    // 初始化 Qexed Wasm运行环境
-    let _sendbox = qexed_wasm_runtime::new()?;
     // 初始化其他服务
     let _api = tokio::join!(
         tokio::spawn(qexed_warden::new()),

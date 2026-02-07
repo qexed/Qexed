@@ -11,6 +11,7 @@
 /tmp
 /tool/
 /
+/plugin
 /crates-old
 /Cargo.old.toml
 # 未使用的代码

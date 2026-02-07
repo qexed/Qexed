@@ -6,5 +6,10 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib"]  # 编译为动态库
 [dependencies]
+
 qexed_plugin_api.workspace = true
 [build-dependencies]
+toml.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+cargo_toml = { workspace = true }

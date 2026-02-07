@@ -5,7 +5,6 @@ unsafe extern "C" {
     fn Debug(buf: *const u8, len: i32);
     fn Warn(buf: *const u8, len: i32);
     fn Error(buf: *const u8, len: i32);
-
 }
 pub fn trace(message:&str){
     unsafe {

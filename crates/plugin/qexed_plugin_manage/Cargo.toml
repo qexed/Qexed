@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 qexed_config.workspace = true
+qexed_wasm_runtime.workspace = true
 log.workspace = true
 anyhow.workspace = true
 rust-i18n = { workspace = true }
+rayon.workspace = true
