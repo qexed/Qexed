@@ -29,17 +29,19 @@ fn log_handler(log: &tklog::LogContext) -> bool {
     if log.modname == "qexed_wasm_runtime::modern::log" {
         // 插件部分log由对应模块字段调用
         println!(
-            "{} [{}] {}",
+            "{} [{}]{} {}",
             chrono::Local::now().format("%H:%M:%S"),
             format_level(&log.level),
+            level_indent(&log.level),
             log.log_body
         );
     } else {
         let package_name = log.modname.split("::").next().unwrap_or(&log.modname);
         println!(
-            "{} [{}] [{}] {}",
+            "{} [{}]{} [{}] {}",
             chrono::Local::now().format("%H:%M:%S"),
             format_level(&log.level),
+            level_indent(&log.level),
             t!(format!("qexed_log.modern.{}", package_name)),
             log.log_body
         );
@@ -56,5 +58,13 @@ fn format_level(level: &tklog::LEVEL) -> colored::ColoredString {
         LEVEL::Error => colored::Colorize::bright_red("ERROR"),
         LEVEL::Fatal => colored::Colorize::on_bright_red("FATAL"),
         LEVEL::Off => colored::Colorize::magenta("Off"),
+    }
+}
+fn level_indent(level: &tklog::LEVEL) -> &str {
+    match level {
+        LEVEL::Info => " ",
+        LEVEL::Warn => " ",
+        LEVEL::Off => "  ",
+        _ => ""
     }
 }

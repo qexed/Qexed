@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize,Debug)]
@@ -22,6 +24,10 @@ pub struct Plugin {
     pub softdepend: Vec<PluginApi>, // 软依赖
     #[serde(default)]
     pub loadbefore: Vec<PluginApi>, // 列出该插件应优先于哪些插件之前加载
+    // 内部元素
+    // 插件文件路径
+    #[serde(skip)]
+    pub path:Option<PathBuf>,
 }
 #[derive(Serialize, Deserialize,Debug)]
 pub struct PluginApi {

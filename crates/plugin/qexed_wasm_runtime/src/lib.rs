@@ -15,7 +15,7 @@ pub fn new() -> anyhow::Result<()>{
 pub fn load_plugin_config(path:PathBuf)->anyhow::Result<config::Plugin>{
     let engine = Engine::default();
     let mut linker = Linker::new(&engine);
-    let module = Module::from_file(&engine, path)?;
+    let module = Module::from_file(&engine, path.clone())?;
     let mut store = Store::new(&engine, ());
     for import in module.imports() {
         let module_name = import.module().to_string(); // 转换为String
@@ -62,7 +62,8 @@ pub fn load_plugin_config(path:PathBuf)->anyhow::Result<config::Plugin>{
         .ok_or_else(|| anyhow::anyhow!("memory not found"))?;
     let mut data = vec![0u8; len as usize];
     memory.read(&store, data_ptr as usize, &mut data)?;
-    let config :config::Plugin = toml::from_slice(&data)?;
+    let mut config :config::Plugin = toml::from_slice(&data)?;
+    config.path = Some(path);
     Ok(config)
 }
 fn _new2() -> anyhow::Result<()> {

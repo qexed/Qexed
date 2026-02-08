@@ -10,3 +10,4 @@ log.workspace = true
 anyhow.workspace = true
 rust-i18n = { workspace = true }
 rayon.workspace = true
+dashmap.workspace = true
