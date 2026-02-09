@@ -2,6 +2,9 @@ _fallback_language: zh-CN
 _version: 2
 
 qexed:
+  error_exit:
+    en: "Failed: %{err}"
+    zh-CN: "错误: %{err}"
   system_running:
     en: Running %{system} %{version}(%{arch})
     zh-CN: "运行在 %{system} %{version}(%{arch})"
@@ -78,6 +81,19 @@ qexed_log:
     qexed_wasm_runtime:
       en: "Plugin RunTime"
       zh-CN: "插件运行环境"
+qexed_ip_connection_speed_test:
+  simple_warning:
+    en: "**** The current module is running under the simple engine! ****"
+    zh-CN: "**** 当前模块正运行在简易引擎下！****"
+  simple_warning2:
+    en: "Running in Simple Mode. IP rate data is temporary and will be cleared on restart. For persistence, switch to a standard engine."
+    zh-CN: "当前运行在简易引擎下。IP速率数据为临时存储，重启后将被清除。如需持久化，请切换至标准引擎。"
+  engine_incompatible:
+    en: "IP速率检测当前版本仅兼容 Simple 与 Pika(Redis) 引擎"
+    zh-CN: "IP速率检测当前版本仅兼容 Simple 与 Pika(Redis) 引擎"
+  connect_to_speek:
+    en: "[%{ip}] is making connections too rapidly."
+    zh-CN: "[%{ip}] 连接速率过快"
 qexed_plugin_manage:
   load_plugin_config_start:
     en: "Loading plugin configurations"
@@ -109,6 +125,21 @@ qexed_plugin_manage:
   unknown_path:
     en: "Unknown"
     zh-CN: "未知"
+  plugin_circular_dependency:
+    en: "Plugin circular dependency detected, removing conflicting plugins."
+    zh-CN: "检测到插件循环依赖,移除冲突插件中"
+  removed_plugins:
+    en: "Removed plugins:"
+    zh-CN: "移除的插件："
+  detected_circular_dependency_path:
+    en: "Detected circular dependency path:"
+    zh-CN: "检测到的循环依赖路径："
+  plugin_version_decode_err:
+    en: "Plugin [%{name}] version resolution failed. Please refer to the documentation at %{url}. Error: %{err}"
+    zh-CN: "插件[%{name}]版本解析失败,请阅读文档%{url},错误:%{err}"
+  dependency_conflict:
+    en: "The dependency of plugin [%{name}] is in conflict: %{conflicts} appears simultaneously in both 'depend' and 'softdepend' sections."
+    zh-CN: "插件[%{name}]的依赖项冲突: %{conflicts} 同时出现在depend和softdepend中"
 qexed_update_check:
   skip_local_version_check:
     en: "Skip the local version update check"
@@ -128,12 +159,12 @@ qexed_update_check:
   version_check_failed:
     en: "Version check failed: %{err}"
     zh-CN: "版本检查失败: %{err}"
+# 通用翻译
+config_init_finish:
+  en: "Config Load Finish"
+  zh-CN: "配置文件初始化完成"
+config_load_error:
+  en: "Failed to load config file: %{err}"
+  zh-CN: "配置文件读取报错: %{err}"
 
-qexed_warden:
-  config_init_finish:
-    en: "Config Load Finish"
-    zh-CN: "配置文件初始化完成"
-  config_load_error:
-    en: "Failed to load config file: %{err}"
-    zh-CN: "配置文件读取报错: %{err}"
 

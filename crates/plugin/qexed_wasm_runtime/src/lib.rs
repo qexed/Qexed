@@ -2,7 +2,7 @@ pub mod config;
 pub mod modern;
 // src/main.rs
 
-use std::{ path::PathBuf};
+use std::path::PathBuf;
 
 use wasmtime::{Engine, Linker, Module, Store};
 rust_i18n::i18n!("../../../locales");
@@ -56,6 +56,7 @@ pub fn load_plugin_config(path:PathBuf)->anyhow::Result<config::Plugin>{
     let instance = linker.instantiate(&mut store, &module)?;
     let plugin_config_func = instance.get_typed_func::<(), u32>(&mut store, "get_config_data")?;
     let plugin_get_config_len= instance.get_typed_func::<(), u32>(&mut store, "get_config_len")?;
+    // let plugin_display_name_func = instance.get_typed_func::<*mut c_char, *mut c_char>(&mut store, "get_plugin_display_name")?;
     let data_ptr = plugin_config_func.call(&mut store, ())?;
     let len = plugin_get_config_len.call(&mut store, ())?;
     let memory = instance.get_memory(&mut store, "memory")

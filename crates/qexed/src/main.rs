@@ -6,6 +6,17 @@ rust_i18n::i18n!("../../locales");
 shadow_rs::shadow!(build);
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    match run().await{
+        Ok(_) => {
+            log::debug!("exit");
+        },
+        Err(err) => {
+            log::error!("{}",t!("qexed.error_exit",err=err));
+        },
+    };
+    Ok(())
+}
+async fn run() -> anyhow::Result<()> {
     let mut _build_type = "";
     #[cfg(debug_assertions)]
     {
@@ -51,19 +62,23 @@ async fn main() -> anyhow::Result<()> {
         Ok(v) => {
             if !v {
                 log::error!("{}", t!("qexed.plugin_update_check_error_by_false"));
-                return Ok(());
             }
         }
         Err(err) => {
             log::error!("{}", t!("qexed.plugin_update_check_error", err = err));
+        }
+    };
+    // 初始化其他服务
+    let (_warden_api,ip_connect_speed_test_api) = match tokio::try_join!(
+        qexed_warden::new(),
+        qexed_ip_connection_speed_test::new(),
+    ){
+        Ok(v)=>v,
+        Err(err)=>{
+            log::error!("{}",err);
             return Err(err);
         }
-    }
-    // 初始化其他服务
-    let _api = tokio::join!(
-        tokio::spawn(qexed_warden::new()),
-        tokio::spawn(qexed_ip_connection_speed_test::new()),
-    );
+    };
     log::info!("{}", t!("qexed.modern_init_start"));
     // let (a,b) = (api.0??,api.1??);
     log::info!("{}", t!("qexed.modern_init_finish"));
@@ -93,10 +108,6 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         let (socket, addr) = tcp_server.accept().await?;
-        log::debug!("{}", t!("qexed.new_tcp_connection", addr = addr));
-        // 提交到速率检测部分
-        socket.set_linger(Some(std::time::Duration::from_nanos(1)))?; // 1秒后强制关闭
-        // socket.set_reuse_address(true)?;
-        socket.set_nodelay(true)?; // 禁用 Nagle 算法
+        ip_connect_speed_test_api.send(qexed_ip_connection_speed_test::message::Message::NewConnect(socket, addr))?;
     }
 }

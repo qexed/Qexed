@@ -18,7 +18,7 @@ pub struct Plugin {
     #[serde(default)]
     pub permission:Vec<String>,// 申请的权限
     pub edition:u32,// API 版本
-    #[serde(default)]
+    #[serde(default)] 
     pub api:Vec<String>,// 对外 API 接口
     #[serde(default)]
     pub depend:HashMap<String,PluginApi>,// 依赖插件

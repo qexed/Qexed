@@ -1,0 +1,16 @@
+[package]
+# 你问我为什么取名叫 hello hello_world,问就是懒
+name = "hello_hello_world"
+version = "0.1.0"
+edition = "2024"
+# 请务必使用 --target=wasm32-unknown-unknown !!!
+[lib]
+crate-type = ["cdylib"]  # 编译为动态库
+[dependencies] 
+
+qexed_plugin_api.workspace = true
+[build-dependencies]
+toml.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+cargo_toml = { workspace = true }

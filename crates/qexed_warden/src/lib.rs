@@ -8,11 +8,11 @@ pub async fn new()->anyhow::Result<tokio::sync::mpsc::UnboundedSender<message::M
     let _config = match qexed_config::app::qexed_warden::QexedWarden::load_or_create_default(){
         Ok(v)=>v,
         Err(err)=>{
-            log::error!("{}",t!("qexed_warden.config_load_error",err=err));
+            log::error!("{}",t!("config_load_error",err=err));
             return Err(err);
         }
     };
-    log::info!("{}",t!("qexed_warden.config_init_finish"));
+    log::info!("{}",t!("config_init_finish"));
     let (s,_r) = tokio::sync::mpsc::unbounded_channel();
     Ok(s)
 }

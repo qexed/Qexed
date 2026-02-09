@@ -907,6 +907,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hello_hello_world"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_toml",
+ "qexed_plugin_api",
+ "serde",
+ "toml 0.9.11+spec-1.1.0",
+]
+
+[[package]]
 name = "hello_world"
 version = "0.1.0"
 dependencies = [
@@ -1992,10 +2003,13 @@ name = "qexed_ip_connection_speed_test"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "log",
+ "qexed_config",
  "reqwest",
  "rust-i18n",
  "serde",
+ "tinykv",
  "tokio",
 ]
 
@@ -2028,6 +2042,7 @@ dependencies = [
  "qexed_wasm_runtime",
  "rayon",
  "rust-i18n",
+ "semver",
 ]
 
 [[package]]
@@ -2820,6 +2835,16 @@ checksum = "78cc610bac2dcee56805c99642447d4c5dbde4d01f752ffea0199aee1f601dc4"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tinykv"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "473b5eee0c151fa30c003c9c1c2e0ffb698ca7ed87c1ef43fa1a384e8ca756c0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
