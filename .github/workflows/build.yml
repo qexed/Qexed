@@ -1,280 +1,140 @@
-name: Cross-platform Build
+name: Build for Linux, Windows, and macOS
 
 on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
   release:
-    types: [created]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: '构建版本号'
-        required: false
-        default: 'manual-build'
-      targets:
-        description: '目标平台'
-        required: false
-        default: 'all'
-        type: choice
-        options:
-        - all
-        - linux-only
-        - windows-only
-        - macos-only
+    types: [published]
+  workflow_dispatch: # 允许手动触发
 
 env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
-  RUST_BACKTRACE: full
+  # 设置统一的构建目录，便于缓存配置
+  CARGO_TARGET_DIR: target-ci
 
 jobs:
-  # 单一作业，在 Ubuntu 上交叉编译所有平台
-  cross-compile:
-    strategy:
-      matrix:
-        # 定义所有目标平台
-        target: 
-          - x86_64-unknown-linux-gnu      # Linux GNU
-          - x86_64-pc-windows-msvc        # Windows MSVC
-          - x86_64-apple-darwin           # macOS
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-pc-windows-msvc
-            os: ubuntu-latest
-          - target: x86_64-apple-darwin
-            os: ubuntu-latest
-    
+  multi-platform-build:
+    name: Build on ${{ matrix.os }} (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     
+    # 核心：定义构建矩阵
+    strategy:
+      matrix:
+        include:
+          # Linux 配置
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: qexed-linux
+            artifact_path: target-ci/x86_64-unknown-linux-gnu/release/qexed
+            
+          # Windows 配置
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: qexed-windows.exe
+            artifact_path: target-ci/x86_64-pc-windows-msvc/release/qexed.exe
+            vcpkg_root: ${{ github.workspace }}\vcpkg
+            
+          # macOS 配置
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: qexed-macos
+            artifact_path: target-ci/x86_64-apple-darwin/release/qexed
+
     steps:
-    - name: Checkout code
+    # 第一步：检出代码
+    - name: Checkout code and submodules
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        fetch-depth: 1
 
+    # 第二步：各平台特有的依赖安装
+    - name: Install Linux dependencies (OpenSSL)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libssl-dev
+
+    - name: Set up vcpkg and install OpenSSL (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        # 克隆 vcpkg
+        git clone https://github.com/Microsoft/vcpkg.git ${{ matrix.vcpkg_root }}
+        & "${{ matrix.vcpkg_root }}\bootstrap-vcpkg.bat"
+        # 安装 OpenSSL
+        & "${{ matrix.vcpkg_root }}\vcpkg" install openssl:x64-windows
+        # 设置环境变量
+        echo "VCPKG_ROOT=${{ matrix.vcpkg_root }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        echo "OPENSSL_ROOT_DIR=${{ matrix.vcpkg_root }}\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        echo "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Install macOS dependencies (OpenSSL)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install openssl pkg-config
+        echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
+    # 第三步：设置 Rust 环境
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: stable
         targets: ${{ matrix.target }}
-        components: rust-src
 
-    - name: Add Rust targets
-      run: |
-        rustup target add ${{ matrix.target }}
-        echo "Installed targets:"
-        rustup target list --installed
-
-    - name: Install cross-compilation dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          gcc-multilib \
-          g++-mingw-w64 \
-          clang \
-          lld \
-          musl-tools
-        
-        # 安装 macOS 交叉编译工具链 (osxcross)
-        if [[ "${{ matrix.target }}" == *"apple-darwin"* ]]; then
-          echo "Installing macOS cross-compilation tools..."
-          wget -q https://github.com/tpoechtrager/osxcross/archive/master.zip
-          unzip -q master.zip
-          cd osxcross-master
-          # 这里需要下载 macOS SDK，但由于许可问题，需要手动处理
-          echo "macOS cross-compilation setup incomplete - SDK required"
-        fi
-
-    - name: Setup cross-compilation environment
-      run: |
-        # 设置特定目标的编译环境
-        case "${{ matrix.target }}" in
-          *windows*)
-            echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
-            echo "AR=x86_64-w64-mingw32-ar" >> $GITHUB_ENV
-            ;;
-          *musl*)
-            echo "CC=x86_64-linux-musl-gcc" >> $GITHUB_ENV  
-            echo "AR=x86_64-linux-musl-ar" >> $GITHUB_ENV
-            ;;
-          *apple-darwin*)
-            # 使用 zig 作为跨平台编译器（推荐方案）
-            echo "Using zig as cross-compiler for macOS"
-            ;;
-        esac
-
-    - name: Install Zig
-      if: matrix.target == 'x86_64-apple-darwin'
-      uses: mlugg/setup-zig@v2
+    # 第四步：配置缓存（加速后续构建）
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
       with:
-        version: '0.10.0' # 指定您需要的版本
-    - name: Configure environment for macOS cross-compilation
-      if: matrix.target == 'x86_64-apple-darwin'
-      run: |
-        # 设置 zig 编译环境
-        echo "CC=zig cc" >> $GITHUB_ENV
-        echo "CXX=zig c++" >> $GITHUB_ENV
-        echo "AR=zig ar" >> $GITHUB_ENV
-        echo "CFLAGS=-target x86_64-macos" >> $GITHUB_ENV
-        echo "CXXFLAGS=-target x86_64-macos" >> $GITHUB_ENV
-        
-        # 设置 Rust 编译标志
-        echo "RUSTFLAGS=-C linker=zig -C link-arg=-target -C link-arg=x86_64-macos" >> $GITHUB_ENV
-        echo "CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=zig" >> $GITHUB_ENV
-        echo "CARGO_TARGET_X86_64_APPLE_DARWIN_AR=zig" >> $GITHUB_ENV
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ${{ env.CARGO_TARGET_DIR }}
+        key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ matrix.os }}-cargo-
 
-    - name: Configure zstd-sys to use pkg-config
-      run: |
-        # 避免 zstd-sys 尝试编译 C 代码
-        echo "ZSTD_SYS_USE_PKG_CONFIG=1" >> $GITHUB_ENV
-        echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+    # 第五步：执行构建
+    - name: Build the project
+      run: cargo build --release --target ${{ matrix.target }} --package qexed
 
-    - name: Build for target
-      run: |
-        echo "Building for target: ${{ matrix.target }}"
-        echo "RUSTFLAGS: ${RUSTFLAGS:-not set}"
-        echo "CC: ${CC:-not set}"
-        echo "CARGO_BUILD_TARGET: ${CARGO_BUILD_TARGET:-not set}"
-        
-        # 使用详细输出以便调试
-        cargo build --release --target ${{ matrix.target }} --verbose --package qexed
-        
-        echo "Build completed for ${{ matrix.target }}"
-
-    - name: List build artifacts
-      run: |
-        echo "=== Build artifacts for ${{ matrix.target }} ==="
-        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-          find target/${{ matrix.target }}/release/ -name "*.exe" -ls 2>/dev/null || \
-          echo "No .exe files found"
-        else
-          find target/${{ matrix.target }}/release/ -type f -executable -ls 2>/dev/null || \
-          echo "No executable files found"
-        fi
-        
-        # 列出所有文件
-        ls -la target/${{ matrix.target }}/release/ 2>/dev/null || echo "Build directory not found"
-
-    - name: Package artifacts
-      run: |
-        mkdir -p release-package-${{ matrix.target }}
-        
-        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-          # Windows: 复制 .exe 文件
-          cp target/${{ matrix.target }}/release/*.exe release-package-${{ matrix.target }}/ 2>/dev/null || true
-        else
-          # Unix: 复制可执行文件
-          find target/${{ matrix.target }}/release/ -maxdepth 1 -type f -executable -exec cp {} release-package-${{ matrix.target }}/ \; 2>/dev/null || true
-        fi
-        
-        # 如果目录为空，创建说明文件
-        if [ -z "$(ls -A release-package-${{ matrix.target }})" ]; then
-          echo "No binaries were built for ${{ matrix.target }}" > release-package-${{ matrix.target }}/BUILD-INFO.txt
-          echo "This might be a library crate or build failed silently" >> release-package-${{ matrix.target }}/BUILD-INFO.txt
-        fi
-        
-        # 创建版本信息
-        echo "Build for: ${{ matrix.target }}" > release-package-${{ matrix.target }}/version.txt
-        echo "Date: $(date)" >> release-package-${{ matrix.target }}/version.txt
-        echo "Git SHA: ${{ github.sha }}" >> release-package-${{ matrix.target }}/version.txt
-        
-        echo "=== Package contents for ${{ matrix.target }} ==="
-        ls -la release-package-${{ matrix.target }}/
-
-    - name: Upload artifacts
+    # 第六步：上传构建产物
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: binaries-${{ matrix.target }}
-        path: release-package-${{ matrix.target }}/*
-        if-no-files-found: warn
-        retention-days: 30
-        compression-level: 1  # 快速压缩
+        name: ${{ matrix.artifact_name }}-${{ github.sha }}
+        path: ${{ matrix.artifact_path }}
+        retention-days: 7
 
-  # 汇总所有构建产物
-  combine-releases:
-    needs: cross-compile
+  # 可选：汇总所有产物的作业
+  combine-release:
+    name: Create Combined Release
+    needs: multi-platform-build
     runs-on: ubuntu-latest
-    if: always()
-    
+    if: success()
+
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        path: all-artifacts
+        path: downloaded-artifacts
 
-    - name: Create combined release package
+    - name: Create checksums and assemble
       run: |
-        mkdir -p combined-release
-        cp -r all-artifacts/* combined-release/ 2>/dev/null || true
-        
-        # 创建校验和文件
-        cd combined-release
-        find . -type f -name "*.exe" -o -type f -executable | while read file; do
-          if [ -f "$file" ] && [ -x "$file" ] || [[ "$file" == *.exe ]]; then
-            sha256sum "$file" >> SHA256SUMS.txt 2>/dev/null || true
-          fi
-        done
-        
-        # 如果 sha256sum 不可用，使用 shasum
-        if [ ! -f SHA256SUMS.txt ] || [ ! -s SHA256SUMS.txt ]; then
-          find . -type f -name "*.exe" -o -type f -executable | while read file; do
-            if [ -f "$file" ] && [ -x "$file" ] || [[ "$file" == *.exe ]]; then
-              shasum -a 256 "$file" >> SHA256SUMS.txt 2>/dev/null || true
-            fi
-          done
-        fi
-        
-        echo "=== Combined release contents ==="
+        mkdir -p release-assets
+        # 移动所有文件
+        find downloaded-artifacts -type f -exec cp {} release-assets/ \;
+        # 生成校验和
+        cd release-assets
+        sha256sum * > SHA256SUMS.txt
+        echo "=== 最终发布包内容 ==="
         ls -la
-        echo "=== File sizes ==="
-        find . -type f -exec du -h {} \; | sort -h
 
     - name: Upload combined release
       uses: actions/upload-artifact@v4
       with:
-        name: all-platforms-combined
-        path: combined-release
-        retention-days: 30
-        overwrite: true
-
-    - name: Create release summary
-      run: |
-        echo "## Build Summary for ${{ github.sha }}" > summary.md
-        echo "**Date:** $(date)" >> summary.md
-        echo "**Platforms built:**" >> summary.md
-        echo "- Linux (GNU): x86_64-unknown-linux-gnu" >> summary.md  
-        echo "- Linux (Musl): x86_64-unknown-linux-musl" >> summary.md
-        echo "- Windows: x86_64-pc-windows-msvc" >> summary.md
-        echo "- macOS: x86_64-apple-darwin" >> summary.md
-        echo "" >> summary.md
-        echo "### Artifacts" >> summary.md
-        find all-artifacts -type f -name "*.exe" -o -type f -executable | while read file; do
-          if [ -f "$file" ]; then
-            size=$(du -h "$file" | cut -f1)
-            echo "- \`$(basename "$file")\` ($size)" >> summary.md
-          fi
-        done
-        
-        cat summary.md
-
-  # 验证构建
-  verify-builds:
-    needs: cross-compile
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        pattern: binaries-*
-        path: verify-artifacts
-
-    - name: Verify file types
-      run: |
-        echo "=== Verifying built artifacts ==="
-        find verify-artifacts -type f | while read file; do
-          if [ -f "$file" ]; then
-            echo "File: $file"
-            file "$file" || echo "Cannot determine file type"
-            echo "---"
-          fi
-        done
+        name: qexed-combined-release-${{ github.sha }}
+        path: release-assets/
