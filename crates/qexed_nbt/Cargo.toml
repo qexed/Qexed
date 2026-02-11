@@ -1,0 +1,16 @@
+[package]
+name = "qexed_nbt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+uuid.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+flate2.workspace = true
+byteorder.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+[dev-dependencies]
+serde_json.workspace = true

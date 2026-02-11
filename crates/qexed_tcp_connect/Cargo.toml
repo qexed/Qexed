@@ -1,0 +1,15 @@
+[package]
+name = "qexed_tcp_connect"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+bytes = { workspace = true }
+flate2 = { workspace = true }
+openssl = { workspace = true }
+tokio.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+
+

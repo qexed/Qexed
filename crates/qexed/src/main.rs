@@ -69,9 +69,16 @@ async fn run() -> anyhow::Result<()> {
         }
     };
     // 初始化其他服务
+    let (handshaking_packet_split_api,status_packet_split_api) = match qexed_packet_split::new().await {
+        Ok(v) => v,
+        Err(err) => {
+            log::error!("{}",err);
+            return Err(err);
+        },
+    };
     let (_warden_api,ip_connect_speed_test_api) = match tokio::try_join!(
         qexed_warden::new(),
-        qexed_ip_connection_speed_test::new(),
+        qexed_ip_connection_speed_test::new(handshaking_packet_split_api),
     ){
         Ok(v)=>v,
         Err(err)=>{

@@ -1,0 +1,19 @@
+[package]
+name = "qexed_protocol"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_nbt.workspace = true
+qexed_packet.workspace = true
+qexed_packet_macros.workspace = true
+
+log.workspace = true
+tklog.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
