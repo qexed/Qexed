@@ -18,7 +18,7 @@ jobs:
       run: rustup target add ${{ matrix.target }}
     
     - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
+      run: cargo build --package qexed --release --target ${{ matrix.target }}
     
     - name: Package artifacts
       run: |
