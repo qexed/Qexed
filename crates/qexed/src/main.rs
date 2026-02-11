@@ -6,13 +6,13 @@ rust_i18n::i18n!("../../locales");
 shadow_rs::shadow!(build);
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    match run().await{
+    match run().await {
         Ok(_) => {
             log::debug!("exit");
-        },
+        }
         Err(err) => {
-            log::error!("{}",t!("qexed.error_exit",err=err));
-        },
+            log::error!("{}", t!("qexed.error_exit", err = err));
+        }
     };
     Ok(())
 }
@@ -27,7 +27,15 @@ async fn run() -> anyhow::Result<()> {
     qexed_log::log_init().await;
     // Print full information:
     let info = os_info::get();
-    log::info!("{}",t!("qexed.system_running",system=info.os_type(),version=info.version(),arch=std::env::consts::ARCH));
+    log::info!(
+        "{}",
+        t!(
+            "qexed.system_running",
+            system = info.os_type(),
+            version = info.version(),
+            arch = std::env::consts::ARCH
+        )
+    );
     log::info!(
         "{}",
         t!(
@@ -55,34 +63,51 @@ async fn run() -> anyhow::Result<()> {
     thread::spawn(qexed_safe_check::root_check::root_check);
     // 插件初始化
     let plugin_manage = qexed_plugin_manage::new().await?;
-    
+
     // 插件更新检查
     // 适用于群组服预配置插件列表的服务，也适用于插件更新
-    match plugin_manage.update_plugins_check(&config.plugin_download).await {
+    match plugin_manage
+        .update_plugins_check(&config.plugin_download)
+        .await
+    {
         Ok(v) => {
             if !v {
                 log::error!("{}", t!("qexed.plugin_update_check_error_by_false"));
             }
-        }
+        },
         Err(err) => {
             log::error!("{}", t!("qexed.plugin_update_check_error", err = err));
-        }
-    };
-    // 初始化其他服务
-    let (handshaking_packet_split_api,status_packet_split_api) = match qexed_packet_split::new().await {
-        Ok(v) => v,
-        Err(err) => {
-            log::error!("{}",err);
-            return Err(err);
         },
     };
-    let (_warden_api,ip_connect_speed_test_api) = match tokio::try_join!(
+    // 初始化其他服务
+    // 初始化玩家管理服务
+    let players_api = match qexed_players::new(config.server.max_player.clone()).await {
+        Ok(v) => v,
+        Err(err) => {
+            log::error!("{}", err);
+            return Err(err);
+        }
+    };
+    let (handshaking_packet_split_api, _status_packet_split_api) =
+        match qexed_packet_split::new(
+            players_api,
+            config.server.max_player.clone(),
+            config.server.motd,
+            config.server.favicon
+        ).await {
+            Ok(v) => v,
+            Err(err) => {
+                log::error!("{}", err);
+                return Err(err);
+            }
+        };
+    let (_warden_api, ip_connect_speed_test_api) = match tokio::try_join!(
         qexed_warden::new(),
         qexed_ip_connection_speed_test::new(handshaking_packet_split_api),
-    ){
-        Ok(v)=>v,
-        Err(err)=>{
-            log::error!("{}",err);
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            log::error!("{}", err);
             return Err(err);
         }
     };
@@ -115,6 +140,7 @@ async fn run() -> anyhow::Result<()> {
 
     loop {
         let (socket, addr) = tcp_server.accept().await?;
-        ip_connect_speed_test_api.send(qexed_ip_connection_speed_test::message::Message::NewConnect(socket, addr))?;
+        ip_connect_speed_test_api
+            .send(qexed_ip_connection_speed_test::message::Message::NewConnect(socket, addr))?;
     }
 }

@@ -7,7 +7,7 @@ qexed_config.workspace = true
 qexed_tcp_connect.workspace = true
 qexed_protocol.workspace = true
 qexed_packet.workspace = true
-
+qexed_players.workspace = true
 
 serde_json.workspace = true
 async-trait.workspace = true
@@ -18,3 +18,4 @@ anyhow.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
 rust-i18n.workspace = true
+rand.workspace = true

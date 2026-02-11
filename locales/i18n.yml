@@ -81,6 +81,12 @@ qexed_log:
     qexed_wasm_runtime:
       en: "Plugin RunTime"
       zh-CN: "插件运行环境"
+    qexed_players:
+      en: "Players"
+      zh-CN: "玩家管理"
+    qexed_packet_split:
+      en: "Packet Split"
+      zh-CN: "数据包分流"
 qexed_ip_connection_speed_test:
   simple_warning:
     en: "**** The current module is running under the simple engine! ****"

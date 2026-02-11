@@ -20,6 +20,7 @@ members = [
     "crates/packet/qexed_protocol",
     "crates/macros/qexed_packet_macros",
     "crates/qexed_nbt",
+    "crates/qexed_players"
 ]
 [workspace.dependencies]
 # 内部包
@@ -39,6 +40,7 @@ qexed_packet.path = "crates/packet/qexed_packet"
 qexed_protocol.path = "crates/packet/qexed_protocol"
 qexed_packet_macros.path = "crates/macros/qexed_packet_macros"
 qexed_nbt.path = "crates/qexed_nbt"
+qexed_players.path = "crates/qexed_players"
 # 插件
 # pass
 # 外部包

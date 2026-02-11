@@ -90,7 +90,7 @@ impl Server {
                                 continue;
                             }
                         }
-                    }
+                    };
                     match self.handshaking_packet_split_api.send((tcp_stream,socket_addr)){
                         Ok(_)=>{},
                         // 这里不应该报错的,报错了后面就无法运行了

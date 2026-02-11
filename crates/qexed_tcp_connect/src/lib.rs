@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::io::{Error, Result};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::{io::AsyncReadExt, net::TcpListener};
@@ -33,7 +33,7 @@ pub async fn new_tcp_server_by_addr(addr: String) -> Result<TcpListener> {
 pub struct PacketListener {
     pub socket_read: ReadHalf<TcpStream>,
     pub socket_write: WriteHalf<TcpStream>,
-    compression_threshold: usize,
+    compression_threshold: isize,
     compression_enabled: Arc<AtomicBool>, // 是否启用压缩
 }
 
@@ -41,7 +41,7 @@ impl PacketListener {
     pub fn new(
         socket_read: ReadHalf<TcpStream>,
         socket_write: WriteHalf<TcpStream>,
-        compression_threshold: usize,
+        compression_threshold: isize,
     ) -> Self {
         Self {
             socket_read,
@@ -50,7 +50,7 @@ impl PacketListener {
             compression_threshold: compression_threshold,
         }
     }
-    pub fn from_socket(socket: TcpStream, compression_threshold: usize) -> Self {
+    pub fn from_socket(socket: TcpStream, compression_threshold: isize) -> Self {
         let (r, w) = tokio::io::split(socket);
         Self::new(r, w, compression_threshold)
     }
@@ -67,7 +67,7 @@ impl PacketListener {
             },
             PacketSend {
                 socket_write: self.socket_write,
-                compression_threshold: Arc::new(AtomicUsize::new(self.compression_threshold)),
+                compression_threshold: Arc::new(AtomicIsize::new(self.compression_threshold)),
                 compression_enabled: Arc::clone(&self.compression_enabled),
                 encryption_enabled: encryption_enabled,
                 encrypter: None,
@@ -82,17 +82,17 @@ impl PacketListener {
 
 pub struct PacketSend {
     pub socket_write: WriteHalf<TcpStream>,
-    compression_threshold: Arc<AtomicUsize>,
+    compression_threshold: Arc<AtomicIsize>,
     compression_enabled: Arc<AtomicBool>,
     encryption_enabled: Arc<AtomicBool>,
     encrypter: Option<Crypter>,
 }
 
 impl PacketSend {
-    pub fn new(socket_write: WriteHalf<TcpStream>, compression_threshold: usize) -> Self {
+    pub fn new(socket_write: WriteHalf<TcpStream>, compression_threshold: isize) -> Self {
         Self {
             socket_write,
-            compression_threshold: Arc::new(AtomicUsize::new(compression_threshold)),
+            compression_threshold: Arc::new(AtomicIsize::new(compression_threshold)),
             compression_enabled: Arc::new(AtomicBool::new(false)),
             encryption_enabled: Arc::new(AtomicBool::new(false)),
             encrypter: None,
@@ -259,7 +259,7 @@ impl PacketSend {
     }
     
     /// 设置压缩阈值
-    pub fn set_compression_threshold(&self, compression_threshold: usize) {
+    pub fn set_compression_threshold(&self, compression_threshold: isize) {
         self.compression_threshold
             .store(compression_threshold, Ordering::Relaxed);
     }

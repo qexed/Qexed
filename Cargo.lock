@@ -1489,6 +1489,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanoid"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
+dependencies = [
+ "rand",
+]
+
+[[package]]
 name = "native-tls"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1961,6 +1970,7 @@ dependencies = [
  "qexed_ip_connection_speed_test",
  "qexed_log",
  "qexed_packet_split",
+ "qexed_players",
  "qexed_plugin_manage",
  "qexed_safe_check",
  "qexed_update_check",
@@ -1980,6 +1990,7 @@ dependencies = [
  "anyhow",
  "humantime-serde",
  "log",
+ "nanoid",
  "qexed_config_macros",
  "rand",
  "serde",
@@ -2075,12 +2086,27 @@ dependencies = [
  "log",
  "qexed_config",
  "qexed_packet",
+ "qexed_players",
  "qexed_protocol",
  "qexed_tcp_connect",
+ "rand",
  "reqwest",
  "rust-i18n",
  "serde",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "qexed_players"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "qexed_config",
+ "rust-i18n",
+ "serde",
+ "sled",
  "tokio",
 ]
 

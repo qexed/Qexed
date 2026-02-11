@@ -1,4 +1,4 @@
-use qexed_packet::{PacketCodec, net_types::VarInt};
+use qexed_packet::{PacketCodec};
 #[qexed_packet_macros::packet(id = 0x6B)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetTitleText {
