@@ -52,3 +52,8 @@
 # git-fetch-with-cli = true  # Windows 上使用 git CLI 而不是 libgit2
 
 
+[target.x86_64-apple-darwin]
+# 使用 zig 作为交叉编译器
+linker = "zig"
+ar = "zig"
+runner = "zig"

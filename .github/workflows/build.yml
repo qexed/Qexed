@@ -106,41 +106,6 @@ jobs:
       uses: mlugg/setup-zig@v2
       with:
         version: '0.10.0' # 指定您需要的版本
-    - name: Configure Cargo for cross-compilation
-      run: |
-        # 创建 Cargo 配置目录
-        mkdir -p .cargo
-        cat > .cargo/config.toml << 'EOF'
-        [build]
-        target-dir = "target"
-
-        [target.x86_64-unknown-linux-gnu]
-        linker = "x86_64-linux-gnu-gcc"
-
-        [target.x86_64-pc-windows-msvc]
-        linker = "x86_64-w64-mingw32-gcc"
-        ar = "x86_64-w64-mingw32-ar"
-
-        [target.x86_64-apple-darwin]
-        # 使用 zig 作为交叉编译器
-        linker = "zig"
-        ar = "zig"
-        runner = "zig"
-        EOF
-        
-        # 对于 macOS 目标，设置 zig 的编译目标
-        if [[ "${{ matrix.target }}" == *"apple-darwin"* ]]; then
-          cat >> .cargo/config.toml << 'EOF'
-
-        [target.x86_64-apple-darwin]
-        linker = "zig"
-        ar = "zig"
-        
-        [env]
-        ZIG_TARGET = "x86_64-macos"
-        EOF
-        fi
-
     - name: Configure environment for macOS cross-compilation
       if: matrix.target == 'x86_64-apple-darwin'
       run: |
@@ -170,7 +135,7 @@ jobs:
         echo "CARGO_BUILD_TARGET: ${CARGO_BUILD_TARGET:-not set}"
         
         # 使用详细输出以便调试
-        cargo build --release --target ${{ matrix.target }} --verbose
+        cargo build --release --target ${{ matrix.target }} --verbose --package qexed
         
         echo "Build completed for ${{ matrix.target }}"
 
