@@ -101,15 +101,11 @@ jobs:
             ;;
         esac
 
-    - name: Install Zig for cross-compilation (macOS fix)
+    - name: Install Zig
       if: matrix.target == 'x86_64-apple-darwin'
-      run: |
-        # 使用 Zig 作为 C/C++ 交叉编译器，避免原生工具链问题
-        wget https://ziglang.org/download/0.10.0/zig-linux-x86_64-0.10.0.tar.xz
-        tar -xf zig-linux-x86_64-0.10.0.tar.xz
-        echo "$(pwd)/zig-linux-x86_64-0.10.0" >> $GITHUB_PATH
-        zig version
-
+      uses: mlugg/setup-zig@v2
+      with:
+        version: '0.10.0' # 指定您需要的版本
     - name: Configure Cargo for cross-compilation
       run: |
         # 创建 Cargo 配置目录
