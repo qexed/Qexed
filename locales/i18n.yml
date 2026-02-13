@@ -174,3 +174,10 @@ config_load_error:
   zh-CN: "配置文件读取报错: %{err}"
 
 
+qexed_packet_split:
+  unknown_next_state:
+    en: "Unknown next state: %{state}"
+    zh-CN: 未知的下一阶段状态:%{state}
+  incompatible_game_version:
+    en: "Your game version is incompatible with the server version\nCurrent server version: %{mc_server}"
+    zh-CN: "您的游戏版本与服务器版本不兼容\n目前服务器版本:%{mc_server}"
