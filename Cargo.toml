@@ -59,7 +59,7 @@ tracing = "0.1.41"
 typename = "0.1.2"
 rand = "0.8.5"
 async-stream = "0.3.6"
-bytes = "1.10.1"
+bytes = "1.11.1"
 flate2 = "1.1.2"
 serde_json = "1.0.142"
 uuid = { version = "1.17.0", features = ["v3", "v4","serde"] }
