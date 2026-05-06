@@ -41,7 +41,7 @@ sha1.workspace = true
 tinytemplate.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
-hmac = { workspace = true }
-sha2 = { workspace = true }
-haproxy-protocol = { workspace = true }
+hmac = "0.12.1"
+sha2 = "0.10.9"
+haproxy-protocol = "0.0.3"
 base64.workspace = true

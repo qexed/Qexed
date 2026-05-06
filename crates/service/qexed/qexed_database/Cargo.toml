@@ -29,7 +29,7 @@ uuid.workspace = true
 thiserror.workspace = true
 
 tokio-util.workspace = true
-bb8 = { workspace = true }
-bb8-redis = { workspace = true }
+bb8 = "0.9.1"
+bb8-redis = "0.26.0"
 
 

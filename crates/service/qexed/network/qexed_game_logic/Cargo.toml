@@ -43,6 +43,6 @@ qexed_block.workspace = true
 qexed_scoreboard.workspace = true
 qexed_entity.workspace = true
 qexed_player_info.workspace = true
-hex = { workspace = true }
-sha1 = { workspace = true }
+hex = "0.4.3"
+sha1 = "0.10.6"
 tokio-util.workspace = true

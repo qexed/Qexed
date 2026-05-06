@@ -11,13 +11,6 @@ pub trait TaskEvent<MessageType,ManageMessageType> {
         manage_api: &MessageSender<ManageMessageType>,
         data: MessageType,
     ) -> anyhow::Result<bool>;
-    async fn finish(
-        &mut self,
-        api: &MessageSender<MessageType>,
-        manage_api: &MessageSender<ManageMessageType>,
-    ) -> anyhow::Result<()>{
-        Ok(())
-    }
 }
 
 
@@ -29,10 +22,4 @@ pub trait TaskEasyEvent<MessageType> {
         api: &MessageSender<MessageType>,
         data: MessageType,
     ) -> anyhow::Result<bool>;
-    async fn finish(
-        &mut self,
-        api: &MessageSender<MessageType>,
-    ) -> anyhow::Result<()>{
-        Ok(())
-    }
 }

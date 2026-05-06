@@ -16,7 +16,7 @@ label = "Qexed One"
 name = "qtunnel_one"
 path = "src/main.rs"
 [dependencies]
-lazy_static = { workspace = true }
+lazy_static = "1.4"
 # 程序级依赖
 qexed_player_list = { workspace = true }
 qexed_status = {workspace = true}

@@ -26,4 +26,4 @@ bitflags.workspace = true
 serde.workspace = true
 futures.workspace = true
 bytes.workspace = true
-bit-vec = { workspace = true }
+bit-vec = "0.8.0"

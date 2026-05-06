@@ -10,10 +10,10 @@ bytes.workspace = true
 serde = { workspace = true, features = ["derive"] }
 qexed_nbt.workspace = true
 uuid = { workspace = true, features = ["serde","v4"] }
-flate2 = { workspace = true }
-byteorder = { workspace = true }
+flate2 = "1.0"
+byteorder = "1.5"
 thiserror.workspace = true
 log.workspace = true
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
-tempfile = { workspace = true }
+tempfile = "3.4"
