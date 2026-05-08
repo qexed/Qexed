@@ -90,7 +90,7 @@ midly = "0.5.3"
 cached = "0.42"
 rsa = "0.9"
 dashmap = "6.1.0"
-wasmtime = "41.0.4"
+wasmtime = "43.0.2"
 schemars = { version = "1" }
 tokio-util = "0.7.17"
 humantime-serde = "1.1.1"
