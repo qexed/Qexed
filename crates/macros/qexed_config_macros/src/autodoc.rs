@@ -1,17 +1,57 @@
-// qexed-config-macros/src/autodoc.rs
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{DeriveInput, LitStr};
+use syn::{DeriveInput, Field, Ident, LitStr, Token, Type, spanned::Spanned};
+
+#[derive(Default)]
+struct AutoDocAttrs {
+    key: Option<String>,
+    pending_deprecated: Option<String>,
+    warning: Option<String>,
+    migration_notice: Option<String>,
+    deprecation: Option<String>,
+    danger: Option<String>,
+    has_sub: bool,
+}
+
+#[derive(Default)]
+struct SerdeAttrs {
+    serialize_name: Option<String>,
+    flatten: bool,
+}
+
+struct FieldDoc {
+    field_ty: Type,
+    display_name: String,
+    auto_doc: AutoDocAttrs,
+    serde: SerdeAttrs,
+    span: Span,
+}
 
 pub fn expand(input: DeriveInput) -> TokenStream {
-    let struct_name = &input.ident;
+    let struct_name = input.ident;
 
-    let fields = match &input.data {
-        syn::Data::Struct(s) => &s.fields,
-        _ => panic!("AutoDoc only supports structs"),
+    let fields = match input.data {
+        syn::Data::Struct(s) => s.fields,
+        _ => {
+            return syn::Error::new(struct_name.span(), "AutoDoc only supports structs")
+                .to_compile_error();
+        }
     };
 
-    // 各个方法对应的代码生成器
+    let mut errors: Option<syn::Error> = None;
+    let mut field_docs = Vec::new();
+
+    for field in fields.iter() {
+        match parse_field_doc(field) {
+            Ok(doc) => field_docs.push(doc),
+            Err(error) => push_error(&mut errors, error),
+        }
+    }
+
+    if let Some(error) = errors {
+        return error.to_compile_error();
+    }
+
     let mut doc_builders = Vec::new();
     let mut pending_builders = Vec::new();
     let mut warning_builders = Vec::new();
@@ -19,183 +59,18 @@ pub fn expand(input: DeriveInput) -> TokenStream {
     let mut deprecation_builders = Vec::new();
     let mut danger_builders = Vec::new();
 
-    for field in fields.iter() {
-        let ident = field.ident.as_ref().unwrap();
-        let field_name = ident.to_string();
-        let field_ty = &field.ty;
-
-        // AutoDoc 属性值
-        let mut key = None;
-        let mut pending_deprecated = None;
-        let mut warning = None;
-        let mut migration_notice = None;
-        let mut deprecation = None;
-        let mut danger = None;
-        let mut has_sub = false;
-
-        // serde 序列化名称
-        let mut serde_serialize_name: Option<String> = None;
-
-        // 解析属性
-        for attr in &field.attrs {
-            // 处理 AutoDoc 属性
-            if attr.path().is_ident("AutoDoc") {
-                attr.parse_nested_meta(|meta| {
-                    let name = meta.path.get_ident().unwrap().to_string();
-
-                    match name.as_str() {
-                        "key" => {
-                            let value: LitStr = meta.value()?.parse()?;
-                            key = Some(value.value());
-                        }
-                        "pending_deprecated" => {
-                            let value: LitStr = meta.value()?.parse()?;
-                            pending_deprecated = Some(value.value());
-                        }
-                        "warning" => {
-                            let value: LitStr = meta.value()?.parse()?;
-                            warning = Some(value.value());
-                        }
-                        "migration_notice" => {
-                            let value: LitStr = meta.value()?.parse()?;
-                            migration_notice = Some(value.value());
-                        }
-                        "deprecation" => {
-                            let value: LitStr = meta.value()?.parse()?;
-                            deprecation = Some(value.value());
-                        }
-                        "danger" => {
-                            let value: LitStr = meta.value()?.parse()?;
-                            danger = Some(value.value());
-                        }
-                        "sub" => {
-                            // sub 没有参数值
-                            has_sub = true;
-                        }
-                        _ => {}
-                    }
-                    Ok(())
-                })
-                .unwrap_or_else(|e| panic!("Failed to parse AutoDoc attribute: {}", e));
-            }
-
-            // 解析 serde(rename) 获取序列化名称
-            if attr.path().is_ident("serde") {
-                let _ = attr.parse_nested_meta(|meta| {
-                    if meta.path.is_ident("rename") {
-                        if let Ok(value) = meta.value() {
-                            let lit: LitStr = value.parse()?;
-                            serde_serialize_name = Some(lit.value());
-                        } else {
-                            meta.parse_nested_meta(|inner| {
-                                if inner.path.is_ident("serialize") {
-                                    let val: LitStr = inner.value()?.parse()?;
-                                    serde_serialize_name = Some(val.value());
-                                }
-                                Ok(())
-                            })?;
-                        }
-                    }
-                    Ok(())
-                });
-            }
-        }
-
-        // 所有字段都必须有 AutoDoc key（无论是否有 sub）
-        let key = key.unwrap_or_else(|| panic!("Field `{}` missing AutoDoc key", field_name));
-
-        // 确定字段的显示名称（用于文档展示和递归前缀）
-        let display_name = serde_serialize_name.unwrap_or(field_name);
-        let display_name_lit = LitStr::new(&display_name, ident.span());
-
-        // ---- 1. doc_fields ----
-        // 字段本身的文档条目（始终有 key）
-        doc_builders.push(quote! {
-            all_doc.push((#display_name_lit.to_string(), ::rust_i18n::t!(#key, locale = lang).to_string()));
-        });
-        // 如果有 sub，递归子类型的 doc_fields，并拼接前缀
-        if has_sub {
-            doc_builders.push(quote! {
-                for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::doc_fields(lang) {
-                    all_doc.push((format!("{}.{}", #display_name_lit, sub_key), sub_desc));
-                }
-            });
-        }
-
-        // ---- 2. pending_deprecated_fields ----
-        // 如果字段自身有 pending_deprecated 属性，添加自身条目
-        if let Some(pd_key) = &pending_deprecated {
-            pending_builders.push(quote! {
-                all_pending.push((#display_name_lit.to_string(), ::rust_i18n::t!(#pd_key, locale = lang).to_string()));
-            });
-        }
-        // 无论自身是否有 pending_deprecated，只要 has_sub，就需要递归子类型的 pending_deprecated
-        if has_sub {
-            pending_builders.push(quote! {
-                for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::pending_deprecated_fields(lang) {
-                    all_pending.push((format!("{}.{}", #display_name_lit, sub_key), sub_desc));
-                }
-            });
-        }
-
-        // ---- 3. warning_fields ----
-        if let Some(warn_key) = &warning {
-            warning_builders.push(quote! {
-                all_warning.push((#display_name_lit.to_string(), ::rust_i18n::t!(#warn_key, locale = lang).to_string()));
-            });
-        }
-        if has_sub {
-            warning_builders.push(quote! {
-                for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::warning_fields(lang) {
-                    all_warning.push((format!("{}.{}", #display_name_lit, sub_key), sub_desc));
-                }
-            });
-        }
-
-        // ---- 4. migration_notice_fields ----
-        if let Some(mig_key) = &migration_notice {
-            migration_builders.push(quote! {
-                all_migration.push((#display_name_lit.to_string(), ::rust_i18n::t!(#mig_key, locale = lang).to_string()));
-            });
-        }
-        if has_sub {
-            migration_builders.push(quote! {
-                for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::migration_notice_fields(lang) {
-                    all_migration.push((format!("{}.{}", #display_name_lit, sub_key), sub_desc));
-                }
-            });
-        }
-
-        // ---- 5. deprecation_fields ----
-        if let Some(dep_key) = &deprecation {
-            deprecation_builders.push(quote! {
-                all_deprecation.push((#display_name_lit.to_string(), ::rust_i18n::t!(#dep_key, locale = lang).to_string()));
-            });
-        }
-        if has_sub {
-            deprecation_builders.push(quote! {
-                for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::deprecation_fields(lang) {
-                    all_deprecation.push((format!("{}.{}", #display_name_lit, sub_key), sub_desc));
-                }
-            });
-        }
-
-        // ---- 6. danger_fields ----
-        if let Some(danger_key) = &danger {
-            danger_builders.push(quote! {
-                all_danger.push((#display_name_lit.to_string(), ::rust_i18n::t!(#danger_key, locale = lang).to_string()));
-            });
-        }
-        if has_sub {
-            danger_builders.push(quote! {
-                for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::danger_fields(lang) {
-                    all_danger.push((format!("{}.{}", #display_name_lit, sub_key), sub_desc));
-                }
-            });
-        }
+    for field in &field_docs {
+        append_field_builders(
+            field,
+            &mut doc_builders,
+            &mut pending_builders,
+            &mut warning_builders,
+            &mut migration_builders,
+            &mut deprecation_builders,
+            &mut danger_builders,
+        );
     }
 
-    // 生成最终的 impl
     quote! {
         impl ::qexed_config_new::tool::AutoDocConfigTrait for #struct_name {
             fn doc_fields(lang: &str) -> Vec<(String, String)> {
@@ -234,5 +109,258 @@ pub fn expand(input: DeriveInput) -> TokenStream {
                 all_danger
             }
         }
+    }
+}
+
+fn parse_field_doc(field: &Field) -> syn::Result<FieldDoc> {
+    let ident = field
+        .ident
+        .as_ref()
+        .ok_or_else(|| syn::Error::new(field.span(), "AutoDoc only supports named fields"))?;
+    let field_name = ident.to_string();
+    let field_ty = field.ty.clone();
+
+    let mut auto_doc = AutoDocAttrs::default();
+    let mut serde = SerdeAttrs::default();
+
+    for attr in &field.attrs {
+        if attr.path().is_ident("AutoDoc") {
+            parse_autodoc_attr(attr, &mut auto_doc)?;
+        }
+
+        if attr.path().is_ident("serde") {
+            parse_serde_attr(attr, &mut serde)?;
+        }
+    }
+
+    if !serde.flatten && auto_doc.key.is_none() {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!("Field `{}` missing AutoDoc key", field_name),
+        ));
+    }
+
+    let display_name = serde
+        .serialize_name
+        .clone()
+        .unwrap_or_else(|| field_name.clone());
+
+    Ok(FieldDoc {
+        field_ty,
+        display_name,
+        auto_doc,
+        serde,
+        span: ident.span(),
+    })
+}
+
+fn parse_autodoc_attr(attr: &syn::Attribute, auto_doc: &mut AutoDocAttrs) -> syn::Result<()> {
+    attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("key") {
+            auto_doc.key = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("pending_deprecated") {
+            auto_doc.pending_deprecated = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("warning") {
+            auto_doc.warning = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("migration_notice") {
+            auto_doc.migration_notice = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("deprecation") {
+            auto_doc.deprecation = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("danger") {
+            auto_doc.danger = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("sub") {
+            auto_doc.has_sub = true;
+        }
+
+        Ok(())
+    })
+}
+
+fn parse_serde_attr(attr: &syn::Attribute, serde: &mut SerdeAttrs) -> syn::Result<()> {
+    attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("flatten") {
+            serde.flatten = true;
+            return Ok(());
+        }
+
+        if meta.path.is_ident("rename") {
+            if meta.input.peek(Token![=]) {
+                let value = meta.value()?;
+                serde.serialize_name = Some(value.parse::<LitStr>()?.value());
+            } else {
+                meta.parse_nested_meta(|inner| {
+                    if inner.path.is_ident("serialize") {
+                        serde.serialize_name = Some(inner.value()?.parse::<LitStr>()?.value());
+                    }
+                    Ok(())
+                })?;
+            }
+
+            return Ok(());
+        }
+
+        if meta.input.peek(Token![=]) {
+            let _ = meta.value()?.parse::<syn::Expr>()?;
+        } else if meta.input.peek(syn::token::Paren) {
+            meta.parse_nested_meta(|inner| {
+                if inner.input.peek(Token![=]) {
+                    let _ = inner.value()?.parse::<syn::Expr>()?;
+                }
+                Ok(())
+            })?;
+        }
+
+        Ok(())
+    })
+}
+
+fn append_field_builders(
+    field: &FieldDoc,
+    doc_builders: &mut Vec<TokenStream>,
+    pending_builders: &mut Vec<TokenStream>,
+    warning_builders: &mut Vec<TokenStream>,
+    migration_builders: &mut Vec<TokenStream>,
+    deprecation_builders: &mut Vec<TokenStream>,
+    danger_builders: &mut Vec<TokenStream>,
+) {
+    let display_name_lit = LitStr::new(&field.display_name, field.span);
+
+    if !field.serde.flatten {
+        let key = field
+            .auto_doc
+            .key
+            .as_ref()
+            .expect("non-flatten fields must have an AutoDoc key");
+
+        doc_builders.push(push_translated_entry("all_doc", &display_name_lit, key));
+        push_optional_translated_entry(
+            pending_builders,
+            "all_pending",
+            &display_name_lit,
+            field.auto_doc.pending_deprecated.as_deref(),
+        );
+        push_optional_translated_entry(
+            warning_builders,
+            "all_warning",
+            &display_name_lit,
+            field.auto_doc.warning.as_deref(),
+        );
+        push_optional_translated_entry(
+            migration_builders,
+            "all_migration",
+            &display_name_lit,
+            field.auto_doc.migration_notice.as_deref(),
+        );
+        push_optional_translated_entry(
+            deprecation_builders,
+            "all_deprecation",
+            &display_name_lit,
+            field.auto_doc.deprecation.as_deref(),
+        );
+        push_optional_translated_entry(
+            danger_builders,
+            "all_danger",
+            &display_name_lit,
+            field.auto_doc.danger.as_deref(),
+        );
+    }
+
+    if !field.auto_doc.has_sub && !field.serde.flatten {
+        return;
+    }
+
+    let prefix = if field.serde.flatten {
+        None
+    } else {
+        Some(display_name_lit)
+    };
+
+    doc_builders.push(push_recursive_entries(
+        "all_doc",
+        "doc_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    pending_builders.push(push_recursive_entries(
+        "all_pending",
+        "pending_deprecated_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    warning_builders.push(push_recursive_entries(
+        "all_warning",
+        "warning_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    migration_builders.push(push_recursive_entries(
+        "all_migration",
+        "migration_notice_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    deprecation_builders.push(push_recursive_entries(
+        "all_deprecation",
+        "deprecation_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    danger_builders.push(push_recursive_entries(
+        "all_danger",
+        "danger_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+}
+
+fn push_translated_entry(target: &str, display_name: &LitStr, i18n_key: &str) -> TokenStream {
+    let target = Ident::new(target, Span::call_site());
+    let i18n_key = LitStr::new(i18n_key, Span::call_site());
+
+    quote! {
+        #target.push((
+            #display_name.to_string(),
+            ::rust_i18n::t!(#i18n_key, locale = lang).to_string(),
+        ));
+    }
+}
+
+fn push_optional_translated_entry(
+    builders: &mut Vec<TokenStream>,
+    target: &str,
+    display_name: &LitStr,
+    i18n_key: Option<&str>,
+) {
+    if let Some(i18n_key) = i18n_key {
+        builders.push(push_translated_entry(target, display_name, i18n_key));
+    }
+}
+
+fn push_recursive_entries(
+    target: &str,
+    method: &str,
+    field_ty: &Type,
+    prefix: Option<&LitStr>,
+) -> TokenStream {
+    let target = Ident::new(target, Span::call_site());
+    let method = Ident::new(method, Span::call_site());
+
+    match prefix {
+        Some(prefix) => quote! {
+            for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::#method(lang) {
+                #target.push((format!("{}.{}", #prefix, sub_key), sub_desc));
+            }
+        },
+        None => quote! {
+            #target.extend(<#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::#method(lang));
+        },
+    }
+}
+
+fn push_error(errors: &mut Option<syn::Error>, error: syn::Error) {
+    if let Some(errors) = errors {
+        errors.combine(error);
+    } else {
+        *errors = Some(error);
     }
 }

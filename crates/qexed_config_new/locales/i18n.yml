@@ -27,7 +27,7 @@ autodoc:
       # For example, you can freely modify the content of this line,
       # continue with line breaks,
       # as long as you don't write within AutoDoc and AutoDocHeader blocks.
-    zh-CN: |- 
+    zh-CN: |-
       # 例如这一行的内容你就随意修改,
       # 你也可以继续换行等,
       # 只要不是在 AutoDoc 和 AutoDocHeader 中写就行了
@@ -47,12 +47,295 @@ autodoc:
     en: "Migration notice: \n%{text}"
     zh-CN: "迁移建议：\n%{text}"
 
-config.plugin_download.enable:
-  en: "Enable Plugin Download Feature"
-  zh-CN: "启用插件下载功能"
-config.plugin_download.download:
-  en: "Download URL"
-  zh-CN: "下载地址"
-config.plugin_download.download_token:
-  en: "Download Server Authentication Token"
-  zh-CN: "下载服务器身份认证token"
+qexed_config:
+  config:
+    server:
+      motd1:
+        en: "Welcome to Qexed"
+        zh-CN: "欢迎使用 Qexed"
+      motd2:
+        en: "MC server based on Rust"
+        zh-CN: "基于Rust的MC服务端"
+
+config:
+  qexed:
+    version:
+      en: "Configuration version"
+      zh-CN: "配置版本"
+    update_check:
+      en: "Enable update checks"
+      zh-CN: "启用更新检查"
+    language:
+      en: "Runtime language"
+      zh-CN: "运行时语言"
+    plugin_download:
+      en: "Plugin download settings"
+      zh-CN: "插件下载设置"
+      enable:
+        en: "Enable plugin downloads"
+        zh-CN: "启用插件下载功能"
+      download:
+        en: "Plugin download URL"
+        zh-CN: "插件下载地址"
+      download_token:
+        en: "Plugin download authentication token"
+        zh-CN: "插件下载认证 token"
+      warning:
+        download:
+          en: "Use a trusted download server. This URL is used when fetching plugin metadata or plugin packages."
+          zh-CN: "请使用可信的下载服务器。该地址会用于获取插件元数据或插件包。"
+        download_token:
+          en: "This token is sensitive. Do not share generated configuration files publicly without rotating it."
+          zh-CN: "该 token 属于敏感信息。公开配置文件前请先更换或移除。"
+      migration_notice:
+        enable:
+          en: "The field name is kept compatible with the old qexed_config crate."
+          zh-CN: "字段名保持与旧 qexed_config crate 兼容。"
+    server:
+      en: "Server settings"
+      zh-CN: "服务器设置"
+      ip:
+        en: "Server listen address"
+        zh-CN: "服务器监听地址"
+      online:
+        en: "Enable public server mode"
+        zh-CN: "启用公网服务模式"
+      max_player:
+        en: "Maximum player count. -1 means unlimited."
+        zh-CN: "最大玩家数，-1 表示不限制。"
+      display_players:
+        en: "Expose player count in status responses"
+        zh-CN: "在状态响应中显示玩家数"
+      online_mode:
+        en: "Enable Mojang online authentication"
+        zh-CN: "启用 Mojang 正版验证"
+      network_compression_threshold:
+        en: "Packet compression threshold in bytes"
+        zh-CN: "网络数据包压缩阈值，单位为字节"
+      proxy:
+        en: "Enable proxy forwarding"
+        zh-CN: "启用代理转发"
+      proxy_protocol:
+        en: "Proxy forwarding protocol"
+        zh-CN: "代理端协议"
+      proxy_token:
+        en: "Proxy authentication token"
+        zh-CN: "代理认证密钥"
+      max_port_connections:
+        en: "Maximum concurrent TCP connections. 0 is treated as 65535."
+        zh-CN: "总 TCP 连接同时在线限制数，0 表示 65535。"
+      rate_limit_window_secs:
+        en: "Per-IP connection rate limit window in seconds"
+        zh-CN: "同 IP 连接频率限制的时间窗口，单位为秒"
+      rate_limit_max_attempts:
+        en: "Maximum connection attempts allowed per IP within the rate limit window"
+        zh-CN: "同 IP 在时间窗口内允许的最大连接次数"
+      motd:
+        en: "Random server description lines"
+        zh-CN: "服务器描述随机内容"
+      favicon:
+        en: "Server icon data URI"
+        zh-CN: "服务器图标 data URI"
+      warning:
+        online:
+          en: "When disabled, clients may be accepted without the expected public-server checks."
+          zh-CN: "关闭后，客户端可能不会经过预期的公网服务检查。"
+        online_mode:
+          en: "Disabling online mode allows offline usernames and increases impersonation risk."
+          zh-CN: "关闭正版验证会允许离线用户名，并增加身份冒用风险。"
+        proxy_token:
+          en: "Keep this token private and rotate it if it is exposed."
+          zh-CN: "请妥善保管该密钥；一旦泄露请立即更换。"
+  qexed_warden:
+    version:
+      en: "Warden configuration version"
+      zh-CN: "典狱长配置版本"
+    data:
+      en: "Warden data storage settings"
+      zh-CN: "典狱长数据存储设置"
+      version:
+        en: "Warden data configuration version"
+        zh-CN: "典狱长数据配置版本"
+      storage_engine:
+        en: "Storage engine used by Warden"
+        zh-CN: "典狱长使用的存储引擎"
+      simple:
+        en: "In-memory Warden storage"
+        zh-CN: "典狱长内存存储"
+        player_list:
+          en: "Banned player UUID list"
+          zh-CN: "被封禁玩家 UUID 列表"
+      mysql:
+        en: "Warden MySQL storage"
+        zh-CN: "典狱长 MySQL 存储"
+        table_prefix:
+          en: "Table prefix for Warden MySQL tables"
+          zh-CN: "典狱长 MySQL 表名前缀"
+      mongodb:
+        en: "Warden MongoDB storage"
+        zh-CN: "典狱长 MongoDB 存储"
+      pika:
+        en: "Warden Pika storage"
+        zh-CN: "典狱长 Pika 存储"
+        key_prefix:
+          en: "Key prefix for Warden Pika records"
+          zh-CN: "典狱长 Pika 记录键前缀"
+  qexed_ip_connection_speed_test:
+    version:
+      en: "IP connection speed test configuration version"
+      zh-CN: "IP 连接速率检测配置版本"
+    enable:
+      en: "Enable IP connection speed detection"
+      zh-CN: "启用 IP 连接速率检测"
+    data:
+      en: "IP connection speed test storage settings"
+      zh-CN: "IP 连接速率检测数据存储设置"
+      version:
+        en: "IP connection speed test data configuration version"
+        zh-CN: "IP 连接速率检测数据配置版本"
+      storage_engine:
+        en: "Storage engine used by IP connection speed detection"
+        zh-CN: "IP 连接速率检测使用的存储引擎"
+      simple:
+        en: "In-memory IP connection speed storage"
+        zh-CN: "IP 连接速率检测内存存储"
+        player_list:
+          en: "Tracked UUID list for simple storage"
+          zh-CN: "简易存储中的 UUID 跟踪列表"
+      pika:
+        en: "IP connection speed test Pika storage"
+        zh-CN: "IP 连接速率检测 Pika 存储"
+        key_prefix:
+          en: "Key prefix for IP connection speed test records"
+          zh-CN: "IP 连接速率检测 Pika 记录键前缀"
+    ttl:
+      en: "Connection rate tracking TTL in seconds"
+      zh-CN: "连接速率统计 TTL，单位为秒"
+    violation_count:
+      en: "Maximum allowed violations within the TTL"
+      zh-CN: "TTL 时间内允许的最大违规次数"
+    whitelist_ips:
+      en: "IP addresses excluded from connection speed detection"
+      zh-CN: "不参与连接速率检测的 IP 白名单"
+  public:
+    ip:
+      ip:
+        en: "Distributed mode listen address"
+        zh-CN: "分布式模式监听地址"
+    mysql:
+      ip:
+        en: "MySQL server address"
+        zh-CN: "MySQL 服务器地址"
+      port:
+        en: "MySQL server port"
+        zh-CN: "MySQL 服务器端口"
+      username:
+        en: "MySQL username"
+        zh-CN: "MySQL 用户名"
+      password:
+        en: "MySQL password"
+        zh-CN: "MySQL 密码"
+      database:
+        en: "MySQL database name"
+        zh-CN: "MySQL 数据库名"
+      pool_max_size:
+        en: "Maximum MySQL connection pool size"
+        zh-CN: "MySQL 连接池最大连接数"
+      pool_min_idle:
+        en: "Minimum idle MySQL connections"
+        zh-CN: "MySQL 连接池最小空闲连接数"
+      connection_timeout:
+        en: "MySQL connection timeout"
+        zh-CN: "MySQL 连接超时时间"
+      idle_timeout:
+        en: "MySQL idle connection timeout"
+        zh-CN: "MySQL 空闲连接超时时间"
+      use_ssl:
+        en: "Enable SSL for MySQL connections"
+        zh-CN: "启用 MySQL SSL 连接"
+      charset:
+        en: "MySQL connection charset"
+        zh-CN: "MySQL 连接字符集"
+      options:
+        en: "Additional MySQL connection options"
+        zh-CN: "额外 MySQL 连接选项"
+    mongodb:
+      host:
+        en: "MongoDB server address"
+        zh-CN: "MongoDB 服务器地址"
+      port:
+        en: "MongoDB server port"
+        zh-CN: "MongoDB 服务器端口"
+      username:
+        en: "MongoDB username"
+        zh-CN: "MongoDB 用户名"
+      password:
+        en: "MongoDB password"
+        zh-CN: "MongoDB 密码"
+      database:
+        en: "MongoDB database name"
+        zh-CN: "MongoDB 数据库名"
+      app_name:
+        en: "MongoDB application name"
+        zh-CN: "MongoDB 应用名称"
+      replica_set:
+        en: "MongoDB replica set name"
+        zh-CN: "MongoDB 副本集名称"
+      auth_source:
+        en: "MongoDB authentication database"
+        zh-CN: "MongoDB 认证数据库"
+      use_tls:
+        en: "Enable TLS for MongoDB connections"
+        zh-CN: "启用 MongoDB TLS 连接"
+      connect_timeout:
+        en: "MongoDB connection timeout"
+        zh-CN: "MongoDB 连接超时时间"
+      socket_timeout:
+        en: "MongoDB socket timeout"
+        zh-CN: "MongoDB Socket 超时时间"
+      max_pool_size:
+        en: "Maximum MongoDB connection pool size"
+        zh-CN: "MongoDB 连接池最大连接数"
+      min_pool_size:
+        en: "Minimum MongoDB connection pool size"
+        zh-CN: "MongoDB 连接池最小连接数"
+      max_idle_time:
+        en: "MongoDB maximum idle connection time"
+        zh-CN: "MongoDB 最大空闲连接时间"
+    pika:
+      mode:
+        en: "Pika connection mode"
+        zh-CN: "Pika 连接模式"
+      host:
+        en: "Pika server address"
+        zh-CN: "Pika 服务器地址"
+      port:
+        en: "Pika server port"
+        zh-CN: "Pika 服务器端口"
+      password:
+        en: "Pika password"
+        zh-CN: "Pika 密码"
+      database:
+        en: "Pika database index"
+        zh-CN: "Pika 数据库索引"
+      pool_max_size:
+        en: "Maximum Pika connection pool size"
+        zh-CN: "Pika 连接池最大连接数"
+      pool_min_idle:
+        en: "Minimum idle Pika connections"
+        zh-CN: "Pika 连接池最小空闲连接数"
+      timeout:
+        en: "Pika operation timeout"
+        zh-CN: "Pika 操作超时时间"
+      connection_timeout:
+        en: "Pika connection timeout"
+        zh-CN: "Pika 连接超时时间"
+      master_name:
+        en: "Pika sentinel master name"
+        zh-CN: "Pika 哨兵主节点名称"
+      nodes:
+        en: "Pika sentinel or cluster nodes"
+        zh-CN: "Pika 哨兵或集群节点列表"
+      use_tls:
+        en: "Enable TLS for Pika connections"
+        zh-CN: "启用 Pika TLS 连接"

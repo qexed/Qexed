@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use toml_edit::{DocumentMut, RawString, TableLike, value};
+use toml_edit::{DocumentMut, RawString, value};
 
 use crate::build;
 
@@ -55,12 +55,12 @@ pub trait AppConfigTrait:
         // ----- 名称校验 -----
         if !Self::NAME
             .chars()
-            .all(|c| c.is_ascii_alphabetic() || c.is_ascii_digit())
+            .all(|c| c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_')
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!(
-                    "Invalid NAME: '{}' - only alphanumeric characters allowed",
+                    "Invalid NAME: '{}' - only alphanumeric characters and underscores allowed",
                     Self::NAME
                 ),
             )
@@ -351,48 +351,6 @@ fn get_item_by_path<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a toml_
     Some(current)
 }
 
-use toml_edit::{ KeyMut, Table, ArrayOfTables};
-
-// 根据路径获取 KeyMut 可变引用
-fn get_key_mut_by_path<'a>(
-    doc: &'a mut DocumentMut,
-    path: &[&str],
-) -> Option<KeyMut<'a>> {
-    if path.is_empty() {
-        return None;
-    }
-
-    // 单个部分：顶层键
-    if path.len() == 1 {
-        return doc.key_mut(path[0]);
-    }
-
-    // 多个部分：找到父表，然后获取最后一个键
-    let (parent_parts, last_part) = path.split_at(path.len() - 1);
-    
-    // 找到父表
-    let mut current = doc.as_table_mut();
-    for part in parent_parts {
-        match current.get_mut(part) {
-            Some(toml_edit::Item::Table(table)) => {
-                current = table;
-            }
-            Some(toml_edit::Item::ArrayOfTables(array)) => {
-                // 如果是数组表，取第一个元素
-                if let Some(first) = array.iter_mut().next() {
-                    current = first;
-                } else {
-                    return None;
-                }
-            }
-            _ => return None,
-        }
-    }
-
-    // 从父表中获取最后一个键的 KeyMut
-    current.key_mut(last_part[0])
-}
-
 // 更新 AutoDoc 注释
 fn update_autodoc_for_key(doc: &mut DocumentMut, key: &str, new_comment: &str) {
     let start_marker = "# ======= AutoDoc =======";
@@ -407,12 +365,7 @@ fn update_autodoc_for_key(doc: &mut DocumentMut, key: &str, new_comment: &str) {
             match item {
                 // ✅ 表头：[Name]
                 toml_edit::Item::Table(table) => {
-                    update_table_decor(
-                        table,
-                        start_marker,
-                        end_marker,
-                        &processed_comment,
-                    );
+                    update_table_decor(table, start_marker, end_marker, &processed_comment);
                 }
                 // ✅ 普通键值
                 _ => {
@@ -422,7 +375,6 @@ fn update_autodoc_for_key(doc: &mut DocumentMut, key: &str, new_comment: &str) {
                             start_marker,
                             end_marker,
                             &processed_comment,
-
                         );
                     }
                 }
@@ -454,7 +406,6 @@ fn update_autodoc_for_key(doc: &mut DocumentMut, key: &str, new_comment: &str) {
                                     start_marker,
                                     end_marker,
                                     &processed_comment,
-
                                 );
                             }
                         }
@@ -515,11 +466,10 @@ fn update_key_decor(
     if !final_prefix.ends_with('\n') {
         final_prefix.push('\n');
     }
-    
+
     key_mut
         .leaf_decor_mut()
         .set_prefix(RawString::from(final_prefix));
-
 }
 fn update_table_decor(
     table: &mut toml_edit::Table,
@@ -539,9 +489,7 @@ fn update_table_decor(
     if !final_prefix.ends_with('\n') {
         final_prefix.push('\n');
     }
-    table
-        .decor_mut()
-        .set_prefix(RawString::from(final_prefix));
+    table.decor_mut().set_prefix(RawString::from(final_prefix));
 }
 fn build_safe_path(
     base: &std::path::Path,
