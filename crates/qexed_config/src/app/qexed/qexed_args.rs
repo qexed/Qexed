@@ -7,7 +7,7 @@ use clap::Parser;
     about = "Qexed 服务端",
     long_about = "Qexed 服务端启动器"
 )]
-#[derive(Clone,Debug)]
+#[derive(PartialEq, Clone, Default)]
 pub struct ServerArgs {
     #[arg(long, default_value = "false")]
     pub init_settings: bool,

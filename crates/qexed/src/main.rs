@@ -28,7 +28,7 @@ async fn run() -> anyhow::Result<()> {
         _build_type = "dev-";
     }
     let args = qexed_config::app::qexed::qexed_args::ServerArgs::parse();
-    let config = qexed_config::app::qexed::Qexed::load_or_create_default(args.language,None,None)?;
+    let config = qexed_config::app::qexed::Qexed::load_or_create_default(args.language.clone(),None,None)?;
     
     rust_i18n::set_locale(&match args.language{
         Some(v)=>v,
