@@ -9,10 +9,10 @@
 /doc
 /deploy
 /tmp
-/tool/
 /
 /plugin
 /crates-old
+/qexed_old
 /Cargo.old.toml
 # 未使用的代码
 /crates/service/qexed/unuse
@@ -36,3 +36,4 @@ target
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+/assets/zh_cn.json

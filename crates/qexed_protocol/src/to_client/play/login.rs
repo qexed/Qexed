@@ -27,7 +27,7 @@ pub struct Login {
 }
 
 impl Packet for Login {
-    const ID: u32 = 0x2b;
+    const ID: i32 = 0x2b;
     fn serialize(&self, w: &mut PacketWriter) -> Result<(), anyhow::Error> {
         w.serialize(&self.entity_id)?;
         w.serialize(&self.is_hardcore)?;

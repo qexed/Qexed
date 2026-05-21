@@ -6,22 +6,17 @@ build = "build.rs"
 [dependencies]
 qexed_log.workspace = true
 qexed_config.workspace = true
-qexed_update_check.workspace = true
-qexed_safe_check.workspace = true
-qexed_plugin_manage.workspace = true
-qexed_warden.workspace = true
-qexed_wasm_runtime.workspace = true
-qexed_ip_connection_speed_test.workspace = true
-qexed_packet_split.workspace = true
-qexed_players.workspace = true
+qexed_tcp_connect.workspace = true
+qexed_packet_macros.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
 log = { workspace = true }
-tklog = { workspace = true }
 tokio = { workspace = true }
 anyhow.workspace = true
 rust-i18n = { workspace = true }
 shadow-rs.workspace = true
-winapi = { workspace = true }
 os_info = { workspace = true }
-libloading = { workspace = true }
+clap.workspace = true
+tokio-stream.workspace = true
 [build-dependencies]
 shadow-rs.workspace = true

@@ -3,51 +3,35 @@ resolver = "3"
 members = [
     "crates/qexed",
     "crates/qexed_log",
-    "crates/qexed_update_check",
     "crates/qexed_config",
-    "crates/qexed_safe_check",
-    "crates/plugin/qexed_plugin_manage",
-    "crates/qexed_warden",
-    "crates/qexed_ip_connection_speed_test",
+    "crates/qexed_config_new",
     "crates/macros/qexed_config_macros",
-    "crates/plugin/qexed_wasm_runtime",
-    "crates/plugin/hello_world",
-    "crates/plugin/hello_hello_world",
-    "crates/plugin/qexed_plugin_api",
-    "crates/qexed_packet_split",
-    "crates/qexed_tcp_connect",
-    "crates/packet/qexed_packet",
-    "crates/packet/qexed_protocol",
     "crates/macros/qexed_packet_macros",
-    "crates/qexed_nbt",
-    "crates/qexed_players"
+    "crates/qexed_tcp_connect",
+    "crates/qexed_packet",
+    "crates/qexed_protocol",
+    "crates/qexed_nbt", 
+    "crates/macros/qexed_error_macros",
 ]
 [workspace.dependencies]
-# 内部包
-qexed_log.path = "crates/qexed_log"
-qexed_update_check.path = "crates/qexed_update_check"
-qexed_config.path = "crates/qexed_config"
-qexed_safe_check.path = "crates/qexed_safe_check"
-qexed_config_macros.path = "crates/macros/qexed_config_macros"
-qexed_plugin_manage.path = "crates/plugin/qexed_plugin_manage"
-qexed_warden.path = "crates/qexed_warden"
-qexed_ip_connection_speed_test.path = "crates/qexed_ip_connection_speed_test"
-qexed_wasm_runtime.path = "crates/plugin/qexed_wasm_runtime"
-qexed_plugin_api.path = "crates/plugin/qexed_plugin_api"
-qexed_packet_split.path = "crates/qexed_packet_split"
-qexed_tcp_connect.path = "crates/qexed_tcp_connect"
-qexed_packet.path = "crates/packet/qexed_packet"
-qexed_protocol.path = "crates/packet/qexed_protocol"
+qexed_config = { path = "crates/qexed_config" }
+qexed_log = { path = "crates/qexed_log" }
+
+qexed_config_macros = {path = "crates/macros/qexed_config_macros"}
 qexed_packet_macros.path = "crates/macros/qexed_packet_macros"
+qexed_packet.path = "crates/qexed_packet"
+qexed_tcp_connect.path = "crates/qexed_tcp_connect"
+qexed_protocol.path = "crates/qexed_protocol"
 qexed_nbt.path = "crates/qexed_nbt"
-qexed_players.path = "crates/qexed_players"
+qexed_error_macros.path="crates/macros/qexed_error_macros"
+# 外部包
 # 插件
 # pass
 # 外部包
 thiserror = "1.0"
 anyhow = "1.0"                                         # 用于简化错误处理
 byteorder = "1.5.0"
-tokio = { version = "1.48.0", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full","net"] }
 tklog = "0.3.0"
 log = "0.4.27"
 chrono = "0.4.41"
@@ -137,3 +121,6 @@ cargo_toml = "0.22.3"
 libloading = "0.9.0"
 semver = "1.0.27"
 tinykv = "0.4.0"
+clap = { version = "4.6.0",features = ["derive"] }
+time = "0.3.47"
+

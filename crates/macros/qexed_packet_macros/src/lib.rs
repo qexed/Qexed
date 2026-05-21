@@ -16,7 +16,7 @@ pub fn packet(attr: TokenStream, item: TokenStream) -> TokenStream {
             if meta_name_value.path.is_ident("id") {
                 if let Expr::Lit(expr_lit) = &meta_name_value.value {
                     if let Lit::Int(lit_int) = &expr_lit.lit {
-                        lit_int.base10_parse::<u32>().expect("Invalid packet id")
+                        lit_int.base10_parse::<i32>().expect("Invalid packet id")
                     } else {
                         panic!("Packet id must be an integer literal");
                     }
@@ -60,7 +60,7 @@ pub fn packet(attr: TokenStream, item: TokenStream) -> TokenStream {
         #input
         
         impl qexed_packet::Packet for #struct_name {
-            const ID: u32 = #packet_id;
+            const ID: i32 = #packet_id;
             
             fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
                 #(self.#field_names.serialize(w)?;)*
@@ -404,5 +404,130 @@ pub fn subenum(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
     
+    TokenStream::from(expanded)
+}
+use syn::{
+    parse::{Parse, ParseStream}, Token, Block, Result,
+    punctuated::Punctuated,
+};
+use syn::{
+    token::Brace,Type,
+};
+/// 一个匹配分支： `Type => { ... }`
+struct MatchArm {
+    ty: Type,
+    arrow: Token![=>],
+    block: Block,
+}
+struct DefaultArm {
+    underscore: Token![_],
+    arrow: Token![=>],
+    block: Block,
+}
+/// 整个 `smatch!` 的输入语法：
+/// `smatch!( reader, packet, Type1 => { ... }, Type2 => { ... }, ... , { default } )`
+struct SmatchInput {
+    reader: Expr,
+    _comma1: Token![,],
+    packet: Expr,
+    _comma2: Token![,],
+    arms: Punctuated<MatchArm, Token![,]>,
+    default: Option<DefaultArm>,
+}
+
+impl Parse for MatchArm {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(MatchArm {
+            ty: input.parse()?,
+            arrow: input.parse()?,
+            block: input.parse()?,
+        })
+    }
+}
+impl Parse for DefaultArm {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(DefaultArm {
+            underscore: input.parse()?,
+            arrow: input.parse()?,
+            block: input.parse()?,
+        })
+    }
+}
+impl Parse for SmatchInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let reader = input.parse()?;
+        let _comma1 = input.parse()?;
+        let packet = input.parse()?;
+        let _comma2 = input.parse()?;
+
+        let mut arms = Punctuated::new();
+        // 逐个解析 MatchArm，直到遇到 `_` 或输入结束
+        while !input.is_empty() && !input.peek(Token![_]) {
+            let arm: MatchArm = input.parse()?;
+            arms.push_value(arm);
+            // 如果后面是逗号，吞掉逗号；否则停止
+            if input.peek(Token![,]) {
+                let punct: Token![,] = input.parse()?;
+                arms.push_punct(punct);
+            } else {
+                break;
+            }
+        }
+
+        // 如果有 `_`，就解析为 DefaultArm
+        let default = if input.peek(Token![_]) {
+            Some(input.parse()?)
+        } else {
+            None
+        };
+
+        Ok(SmatchInput {
+            reader,
+            _comma1,
+            packet,
+            _comma2,
+            arms,
+            default,
+        })
+    }
+}
+
+#[proc_macro]
+pub fn smatch(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as SmatchInput);
+    let packet = &input.packet;
+    // 直接生成每个分支的 TokenStream，而不是保留 MatchArm
+    let reader = &input.reader;
+    let match_arms: Vec<_> = input.arms.iter().map(|arm| {
+        
+        let ty = &arm.ty;
+        let block = &arm.block;
+        let reader_expr = &input.reader;
+        quote! {
+            <#ty as ::qexed_packet::Packet>::ID => {
+                let mut #packet: #ty = ::std::default::Default::default();
+                // 
+                ::qexed_packet::Packet::deserialize(&mut #packet, &mut #reader)?;
+                #block
+            }
+        }
+    }).collect();
+
+   let default_arm = if let Some(default) = &input.default {
+        let block = &default.block;
+        quote! { _ => #block }
+    } else {
+        quote! { _ => {} }
+    };
+    let expanded = quote! {{
+        // use qexed_packet::{Packet, PacketCodec};
+        let mut _id: ::qexed_packet::net_types::VarInt = ::std::default::Default::default();
+        ::qexed_packet::PacketCodec::deserialize(&mut _id, &mut #reader)?;
+        match _id.0 {
+            #(#match_arms)*
+            #default_arm
+        }
+    }};
+
     TokenStream::from(expanded)
 }

@@ -1,6 +1,134 @@
 _fallback_language: zh-CN
 _version: 2
+# 启动参数
+# CLI界面
+cli:
+  about:
+    en: "Minecraft Dedicated Server"
+    zh-CN: "Minecraft 专用服务器"
+  long_about:
+    en: "Official Minecraft dedicated server launcher"
+    zh-CN: "官方 Minecraft 专用服务器启动器"
 
+# 参数说明
+args:
+  nogui:
+    help:
+      en: "Disable graphical user interface"
+      zh-CN: "禁用图形用户界面"
+    long_help:
+      en: "Run the server without showing the GUI interface"
+      zh-CN: "不显示图形界面运行服务器"
+  init_settings:
+    help:
+      en: "Initialize configuration files and exit"
+      zh-CN: "仅初始化配置文件，然后退出"
+    long_help:
+      en: "Create initial 'server.properties' and 'eula.txt' files, then exit"
+      zh-CN: "创建初始的 'server.properties' 和 'eula.txt' 文件，然后退出"
+  demo:
+    help:
+      en: "Start in demo mode"
+      zh-CN: "以演示模式启动"
+    long_help:
+      en: "Launch the server in demo mode with limited gameplay"
+      zh-CN: "在演示模式下启动服务器，提供有限的游戏体验"
+  bonus_chest:
+    help:
+      en: "Generate bonus chest in new world"
+      zh-CN: "在新世界生成奖励箱"
+    long_help:
+      en: "Place a bonus chest with starter items in newly created worlds"
+      zh-CN: "在新创建的世界中放置一个包含起始物品的奖励箱"
+  force_upgrade:
+    help:
+      en: "Force upgrade world data"
+      zh-CN: "强制升级世界数据"
+    long_help:
+      en: "Force upgrade world data to current version format"
+      zh-CN: "强制将世界数据升级到当前版本格式"
+  erase_cache:
+    help:
+      en: "Erase chunk cache during upgrade"
+      zh-CN: "升级时擦除区块缓存"
+    long_help:
+      en: "Erase chunk cache during the upgrade process"
+      zh-CN: "在升级过程中擦除区块缓存"
+  recreate_region_files:
+    help:
+      en: "Recreate region files"
+      zh-CN: "重新创建区域文件"
+    long_help:
+      en: "Recreate world region files"
+      zh-CN: "重新创建世界区域文件"
+  safe_mode:
+    help:
+      en: "Safe mode: load only vanilla datapack"
+      zh-CN: "安全模式：仅加载原版数据包"
+    long_help:
+      en: "Load only vanilla datapack for troubleshooting custom datapack issues"
+      zh-CN: "仅加载原版数据包，用于排查自定义数据包问题"
+  help:
+    help:
+      en: "Show help information"
+      zh-CN: "显示帮助信息"
+    long_help:
+      en: "Show detailed help information and usage instructions"
+      zh-CN: "显示详细的帮助信息和使用说明"
+  universe:
+    help:
+      en: "Server root directory (contains all worlds)"
+      zh-CN: "服务器根目录（存放所有世界）"
+    long_help:
+      en: "Server root directory containing all world files"
+      zh-CN: "包含所有世界文件的服务器根目录"
+  world:
+    value_name:
+      en: "NAME"
+      zh-CN: "名称"
+    help:
+      en: "World name"
+      zh-CN: "世界名称"
+    long_help:
+      en: "Name of the world to load or create"
+      zh-CN: "要加载或创建的世界名称"
+  port:
+    help:
+      en: "Server port"
+      zh-CN: "服务器端口"
+    long_help:
+      en: "Network port for the server to listen on"
+      zh-CN: "服务器监听的网络端口"
+  server_id:
+    help:
+      en: "Server ID (for BungeeCord, etc.)"
+      zh-CN: "服务器ID（用于BungeeCord等）"
+    long_help:
+      en: "Server identifier for BungeeCord and other proxy servers"
+      zh-CN: "服务器标识符，用于BungeeCord等代理服务器"
+  jfr_profile:
+    help:
+      en: "Enable JFR profiling"
+      zh-CN: "启用JFR性能分析"
+    long_help:
+      en: "Enable Java Flight Recorder performance profiling"
+      zh-CN: "启用Java Flight Recorder性能分析"
+  pid_file:
+    help:
+      en: "Write PID to specified file"
+      zh-CN: "将PID写入指定文件"
+    long_help:
+      en: "Write server process ID to the specified file"
+      zh-CN: "将服务器进程ID写入指定的文件"
+  extra_args:
+    help:
+      en: "Extra non-option arguments (ignored, for backward compatibility)"
+      zh-CN: "剩余的非选项参数（将被忽略，但可用于向后兼容）"
+    long_help:
+      en: "Extra non-option arguments, kept for backward compatibility"
+      zh-CN: "额外的非选项参数，为了向后兼容性保留"
+
+# Qexed 主进程
 qexed:
   error_exit:
     en: "Failed: %{err}"
@@ -51,7 +179,14 @@ qexed:
   modern_init_start:
     en: "start init modern"
     zh-CN: "模块开始启动"
-
+  debug:
+    new_tcp_connection:
+      en: "New TCP connection established. Local: %{local}, Peer: %{peer}, Current connections: %{count}"
+      zh-CN: "新的TCP连接，本地地址: %{local}, 对端地址: %{peer}, 当前TCP连接数: %{count}"
+  tcp_connect_read_packet_error:
+    en: "Failed to parse protocol from IP %{ip}. Error: %{err}"
+    zh-CN: "来自 IP %{ip} 的协议解析失败，错误如下：%{err}"
+# 日志
 qexed_log:
   modern:
     global:
@@ -62,7 +197,7 @@ qexed_log:
       zh-CN: "日志"
     qexed:
       en: "Main"
-      zh-CN: "主程序"
+      zh-CN: "主进程"
     qexed_plugin_manage:
       en: "Plugin Manage"
       zh-CN: "插件管理"
@@ -87,6 +222,67 @@ qexed_log:
     qexed_packet_split:
       en: "Packet Split"
       zh-CN: "数据包分流"
+# 配置文件
+qexed_config:
+  config:
+    server:
+      motd1:
+        en: "Welcome to Qexed"
+        zh-CN: "欢迎使用 Qexed"
+      motd2:
+        en: "MC server based on Rust"
+        zh-CN: "基于Rust的MC服务端"
+qexed_tcp_connect:
+  addr_parse_error:
+    en: "Invalid socket address syntax, please enter the correct socket, for example: 0.0.0.0:25565."
+    zh-CN: "错误的套接字地址语法: 无法解析 '%{addr}' 为有效地址。请输入正确的套接字，例如: 0.0.0.0:25565。"
+  invalid_input:
+    en: "Could not resolve to any address, please enter the correct address."
+    zh-CN: "无效输入: 无法解析为任何IP地址，请输入正确的IP地址。"
+  addr_in_use:
+    en: "Address already in use: unable to bind to %{addr} . The port may already be in use by another process."
+    zh-CN: "地址已被占用: 无法绑定到 %{addr}。该端口可能已被其他进程使用。"
+  permission_denied:
+    en: "Permission denied: unable to bind to address. May require administrator privileges."
+    zh-CN: "权限被拒绝: 无法绑定到地址。可能需要管理员权限。"
+  addr_not_available:
+    en: "Address not available: %{addr} (IP: %{ip}) is not available on the current system."
+    zh-CN: "地址不可用: %{addr} (IP: %{ip}) 在当前系统上不可用。"
+  network_unreachable:
+    en: "Network unreachable: unable to access address %{addr} (IP: %{ip})."
+    zh-CN: "网络不可达: 无法访问地址 %{addr} (IP: %{ip})。"
+  connection_refused:
+    en: "Connection refused: binding to %{addr} was refused."
+    zh-CN: "连接被拒绝: 绑定到 %{addr} 被拒绝。"
+  timed_out:
+    en: "Operation timed out: binding to %{addr} timed out."
+    zh-CN: "操作超时: 绑定到 %{addr} 超时。"
+  other_error:
+    en: "TCP bind error: %{error}"
+    zh-CN: "TCP绑定错误: %{error}"
+  packet_read_varint:
+    incomplete:
+      en: "Incomplete varint"
+      zh-CN: "VarInt不完整"
+    too_large:
+      en: "Too large"
+      zh-CN: "VarInt 字节数过大"
+    read_error:
+      en: "VarInt read bytes error: %{error}"
+      zh-CN: "VarInt 读取字节错误:%{error}"
+  packet_read:
+    packet_read_varint_error:
+      en: "%{error}"
+      zh-CN: "%{error}"
+    connection_closed_with_incomplete_packet:
+      en: "Packet parsing is incomplete due to the connection being closed"
+      zh-CN: "因连接关闭导致数据包解析不完整"
+    io_error:
+      en: "IO Error: %{error}"
+      zh-CN: "IO错误:%{error}"
+
+    
+# TCP 连接速率限制器
 qexed_ip_connection_speed_test:
   simple_warning:
     en: "**** The current module is running under the simple engine! ****"
@@ -108,17 +304,16 @@ qexed_plugin_manage:
     en: "Loading plugin: %{name}, version: %{version}"
     zh-CN: "读取插件:%{name},版本:%{version}"
   load_plugin_config_finish:
-    en: "Finished loading plugin configurations"
-    zh-CN: "读取插件配置完成"
+
+    en: "Plugin configuration loaded"
+    zh-CN: "插件配置加载完成"
   download_skip:
     en: "Plugin download check skipped. If you need to use it, please read: %{url}"
     zh-CN: "插件下载检查跳过，如需使用请阅读: %{url}"
   loading_plugin_config_err:
     en: "An error occurred while reading the configuration file of the plugin at path %{path}: %{err}"
     zh-CN: "读取插件 %{path} 配置文件报错：%{err}"
-  load_plugin_config_finish:
-    en: "Plugin configuration loaded"
-    zh-CN: "插件配置加载完成"
+
   duplicate_plugins_warning:
     en: "Duplicate plugin name found: %{name}"
     zh-CN: "存在多个冲突同名插件:%{name}"
@@ -172,8 +367,6 @@ config_init_finish:
 config_load_error:
   en: "Failed to load config file: %{err}"
   zh-CN: "配置文件读取报错: %{err}"
-
-
 qexed_packet_split:
   unknown_next_state:
     en: "Unknown next state: %{state}"

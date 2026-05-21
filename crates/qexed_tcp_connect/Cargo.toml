@@ -11,5 +11,9 @@ openssl = { workspace = true }
 tokio.workspace = true
 qexed_packet.workspace = true
 qexed_protocol.workspace = true
-
-
+qexed_nbt.workspace = true
+thiserror = "1.0.69"
+rust-i18n = { workspace = true }
+qexed_error_macros.workspace = true
+tokio-stream.workspace = true
+async-stream.workspace = true

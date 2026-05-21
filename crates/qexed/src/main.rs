@@ -1,7 +1,12 @@
-use std::thread;
+use clap::Parser;
 
 use qexed_config::tool::AppConfigTrait;
+use qexed_protocol::to_server::handshaking::set_protocol::SetProtocol;
 use rust_i18n::t;
+use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio_stream::StreamExt;
+
 rust_i18n::i18n!("../../locales");
 shadow_rs::shadow!(build);
 #[tokio::main]
@@ -11,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
             log::debug!("exit");
         }
         Err(err) => {
-            log::error!("{}", t!("qexed.error_exit", err = err));
+            log::error!("{}", err);
         }
     };
     Ok(())
@@ -22,10 +27,13 @@ async fn run() -> anyhow::Result<()> {
     {
         _build_type = "dev-";
     }
+    let args = qexed_config::app::qexed::qexed_args::ServerArgs::parse();
     let config = qexed_config::app::qexed::Qexed::load_or_create_default()?;
     rust_i18n::set_locale(&config.language);
+    if args.init_settings {
+        return Ok(());
+    }
     qexed_log::log_init().await;
-    // Print full information:
     let info = os_info::get();
     log::info!(
         "{}",
@@ -55,92 +63,71 @@ async fn run() -> anyhow::Result<()> {
         )
     );
     log::info!("{}", t!("qexed.log_init_finish"));
-    // 检查更新
-    tokio::spawn(qexed_update_check::check_version(
-        config.update_check.clone(),
-    ));
-    // 安全性检测(暂时没那么高级)
-    thread::spawn(qexed_safe_check::root_check::root_check);
-    // 插件初始化
-    let plugin_manage = qexed_plugin_manage::new().await?;
-
-    // 插件更新检查
-    // 适用于群组服预配置插件列表的服务，也适用于插件更新
-    match plugin_manage
-        .update_plugins_check(&config.plugin_download)
-        .await
-    {
-        Ok(v) => {
-            if !v {
-                log::error!("{}", t!("qexed.plugin_update_check_error_by_false"));
-            }
-        },
-        Err(err) => {
-            log::error!("{}", t!("qexed.plugin_update_check_error", err = err));
-        },
-    };
-    // 初始化其他服务
-    // 初始化玩家管理服务
-    let players_api = match qexed_players::new(config.server.max_player.clone()).await {
-        Ok(v) => v,
-        Err(err) => {
-            log::error!("{}", err);
-            return Err(err);
-        }
-    };
-    let (handshaking_packet_split_api, _status_packet_split_api) =
-        match qexed_packet_split::new(
-            players_api,
-            config.server.max_player.clone(),
-            config.server.motd,
-            config.server.favicon
-        ).await {
-            Ok(v) => v,
-            Err(err) => {
-                log::error!("{}", err);
-                return Err(err);
-            }
-        };
-    let (_warden_api, ip_connect_speed_test_api) = match tokio::try_join!(
-        qexed_warden::new(),
-        qexed_ip_connection_speed_test::new(handshaking_packet_split_api),
-    ) {
-        Ok(v) => v,
-        Err(err) => {
-            log::error!("{}", err);
-            return Err(err);
-        }
-    };
-    log::info!("{}", t!("qexed.modern_init_start"));
-    // let (a,b) = (api.0??,api.1??);
-    log::info!("{}", t!("qexed.modern_init_finish"));
-    // 启动 Tcp 服务器
-    let tcp_server = match tokio::net::TcpListener::bind(config.server.ip.clone()).await {
-        Ok(v) => {
-            log::info!("{}", t!("qexed.listen_ip", ip = config.server.ip.clone()));
-            v
-        }
-        Err(err) => match err.kind() {
-            std::io::ErrorKind::AddrInUse => {
-                log::error!("{}", t!("qexed.address_in_use", ip = config.server.ip));
-                return Err(err.into());
-            }
-            _ => {
-                log::error!("{}", t!("qexed.bind_failed", err = err));
-                return Err(err.into());
-            }
-        },
-    };
     if !config.server.online {
         log::warn!("{}", t!("qexed.minecraft_warning.offline_mode"));
         log::warn!("{}", t!("qexed.minecraft_warning.no_authentication"));
         log::warn!("{}", t!("qexed.minecraft_warning.hacker_risk"));
         log::warn!("{}", t!("qexed.minecraft_warning.set_online_mode"));
     }
-
+    let tcp_server: TcpListener = qexed_tcp_connect::bind(&config.server.ip).await?;
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+        config.server.max_port_connections as usize,
+    ));
+    let max_port_connections = config.server.max_port_connections as usize;
+    while let Ok((mut stream, addr)) = tcp_server.accept().await {
+        let permit = semaphore.clone().acquire_owned().await?;
+        log::debug!(
+            "{}",
+            t!(
+                "qexed.debug.new_tcp_connection",
+                local = stream.local_addr()?,
+                peer = addr,
+                count = max_port_connections - semaphore.available_permits()
+            )
+        );
+        tokio::spawn(async move {
+            let result: anyhow::Result<()> = async {
+                let (r, w) = tokio::io::split(stream);
+                let mut packet_read = qexed_tcp_connect::PacketStream::new(r);
+                let mut part0 = true;
+                while let Some(result) = packet_read.next().await {
+                    match result {
+                        Ok(mut packet) => {
+                            let mut reader = qexed_packet::PacketReader::new(&mut packet);
+                            if part0 {
+                                qexed_packet_macros::smatch!(
+                                    reader,
+                                    packet,
+                                    SetProtocol=>{
+                                        log::info!("心跳数据包:{:?}", packet);
+                                        part0=false;
+                                    },
+                                    _=>{
+                                      log::info!("未知的数据包")  
+                                    }
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "{}",
+                                t!("qexed.tcp_connect_read_packet_error", ip = addr, err = e)
+                            );
+                            break;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(e) = result {
+                log::error!("连接处理错误: {}", e);
+            }
+            log::info!("连接关闭: {addr}");
+            drop(permit);
+        });
+    }
     loop {
-        let (socket, addr) = tcp_server.accept().await?;
-        ip_connect_speed_test_api
-            .send(qexed_ip_connection_speed_test::message::Message::NewConnect(socket, addr))?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }

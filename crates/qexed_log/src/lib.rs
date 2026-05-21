@@ -37,9 +37,10 @@ fn log_handler(log: &tklog::LogContext) -> bool {
     } else {
         let package_name = log.modname.split("::").next().unwrap_or(&log.modname);
         println!(
-            "{} [{}] [{}] {}",
+            "{} [{}]{} [{}] {}",
             chrono::Local::now().format("%H:%M:%S"),
             format_level(&log.level),
+            format_level_space(&log.level),
             t!(format!("qexed_log.modern.{}", package_name)),
             log.log_body
         );
@@ -56,5 +57,11 @@ fn format_level(level: &tklog::LEVEL) -> colored::ColoredString {
         LEVEL::Error => colored::Colorize::bright_red("ERROR"),
         LEVEL::Fatal => colored::Colorize::on_bright_red("FATAL"),
         LEVEL::Off => colored::Colorize::magenta("Off"),
+    }
+}
+fn format_level_space(level: &tklog::LEVEL)->&str{
+    match level {
+        LEVEL::Info|LEVEL::Warn => " ",
+        _ => "",
     }
 }

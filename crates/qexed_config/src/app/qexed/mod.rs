@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::tool::AppConfigTrait;
 pub mod plugin_download;
 pub mod server;
+pub mod qexed_args;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Qexed {
     pub version: i32,

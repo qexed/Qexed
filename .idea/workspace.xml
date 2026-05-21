@@ -1,0 +1,496 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml">
+      <package file="$PROJECT_DIR$/crates/qexed">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/qexed_config">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/macros/qexed_config_macros">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/macros/qexed_error_macros">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/qexed_log">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/qexed_nbt">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/qexed_packet">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/macros/qexed_packet_macros">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/macros/qexed_packet_match_macros">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/qexed_protocol">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/crates/qexed_tcp_connect">
+        <feature name="default" enabled="true" />
+      </package>
+    </cargoProject>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="f0759aa6-8445-4782-8319-41f382d80497" name="更改" comment="重置，删除旧库">
+      <change afterPath="$PROJECT_DIR$/crates/qexed_config/src/app/qexed/qexed_args.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/bitset.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/bool.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/float.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/int.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/json.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/nbt.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/option.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/position.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/rest_buffer.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/string.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/uuid.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/var.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/codec/vec.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/lib.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/net_types/bitset.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/net_types/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/net_types/position.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/net_types/rest_buffer.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/net_types/var_int.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_packet/src/net_types/var_long.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/a.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/error.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/lib.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/nullpacket.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/add_resource_pack.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/clear_dialog.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/cookie_request.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/custom_payload.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/custom_report_details.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/disconnect.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/feature_flags.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/finish_configuration.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/keep_alive.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/ping.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/registry_data.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/remove_resource_pack.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/reset_chat.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/select_known_packs.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/server_links.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/show_dialog.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/store_cookie.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/tags.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/configuration/transfer.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/compress.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/cookie_request.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/disconnect.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/encryption_begin.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/login_plugin_request.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/login/success.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/command_suggestions.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/commands.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/container_set_content.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/container_set_data.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/container_set_slot.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/game_state_change.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/keep_alive.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/login.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/map_chunk.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/ping.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/position.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/recipe_book_add.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/recipe_book_remove.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/recipe_book_settings.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/set_entity_data.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/set_title_text.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/system_chat.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/update_advancements.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/update_view_distance.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/play/update_view_position.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/status/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/status/ping.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_client/status/server_info.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/cookie_response.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/custom_click_action.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/custom_payload.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/finish_configuration.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/keep_alive.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/pong.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/resource_pack_receive.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/select_known_packs.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/configuration/settings.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/handshaking/legacy_server_list_ping.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/handshaking/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/handshaking/set_protocol.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/login/cookie_response.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/login/encryption_begin.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/login/login_acknowledged.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/login/login_plugin_response.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/login/login_start.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/login/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/play/chat_command.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/play/chat_message.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/play/keep_alive.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/play/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/play/player_action.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/play/pong.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/status/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/status/ping.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/to_server/status/ping_start.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/crates/qexed_protocol/src/types.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.cargo/config.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.devcontainer/Dockerfile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.devcontainer/devcontainer.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.github/workflows/build.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.github/workflows/test.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.sconsign.dblite" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cross.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Dockerfile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/LICENSE" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/SConstruct" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/registries.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/reports/blocks.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/assets/test_data.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/macros/qexed_packet_macros/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/macros/qexed_packet_macros/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/bitset.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/bool.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/float.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/int.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/json.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/nbt.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/option.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/position.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/rest_buffer.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/string.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/uuid.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/var.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/codec/vec.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/net_types/bitset.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/net_types/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/net_types/position.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/net_types/rest_buffer.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/net_types/var_int.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_packet/src/net_types/var_long.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/readme.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/a.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/error.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/nullpacket.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/add_resource_pack.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/clear_dialog.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/cookie_request.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/custom_payload.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/custom_report_details.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/disconnect.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/feature_flags.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/finish_configuration.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/keep_alive.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/ping.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/registry_data.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/remove_resource_pack.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/reset_chat.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/select_known_packs.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/server_links.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/show_dialog.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/store_cookie.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/tags.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/configuration/transfer.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/compress.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/cookie_request.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/disconnect.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/encryption_begin.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/login_plugin_request.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/login/success.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/command_suggestions.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/commands.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/container_set_content.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/container_set_data.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/container_set_slot.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/game_state_change.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/keep_alive.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/login.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/map_chunk.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/ping.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/position.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/recipe_book_add.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/recipe_book_remove.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/recipe_book_settings.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/set_entity_data.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/set_title_text.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/system_chat.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/update_advancements.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/update_view_distance.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/play/update_view_position.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/status/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/status/ping.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_client/status/server_info.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/cookie_response.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/custom_click_action.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/custom_payload.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/finish_configuration.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/keep_alive.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/pong.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/resource_pack_receive.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/select_known_packs.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/configuration/settings.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/handshaking/legacy_server_list_ping.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/handshaking/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/handshaking/set_protocol.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/login/cookie_response.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/login/encryption_begin.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/login/login_acknowledged.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/login/login_plugin_response.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/login/login_start.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/login/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/play/chat_command.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/play/chat_message.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/play/keep_alive.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/play/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/play/player_action.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/play/pong.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/status/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/status/ping.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/to_server/status/ping_start.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/packet/qexed_protocol/src/types.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_hello_world/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_hello_world/build.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_hello_world/plugin.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_hello_world/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_world/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_world/build.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_world/plugin.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/hello_world/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_plugin_api/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_plugin_api/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_plugin_api/src/log.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_plugin_manage/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_plugin_manage/src/dependency_analyzer.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_plugin_manage/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_wasm_runtime/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_wasm_runtime/src/config.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_wasm_runtime/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_wasm_runtime/src/modern/log.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/plugin/qexed_wasm_runtime/src/modern/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed/src/modern/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed/src/modern/qexed_warden.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_config/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_config/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_config/src/app/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_config/src/app/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_config/src/app/qexed/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_config/src/app/qexed/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_config/src/app/qexed/server.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_config/src/app/qexed/server.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_config/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_config/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_ip_connection_speed_test/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_ip_connection_speed_test/src/engine/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_ip_connection_speed_test/src/engine/pika.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_ip_connection_speed_test/src/engine/simple.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_ip_connection_speed_test/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_ip_connection_speed_test/src/message.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_log/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_log/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_log/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_log/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_packet_split/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_packet_split/src/handshaking.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_packet_split/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_packet_split/src/message.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_packet_split/src/status.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_players/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_players/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_players/src/message.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_safe_check/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_safe_check/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_safe_check/src/root_check.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_tcp_connect/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_tcp_connect/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_tcp_connect/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_tcp_connect/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_tcp_connect/src/lib.rs.old" beforeDir="false" afterPath="$PROJECT_DIR$/crates/qexed_tcp_connect/src/lib.rs.old" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_update_check/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_update_check/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_warden/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_warden/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/crates/qexed_warden/src/message.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/locales/i18n.yml" beforeDir="false" afterPath="$PROJECT_DIR$/locales/i18n.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/makefile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/readme-cn.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/readme.md" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="11676" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Rust File" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="ROOT_SYNC" value="DONT_SYNC" />
+  </component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="Ha0WhG8g" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="ProjectErrors" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 6,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3DQ7ONcU0mhZKHoDWrqmegdVpBR" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Cargo.Run qexed help.executor&quot;: &quot;Run&quot;,
+    &quot;Cargo.Run qexed.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;v4&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;E:/code/qexed-v4/crates/qexed_tcp_connect/src&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
+    &quot;org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon&quot;: &quot;&quot;,
+    &quot;org.rust.first.attach.projects&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.AcpAgentsConfigurable&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="E:\code\qexed-v4\crates\qexed_tcp_connect\src" />
+      <recent name="E:\code\qexed-v4\crates" />
+      <recent name="E:\code\qexed-v4\crates\qexed_protocol\src" />
+      <recent name="E:\code\qexed-v4\crates\qexed_packet\src" />
+      <recent name="E:\code\qexed-v4" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="E:\code\qexed-v4\crates\qexed_config\src\app\qexed" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Cargo.Run qexed">
+    <configuration name="Run qexed" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="run --package qexed --bin qexed" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test qexed-v4" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="test" />
+      <option name="command" value="test --workspace" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Run qexed" />
+      <item itemvalue="Cargo.Test qexed-v4" />
+    </list>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$USER_HOME$/.cargo/bin" />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="f0759aa6-8445-4782-8319-41f382d80497" name="更改" comment="" />
+      <created>1778202406232</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1778202406232</updated>
+      <workItem from="1778202407246" duration="832000" />
+      <workItem from="1778214712164" duration="10665000" />
+      <workItem from="1778811955856" duration="427000" />
+      <workItem from="1778812540781" duration="625000" />
+      <workItem from="1778826501473" duration="57000" />
+      <workItem from="1779179861950" duration="1028000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

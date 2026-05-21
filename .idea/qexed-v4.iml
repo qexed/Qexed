@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/crates/macros/qexed_config_macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/macros/qexed_packet_macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/packet/qexed_packet/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/packet/qexed_protocol/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/plugin/hello_hello_world/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/plugin/hello_world/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/plugin/qexed_plugin_api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/plugin/qexed_plugin_manage/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/plugin/qexed_wasm_runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_config/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_ip_connection_speed_test/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_log/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_log/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_nbt/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_nbt/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_packet_split/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_players/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_safe_check/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_tcp_connect/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_update_check/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_warden/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/cargo/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_gui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_packet/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/qexed_protocol/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/cargo/target" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

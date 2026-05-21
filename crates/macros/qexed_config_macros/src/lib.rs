@@ -2,7 +2,18 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields};
+use syn::{ ItemStruct, LitStr};
+use syn::{
+    parse::{Parse, ParseStream},
+     Expr,  Token,
+};
+mod autodoc;
 
+#[proc_macro_derive(AutoDoc, attributes(AutoDoc,serde))]
+pub fn derive_autodoc(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    autodoc::expand(input).into()
+}
 /// 自动为枚举生成常用Trait实现的简化宏
 #[proc_macro_derive(AutoEnum, attributes(default, display))]
 pub fn auto_enum_derive(input: TokenStream) -> TokenStream {
@@ -90,4 +101,82 @@ pub fn auto_enum_derive(input: TokenStream) -> TokenStream {
     });
     
     TokenStream::from(output)
+}
+/// 解析 `#[AppConfig(...)]` 的参数
+/// 解析 `#[AppConfig(...)]` 的参数
+struct AppConfigArgs {
+    path: String,
+    name: String,
+}
+
+impl Parse for AppConfigArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut path = None;
+        let mut name = None;
+
+        // 方法：先尝试解析一个字符串字面量（位置参数模式）
+        // 如果失败，则说明是键值对模式
+        let lookahead = input.lookahead1();
+        if lookahead.peek(LitStr) {
+            // 位置参数: "path", "name"
+            let path_lit: LitStr = input.parse()?;
+            path = Some(path_lit.value());
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+            let name_lit: LitStr = input.parse()?;
+            name = Some(name_lit.value());
+        } else {
+            // 键值对模式: path = "...", name = "..."
+            while !input.is_empty() {
+                let ident: syn::Ident = input.parse()?;
+                input.parse::<Token![=]>()?;
+                let expr: Expr = input.parse()?;
+                let lit = match expr {
+                    Expr::Lit(lit) => lit,
+                    _ => return Err(input.error("expected string literal")),
+                };
+                let value = match lit.lit {
+                    syn::Lit::Str(s) => s.value(),
+                    _ => return Err(input.error("expected string literal")),
+                };
+                if ident == "path" {
+                    path = Some(value);
+                } else if ident == "name" {
+                    name = Some(value);
+                } else {
+                    return Err(input.error(format!("unknown key `{}`", ident)));
+                }
+                // 允许逗号分隔
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        Ok(AppConfigArgs {
+            path: path.ok_or_else(|| input.error("missing path"))?,
+            name: name.ok_or_else(|| input.error("missing name"))?,
+        })
+    }
+}
+#[proc_macro_attribute]
+pub fn app_config(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as AppConfigArgs);
+    let input = parse_macro_input!(item as ItemStruct);
+    let struct_name = &input.ident;
+    let path = args.path;
+    let name = args.name;
+
+    let expanded = quote! {
+        #input
+
+        impl ::qexed_config_new::tool::AppConfigTrait for #struct_name {
+            const PATH: &'static str = #path;
+            const NAME: &'static str = #name;
+        }
+    };
+    expanded.into()
 }

@@ -1,0 +1,58 @@
+_fallback_language: zh-CN
+_version: 2
+autodoc:
+  header:
+    en: |-
+      # Official documentation: https://www.qexed.com/doc?path=/qexed/doc/autodoc
+      # Do not modify fields prefixed with auto_doc_system_
+      # Example: auto_doc_system_lang
+      # These settings are used for automatically updating the language-specific comments in the config file.
+      # However, you can modify fields prefixed with auto_doc_setting_
+      # auto_doc_setting_lang: The language for the current file; if empty, the global language is used
+      # auto_doc_setting_enable: Enable the AutoDoc feature, which can automatically update comments for fields based on language, version, etc., as well as optional value information
+      # Comments below "=======================" will not be modified by the system.
+      # Comments above "=======================" will be modified by the system. Please do not edit them.
+    zh-CN: |-
+      # 官方文档：https://www.qexed.com/doc?path=/qexed/doc/autodoc
+      # 请不要修改 auto_doc_system_ 开头的字段
+      # 例如: auto_doc_system_lang
+      # 这些设置是用于自动更新配置文件语言自动注释的
+      # 但是您可以修改 auto_doc_setting_ 开头的字段
+      # auto_doc_setting_lang:当前文件独立语言,若为空则使用全局语言
+      # auto_doc_setting_enable:启用AutoDoc功能，该功能可自动为字段根据语言、版本等信息更新注释,以及可选的值等信息
+      # 在 "=======================" 下面的注释都不会被系统修改
+      # 但是在 "=======================" 上面的注释都会被系统修改，请不要修改
+  header-init-example:
+    en: |-
+      # For example, you can freely modify the content of this line,
+      # continue with line breaks,
+      # as long as you don't write within AutoDoc and AutoDocHeader blocks.
+    zh-CN: |- 
+      # 例如这一行的内容你就随意修改,
+      # 你也可以继续换行等,
+      # 只要不是在 AutoDoc 和 AutoDocHeader 中写就行了
+  danger:
+    en: "DANGER: \n%{text}"
+    zh-CN: "高危警告：\n%{text}"
+  warning:
+    en: "WARNING: \n%{text}"
+    zh-CN: "警告：\n%{text}"
+  pending_deprecated:
+    en: "Pending deprecation: \n%{text}"
+    zh-CN: "即将弃用：\n%{text}"
+  deprecated:
+    en: "Deprecated: \n%{text}"
+    zh-CN: "已被弃用：\n%{text}"
+  migration:
+    en: "Migration notice: \n%{text}"
+    zh-CN: "迁移建议：\n%{text}"
+
+config.plugin_download.enable:
+  en: "Enable Plugin Download Feature"
+  zh-CN: "启用插件下载功能"
+config.plugin_download.download:
+  en: "Download URL"
+  zh-CN: "下载地址"
+config.plugin_download.download_token:
+  en: "Download Server Authentication Token"
+  zh-CN: "下载服务器身份认证token"
