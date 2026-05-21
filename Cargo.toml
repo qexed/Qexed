@@ -4,7 +4,6 @@ members = [
     "crates/qexed",
     "crates/qexed_log",
     "crates/qexed_config",
-    "crates/qexed_config_new",
     "crates/macros/qexed_config_macros",
     "crates/macros/qexed_packet_macros",
     "crates/qexed_tcp_connect",

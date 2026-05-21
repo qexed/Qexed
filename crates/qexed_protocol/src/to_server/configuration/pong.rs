@@ -2,5 +2,5 @@ use qexed_packet::PacketCodec;
 #[qexed_packet_macros::packet(id = 0x05)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Pong {
-    pub id:i32,
+    pub id: i32,
 }

@@ -1,4 +1,7 @@
-use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::{Position, VarInt}};
+use qexed_packet::{
+    Packet, PacketCodec, PacketReader, PacketWriter,
+    net_types::{Position, VarInt},
+};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Login {
@@ -27,7 +30,7 @@ pub struct Login {
 }
 
 impl Packet for Login {
-    const ID: i32 = 0x2b;
+    const ID: i32 = 0x31;
     fn serialize(&self, w: &mut PacketWriter) -> Result<(), anyhow::Error> {
         w.serialize(&self.entity_id)?;
         w.serialize(&self.is_hardcore)?;

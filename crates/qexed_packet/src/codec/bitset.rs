@@ -1,4 +1,3 @@
-
 use crate::{PacketCodec, PacketReader, PacketWriter, net_types::Bitset};
 
 impl PacketCodec for Bitset {

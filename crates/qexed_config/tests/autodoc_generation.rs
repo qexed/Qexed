@@ -1,4 +1,4 @@
-use qexed_config_new::{
+use qexed_config::{
     app::{
         qexed::Qexed, qexed_ip_connection_speed_test::QexedIpConnectionSpeedTest,
         qexed_warden::QexedWarden,
@@ -9,7 +9,7 @@ use qexed_config_new::{
 fn temp_config_dir(name: &str) -> std::path::PathBuf {
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "qexed_config_new_{}_{}_{}",
+        "qexed_config_{}_{}_{}",
         name,
         std::process::id(),
         std::time::SystemTime::now()

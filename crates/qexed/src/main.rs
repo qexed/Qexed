@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
 
-rust_i18n::i18n!("../../locales");
+rust_i18n::i18n!("locales");
 shadow_rs::shadow!(build);
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,8 +28,12 @@ async fn run() -> anyhow::Result<()> {
         _build_type = "dev-";
     }
     let args = qexed_config::app::qexed::qexed_args::ServerArgs::parse();
-    let config = qexed_config::app::qexed::Qexed::load_or_create_default()?;
-    rust_i18n::set_locale(&config.language);
+    let config = qexed_config::app::qexed::Qexed::load_or_create_default(args.language,None,None)?;
+    
+    rust_i18n::set_locale(&match args.language{
+        Some(v)=>v,
+        None=>config.language,
+    });
     if args.init_settings {
         return Ok(());
     }

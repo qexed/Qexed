@@ -1,13 +1,27 @@
+use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Serialize, Deserialize)]
+
+#[derive(Debug, Serialize, Deserialize, AutoDoc)]
 pub struct PluginDownload {
-    // 是否启用插件下载功能
+    #[AutoDoc(
+        key = "config.qexed.plugin_download.enable",
+        migration_notice = "config.qexed.plugin_download.migration_notice.enable"
+    )]
     pub enable: bool,
-    // 插件下载地址(用于插件配置)
+
+    #[AutoDoc(
+        key = "config.qexed.plugin_download.download",
+        warning = "config.qexed.plugin_download.warning.download"
+    )]
     pub download: String,
-    // 插件下载认证token
+
+    #[AutoDoc(
+        key = "config.qexed.plugin_download.download_token",
+        warning = "config.qexed.plugin_download.warning.download_token"
+    )]
     pub download_token: String,
 }
+
 impl Default for PluginDownload {
     fn default() -> Self {
         Self {

@@ -1,7 +1,10 @@
 use anyhow::Ok;
-use qexed_packet::{PacketCodec, net_types::{Position, VarInt, VarLong}};
+use qexed_packet::{
+    PacketCodec,
+    net_types::{Position, VarInt, VarLong},
+};
 use uuid::Uuid;
-pub type TextComponent = qexed_nbt::Tag;
+pub type TextComponent = qexed_packet::net_types::AnyNbt;
 #[qexed_packet_macros::substruct]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct KnownPacks {
@@ -368,29 +371,28 @@ pub struct ComponentsToAddHash {
     pub component_data: i32,
 }
 
-
 #[derive(Debug, Default, PartialEq, Clone)]
-pub struct IDSet{
-    pub r#type:VarInt,
-    pub tag_name:Option<String>,
-    pub ids:Option<Vec<VarInt>>,
+pub struct IDSet {
+    pub r#type: VarInt,
+    pub tag_name: Option<String>,
+    pub ids: Option<Vec<VarInt>>,
 }
 impl PacketCodec for IDSet {
     fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
         self.r#type.serialize(w)?;
-        if self.r#type.0==0{
-            if let Some(tag_name) = &self.tag_name{
+        if self.r#type.0 == 0 {
+            if let Some(tag_name) = &self.tag_name {
                 tag_name.serialize(w)?;
             } else {
-                return Err(anyhow::anyhow!("未定义tag_name"))
+                return Err(anyhow::anyhow!("未定义tag_name"));
             }
         } else {
-            if let Some(ids) = &self.ids{
+            if let Some(ids) = &self.ids {
                 for prop in ids {
                     prop.serialize(w)?;
                 }
             } else {
-                return Err(anyhow::anyhow!("未定义ids"))
+                return Err(anyhow::anyhow!("未定义ids"));
             }
         }
         Ok(())
@@ -398,13 +400,13 @@ impl PacketCodec for IDSet {
 
     fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
         self.r#type.deserialize(r)?;
-        if self.r#type.0==0{
-            let mut tag_name:String = Default::default();
+        if self.r#type.0 == 0 {
+            let mut tag_name: String = Default::default();
             tag_name.deserialize(r)?;
             self.tag_name = Some(tag_name);
         } else {
-            let mut ids:Vec<VarInt> = Default::default();
-            for _ in 0..self.r#type.0-1 {
+            let mut ids: Vec<VarInt> = Default::default();
+            for _ in 0..self.r#type.0 - 1 {
                 let mut id = VarInt::default();
                 id.deserialize(r)?;
                 ids.push(id);
@@ -416,10 +418,9 @@ impl PacketCodec for IDSet {
     }
 }
 
-
 #[qexed_packet_macros::subenum]
 #[derive(Debug, PartialEq, Clone)]
-pub enum RecipeDisplay{
+pub enum RecipeDisplay {
     MinecraftCraftingShapeless(minecraft::CraftingShapeless),
     MinecraftCraftingShaped(minecraft::CraftingShaped),
     MinecraftFurnace(minecraft::Furnace),
@@ -1131,74 +1132,74 @@ pub mod minecraft {
     }
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
-    pub struct CraftingShapeless{
-        pub ingredients:Vec<SlotDisplay>,
-        pub result:SlotDisplay,
-        pub crafting_station:SlotDisplay,
+    pub struct CraftingShapeless {
+        pub ingredients: Vec<SlotDisplay>,
+        pub result: SlotDisplay,
+        pub crafting_station: SlotDisplay,
     }
 
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
-    pub struct CraftingShaped{
-        pub width:VarInt,
-        pub height:VarInt,
-        pub ingredients:Vec<SlotDisplay>,
-        pub result:SlotDisplay,
-        pub crafting_station:SlotDisplay,
+    pub struct CraftingShaped {
+        pub width: VarInt,
+        pub height: VarInt,
+        pub ingredients: Vec<SlotDisplay>,
+        pub result: SlotDisplay,
+        pub crafting_station: SlotDisplay,
     }
 
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
-    pub struct Furnace{
-        pub ingredient:SlotDisplay,
-        pub fuel:SlotDisplay,
-        pub result:SlotDisplay,
-        pub crafting_station:SlotDisplay,
-        pub cooking_time:VarInt,
-        pub experience:f32,
-    }    
+    pub struct Furnace {
+        pub ingredient: SlotDisplay,
+        pub fuel: SlotDisplay,
+        pub result: SlotDisplay,
+        pub crafting_station: SlotDisplay,
+        pub cooking_time: VarInt,
+        pub experience: f32,
+    }
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
-    pub struct Stonecutter{
-        pub ingredient:SlotDisplay,
-        pub result:SlotDisplay,
-        pub crafting_station:SlotDisplay,
-    } 
+    pub struct Stonecutter {
+        pub ingredient: SlotDisplay,
+        pub result: SlotDisplay,
+        pub crafting_station: SlotDisplay,
+    }
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
-    pub struct Smithing{
-        pub template:SlotDisplay,
-        pub base:SlotDisplay,
-        pub addition:SlotDisplay,
-        pub result:SlotDisplay,
-        pub crafting_station:SlotDisplay,
+    pub struct Smithing {
+        pub template: SlotDisplay,
+        pub base: SlotDisplay,
+        pub addition: SlotDisplay,
+        pub result: SlotDisplay,
+        pub crafting_station: SlotDisplay,
     }
 
-    pub mod particle{
+    pub mod particle {
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct Dust{
-            color:i32,
-            scale:f32,
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct Dust {
+            color: i32,
+            scale: f32,
         }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct DustColorTransition{
-            form_color:i32,
-            to_color:i32,
-            scale:f32,
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct DustColorTransition {
+            form_color: i32,
+            to_color: i32,
+            scale: f32,
         }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct Effect{
-            color:i32,
-            power:f32,
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct Effect {
+            color: i32,
+            power: f32,
         }
     }
 }
 #[qexed_packet_macros::subenum]
 #[derive(Debug, PartialEq, Clone)]
-pub enum SlotDisplay{
+pub enum SlotDisplay {
     Empty,
     AnyFuel,
     Item(slot_display_types::minecraft::Item),
@@ -1209,55 +1210,56 @@ pub enum SlotDisplay{
     Composite(slot_display_types::minecraft::Composite),
     Unknown,
 }
-pub mod slot_display_types{
+pub mod slot_display_types {
 
-    pub mod minecraft{
+    pub mod minecraft {
         use qexed_packet::net_types::VarInt;
 
         use crate::types::{Slot, SlotDisplay};
 
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct Item{
-            pub item_type:VarInt,
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct Item {
+            pub item_type: VarInt,
         }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct ItemStack{
-            pub item_stack:Slot,
-        }    
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct ItemStack {
+            pub item_stack: Slot,
+        }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct Tag{
-            pub tag:String,
-        }    
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct Tag {
+            pub tag: String,
+        }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct SmithingTrim{
-            pub base:SlotDisplay,
-            pub material:SlotDisplay,
-            pub pattern:VarInt,
-        }    
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct SmithingTrim {
+            pub base: SlotDisplay,
+            pub material: SlotDisplay,
+            pub pattern: VarInt,
+        }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct WithRemainder{
-            pub ingredient:SlotDisplay,
-            pub remainder:SlotDisplay,
-        }    
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct WithRemainder {
+            pub ingredient: SlotDisplay,
+            pub remainder: SlotDisplay,
+        }
         #[qexed_packet_macros::substruct]
-        #[derive(Debug, Default, PartialEq, Clone)]        
-        pub struct Composite{
-            pub options:Vec<SlotDisplay>,
-        }    
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct Composite {
+            pub options: Vec<SlotDisplay>,
+        }
     }
-    
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
-pub struct EntityMetadata{pub data:Vec<EntityMetadataSub>}
+pub struct EntityMetadata {
+    pub data: Vec<EntityMetadataSub>,
+}
 impl PacketCodec for EntityMetadata {
     fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
-        Ok(for i in &self.data{
+        Ok(for i in &self.data {
             i.serialize(w)?;
         })
     }
@@ -1267,25 +1269,24 @@ impl PacketCodec for EntityMetadata {
         loop {
             let mut data = EntityMetadataSub::default();
             data.deserialize(r)?;
-            if data.index==0xff{
+            if data.index == 0xff {
                 self.data.push(data);
                 return Ok(());
             }
             self.data.push(data);
-
         }
     }
 }
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct EntityMetadataSub {
-    pub index:u8,
-    pub data:Option<EntityMetadataEnum>,
+    pub index: u8,
+    pub data: Option<EntityMetadataEnum>,
 }
 impl PacketCodec for EntityMetadataSub {
     fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
         self.index.serialize(w)?;
-        if self.index!=0xff{
-            if let Some(data) = &self.data{
+        if self.index != 0xff {
+            if let Some(data) = &self.data {
                 data.serialize(w)?;
             } else {
                 return Err(anyhow::anyhow!("EntityMetadata Lose"));
@@ -1296,8 +1297,8 @@ impl PacketCodec for EntityMetadataSub {
 
     fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
         self.index.deserialize(r)?;
-        if self.index!=0xff{
-            let mut data =EntityMetadataEnum::default();
+        if self.index != 0xff {
+            let mut data = EntityMetadataEnum::default();
             data.deserialize(r)?;
             self.data = Some(data);
         }
@@ -1306,7 +1307,7 @@ impl PacketCodec for EntityMetadataSub {
 }
 #[qexed_packet_macros::subenum]
 #[derive(Debug, PartialEq, Clone)]
-pub enum EntityMetadataEnum{
+pub enum EntityMetadataEnum {
     Byte(u8),
     VarInt(VarInt),
     VarLong(VarLong),
@@ -1324,7 +1325,7 @@ pub enum EntityMetadataEnum{
     BlockState(VarInt),
     OptionBlockState(VarInt),
     NBT(qexed_nbt::Tag),
-	// Particle(Particle),
+    // Particle(Particle),
     // Particles(Vec<Particle>),
     // VillagerData(Villager_Data),
     // OptionVarInt(VarInt),
@@ -1336,20 +1337,20 @@ pub enum EntityMetadataEnum{
     // FrogVariant(VarInt),
     // PigVariant(VarInt),
     // ChickenVariant(VarInt),
-	// OptionGlobalPosition(OptionGlobalPosition),
-	// PaintingVariant(PaintingVariant),
+    // OptionGlobalPosition(OptionGlobalPosition),
+    // PaintingVariant(PaintingVariant),
     // SnifferState(VarInt),
     // ArmadilloState(VarInt),
     // Vector3(Vector3),
     // Quaternion(Quaternion),
-    Unknown
+    Unknown,
 }
 #[qexed_packet_macros::substruct]
-#[derive(Debug, Default, PartialEq,Clone)]
-pub struct Rotations{
-    pub x:f32,
-    pub y:f32,
-    pub z:f32,
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct Rotations {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 // #[qexed_packet_macros::subenum]
 // #[derive(Debug, PartialEq, Clone)]

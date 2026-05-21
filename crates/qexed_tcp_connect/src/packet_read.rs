@@ -1,145 +1,358 @@
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
+use flate2::read::ZlibDecoder;
+use openssl::symm::{Cipher, Crypter, Mode};
 use std::collections::VecDeque;
-use tokio::io::AsyncRead;
+use std::io::{Cursor, Read};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio_stream::Stream;
-// 数据包读取
+
+const READ_BUFFER_SIZE: usize = 4096;
+const MAX_PACKET_SIZE: usize = 8 * 1024 * 1024;
+
 pub struct PacketStream<R> {
     reader: R,
     buffer: BytesMut,
-    pending: VecDeque<bytes::BytesMut>,
+    pending: VecDeque<BytesMut>,
+    compression_threshold: Option<i32>,
+    decrypter: Option<Crypter>,
+    max_packet_size: usize,
 }
 
 impl<R: AsyncRead + Unpin> PacketStream<R> {
     pub fn new(reader: R) -> Self {
         Self {
             reader,
-            buffer: BytesMut::new(),
+            buffer: BytesMut::with_capacity(READ_BUFFER_SIZE),
             pending: VecDeque::new(),
+            compression_threshold: None,
+            decrypter: None,
+            max_packet_size: MAX_PACKET_SIZE,
         }
+    }
+
+    pub fn set_compression_threshold(&mut self, threshold: i32) {
+        self.compression_threshold = (threshold >= 0).then_some(threshold);
+    }
+
+    pub fn set_compression(&mut self, enabled: bool) {
+        self.compression_threshold = enabled.then_some(0);
+    }
+
+    pub fn disable_compression(&mut self) {
+        self.compression_threshold = None;
+    }
+
+    pub fn is_compression_enabled(&self) -> bool {
+        self.compression_threshold.is_some()
+    }
+
+    pub fn enable_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketReadError> {
+        if shared_secret.len() != 16 {
+            return Err(PacketReadError::InvalidEncryptionKeyLength(
+                shared_secret.len(),
+            ));
+        }
+
+        let mut decrypter = Crypter::new(
+            Cipher::aes_128_cfb8(),
+            Mode::Decrypt,
+            shared_secret,
+            Some(shared_secret),
+        )
+        .map_err(|err| PacketReadError::CryptoError(err.to_string()))?;
+        decrypter.pad(false);
+        self.decrypter = Some(decrypter);
+        Ok(())
+    }
+
+    pub fn set_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketReadError> {
+        self.enable_encryption(shared_secret)
+    }
+
+    pub fn disable_encryption(&mut self) {
+        self.decrypter = None;
+    }
+
+    pub fn is_encryption_enabled(&self) -> bool {
+        self.decrypter.is_some()
+    }
+
+    pub fn set_max_packet_size(&mut self, max_packet_size: usize) {
+        self.max_packet_size = max_packet_size;
+    }
+
+    pub async fn read_packet(&mut self) -> Result<Option<BytesMut>, PacketReadError> {
+        use tokio::io::AsyncReadExt;
+
+        loop {
+            if let Some(packet) = self.pending.pop_front() {
+                return Ok(Some(packet));
+            }
+
+            if let Some(packet) = self.try_parse_packet()? {
+                return Ok(Some(packet));
+            }
+
+            let mut tmp = [0_u8; READ_BUFFER_SIZE];
+            let n = self
+                .reader
+                .read(&mut tmp)
+                .await
+                .map_err(PacketReadError::OtherError)?;
+
+            if n == 0 {
+                if self.buffer.is_empty() {
+                    return Ok(None);
+                }
+
+                return Err(PacketReadError::ConnectionClosedWithIncompletePacket);
+            }
+
+            self.push_read_bytes(&tmp[..n])?;
+        }
+    }
+
+    fn push_read_bytes(&mut self, bytes: &[u8]) -> Result<(), PacketReadError> {
+        if let Some(decrypter) = self.decrypter.as_mut() {
+            let mut decrypted = vec![0_u8; bytes.len()];
+            let len = decrypter
+                .update(bytes, &mut decrypted)
+                .map_err(|err| PacketReadError::CryptoError(err.to_string()))?;
+            self.buffer.extend_from_slice(&decrypted[..len]);
+        } else {
+            self.buffer.extend_from_slice(bytes);
+        }
+
+        Ok(())
+    }
+
+    fn try_parse_packet(&mut self) -> Result<Option<BytesMut>, PacketReadError> {
+        let Some((packet_len, header_len)) = read_varint_prefix(&self.buffer)? else {
+            return Ok(None);
+        };
+
+        if packet_len < 0 {
+            return Err(PacketReadError::InvalidPacketLength(packet_len));
+        }
+
+        let packet_len = packet_len as usize;
+        if packet_len > self.max_packet_size {
+            return Err(PacketReadError::PacketTooLarge(
+                packet_len,
+                self.max_packet_size,
+            ));
+        }
+
+        let frame_len = header_len + packet_len;
+        if self.buffer.len() < frame_len {
+            return Ok(None);
+        }
+
+        let mut frame = self.buffer.split_to(frame_len);
+        frame.advance(header_len);
+        self.decode_frame(frame).map(Some)
+    }
+
+    fn decode_frame(&self, frame: BytesMut) -> Result<BytesMut, PacketReadError> {
+        let Some(threshold) = self.compression_threshold else {
+            return Ok(frame);
+        };
+
+        let mut cursor = Cursor::new(frame.as_ref());
+        let data_len =
+            read_varint(&mut cursor).map_err(PacketReadError::PacketReadVarIntParseError)?;
+        let header_len = cursor.position() as usize;
+
+        if data_len < 0 {
+            return Err(PacketReadError::InvalidCompressedDataLength(data_len));
+        }
+
+        if data_len == 0 {
+            return Ok(BytesMut::from(&frame[header_len..]));
+        }
+
+        if data_len < threshold {
+            return Err(PacketReadError::CompressedDataLengthTooSmall(
+                data_len, threshold,
+            ));
+        }
+
+        let expected_len = data_len as usize;
+        if expected_len > self.max_packet_size {
+            return Err(PacketReadError::PacketTooLarge(
+                expected_len,
+                self.max_packet_size,
+            ));
+        }
+
+        let mut decoder = ZlibDecoder::new(&frame[header_len..]).take(expected_len as u64 + 1);
+        let mut decompressed = Vec::with_capacity(expected_len);
+        decoder
+            .read_to_end(&mut decompressed)
+            .map_err(PacketReadError::DecompressionError)?;
+
+        if decompressed.len() != expected_len {
+            return Err(PacketReadError::DecompressionSizeMismatch(
+                expected_len,
+                decompressed.len(),
+            ));
+        }
+
+        Ok(BytesMut::from(decompressed.as_slice()))
     }
 }
 
 impl<R: AsyncRead + Unpin> Stream for PacketStream<R> {
-    type Item = Result<bytes::BytesMut,PacketReadError>;
+    type Item = Result<BytesMut, PacketReadError>;
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        use std::pin::Pin;
-        use tokio::io::ReadBuf;
-
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             if let Some(packet) = self.pending.pop_front() {
-                return std::task::Poll::Ready(Some(Ok(packet)));
+                return Poll::Ready(Some(Ok(packet)));
             }
-            let packets = match self.try_parse_packets() {
-                Ok(pkts) => pkts,
-                Err(e) => return std::task::Poll::Ready(Some(Err(e))),
-            };
-            if !packets.is_empty() {
-                self.pending.extend(packets);
-                continue;
-            }
-            let mut tmp = [0u8; 1024];
-            let mut buf = ReadBuf::new(&mut tmp);
 
-            match Pin::new(&mut self.reader).poll_read(cx, &mut buf) {
-                std::task::Poll::Pending => return std::task::Poll::Pending,
-                std::task::Poll::Ready(Ok(())) => {
-                    let n = buf.filled().len();
+            match self.try_parse_packet() {
+                Ok(Some(packet)) => return Poll::Ready(Some(Ok(packet))),
+                Ok(None) => {}
+                Err(err) => return Poll::Ready(Some(Err(err))),
+            }
+
+            let mut tmp = [0_u8; READ_BUFFER_SIZE];
+            let mut read_buf = ReadBuf::new(&mut tmp);
+            match Pin::new(&mut self.reader).poll_read(cx, &mut read_buf) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    let n = read_buf.filled().len();
                     if n == 0 {
-                        // EOF
-                        if !self.buffer.is_empty() {
-                            return std::task::Poll::Ready(Some(Err(PacketReadError::ConnectionClosedWithIncompletePacket)));
+                        if self.buffer.is_empty() {
+                            return Poll::Ready(None);
                         }
-                        return std::task::Poll::Ready(None);
+
+                        return Poll::Ready(Some(Err(
+                            PacketReadError::ConnectionClosedWithIncompletePacket,
+                        )));
                     }
-                    self.buffer.extend_from_slice(&tmp[..n]);
+
+                    if let Err(err) = self.push_read_bytes(&tmp[..n]) {
+                        return Poll::Ready(Some(Err(err)));
+                    }
                 }
-                std::task::Poll::Ready(Err(e)) => {
-                    return std::task::Poll::Ready(Some(Err(PacketReadError::OtherError(e))));
+                Poll::Ready(Err(err)) => {
+                    return Poll::Ready(Some(Err(PacketReadError::OtherError(err))));
                 }
             }
         }
-    }
-}
-
-impl<R: AsyncRead + Unpin> PacketStream<R> {
-    fn try_parse_packets(&mut self) -> Result<Vec<bytes::BytesMut>,PacketReadError> {
-        let mut packets = Vec::new();
-        let buffer = &mut self.buffer;
-        while buffer.len() > 0 {
-            let mut cursor = std::io::Cursor::new(buffer.as_ref());
-
-            let len = match read_varint(&mut cursor) {
-                Ok(v) => v,
-                Err(e) => return Err(PacketReadError::PacketReadVarIntParseError(e)),
-            };
-            let header_len = cursor.position() as usize;
-            let len = len as usize;
-            let total = (header_len + len) as usize;
-
-            if buffer.len() < total {
-                break;
-            }
-
-            let mut payload = buffer.split_to(total);
-            let payload = payload.split_off(header_len);
-
-            packets.push(payload);
-        }
-        Ok(packets)
     }
 }
 
 #[derive(Debug, qexed_error_macros::I18nErrorDisplay)]
 pub enum PacketReadError {
-    #[error("qexed_tcp_connect.packet_read.packet_read_varint_error",error=field_0)]
+    #[error("qexed_tcp_connect.packet_read.packet_read_varint_error", error = field_0.to_string())]
     PacketReadVarIntParseError(PacketReadVarIntParseError),
     #[error("qexed_tcp_connect.packet_read.connection_closed_with_incomplete_packet")]
     ConnectionClosedWithIncompletePacket,
-    #[error("qexed_tcp_connect.packet_read.io_error",error=field_0)]
-    OtherError(std::io::Error)
+    #[error("qexed_tcp_connect.packet_read.io_error", error = field_0.to_string())]
+    OtherError(std::io::Error),
+    #[error("qexed_tcp_connect.packet_read.invalid_packet_length", length = field_0)]
+    InvalidPacketLength(i32),
+    #[error("qexed_tcp_connect.packet_read.packet_too_large", size = field_0, max = field_1)]
+    PacketTooLarge(usize, usize),
+    #[error("qexed_tcp_connect.packet_read.invalid_compressed_data_length", length = field_0)]
+    InvalidCompressedDataLength(i32),
+    #[error("qexed_tcp_connect.packet_read.compressed_data_length_too_small", size = field_0, threshold = field_1)]
+    CompressedDataLengthTooSmall(i32, i32),
+    #[error("qexed_tcp_connect.packet_read.decompression_error", error = field_0.to_string())]
+    DecompressionError(std::io::Error),
+    #[error("qexed_tcp_connect.packet_read.decompression_size_mismatch", expected = field_0, actual = field_1)]
+    DecompressionSizeMismatch(usize, usize),
+    #[error("qexed_tcp_connect.packet_read.crypto_error", error = field_0)]
+    CryptoError(String),
+    #[error("qexed_tcp_connect.packet_read.invalid_encryption_key_length", length = field_0)]
+    InvalidEncryptionKeyLength(usize),
 }
+
 impl std::error::Error for PacketReadError {}
 
-fn read_varint<R: std::io::Read>(r: &mut R) -> Result<i32,PacketReadVarIntParseError> {
-    let mut val = 0i32;
-    let mut shift = 0;
-
-    loop {
-        let mut b = [0u8; 1];
-        let n = match r.read(&mut b){
-            Ok(v)=>v,
-            Err(e)=>{
-                return Err(PacketReadVarIntParseError::ReadError(e));
-            }
-        };
-        if n == 0 {
-            return Err(PacketReadVarIntParseError::IncompleteError);
-        }
-
-        val |= ((b[0] & 0x7F) as i32) << shift;
-        if (b[0] & 0x80) == 0 {
-            break;
-        }
-
-        shift += 7;
-        if shift >= 35 {
-            return Err(PacketReadVarIntParseError::TooLargeError);
-        }
-    }
-
-    Ok(val)
-}
 #[derive(Debug, qexed_error_macros::I18nErrorDisplay)]
 pub enum PacketReadVarIntParseError {
     #[error("qexed_tcp_connect.packet_read_varint.incomplete")]
     IncompleteError,
     #[error("qexed_tcp_connect.packet_read_varint.too_large")]
     TooLargeError,
-    #[error("qexed_tcp_connect.packet_read_varint.read_error",error=field_0)]
-    ReadError(std::io::Error)
+    #[error("qexed_tcp_connect.packet_read_varint.read_error", error = field_0.to_string())]
+    ReadError(std::io::Error),
 }
+
 impl std::error::Error for PacketReadVarIntParseError {}
+
+pub(crate) fn read_varint<R: Read>(reader: &mut R) -> Result<i32, PacketReadVarIntParseError> {
+    let mut value = 0_i32;
+
+    for position in 0..5 {
+        let mut byte = [0_u8; 1];
+        let read = reader
+            .read(&mut byte)
+            .map_err(PacketReadVarIntParseError::ReadError)?;
+
+        if read == 0 {
+            return Err(PacketReadVarIntParseError::IncompleteError);
+        }
+
+        value |= ((byte[0] & 0x7f) as i32) << (7 * position);
+        if (byte[0] & 0x80) == 0 {
+            return Ok(value);
+        }
+    }
+
+    Err(PacketReadVarIntParseError::TooLargeError)
+}
+
+pub(crate) fn read_varint_prefix(bytes: &[u8]) -> Result<Option<(i32, usize)>, PacketReadError> {
+    let mut value = 0_i32;
+
+    for (position, byte) in bytes.iter().take(5).enumerate() {
+        value |= ((*byte & 0x7f) as i32) << (7 * position);
+        if (*byte & 0x80) == 0 {
+            return Ok(Some((value, position + 1)));
+        }
+    }
+
+    if bytes.len() < 5 {
+        Ok(None)
+    } else {
+        Err(PacketReadError::PacketReadVarIntParseError(
+            PacketReadVarIntParseError::TooLargeError,
+        ))
+    }
+}
+
+pub(crate) fn write_varint(value: i32, buf: &mut BytesMut) {
+    let mut value = value as u32;
+
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        buf.extend_from_slice(&[byte]);
+
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+pub(crate) fn varint_len(value: i32) -> usize {
+    let mut value = value as u32;
+    let mut len = 1;
+
+    while value >= 0x80 {
+        value >>= 7;
+        len += 1;
+    }
+
+    len
+}

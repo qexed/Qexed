@@ -179,7 +179,7 @@ pub fn app_config(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #input
 
-        impl ::qexed_config_new::tool::AppConfigTrait for #struct_name {
+        impl ::qexed_config::tool::AppConfigTrait for #struct_name {
             const PATH: &'static str = #path;
             const NAME: &'static str = #name;
         }

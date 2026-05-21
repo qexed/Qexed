@@ -1,3 +1,8 @@
+use qexed_packet::PacketCodec;
+
 #[qexed_packet_macros::packet(id = 0x01)]
 #[derive(Debug, Default, PartialEq, Clone)]
-pub struct CookieResponse {}
+pub struct CookieResponse {
+    pub key: String,
+    pub payload: Option<qexed_packet::net_types::ByteArray>,
+}

@@ -1,6 +1,9 @@
-rust_i18n::i18n!("../../locales");
-pub const PROTOCOL_VERSION: i32 = 775;  // 数据包协议版本
-pub const MC_VERSION: &'static str = "26.1.2";  // Minecraft游戏版本
+extern crate self as qexed_config;
+
+rust_i18n::i18n!("./locales");
+pub const PROTOCOL_VERSION: i32 = 775; // 数据包协议版本
+pub const MC_VERSION: &'static str = "26.1.2"; // Minecraft游戏版本
+shadow_rs::shadow!(build);
 pub mod app;
-pub mod tool;
 pub mod public;
+pub mod tool;

@@ -1,6 +1,6 @@
-use qexed_packet::{PacketCodec};
-#[qexed_packet_macros::packet(id = 0x6B)]
+use qexed_packet::PacketCodec;
+#[qexed_packet_macros::packet(id = 0x72)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetTitleText {
-    pub text:qexed_nbt::Tag
+    pub text: crate::types::TextComponent,
 }

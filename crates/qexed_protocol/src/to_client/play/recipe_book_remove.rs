@@ -1,7 +1,7 @@
-use qexed_packet::net_types::VarInt;
 use qexed_packet::PacketCodec;
-#[qexed_packet_macros::packet(id = 0x44)]
+use qexed_packet::net_types::VarInt;
+#[qexed_packet_macros::packet(id = 0x4b)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct RecipeBookRemove {
-    pub recipe_ids:Vec<VarInt>,
+    pub recipe_ids: Vec<VarInt>,
 }

@@ -746,7 +746,8 @@ impl PacketCodec for Node {
 
         // 4. 读取 name（仅对literal和argument节点）
         let node_type = self.flags & 0x03;
-        if node_type == 0x01 || node_type == 0x02 { // literal或argument节点
+        if node_type == 0x01 || node_type == 0x02 {
+            // literal或argument节点
             self.name = Some(r.deserialize()?);
         } else {
             self.name = None;

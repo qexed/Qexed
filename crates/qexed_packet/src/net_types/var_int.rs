@@ -1,8 +1,7 @@
-
-#[derive(Debug,PartialEq,Clone)]
+#[derive(Debug, PartialEq, Clone)]
 // VarInt 结构体定义
 pub struct VarInt(pub i32);
-impl Default for VarInt{
+impl Default for VarInt {
     fn default() -> Self {
         Self(Default::default())
     }
@@ -14,12 +13,12 @@ impl std::fmt::Display for VarInt {
 }
 
 #[cfg(test)]
-mod test{
+mod test {
     use crate::net_types::var_int::VarInt;
     #[test]
-    fn test_print(){
-        println!("{}",VarInt(123));
-        println!("{:?}",VarInt(123));
-        println!("{}",123);
+    fn test_print() {
+        println!("{}", VarInt(123));
+        println!("{:?}", VarInt(123));
+        println!("{}", 123);
     }
 }

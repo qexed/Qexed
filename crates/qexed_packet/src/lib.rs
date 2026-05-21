@@ -3,7 +3,7 @@ use thiserror::Error;
 pub mod codec;
 pub mod net_types;
 
-pub trait Packet: std::fmt::Debug + Send + Sync + Clone + Default  {
+pub trait Packet: std::fmt::Debug + Send + Sync + Clone + Default {
     const ID: i32;
     fn serialize(&self, w: &mut PacketWriter) -> anyhow::Result<()>;
     fn deserialize(&mut self, r: &mut PacketReader) -> anyhow::Result<()>;
@@ -17,7 +17,9 @@ pub struct PacketReader<'a> {
 }
 
 impl<'a> PacketReader<'a> {
-    pub fn new(buf: &'a mut dyn Buf) -> Self { Self { buf } }
+    pub fn new(buf: &'a mut dyn Buf) -> Self {
+        Self { buf }
+    }
     pub fn deserialize<T: PacketCodec>(&mut self) -> anyhow::Result<T> {
         let mut t: T = Default::default();
         t.deserialize(self)?;

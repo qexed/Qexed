@@ -1,0 +1,343 @@
+use bytes::{Bytes, BytesMut};
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
+use openssl::symm::{Cipher, Crypter, Mode};
+use qexed_packet::PacketCodec;
+use std::io::Write;
+use std::ops::{Deref, DerefMut};
+use tokio::io::{AsyncWrite, AsyncWriteExt, WriteHalf};
+use tokio::net::TcpStream;
+
+use crate::packet_read::{varint_len, write_varint};
+
+const MAX_PACKET_SIZE: usize = 8 * 1024 * 1024;
+
+pub struct PacketSink<W> {
+    writer: W,
+    compression_threshold: Option<i32>,
+    encrypter: Option<Crypter>,
+    max_packet_size: usize,
+}
+
+pub struct PacketSend {
+    inner: PacketSink<WriteHalf<TcpStream>>,
+    compression_threshold: i32,
+}
+
+impl<W: AsyncWrite + Unpin> PacketSink<W> {
+    pub fn new(writer: W) -> Self {
+        Self {
+            writer,
+            compression_threshold: None,
+            encrypter: None,
+            max_packet_size: MAX_PACKET_SIZE,
+        }
+    }
+
+    pub fn with_compression_threshold(writer: W, threshold: i32) -> Self {
+        let mut sink = Self::new(writer);
+        sink.set_compression_threshold(threshold);
+        sink
+    }
+
+    pub fn set_compression_threshold(&mut self, threshold: i32) {
+        self.compression_threshold = (threshold >= 0).then_some(threshold);
+    }
+
+    pub fn set_compression(&mut self, enabled: bool) {
+        self.compression_threshold = enabled.then_some(0);
+    }
+
+    pub fn disable_compression(&mut self) {
+        self.compression_threshold = None;
+    }
+
+    pub fn is_compression_enabled(&self) -> bool {
+        self.compression_threshold.is_some()
+    }
+
+    pub fn enable_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketWriteError> {
+        if shared_secret.len() != 16 {
+            return Err(PacketWriteError::InvalidEncryptionKeyLength(
+                shared_secret.len(),
+            ));
+        }
+
+        let mut encrypter = Crypter::new(
+            Cipher::aes_128_cfb8(),
+            Mode::Encrypt,
+            shared_secret,
+            Some(shared_secret),
+        )
+        .map_err(|err| PacketWriteError::CryptoError(err.to_string()))?;
+        encrypter.pad(false);
+        self.encrypter = Some(encrypter);
+        Ok(())
+    }
+
+    pub fn set_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketWriteError> {
+        self.enable_encryption(shared_secret)
+    }
+
+    pub fn disable_encryption(&mut self) {
+        self.encrypter = None;
+    }
+
+    pub fn is_encryption_enabled(&self) -> bool {
+        self.encrypter.is_some()
+    }
+
+    pub fn set_max_packet_size(&mut self, max_packet_size: usize) {
+        self.max_packet_size = max_packet_size;
+    }
+
+    pub async fn send<T: qexed_packet::Packet>(
+        &mut self,
+        packet: T,
+    ) -> Result<(), PacketWriteError> {
+        self.send_raw(Self::build_send_packet(packet)?).await
+    }
+
+    pub fn build_send_packet<T: qexed_packet::Packet>(
+        packet: T,
+    ) -> Result<Bytes, PacketWriteError> {
+        let mut buf = BytesMut::new();
+        let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+        qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;
+        packet.serialize(&mut writer)?;
+        Ok(buf.freeze())
+    }
+
+    pub async fn send_raw<B: AsRef<[u8]>>(&mut self, payload: B) -> Result<(), PacketWriteError> {
+        let frame = self.encode_frame(payload.as_ref())?;
+        let frame = self.encrypt_frame(&frame)?;
+        self.writer
+            .write_all(&frame)
+            .await
+            .map_err(PacketWriteError::OtherError)?;
+        Ok(())
+    }
+
+    pub async fn flush(&mut self) -> Result<(), PacketWriteError> {
+        self.writer
+            .flush()
+            .await
+            .map_err(PacketWriteError::OtherError)
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), PacketWriteError> {
+        self.writer
+            .shutdown()
+            .await
+            .map_err(PacketWriteError::OtherError)
+    }
+
+    pub fn get_ref(&self) -> &W {
+        &self.writer
+    }
+
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+
+    fn encode_frame(&self, payload: &[u8]) -> Result<BytesMut, PacketWriteError> {
+        if payload.len() > self.max_packet_size {
+            return Err(PacketWriteError::PacketTooLarge(
+                payload.len(),
+                self.max_packet_size,
+            ));
+        }
+
+        let mut body = BytesMut::new();
+
+        match self.compression_threshold {
+            Some(threshold) => self.write_compressed_body(payload, threshold, &mut body)?,
+            None => body.extend_from_slice(payload),
+        }
+
+        if body.len() > self.max_packet_size {
+            return Err(PacketWriteError::PacketTooLarge(
+                body.len(),
+                self.max_packet_size,
+            ));
+        }
+
+        let mut frame = BytesMut::with_capacity(varint_len(body.len() as i32) + body.len());
+        write_varint(body.len() as i32, &mut frame);
+        frame.extend_from_slice(&body);
+        Ok(frame)
+    }
+
+    fn write_compressed_body(
+        &self,
+        payload: &[u8],
+        threshold: i32,
+        body: &mut BytesMut,
+    ) -> Result<(), PacketWriteError> {
+        if threshold >= 0 && payload.len() >= threshold as usize {
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+            encoder
+                .write_all(payload)
+                .map_err(PacketWriteError::CompressionError)?;
+            let compressed = encoder
+                .finish()
+                .map_err(PacketWriteError::CompressionError)?;
+
+            write_varint(payload.len() as i32, body);
+            body.extend_from_slice(&compressed);
+        } else {
+            write_varint(0, body);
+            body.extend_from_slice(payload);
+        }
+
+        Ok(())
+    }
+
+    fn encrypt_frame(&mut self, frame: &BytesMut) -> Result<BytesMut, PacketWriteError> {
+        let Some(encrypter) = self.encrypter.as_mut() else {
+            return Ok(frame.clone());
+        };
+
+        let mut encrypted = vec![0_u8; frame.len()];
+        let len = encrypter
+            .update(frame, &mut encrypted)
+            .map_err(|err| PacketWriteError::CryptoError(err.to_string()))?;
+        encrypted.truncate(len);
+        Ok(BytesMut::from(encrypted.as_slice()))
+    }
+}
+
+impl PacketSend {
+    pub fn new(socket_write: WriteHalf<TcpStream>, compression_threshold: isize) -> Self {
+        Self {
+            inner: PacketSink::new(socket_write),
+            compression_threshold: normalize_threshold(compression_threshold),
+        }
+    }
+
+    pub async fn send<T: qexed_packet::Packet>(
+        &mut self,
+        packet: T,
+    ) -> Result<(), PacketWriteError> {
+        self.inner.send(packet).await
+    }
+
+    pub async fn build_send_packet<T: qexed_packet::Packet>(
+        packet: T,
+    ) -> Result<Bytes, PacketWriteError> {
+        PacketSink::<WriteHalf<TcpStream>>::build_send_packet(packet)
+    }
+
+    pub async fn send_raw<B: AsRef<[u8]>>(&mut self, payload: B) -> Result<(), PacketWriteError> {
+        self.inner.send_raw(payload).await
+    }
+
+    pub fn set_compression(&mut self, enabled: bool) {
+        if enabled {
+            self.inner
+                .set_compression_threshold(self.compression_threshold);
+        } else {
+            self.inner.disable_compression();
+        }
+    }
+
+    pub fn set_compression_threshold(&mut self, compression_threshold: isize) {
+        self.compression_threshold = normalize_threshold(compression_threshold);
+        if self.inner.is_compression_enabled() {
+            self.inner
+                .set_compression_threshold(self.compression_threshold);
+        }
+    }
+
+    pub fn enable_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketWriteError> {
+        self.inner.enable_encryption(shared_secret)
+    }
+
+    pub fn set_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketWriteError> {
+        self.enable_encryption(shared_secret)
+    }
+
+    pub fn disable_encryption(&mut self) {
+        self.inner.disable_encryption();
+    }
+
+    pub fn is_encryption_enabled(&self) -> bool {
+        self.inner.is_encryption_enabled()
+    }
+
+    pub fn is_compression_enabled(&self) -> bool {
+        self.inner.is_compression_enabled()
+    }
+
+    pub async fn flush(&mut self) -> Result<(), PacketWriteError> {
+        self.inner.flush().await
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), PacketWriteError> {
+        self.inner.shutdown().await
+    }
+
+    pub fn get_ref(&self) -> &WriteHalf<TcpStream> {
+        self.inner.get_ref()
+    }
+
+    pub fn get_mut(&mut self) -> &mut WriteHalf<TcpStream> {
+        self.inner.get_mut()
+    }
+
+    pub fn into_inner(self) -> WriteHalf<TcpStream> {
+        self.inner.into_inner()
+    }
+}
+
+impl Deref for PacketSend {
+    type Target = PacketSink<WriteHalf<TcpStream>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for PacketSend {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+#[derive(Debug, qexed_error_macros::I18nErrorDisplay)]
+pub enum PacketWriteError {
+    #[error("qexed_tcp_connect.packet_write.io_error", error = field_0.to_string())]
+    OtherError(std::io::Error),
+    #[error("qexed_tcp_connect.packet_write.packet_too_large", size = field_0, max = field_1)]
+    PacketTooLarge(usize, usize),
+    #[error("qexed_tcp_connect.packet_write.compression_error", error = field_0.to_string())]
+    CompressionError(std::io::Error),
+    #[error("qexed_tcp_connect.packet_write.crypto_error", error = field_0)]
+    CryptoError(String),
+    #[error("qexed_tcp_connect.packet_write.invalid_encryption_key_length", length = field_0)]
+    InvalidEncryptionKeyLength(usize),
+    #[error("qexed_tcp_connect.packet_write.packet_encode_error", error = field_0.to_string())]
+    PacketEncodeError(anyhow::Error),
+}
+
+impl From<anyhow::Error> for PacketWriteError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::PacketEncodeError(value)
+    }
+}
+
+impl std::error::Error for PacketWriteError {}
+
+fn normalize_threshold(compression_threshold: isize) -> i32 {
+    compression_threshold
+        .try_into()
+        .unwrap_or(if compression_threshold < 0 {
+            -1
+        } else {
+            i32::MAX
+        })
+}

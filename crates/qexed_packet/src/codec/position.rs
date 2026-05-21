@@ -10,7 +10,7 @@ impl PacketCodec for Position {
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        let mut val :i64= 0;
+        let mut val: i64 = 0;
         val.deserialize(r)?;
         self.x = (val >> 38) as i32;
         self.y = ((val << 52) >> 52) as i32;
@@ -29,7 +29,7 @@ impl PacketCodec for Position {
 //         let encoded = (x_part << 38) | (z_part << 12) | y_part;
 //         w.i64(encoded);
 //     }
-// 
+//
 //     fn deserialize(&mut self, r: &mut PacketReader) {
 //         let val = r.i64();
 //         self.x = (val >> 38) as i32;
@@ -37,4 +37,4 @@ impl PacketCodec for Position {
 //         self.z = ((val << 26) >> 38) as i32;
 //     }
 // }
-// 
+//

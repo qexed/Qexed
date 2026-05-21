@@ -1,18 +1,35 @@
 use crate::{PacketCodec, net_types::VarInt};
-impl <T>PacketCodec for Vec<T> where T: PacketCodec, {
+
+impl<T> PacketCodec for Vec<T>
+where
+    T: PacketCodec,
+{
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
+        if self.len() > i32::MAX as usize {
+            return Err(anyhow::anyhow!(
+                "vec length {} exceeds VarInt max",
+                self.len()
+            ));
+        }
+
         VarInt(self.len() as i32).serialize(w)?;
-        for prop in self{
+        for prop in self {
             prop.serialize(w)?;
         }
         Ok(())
     }
-    // 我们信任提供的是空vec,要不然你调用这个干什么？？？
+
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        let mut len = VarInt(0);
+        let mut len = VarInt::default();
         len.deserialize(r)?;
-        for _ in 0..len.0{
-            let mut value:T = Default::default();
+        if len.0 < 0 {
+            return Err(anyhow::anyhow!("negative vec length: {}", len.0));
+        }
+
+        self.clear();
+        self.reserve(len.0 as usize);
+        for _ in 0..len.0 {
+            let mut value = T::default();
             value.deserialize(r)?;
             self.push(value);
         }
@@ -20,17 +37,20 @@ impl <T>PacketCodec for Vec<T> where T: PacketCodec, {
     }
 }
 
-impl<const N: usize>PacketCodec for [u8; N] where [u8; N]: Default {
+impl<const N: usize> PacketCodec for [u8; N]
+where
+    [u8; N]: Default,
+{
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        for i in 0..N {
-            self[i].serialize(w)?
+        for value in self {
+            value.serialize(w)?
         }
         Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        for i in 0..N {
-            self[i].deserialize(r)?;
+        for value in self {
+            value.deserialize(r)?;
         }
         Ok(())
     }

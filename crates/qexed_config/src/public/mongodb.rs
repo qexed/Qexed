@@ -1,64 +1,101 @@
+use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, AutoDoc)]
 pub struct MongoConfig {
-    // 基础连接信息
     #[serde(default = "default_host")]
+    #[AutoDoc(key = "config.public.mongodb.host")]
     pub host: String,
-    
+
     #[serde(default = "default_mongo_port")]
+    #[AutoDoc(key = "config.public.mongodb.port")]
     pub port: u16,
-    
+
     #[serde(default)]
-    pub username: Option<String>, // 可选认证
-    
+    #[AutoDoc(key = "config.public.mongodb.username")]
+    pub username: Option<String>,
+
     #[serde(default)]
-    pub password: Option<String>, // 可选认证，序列化时跳过
-    
+    #[AutoDoc(key = "config.public.mongodb.password")]
+    pub password: Option<String>,
+
     #[serde(default)]
+    #[AutoDoc(key = "config.public.mongodb.database")]
     pub database: String,
-    
-    // 连接选项（可映射为 MongoDB 连接字符串参数）
+
     #[serde(default = "default_app_name")]
+    #[AutoDoc(key = "config.public.mongodb.app_name")]
     pub app_name: Option<String>,
-    
+
     #[serde(default = "default_replica_set")]
+    #[AutoDoc(key = "config.public.mongodb.replica_set")]
     pub replica_set: Option<String>,
-    
+
     #[serde(default)]
-    pub auth_source: Option<String>, // 认证数据库，默认为 `database`
-    
+    #[AutoDoc(key = "config.public.mongodb.auth_source")]
+    pub auth_source: Option<String>,
+
     #[serde(default)]
+    #[AutoDoc(key = "config.public.mongodb.use_tls")]
     pub use_tls: bool,
-    
+
     #[serde(with = "humantime_serde", default = "default_connect_timeout_ms")]
+    #[AutoDoc(key = "config.public.mongodb.connect_timeout")]
     pub connect_timeout: Duration,
-    
+
     #[serde(with = "humantime_serde", default = "default_socket_timeout_ms")]
+    #[AutoDoc(key = "config.public.mongodb.socket_timeout")]
     pub socket_timeout: Duration,
-    
-    // 连接池配置
+
     #[serde(default = "default_max_pool_size")]
+    #[AutoDoc(key = "config.public.mongodb.max_pool_size")]
     pub max_pool_size: u32,
-    
+
     #[serde(default = "default_min_pool_size")]
+    #[AutoDoc(key = "config.public.mongodb.min_pool_size")]
     pub min_pool_size: u32,
-    
+
     #[serde(with = "humantime_serde", default = "default_max_idle_time_ms")]
+    #[AutoDoc(key = "config.public.mongodb.max_idle_time")]
     pub max_idle_time: Option<Duration>,
 }
 
-// 默认值函数
-fn default_host() -> String { "127.0.0.1".to_string() }
-fn default_mongo_port() -> u16 { 27017 }
-fn default_app_name() -> Option<String> { Some("my_rust_app".to_string()) }
-fn default_replica_set() -> Option<String> { None }
-fn default_connect_timeout_ms() -> Duration { Duration::from_millis(10000) }
-fn default_socket_timeout_ms() -> Duration { Duration::from_millis(5000) }
-fn default_max_pool_size() -> u32 { 100 }
-fn default_min_pool_size() -> u32 { 0 }
-fn default_max_idle_time_ms() -> Option<Duration> { Some(Duration::from_secs(60)) }
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_mongo_port() -> u16 {
+    27017
+}
+
+fn default_app_name() -> Option<String> {
+    Some("my_rust_app".to_string())
+}
+
+fn default_replica_set() -> Option<String> {
+    None
+}
+
+fn default_connect_timeout_ms() -> Duration {
+    Duration::from_millis(10000)
+}
+
+fn default_socket_timeout_ms() -> Duration {
+    Duration::from_millis(5000)
+}
+
+fn default_max_pool_size() -> u32 {
+    100
+}
+
+fn default_min_pool_size() -> u32 {
+    0
+}
+
+fn default_max_idle_time_ms() -> Option<Duration> {
+    Some(Duration::from_secs(60))
+}
 
 impl Default for MongoConfig {
     fn default() -> Self {
@@ -82,25 +119,20 @@ impl Default for MongoConfig {
 }
 
 impl MongoConfig {
-    /// 生成 MongoDB 连接 URI (符合官方规范)
     pub fn connection_uri(&self) -> String {
         let mut uri = if self.use_tls {
             "mongodb+srv://".to_string()
         } else {
             "mongodb://".to_string()
         };
-        
-        // 添加认证信息
+
         if let (Some(user), Some(pass)) = (&self.username, &self.password) {
             uri.push_str(&format!("{}:{}@", user, pass));
         }
-        
-        // 添加主机和端口
+
         uri.push_str(&format!("{}:{}", self.host, self.port));
-        
-        // 添加数据库和选项
         uri.push_str(&format!("/{}?", self.database));
-        
+
         let mut options = Vec::new();
         if let Some(name) = &self.app_name {
             options.push(format!("appName={}", name));
@@ -113,8 +145,14 @@ impl MongoConfig {
         } else if !self.database.is_empty() {
             options.push(format!("authSource={}", self.database));
         }
-        options.push(format!("connectTimeoutMS={}", self.connect_timeout.as_millis()));
-        options.push(format!("socketTimeoutMS={}", self.socket_timeout.as_millis()));
+        options.push(format!(
+            "connectTimeoutMS={}",
+            self.connect_timeout.as_millis()
+        ));
+        options.push(format!(
+            "socketTimeoutMS={}",
+            self.socket_timeout.as_millis()
+        ));
         options.push(format!("maxPoolSize={}", self.max_pool_size));
         options.push(format!("minPoolSize={}", self.min_pool_size));
         if let Some(idle) = self.max_idle_time {
@@ -123,11 +161,11 @@ impl MongoConfig {
         if self.use_tls {
             options.push("tls=true".to_string());
         }
-        
+
         uri.push_str(&options.join("&"));
         uri
     }
-    
+
     pub fn validate(&self) -> Result<(), String> {
         if self.database.is_empty() {
             return Err("MongoDB 配置错误：数据库名不能为空".to_string());
@@ -135,7 +173,6 @@ impl MongoConfig {
         if self.max_pool_size < self.min_pool_size {
             return Err("MongoDB 配置错误：最大连接池大小不能小于最小连接池大小".to_string());
         }
-        // 如果有用户名，则密码也必须提供（反之亦然）
         match (&self.username, &self.password) {
             (Some(_), None) => return Err("MongoDB 配置错误：提供了用户名但未提供密码".to_string()),
             (None, Some(_)) => return Err("MongoDB 配置错误：提供了密码但未提供用户名".to_string()),

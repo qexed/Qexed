@@ -1,12 +1,13 @@
+use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 
-use crate::tool::AppConfigTrait;
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, AutoDoc)]
 pub struct IP {
     #[cfg(feature = "distributed")]
+    #[AutoDoc(key = "config.public.ip.ip")]
     pub ip: String,
 }
+
 impl Default for IP {
     fn default() -> Self {
         Self {

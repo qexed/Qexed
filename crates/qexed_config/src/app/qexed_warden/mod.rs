@@ -1,23 +1,23 @@
-
-// 典狱长(封禁管理)
 pub mod data;
+
+use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
-use crate::tool::AppConfigTrait;
-#[derive(Debug, Serialize, Deserialize)]
+
+#[qexed_config_macros::app_config("/", "qexed_warden")]
+#[derive(Debug, Serialize, Deserialize, AutoDoc)]
 pub struct QexedWarden {
+    #[AutoDoc(key = "config.qexed_warden.version")]
     pub version: i32,
-    pub data:data::Data,
+
+    #[AutoDoc(key = "config.qexed_warden.data", sub)]
+    pub data: data::Data,
 }
+
 impl Default for QexedWarden {
     fn default() -> Self {
-        Self { 
+        Self {
             version: Default::default(),
-            data:Default::default(),
+            data: Default::default(),
         }
     }
-}
-impl AppConfigTrait for QexedWarden {
-    const PATH: &'static str = "./config/";
-
-    const NAME: &'static str = "qexed_warden";
 }

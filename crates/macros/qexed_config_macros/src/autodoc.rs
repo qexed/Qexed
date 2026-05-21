@@ -72,7 +72,7 @@ pub fn expand(input: DeriveInput) -> TokenStream {
     }
 
     quote! {
-        impl ::qexed_config_new::tool::AutoDocConfigTrait for #struct_name {
+        impl ::qexed_config::tool::AutoDocConfigTrait for #struct_name {
             fn doc_fields(lang: &str) -> Vec<(String, String)> {
                 let mut all_doc = Vec::new();
                 #(#doc_builders)*
@@ -347,12 +347,12 @@ fn push_recursive_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            for (sub_key, sub_desc) in <#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::#method(lang) {
+            for (sub_key, sub_desc) in <#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang) {
                 #target.push((format!("{}.{}", #prefix, sub_key), sub_desc));
             }
         },
         None => quote! {
-            #target.extend(<#field_ty as ::qexed_config_new::tool::AutoDocConfigTrait>::#method(lang));
+            #target.extend(<#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang));
         },
     }
 }

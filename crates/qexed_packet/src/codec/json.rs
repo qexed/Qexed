@@ -1,13 +1,14 @@
-use crate::{PacketCodec};
+use crate::PacketCodec;
+
 impl PacketCodec for serde_json::Value {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        return self.to_string().serialize(w)
+        self.to_string().serialize(w)
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        let mut data :String=Default::default();
+        let mut data = String::new();
         data.deserialize(r)?;
-        *self = serde_json::json!(data);
+        *self = serde_json::from_str(&data)?;
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/generated_log_config.rs"));
 use rust_i18n::t;
 use tklog::{ASYNC_LOG, LEVEL, MODE};
-rust_i18n::i18n!("../../locales");
+rust_i18n::i18n!("locales");
 pub async fn log_init() {
     ASYNC_LOG
         .set_console(false)

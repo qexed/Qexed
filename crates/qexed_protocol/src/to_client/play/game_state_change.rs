@@ -1,8 +1,8 @@
 use qexed_packet::PacketCodec;
-#[qexed_packet_macros::packet(id = 0x22)]
+#[qexed_packet_macros::packet(id = 0x26)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct GameStateChange {
-    pub reason:u8,
+    pub reason: u8,
     // 值含义:
     // 0:no_respawn_block_available
     // 1:start_raining
@@ -18,5 +18,5 @@ pub struct GameStateChange {
     // 11:immediate_respawn
     // 12:limited_crafting
     // 13:level_chunks_load_start
-    pub game_mode:f32,
+    pub game_mode: f32,
 }

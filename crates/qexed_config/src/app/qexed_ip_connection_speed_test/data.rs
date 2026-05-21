@@ -1,31 +1,39 @@
+use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    public::{
-        pika::PikaConfig, storage_engine::StorageEngine,
-    },
-    tool::AppConfigTrait,
-};
-#[derive(Debug, Serialize, Deserialize,Clone)]
+use crate::public::{pika::PikaConfig, storage_engine::StorageEngine};
+
+#[qexed_config_macros::app_config("/qexed_wardon/database/", "config")]
+#[derive(Debug, Serialize, Deserialize, Clone, AutoDoc)]
 pub struct Data {
+    #[AutoDoc(key = "config.qexed_ip_connection_speed_test.data.version")]
     pub version: i32,
+
+    #[AutoDoc(key = "config.qexed_ip_connection_speed_test.data.storage_engine")]
     pub storage_engine: StorageEngine,
-    // 有点难,这部分我不打算写死在配置文件中
+
+    #[AutoDoc(key = "config.qexed_ip_connection_speed_test.data.simple", sub)]
     pub simple: Simple,
+
+    #[AutoDoc(key = "config.qexed_ip_connection_speed_test.data.pika", sub)]
     pub pika: Pika,
 }
-#[derive(Default, Debug, Serialize, Deserialize,Clone)]
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, AutoDoc)]
 pub struct Simple {
-    pub player_list:Vec<uuid::Uuid>,
+    #[AutoDoc(key = "config.qexed_ip_connection_speed_test.data.simple.player_list")]
+    pub player_list: Vec<uuid::Uuid>,
 }
 
-#[derive(Debug, Serialize, Deserialize,Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, AutoDoc)]
 pub struct Pika {
     #[serde(flatten)]
     pub data: PikaConfig,
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed_ip_connection_speed_test.data.pika.key_prefix")]
     pub key_prefix: String,
 }
+
 impl Default for Pika {
     fn default() -> Self {
         Self {
@@ -44,9 +52,4 @@ impl Default for Data {
             pika: Default::default(),
         }
     }
-}
-impl AppConfigTrait for Data {
-    const PATH: &'static str = "./config/qexed_wardon/database/";
-
-    const NAME: &'static str = "config";
 }

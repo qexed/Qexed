@@ -1,19 +1,19 @@
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum StorageEngine {
-    Simple,// 简易,项目内置
-    Mysql,// Mysql数据库
-    MongoDB,// MongoDB数据库
-    Pika, // Pika数据库(Redis协议)
+    Simple,
+    Mysql,
+    MongoDB,
+    Pika,
 }
+
 impl Default for StorageEngine {
     fn default() -> Self {
         StorageEngine::Simple
     }
 }
 
-// 为ForwardingMode实现Display trait
 impl std::fmt::Display for StorageEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -25,7 +25,6 @@ impl std::fmt::Display for StorageEngine {
     }
 }
 
-// 为ForwardingMode实现FromStr用于解析
 impl std::str::FromStr for StorageEngine {
     type Err = String;
 
@@ -35,7 +34,7 @@ impl std::str::FromStr for StorageEngine {
             "mysql" => Ok(StorageEngine::Mysql),
             "mongodb" => Ok(StorageEngine::MongoDB),
             "pika" => Ok(StorageEngine::Pika),
-            _ => Err(format!("未知的转发模式: {}", s)),
+            _ => Err(format!("未知的存储引擎: {}", s)),
         }
     }
 }
