@@ -109,6 +109,15 @@ config:
       online_mode:
         en: "Enable Mojang online authentication"
         zh-CN: "启用 Mojang 正版验证"
+      lan_discovery:
+        en: "LAN discovery settings"
+        zh-CN: "局域网发现设置"
+        enable:
+          en: "Enable Minecraft LAN discovery broadcasts"
+          zh-CN: "启用 Minecraft 局域网发现广播"
+        interval_ms:
+          en: "LAN discovery broadcast interval in milliseconds"
+          zh-CN: "局域网发现广播间隔，单位为毫秒"
       network_compression_threshold:
         en: "Packet compression threshold in bytes"
         zh-CN: "网络数据包压缩阈值，单位为字节"
