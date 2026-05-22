@@ -1565,14 +1565,17 @@ name = "qexed"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bytes",
  "clap",
+ "flate2",
  "hex",
  "log",
  "openssl",
  "os_info",
  "qexed_config",
  "qexed_log",
+ "qexed_nbt",
  "qexed_packet",
  "qexed_protocol",
  "qexed_tcp_connect",
@@ -1583,6 +1586,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "shadow-rs",
+ "tempfile",
  "tokio",
  "uuid",
 ]

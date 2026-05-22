@@ -9,10 +9,13 @@ qexed_config.workspace = true
 qexed_tcp_connect.workspace = true
 qexed_packet.workspace = true
 qexed_protocol.workspace = true
+qexed_nbt.workspace = true
 log = { workspace = true }
 tokio = { workspace = true }
 anyhow.workspace = true
+base64.workspace = true
 bytes.workspace = true
+flate2.workspace = true
 rust-i18n = { workspace = true }
 shadow-rs.workspace = true
 os_info = { workspace = true }
@@ -25,5 +28,8 @@ serde_json.workspace = true
 sha1.workspace = true
 hex.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 [build-dependencies]
 shadow-rs.workspace = true

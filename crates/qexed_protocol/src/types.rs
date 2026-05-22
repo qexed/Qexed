@@ -1,10 +1,118 @@
 use anyhow::Ok;
+use bytes::Buf as _;
 use qexed_packet::{
     PacketCodec,
     net_types::{Position, VarInt, VarLong},
 };
 use uuid::Uuid;
 pub type TextComponent = qexed_packet::net_types::AnyNbt;
+
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct MessageSignature(pub Vec<u8>);
+
+impl MessageSignature {
+    pub const BYTE_LEN: usize = 256;
+
+    pub fn new(bytes: Vec<u8>) -> anyhow::Result<Self> {
+        if bytes.len() != Self::BYTE_LEN {
+            anyhow::bail!(
+                "message signature length must be {}, got {}",
+                Self::BYTE_LEN,
+                bytes.len()
+            );
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl PacketCodec for MessageSignature {
+    fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+        if self.0.len() != Self::BYTE_LEN {
+            anyhow::bail!(
+                "message signature length must be {}, got {}",
+                Self::BYTE_LEN,
+                self.0.len()
+            );
+        }
+        w.buf.extend_from_slice(&self.0);
+        Ok(())
+    }
+
+    fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+        if r.buf.remaining() < Self::BYTE_LEN {
+            anyhow::bail!(
+                "message signature length {} exceeds remaining {}",
+                Self::BYTE_LEN,
+                r.buf.remaining()
+            );
+        }
+        self.0 = r.buf.copy_to_bytes(Self::BYTE_LEN).to_vec();
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct ChatSessionData {
+    pub session_id: Uuid,
+    pub expires_at_epoch_millis: i64,
+    pub public_key_der: Vec<u8>,
+    pub key_signature: Vec<u8>,
+}
+
+impl PacketCodec for ChatSessionData {
+    fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+        self.session_id.serialize(w)?;
+        self.expires_at_epoch_millis.serialize(w)?;
+        write_byte_array(&self.public_key_der, 512, "chat public key", w)?;
+        write_byte_array(&self.key_signature, 4096, "chat key signature", w)
+    }
+
+    fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+        self.session_id.deserialize(r)?;
+        self.expires_at_epoch_millis.deserialize(r)?;
+        self.public_key_der = read_byte_array(512, "chat public key", r)?;
+        self.key_signature = read_byte_array(4096, "chat key signature", r)?;
+        Ok(())
+    }
+}
+
+fn write_byte_array(
+    value: &[u8],
+    max_size: usize,
+    name: &str,
+    w: &mut qexed_packet::PacketWriter,
+) -> anyhow::Result<()> {
+    if value.len() > max_size {
+        anyhow::bail!("{name} length {} exceeds max {max_size}", value.len());
+    }
+    VarInt(value.len() as i32).serialize(w)?;
+    w.buf.extend_from_slice(value);
+    Ok(())
+}
+
+fn read_byte_array(
+    max_size: usize,
+    name: &str,
+    r: &mut qexed_packet::PacketReader,
+) -> anyhow::Result<Vec<u8>> {
+    let mut len = VarInt::default();
+    len.deserialize(r)?;
+    if len.0 < 0 {
+        anyhow::bail!("negative {name} length: {}", len.0);
+    }
+    let len = len.0 as usize;
+    if len > max_size {
+        anyhow::bail!("{name} length {len} exceeds max {max_size}");
+    }
+    if len > r.buf.remaining() {
+        anyhow::bail!(
+            "{name} length {len} exceeds remaining {}",
+            r.buf.remaining()
+        );
+    }
+    Ok(r.buf.copy_to_bytes(len).to_vec())
+}
+
 #[qexed_packet_macros::substruct]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct KnownPacks {

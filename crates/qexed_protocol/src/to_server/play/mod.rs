@@ -1,5 +1,9 @@
+pub mod accept_teleportation;
+pub mod chat_ack;
 pub mod chat_command;
 pub mod chat_message;
+pub mod chat_session_update;
+pub mod chunk_batch_received;
 pub mod keep_alive;
 pub mod player_action;
 pub mod pong;

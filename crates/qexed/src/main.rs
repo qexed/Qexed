@@ -2,8 +2,12 @@ mod auth;
 mod bootstrap;
 mod connection;
 mod lan_discovery;
+mod play;
+mod registry_sync;
+mod secure_chat;
 mod server;
 mod status;
+mod world;
 
 rust_i18n::i18n!("locales");
 shadow_rs::shadow!(build);

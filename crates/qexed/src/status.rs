@@ -30,6 +30,6 @@ pub fn response(config: &qexed_config::app::qexed::Qexed) -> serde_json::Value {
             "text": config.server.motd.join("\n"),
         },
         "favicon": config.server.favicon,
-        "enforcesSecureChat": false,
+        "enforcesSecureChat": config.server.online_mode,
     })
 }

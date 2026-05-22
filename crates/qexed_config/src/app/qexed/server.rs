@@ -60,6 +60,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.code_of_conduct")]
     pub code_of_conduct: String,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world", sub)]
+    pub world: World,
+
     #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
@@ -84,6 +88,7 @@ impl Default for Server {
                 t!("qexed_config.config.server.motd2").to_string(),
             ],
             code_of_conduct: String::new(),
+            world: World::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
         }
@@ -104,6 +109,70 @@ impl Default for LanDiscovery {
         Self {
             enable: true,
             interval_ms: 1500,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
+pub struct World {
+    #[AutoDoc(key = "config.qexed.server.world.path")]
+    pub path: String,
+
+    #[AutoDoc(key = "config.qexed.server.world.dimension")]
+    pub dimension: String,
+
+    #[AutoDoc(key = "config.qexed.server.world.dimension_type")]
+    pub dimension_type: String,
+
+    #[AutoDoc(key = "config.qexed.server.world.view_distance")]
+    pub view_distance: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.simulation_distance")]
+    pub simulation_distance: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.spawn", sub)]
+    pub spawn: Spawn,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self {
+            path: "world".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            dimension_type: "minecraft:overworld".to_string(),
+            view_distance: 3,
+            simulation_distance: 3,
+            spawn: Spawn::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
+pub struct Spawn {
+    #[AutoDoc(key = "config.qexed.server.world.spawn.x")]
+    pub x: f64,
+
+    #[AutoDoc(key = "config.qexed.server.world.spawn.y")]
+    pub y: f64,
+
+    #[AutoDoc(key = "config.qexed.server.world.spawn.z")]
+    pub z: f64,
+
+    #[AutoDoc(key = "config.qexed.server.world.spawn.yaw")]
+    pub yaw: f32,
+
+    #[AutoDoc(key = "config.qexed.server.world.spawn.pitch")]
+    pub pitch: f32,
+}
+
+impl Default for Spawn {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
         }
     }
 }

@@ -145,6 +145,42 @@ config:
       code_of_conduct:
         en: "Server entry code of conduct. Empty disables the code-of-conduct prompt."
         zh-CN: "入服准则内容。为空时不显示入服准则。"
+      world:
+        en: "World and spawn settings"
+        zh-CN: "世界与出生点设置"
+        path:
+          en: "World save directory"
+          zh-CN: "世界存档目录"
+        dimension:
+          en: "Default dimension resource key"
+          zh-CN: "默认维度资源键"
+        dimension_type:
+          en: "Default dimension type resource key"
+          zh-CN: "默认维度类型资源键"
+        view_distance:
+          en: "Initial chunk view distance"
+          zh-CN: "初始区块视距"
+        simulation_distance:
+          en: "Initial simulation distance"
+          zh-CN: "初始模拟距离"
+        spawn:
+          en: "Player spawn position and rotation"
+          zh-CN: "玩家出生坐标与朝向"
+          x:
+            en: "Spawn X coordinate"
+            zh-CN: "出生点 X 坐标"
+          y:
+            en: "Spawn Y coordinate"
+            zh-CN: "出生点 Y 坐标"
+          z:
+            en: "Spawn Z coordinate"
+            zh-CN: "出生点 Z 坐标"
+          yaw:
+            en: "Spawn yaw"
+            zh-CN: "出生点水平朝向"
+          pitch:
+            en: "Spawn pitch"
+            zh-CN: "出生点俯仰角"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

@@ -1,11 +1,15 @@
+use base64::Engine as _;
 use openssl::{
-    pkey::Private,
+    hash::MessageDigest,
+    pkey::{PKey, Private, Public},
     rsa::{Padding, Rsa},
+    sign::Verifier,
 };
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 
 const SESSION_SERVER_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
+const SERVICES_PUBLIC_KEYS_URL: &str = "https://api.minecraftservices.com/publickeys";
 const SERVER_ID: &str = "";
 
 #[derive(Clone)]
@@ -13,6 +17,7 @@ pub struct Authenticator {
     public_key_der: Vec<u8>,
     private_key: std::sync::Arc<Rsa<Private>>,
     http: reqwest::Client,
+    service_public_keys: std::sync::Arc<tokio::sync::RwLock<Option<Vec<PKey<Public>>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +40,7 @@ impl Authenticator {
             public_key_der,
             private_key: std::sync::Arc::new(private_key),
             http,
+            service_public_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -91,6 +97,68 @@ impl Authenticator {
         Ok(profile.try_into()?)
     }
 
+    pub async fn verify_chat_session(
+        &self,
+        profile_id: uuid::Uuid,
+        chat_session: &qexed_protocol::types::ChatSessionData,
+    ) -> anyhow::Result<()> {
+        if chat_session.expires_at_epoch_millis < current_epoch_millis() {
+            anyhow::bail!("Mojang 聊天公钥已过期");
+        }
+
+        PKey::public_key_from_der(&chat_session.public_key_der)
+            .map(|_| ())
+            .map_err(|err| anyhow::anyhow!("Mojang 聊天公钥格式无效: {err}"))?;
+
+        let keys = self.service_public_keys().await?;
+        let payload = crate::secure_chat::profile_key_payload(profile_id, chat_session);
+        for key in &keys {
+            let mut verifier = Verifier::new(MessageDigest::sha1(), key)?;
+            verifier.update(&payload)?;
+            if verifier.verify(&chat_session.key_signature)? {
+                return Ok(());
+            }
+        }
+
+        anyhow::bail!("Mojang 聊天公钥签名无效");
+    }
+
+    async fn service_public_keys(&self) -> anyhow::Result<Vec<PKey<Public>>> {
+        if let Some(keys) = self.service_public_keys.read().await.as_ref() {
+            return Ok(keys.clone());
+        }
+
+        let mut guard = self.service_public_keys.write().await;
+        if let Some(keys) = guard.as_ref() {
+            return Ok(keys.clone());
+        }
+
+        let response = self.http.get(SERVICES_PUBLIC_KEYS_URL).send().await?;
+        if !response.status().is_success() {
+            anyhow::bail!("Mojang publickeys 服务返回异常状态 {}", response.status());
+        }
+
+        let key_set = response.json::<ServicesPublicKeys>().await?;
+        let keys = key_set
+            .player_certificate_keys
+            .into_iter()
+            .map(|key| {
+                let der = base64::engine::general_purpose::STANDARD
+                    .decode(key.public_key)
+                    .map_err(|err| anyhow::anyhow!("Mojang public key base64 无效: {err}"))?;
+                PKey::public_key_from_der(&der)
+                    .map_err(|err| anyhow::anyhow!("Mojang public key DER 无效: {err}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        if keys.is_empty() {
+            anyhow::bail!("Mojang publickeys 服务未返回 playerCertificateKeys");
+        }
+
+        *guard = Some(keys.clone());
+        Ok(keys)
+    }
+
     fn decrypt_rsa(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
         let mut output = vec![0_u8; self.private_key.size() as usize];
         let len = self
@@ -132,6 +200,18 @@ struct SessionProperty {
     name: String,
     value: String,
     signature: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServicesPublicKeys {
+    #[serde(rename = "playerCertificateKeys", default)]
+    player_certificate_keys: Vec<ServicesPublicKey>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServicesPublicKey {
+    #[serde(rename = "publicKey")]
+    public_key: String,
 }
 
 impl TryFrom<SessionProfile> for AuthenticatedProfile {
@@ -191,6 +271,13 @@ fn minecraft_server_hash(server_id: &str, shared_secret: &[u8], public_key_der: 
     hasher.update(public_key_der);
 
     java_signed_hex(&hasher.finalize())
+}
+
+fn current_epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
 }
 
 fn java_signed_hex(bytes: &[u8]) -> String {
