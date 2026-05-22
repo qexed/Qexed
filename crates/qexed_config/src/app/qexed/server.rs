@@ -1,6 +1,6 @@
 use qexed_config_macros::AutoDoc;
 use rust_i18n::t;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 
 #[derive(Debug, Serialize, Deserialize, AutoDoc)]
 pub struct Server {
@@ -130,6 +130,10 @@ pub struct World {
     #[AutoDoc(key = "config.qexed.server.world.simulation_distance")]
     pub simulation_distance: i32,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.light")]
+    pub light: LightMode,
+
     #[AutoDoc(key = "config.qexed.server.world.spawn", sub)]
     pub spawn: Spawn,
 }
@@ -142,8 +146,99 @@ impl Default for World {
             dimension_type: "minecraft:overworld".to_string(),
             view_distance: 3,
             simulation_distance: 3,
+            light: LightMode::default(),
             spawn: Spawn::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LightMode {
+    Static,
+    Dynamic,
+    Fixed(u8),
+}
+
+impl Default for LightMode {
+    fn default() -> Self {
+        Self::Static
+    }
+}
+
+impl Serialize for LightMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Static => serializer.serialize_str("static"),
+            Self::Dynamic => serializer.serialize_str("dynamic"),
+            Self::Fixed(level) => serializer.serialize_u8(*level),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LightMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = LightMode;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(r#""static", "dynamic", or an integer brightness from 0 to 15"#)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value.trim().to_ascii_lowercase().as_str() {
+                    "static" => Ok(LightMode::Static),
+                    "dynamic" => Ok(LightMode::Dynamic),
+                    other => other
+                        .parse::<u8>()
+                        .map_err(|_| E::custom(format!("unknown light mode: {value}")))
+                        .and_then(fixed_light_mode),
+                }
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let value = u8::try_from(value)
+                    .map_err(|_| E::custom(format!("brightness out of range 0..=15: {value}")))?;
+                fixed_light_mode(value)
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let value = u8::try_from(value)
+                    .map_err(|_| E::custom(format!("brightness out of range 0..=15: {value}")))?;
+                fixed_light_mode(value)
+            }
+        }
+
+        fn fixed_light_mode<E>(value: u8) -> Result<LightMode, E>
+        where
+            E: de::Error,
+        {
+            if value <= 15 {
+                Ok(LightMode::Fixed(value))
+            } else {
+                Err(E::custom(format!(
+                    "brightness out of range 0..=15: {value}"
+                )))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
@@ -216,5 +311,76 @@ impl std::str::FromStr for ForwardingMode {
             "none" => Ok(ForwardingMode::None),
             _ => Err(format!("未知的转发模式: {}", s)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LightMode, World};
+
+    #[test]
+    fn parses_world_light_string_modes() {
+        let static_world: World = toml::from_str(
+            r#"
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+simulation_distance = 3
+light = "static"
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+        assert_eq!(static_world.light, LightMode::Static);
+
+        let dynamic_world: World = toml::from_str(
+            r#"
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+simulation_distance = 3
+light = "dynamic"
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+        assert_eq!(dynamic_world.light, LightMode::Dynamic);
+    }
+
+    #[test]
+    fn parses_world_light_fixed_brightness() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+simulation_distance = 3
+light = 12
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+        assert_eq!(world.light, LightMode::Fixed(12));
     }
 }

@@ -1,5 +1,43 @@
-use qexed_packet::PacketCodec;
 use qexed_packet::net_types::{Bitset, VarInt};
+use qexed_packet::{PacketCodec, PacketReader, PacketWriter};
+
+pub const LIGHT_ARRAY_BYTES: usize = 2048;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LightArray(pub [u8; LIGHT_ARRAY_BYTES]);
+
+impl Default for LightArray {
+    fn default() -> Self {
+        Self([0; LIGHT_ARRAY_BYTES])
+    }
+}
+
+impl PacketCodec for LightArray {
+    fn serialize(&self, w: &mut PacketWriter) -> anyhow::Result<()> {
+        VarInt(LIGHT_ARRAY_BYTES as i32).serialize(w)?;
+        for value in &self.0 {
+            value.serialize(w)?;
+        }
+        Ok(())
+    }
+
+    fn deserialize(&mut self, r: &mut PacketReader) -> anyhow::Result<()> {
+        let mut len = VarInt::default();
+        len.deserialize(r)?;
+        if len.0 != LIGHT_ARRAY_BYTES as i32 {
+            anyhow::bail!(
+                "invalid light array length: got {}, expected {}",
+                len.0,
+                LIGHT_ARRAY_BYTES
+            );
+        }
+        for value in &mut self.0 {
+            value.deserialize(r)?;
+        }
+        Ok(())
+    }
+}
+
 #[qexed_packet_macros::packet(id = 0x2d)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct MapChunk {
@@ -37,6 +75,6 @@ pub struct Light {
     pub block_light_mask: Bitset,
     pub empty_sky_light_mask: Bitset,
     pub empty_block_light_mask: Bitset,
-    pub sky_light_arrays: Vec<Vec<u8>>,
-    pub block_light_arrays: Vec<Vec<u8>>,
+    pub sky_light_arrays: Vec<LightArray>,
+    pub block_light_arrays: Vec<LightArray>,
 }

@@ -13,6 +13,7 @@ use qexed_protocol::to_client::play::{
         EntityPosition, EntityPositionSync, PlayerInfoRemove, RemoveEntities, RotateHead,
     },
     player_info_update::{PlayerInfoActions, PlayerInfoEntry, PlayerInfoUpdate},
+    set_equipment::{Equipment, SetEquipment},
 };
 use tokio::sync::mpsc;
 
@@ -28,6 +29,17 @@ pub enum PlayerEvent {
         entity_id: i32,
         position: EntityPosition,
     },
+    EquipmentChanged {
+        profile_id: uuid::Uuid,
+        entity_id: i32,
+        slots: Vec<Equipment>,
+    },
+    BlockChanged {
+        profile_id: uuid::Uuid,
+        position: qexed_packet::net_types::Position,
+        block_state: i32,
+        light_update: Option<Bytes>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +47,7 @@ pub struct OnlinePlayer {
     pub profile: qexed_packet::net_types::GameProfile,
     pub entity_id: i32,
     pub position: EntityPosition,
+    pub equipment: Vec<Equipment>,
 }
 
 #[derive(Debug)]
@@ -61,12 +74,14 @@ impl PlayerManager {
         &self,
         profile: qexed_packet::net_types::GameProfile,
         position: EntityPosition,
+        equipment: Vec<Equipment>,
     ) -> PlayerSession {
         let entity_id = self.next_entity_id.fetch_add(1, Ordering::Relaxed);
         let player = OnlinePlayer {
             profile,
             entity_id,
             position,
+            equipment,
         };
         let (sender, receiver) = mpsc::unbounded_channel();
 
@@ -114,6 +129,68 @@ impl PlayerManager {
         );
     }
 
+    pub fn update_equipment(&self, profile_id: uuid::Uuid, slots: Vec<Equipment>) {
+        let mut players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get_mut(&profile_id) else {
+            return;
+        };
+        for slot in &slots {
+            if let Some(existing) = handle
+                .player
+                .equipment
+                .iter_mut()
+                .find(|existing| existing.slot == slot.slot)
+            {
+                existing.item = slot.item.clone();
+            } else {
+                handle.player.equipment.push(slot.clone());
+            }
+        }
+        let entity_id = handle.player.entity_id;
+        broadcast_locked(
+            &players,
+            profile_id,
+            PlayerEvent::EquipmentChanged {
+                profile_id,
+                entity_id,
+                slots,
+            },
+        );
+    }
+
+    pub fn broadcast_block_changed(
+        &self,
+        profile_id: uuid::Uuid,
+        position: qexed_packet::net_types::Position,
+        block_state: i32,
+        light_update: Option<Bytes>,
+    ) {
+        let players = self.players.lock().expect("player manager poisoned");
+        broadcast_locked(
+            &players,
+            profile_id,
+            PlayerEvent::BlockChanged {
+                profile_id,
+                position,
+                block_state,
+                light_update,
+            },
+        );
+    }
+
+    pub fn online_names(&self) -> Vec<String> {
+        self.players
+            .lock()
+            .expect("player manager poisoned")
+            .values()
+            .map(|handle| handle.player.profile.username.clone())
+            .collect()
+    }
+
+    pub fn online_count(&self) -> usize {
+        self.players.lock().expect("player manager poisoned").len()
+    }
+
     pub fn leave(&self, profile_id: uuid::Uuid) {
         let mut players = self.players.lock().expect("player manager poisoned");
         let Some(handle) = players.remove(&profile_id) else {
@@ -149,6 +226,31 @@ impl PlayerEvent {
                 packet_bytes(EntityPositionSync::from_position(*entity_id, *position))?,
                 packet_bytes(RotateHead::new(*entity_id, position.yaw))?,
             ]),
+            Self::EquipmentChanged {
+                profile_id: _,
+                entity_id,
+                slots,
+            } => Ok(vec![packet_bytes(SetEquipment {
+                entity_id: qexed_packet::net_types::VarInt(*entity_id),
+                slots: slots.clone(),
+            })?]),
+            Self::BlockChanged {
+                profile_id: _,
+                position,
+                block_state,
+                light_update,
+            } => {
+                let mut packets = vec![packet_bytes(
+                    qexed_protocol::to_client::play::block_update::BlockUpdate {
+                        location: position.clone(),
+                        block_state: qexed_packet::net_types::VarInt(*block_state),
+                    },
+                )?];
+                if let Some(light_update) = light_update {
+                    packets.push(light_update.clone());
+                }
+                Ok(packets)
+            }
         }
     }
 }
@@ -171,6 +273,10 @@ pub fn spawn_player_packets(
             ),
         )?,
         packet_bytes(RotateHead::new(player.entity_id, player.position.yaw))?,
+        packet_bytes(SetEquipment {
+            entity_id: qexed_packet::net_types::VarInt(player.entity_id),
+            slots: player.equipment.clone(),
+        })?,
     ])
 }
 

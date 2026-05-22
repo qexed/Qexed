@@ -38,6 +38,10 @@ fn existing_packet_types_use_26_1_2_ids() {
         0x2C
     );
     assert_eq!(
+        qexed_protocol::to_client::play::light_update::LightUpdate::ID,
+        0x30
+    );
+    assert_eq!(
         qexed_protocol::to_client::play::player_info_update::PlayerInfoUpdate::ID,
         0x46
     );
@@ -68,6 +72,26 @@ fn existing_packet_types_use_26_1_2_ids() {
     assert_eq!(
         qexed_protocol::to_client::play::add_entity::EntityPositionSync::ID,
         0x23
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::block_changed_ack::BlockChangedAck::ID,
+        0x04
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::block_update::BlockUpdate::ID,
+        0x08
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::commands::Commands::ID,
+        0x10
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::set_equipment::SetEquipment::ID,
+        0x66
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::set_player_inventory::SetPlayerInventory::ID,
+        0x6C
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_entity_data::SetEntityData::ID,
@@ -123,6 +147,23 @@ fn existing_packet_types_use_26_1_2_ids() {
         qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly::ID,
         0x21
     );
+    assert_eq!(
+        qexed_protocol::to_server::play::pick_item_from_block::PickItemFromBlock::ID,
+        0x24
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::set_carried_item::SetCarriedItem::ID,
+        0x35
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::set_creative_mode_slot::SetCreativeModeSlot::ID,
+        0x38
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::use_item_on::UseItemOn::ID,
+        0x42
+    );
+    assert_eq!(qexed_protocol::to_server::play::use_item::UseItem::ID, 0x43);
     assert_eq!(
         qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate::ID,
         0x0A

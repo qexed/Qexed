@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::OnceLock,
+    time::{Duration, Instant},
 };
 
 use qexed_packet::{Packet, net_types::VarInt};
@@ -37,6 +38,8 @@ use qexed_protocol::to_server::play::{
     chunk_batch_received::ChunkBatchReceived, keep_alive::KeepAlive as ServerboundKeepAlive,
     move_player_pos::MovePlayerPos, move_player_pos_rot::MovePlayerPosRot,
     move_player_rot::MovePlayerRot, move_player_status_only::MovePlayerStatusOnly,
+    pick_item_from_block::PickItemFromBlock, set_carried_item::SetCarriedItem,
+    set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
 use crate::players::{OnlinePlayer, PlayerEvent, PlayerManager, PlayerSession};
@@ -44,6 +47,8 @@ use crate::world::WorldManager;
 
 const TELEPORT_ID: i32 = 1;
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
+const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 pub async fn initialize<R, W>(
@@ -73,7 +78,8 @@ where
         pitch: spawn.pitch,
         on_ground: true,
     };
-    let session = players.join(profile.clone(), position);
+    let inventory = crate::inventory::PlayerInventory::default();
+    let session = players.join(profile.clone(), position, inventory.visible_equipment());
     let leave_guard = PlayerLeaveGuard::new(players, profile.uuid);
     let player_entity_type = entity_type_id("minecraft:player")?;
 
@@ -113,7 +119,7 @@ where
     })
     .await?;
 
-    send_initial_player_state(sink, config, world_config, &session.player).await?;
+    send_initial_player_state(sink, config, world_config, &session.player, &inventory).await?;
     send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
 
     sink.send(Position {
@@ -136,13 +142,12 @@ where
     })
     .await?;
 
-    let mut chunk_state = ChunkSendState::new(
+    let chunk_state = ChunkSendState::new(
         world_config.dimension.clone(),
         spawn_chunk_x,
         spawn_chunk_z,
         view_distance,
     );
-    chunk_state.send_missing_chunks(sink, world).await?;
     sink.flush().await?;
 
     let result = wait_for_play_packets(
@@ -156,6 +161,7 @@ where
         player_entity_type,
         profile,
         chunk_state,
+        inventory,
     )
     .await;
     leave_guard.leave();
@@ -167,6 +173,7 @@ async fn send_initial_player_state<W>(
     config: &qexed_config::app::qexed::Qexed,
     world_config: &qexed_config::app::qexed::server::World,
     player: &OnlinePlayer,
+    inventory: &crate::inventory::PlayerInventory,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -192,6 +199,14 @@ where
     .await?;
 
     sink.send(SetHeldSlot { slot: VarInt(0) }).await?;
+    for packet in inventory.set_player_inventory_packets() {
+        sink.send(packet).await?;
+    }
+    sink.send(crate::inventory::equipment_packet(
+        player.entity_id,
+        inventory.visible_equipment(),
+    ))
+    .await?;
     sink.send(SetExperience {
         experience_progress: 0.0,
         experience_level: VarInt(0),
@@ -210,6 +225,8 @@ where
         entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
     })
     .await?;
+
+    sink.send(crate::commands::command_tree()).await?;
 
     sink.send(InitializeBorder::default()).await?;
     sink.send(SetTime {
@@ -284,6 +301,15 @@ struct ChunkSendState {
     center_z: i32,
     view_distance: i32,
     visible_chunks: HashSet<(i32, i32)>,
+    pending_chunks: VecDeque<(i32, i32)>,
+    pending_unloads: HashMap<(i32, i32), Instant>,
+    loading_chunk: bool,
+}
+
+struct ChunkLoadResult {
+    chunk_x: i32,
+    chunk_z: i32,
+    payload: Result<bytes::Bytes>,
 }
 
 impl ChunkSendState {
@@ -294,12 +320,16 @@ impl ChunkSendState {
             center_z,
             view_distance: view_distance.max(1),
             visible_chunks: HashSet::new(),
+            pending_chunks: VecDeque::new(),
+            pending_unloads: HashMap::new(),
+            loading_chunk: false,
         }
     }
 
     async fn update_center<W>(
         &mut self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
+        chunk_sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
         world: &WorldManager,
         x: f64,
         z: f64,
@@ -313,7 +343,6 @@ impl ChunkSendState {
             return Ok(());
         }
 
-        let previous = self.visible_chunks.clone();
         let next = visible_chunk_set(chunk_x, chunk_z, self.view_distance);
         sink.send(UpdateViewPosition {
             chunk_x: VarInt(chunk_x),
@@ -321,18 +350,11 @@ impl ChunkSendState {
         })
         .await?;
 
-        for (chunk_x, chunk_z) in previous.difference(&next) {
-            sink.send(ForgetLevelChunk {
-                chunk_x: *chunk_x,
-                chunk_z: *chunk_z,
-            })
-            .await?;
-        }
-
         self.center_x = chunk_x;
         self.center_z = chunk_z;
-        self.visible_chunks = previous.intersection(&next).copied().collect();
-        self.send_missing_chunks(sink, world).await?;
+        self.mark_delayed_unloads(next, Instant::now() + CHUNK_UNLOAD_DELAY);
+        self.refresh_pending_chunks();
+        self.start_next_chunk_load(world, Some(chunk_sender));
         sink.flush().await?;
         log::debug!("玩家移动到新区块，已补发视距区块: center=({chunk_x}, {chunk_z})");
         Ok(())
@@ -353,9 +375,20 @@ impl ChunkSendState {
 
         sink.send(ChunkBatchStart {}).await?;
         for (chunk_x, chunk_z) in &chunks {
-            sink.send(world.network_chunk(&self.dimension, *chunk_x, *chunk_z)?)
-                .await?;
-            self.visible_chunks.insert((*chunk_x, *chunk_z));
+            let world_for_task = world.clone();
+            let dimension = self.dimension.clone();
+            let chunk_x = *chunk_x;
+            let chunk_z = *chunk_z;
+            let chunk_payload = tokio::task::spawn_blocking(move || {
+                build_chunk_payload_sync(world_for_task, dimension, chunk_x, chunk_z)
+            })
+            .await
+            .context("join chunk packet build task")??;
+            sink.send_raw(chunk_payload).await?;
+            for update in world.placed_block_updates(&self.dimension, chunk_x, chunk_z) {
+                sink.send(update).await?;
+            }
+            self.visible_chunks.insert((chunk_x, chunk_z));
         }
         sink.send(ChunkBatchFinished {
             batch_size: VarInt(chunks.len() as i32),
@@ -365,11 +398,179 @@ impl ChunkSendState {
     }
 
     fn missing_chunks(&self) -> Vec<(i32, i32)> {
-        visible_chunks(self.center_x, self.center_z, self.view_distance)
+        let mut chunks = self
+            .target_chunks()
             .into_iter()
             .filter(|chunk| !self.visible_chunks.contains(chunk))
-            .collect()
+            .collect::<Vec<_>>();
+        chunks.sort_by_key(|(chunk_x, chunk_z)| {
+            let dx = *chunk_x - self.center_x;
+            let dz = *chunk_z - self.center_z;
+            (
+                dx * dx + dz * dz,
+                dx.abs().max(dz.abs()),
+                *chunk_z,
+                *chunk_x,
+            )
+        });
+        chunks
     }
+
+    fn target_chunks(&self) -> HashSet<(i32, i32)> {
+        visible_chunk_set(self.center_x, self.center_z, self.view_distance)
+    }
+
+    fn refresh_pending_chunks(&mut self) {
+        self.pending_chunks = self.missing_chunks().into();
+    }
+
+    fn mark_delayed_unloads(&mut self, target_chunks: HashSet<(i32, i32)>, unload_at: Instant) {
+        self.pending_unloads.retain(|chunk, _| {
+            self.visible_chunks.contains(chunk) && !target_chunks.contains(chunk)
+        });
+
+        for chunk in &self.visible_chunks {
+            if target_chunks.contains(chunk) {
+                self.pending_unloads.remove(chunk);
+            } else {
+                self.pending_unloads.entry(*chunk).or_insert(unload_at);
+            }
+        }
+    }
+
+    async fn unload_expired_chunks<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        now: Instant,
+    ) -> Result<usize>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        if self.pending_unloads.is_empty() {
+            return Ok(0);
+        }
+
+        let target_chunks = self.target_chunks();
+        let mut expired = self
+            .pending_unloads
+            .iter()
+            .filter_map(|(chunk, unload_at)| {
+                (*unload_at <= now
+                    && self.visible_chunks.contains(chunk)
+                    && !target_chunks.contains(chunk))
+                .then_some(*chunk)
+            })
+            .collect::<Vec<_>>();
+
+        expired.sort_unstable();
+        for (chunk_x, chunk_z) in &expired {
+            self.pending_unloads.remove(&(*chunk_x, *chunk_z));
+            if self.visible_chunks.remove(&(*chunk_x, *chunk_z)) {
+                sink.send(ForgetLevelChunk {
+                    chunk_x: *chunk_x,
+                    chunk_z: *chunk_z,
+                })
+                .await?;
+            }
+        }
+
+        if !expired.is_empty() {
+            sink.flush().await?;
+        }
+        Ok(expired.len())
+    }
+
+    fn start_next_chunk_load(
+        &mut self,
+        world: &WorldManager,
+        sender: Option<&tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>>,
+    ) {
+        if self.loading_chunk {
+            return;
+        }
+        let Some(sender) = sender else {
+            return;
+        };
+
+        while let Some((chunk_x, chunk_z)) = self.pending_chunks.pop_front() {
+            if self.visible_chunks.contains(&(chunk_x, chunk_z)) {
+                continue;
+            }
+
+            let world = world.clone();
+            let dimension = self.dimension.clone();
+            let sender = sender.clone();
+            tokio::task::spawn_blocking(move || {
+                let payload = build_chunk_payload_sync(world, dimension, chunk_x, chunk_z);
+                let _ = sender.send(ChunkLoadResult {
+                    chunk_x,
+                    chunk_z,
+                    payload,
+                });
+            });
+            self.loading_chunk = true;
+            break;
+        }
+    }
+
+    fn has_chunk_work(&self) -> bool {
+        self.loading_chunk || !self.pending_chunks.is_empty()
+    }
+
+    fn has_pending_unloads(&self) -> bool {
+        !self.pending_unloads.is_empty()
+    }
+
+    async fn send_loaded_chunk<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        world: &WorldManager,
+        loaded: ChunkLoadResult,
+        sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        self.loading_chunk = false;
+        let chunk_x = loaded.chunk_x;
+        let chunk_z = loaded.chunk_z;
+
+        if self.visible_chunks.contains(&(chunk_x, chunk_z))
+            || !visible_chunks(self.center_x, self.center_z, self.view_distance)
+                .contains(&(chunk_x, chunk_z))
+        {
+            self.start_next_chunk_load(world, Some(sender));
+            return Ok(());
+        }
+
+        let chunk_payload = loaded.payload?;
+
+        sink.send(ChunkBatchStart {}).await?;
+        sink.send_raw(chunk_payload).await?;
+        for update in world.placed_block_updates(&self.dimension, chunk_x, chunk_z) {
+            sink.send(update).await?;
+        }
+        self.visible_chunks.insert((chunk_x, chunk_z));
+        sink.send(ChunkBatchFinished {
+            batch_size: VarInt(1),
+        })
+        .await?;
+        sink.flush().await?;
+
+        self.start_next_chunk_load(world, Some(sender));
+        Ok(())
+    }
+}
+
+fn build_chunk_payload_sync(
+    world: WorldManager,
+    dimension: String,
+    chunk_x: i32,
+    chunk_z: i32,
+) -> Result<bytes::Bytes> {
+    let chunk = world.network_chunk(&dimension, chunk_x, chunk_z)?;
+    qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
+        .context("encode chunk packet")
 }
 
 fn visible_chunk_set(center_x: i32, center_z: i32, view_distance: i32) -> HashSet<(i32, i32)> {
@@ -416,6 +617,7 @@ async fn wait_for_play_packets<R, W>(
     player_entity_type: i32,
     profile: &qexed_packet::net_types::GameProfile,
     mut chunk_state: ChunkSendState,
+    mut inventory: crate::inventory::PlayerInventory,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -424,14 +626,37 @@ where
     let mut keep_alive = tokio::time::interval(KEEP_ALIVE_INTERVAL);
     keep_alive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     keep_alive.tick().await;
+    let mut chunk_unload_sweep = tokio::time::interval(CHUNK_UNLOAD_SWEEP_INTERVAL);
+    chunk_unload_sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    chunk_unload_sweep.tick().await;
     let mut pending_keep_alive = None;
     let mut chat_session: Option<crate::secure_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0;
     let enforce_secure_chat = config.server.online_mode;
+    let world_config = &config.server.world;
     let mut position = session.player.position;
+    let (chunk_sender, mut chunk_receiver) = tokio::sync::mpsc::unbounded_channel();
+    chunk_state.refresh_pending_chunks();
+    chunk_state.start_next_chunk_load(world, Some(&chunk_sender));
 
     loop {
         tokio::select! {
+            loaded_chunk = chunk_receiver.recv(), if chunk_state.has_chunk_work() => {
+                let Some(loaded_chunk) = loaded_chunk else {
+                    anyhow::bail!("区块加载任务通道已关闭");
+                };
+                chunk_state
+                    .send_loaded_chunk(sink, world, loaded_chunk, &chunk_sender)
+                    .await?;
+            }
+            _ = chunk_unload_sweep.tick(), if chunk_state.has_pending_unloads() => {
+                let unloaded = chunk_state
+                    .unload_expired_chunks(sink, Instant::now())
+                    .await?;
+                if unloaded > 0 {
+                    log::debug!("延迟卸载区块完成: count={unloaded}");
+                }
+            }
             event = session.receiver.recv() => {
                 let Some(event) = event else {
                     continue;
@@ -486,13 +711,117 @@ where
                     continue;
                 }
 
+                if packet_id == SetCarriedItem::ID {
+                    let carried = crate::connection::decode_payload::<SetCarriedItem>(&mut payload)?;
+                    if let Some(main_hand) = inventory.set_selected(carried.slot) {
+                        sink.send(SetHeldSlot {
+                            slot: VarInt(carried.slot as i32),
+                        })
+                        .await?;
+                        players.update_equipment(
+                            profile.uuid,
+                            vec![qexed_protocol::to_client::play::set_equipment::Equipment::mainhand(
+                                main_hand,
+                            )],
+                        );
+                        sink.flush().await?;
+                    } else {
+                        log::warn!("瀹㈡埛绔皾璇曢€夋嫨鏃犳晥鐑爮: {}", carried.slot);
+                    }
+                    continue;
+                }
+
+                if packet_id == SetCreativeModeSlot::ID {
+                    let slot = crate::connection::decode_payload::<SetCreativeModeSlot>(&mut payload)?;
+                    if let Some(change) = inventory.set_creative_slot(slot.slot_num, slot.item_stack.clone()) {
+                        match change {
+                            crate::inventory::InventorySlotChange::Hotbar { slot: inventory_slot, item } => {
+                                sink.send(crate::inventory::set_player_inventory_packet(
+                                    inventory_slot,
+                                    item.clone(),
+                                )).await?;
+                                if inventory_slot == inventory.selected_slot() {
+                                    players.update_equipment(
+                                        profile.uuid,
+                                        vec![qexed_protocol::to_client::play::set_equipment::Equipment::mainhand(item)],
+                                    );
+                                }
+                            }
+                            crate::inventory::InventorySlotChange::Equipment { slot, item } => {
+                                players.update_equipment(
+                                    profile.uuid,
+                                    vec![qexed_protocol::to_client::play::set_equipment::Equipment::new(slot, item)],
+                                );
+                            }
+                        }
+                        sink.flush().await?;
+                    }
+                    continue;
+                }
+
+                if packet_id == PickItemFromBlock::ID {
+                    let pick = crate::connection::decode_payload::<PickItemFromBlock>(&mut payload)?;
+                    let item_id = world
+                        .block_state_at(&world_config.dimension, &pick.position)
+                        .and_then(|block_state| (block_state == crate::inventory::STONE_BLOCK_STATE_ID).then_some(1))
+                        .unwrap_or(1);
+                    let slot = inventory.pick_block(item_id);
+                    let held = inventory.held_item().clone();
+                    sink.send(crate::inventory::set_player_inventory_packet(slot, held.clone())).await?;
+                    sink.send(SetHeldSlot { slot: VarInt(slot as i32) }).await?;
+                    players.update_equipment(
+                        profile.uuid,
+                        vec![qexed_protocol::to_client::play::set_equipment::Equipment::mainhand(held)],
+                    );
+                    sink.flush().await?;
+                    continue;
+                }
+
+                if packet_id == UseItemOn::ID {
+                    let use_item_on = crate::connection::decode_payload::<UseItemOn>(&mut payload)?;
+                    sink.send(crate::inventory::acknowledge_block_change(use_item_on.sequence).packet()).await?;
+                    if use_item_on.hand.0 == 0 {
+                        if let Some(block_state) = crate::inventory::placed_block_state_for_item(inventory.held_item()) {
+                            let placed = crate::inventory::placement_position(
+                                &use_item_on.block_hit.position,
+                                use_item_on.block_hit.face.0,
+                            );
+                            world.place_block(&world_config.dimension, placed.clone(), block_state);
+                            sink.send(crate::inventory::block_update(placed.clone(), block_state)).await?;
+                            let light_update = if world.dynamic_light_enabled() {
+                                let update = world.light_update(
+                                    &world_config.dimension,
+                                    placed.x.div_euclid(16),
+                                    placed.z.div_euclid(16),
+                                );
+                                sink.send(update.clone()).await?;
+                                Some(qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(update)?)
+                            } else {
+                                None
+                            };
+                            players.broadcast_block_changed(profile.uuid, placed, block_state, light_update);
+                        }
+                    }
+                    sink.flush().await?;
+                    continue;
+                }
+
+                if packet_id == UseItem::ID {
+                    let use_item = crate::connection::decode_payload::<UseItem>(&mut payload)?;
+                    sink.send(crate::inventory::acknowledge_block_change(use_item.sequence).packet()).await?;
+                    sink.flush().await?;
+                    continue;
+                }
+
                 if packet_id == MovePlayerPos::ID {
                     let movement = crate::connection::decode_payload::<MovePlayerPos>(&mut payload)?;
                     position.x = movement.x;
                     position.y = movement.y;
                     position.z = movement.z;
                     position.on_ground = movement.flags & 0x01 != 0;
-                    chunk_state.update_center(sink, world, movement.x, movement.z).await?;
+                    chunk_state
+                        .update_center(sink, &chunk_sender, world, movement.x, movement.z)
+                        .await?;
                     players.update_position(profile.uuid, position);
                     continue;
                 }
@@ -505,7 +834,9 @@ where
                     position.yaw = movement.yaw;
                     position.pitch = movement.pitch;
                     position.on_ground = movement.flags & 0x01 != 0;
-                    chunk_state.update_center(sink, world, movement.x, movement.z).await?;
+                    chunk_state
+                        .update_center(sink, &chunk_sender, world, movement.x, movement.z)
+                        .await?;
                     players.update_position(profile.uuid, position);
                     continue;
                 }
@@ -590,10 +921,7 @@ where
                 if packet_id == ChatCommand::ID {
                     let command = crate::connection::decode_payload::<ChatCommand>(&mut payload)?;
                     log::debug!("收到聊天命令: /{}", command.command);
-                    sink.send(SystemChat {
-                        content: text_component(format!("未知命令: /{}", command.command)),
-                        overlay: false,
-                    }).await?;
+                    handle_chat_command(sink, config, players, &command.command).await?;
                     sink.flush().await?;
                     continue;
                 }
@@ -615,6 +943,35 @@ where
     }
 }
 
+async fn handle_chat_command<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    config: &qexed_config::app::qexed::Qexed,
+    players: &PlayerManager,
+    command: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let command = command.trim();
+    let messages = crate::commands::messages();
+    let content = match command {
+        "help" => messages.render_help(),
+        "list" => {
+            let mut names = players.online_names();
+            names.sort();
+            messages.render_list(players.online_count(), config.server.max_player, &names)
+        }
+        _ => messages.render_unknown(command),
+    };
+
+    sink.send(SystemChat {
+        content,
+        overlay: false,
+    })
+    .await?;
+    Ok(())
+}
+
 fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool {
     match event {
         PlayerEvent::Joined(player) => player.profile.uuid == profile_id,
@@ -627,6 +984,17 @@ fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool {
             entity_id: _,
             position: _,
         } => *moved_id == profile_id,
+        PlayerEvent::EquipmentChanged {
+            profile_id: changed_id,
+            entity_id: _,
+            slots: _,
+        } => *changed_id == profile_id,
+        PlayerEvent::BlockChanged {
+            profile_id: changed_id,
+            position: _,
+            block_state: _,
+            light_update: _,
+        } => *changed_id == profile_id,
     }
 }
 
@@ -748,7 +1116,10 @@ fn workspace_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{chunk_coord, dimension_type_holder_id, entity_type_id, keep_alive_id};
+    use super::{
+        ChunkSendState, chunk_coord, dimension_type_holder_id, entity_type_id, keep_alive_id,
+    };
+    use std::time::{Duration, Instant};
 
     #[test]
     fn chunk_coord_uses_floor_division() {
@@ -768,6 +1139,40 @@ mod tests {
     #[test]
     fn keep_alive_id_is_non_negative() {
         assert!(keep_alive_id() >= 0);
+    }
+
+    #[test]
+    fn delayed_unload_keeps_recently_left_chunks_visible() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1);
+        state.visible_chunks.insert((-1, 0));
+        state.visible_chunks.insert((0, 0));
+
+        state.center_x = 2;
+        let target = state.target_chunks();
+        state.mark_delayed_unloads(target, Instant::now() + Duration::from_secs(4));
+
+        assert!(state.visible_chunks.contains(&(-1, 0)));
+        assert!(state.pending_unloads.contains_key(&(-1, 0)));
+    }
+
+    #[test]
+    fn delayed_unload_is_cancelled_when_chunk_returns_to_view() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1);
+        state.visible_chunks.insert((-1, 0));
+
+        state.center_x = 2;
+        state.mark_delayed_unloads(
+            state.target_chunks(),
+            Instant::now() + Duration::from_secs(4),
+        );
+        state.center_x = 0;
+        state.mark_delayed_unloads(
+            state.target_chunks(),
+            Instant::now() + Duration::from_secs(4),
+        );
+
+        assert!(!state.pending_unloads.contains_key(&(-1, 0)));
+        assert!(state.visible_chunks.contains(&(-1, 0)));
     }
 
     #[test]

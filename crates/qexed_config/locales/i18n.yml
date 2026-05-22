@@ -163,6 +163,9 @@ config:
         simulation_distance:
           en: "Initial simulation distance"
           zh-CN: "初始模拟距离"
+        light:
+          en: "World lighting mode: static, dynamic, or a fixed brightness integer from 0 to 15"
+          zh-CN: "世界光照模式：static、dynamic，或 0 到 15 的固定亮度整数"
         spawn:
           en: "Player spawn position and rotation"
           zh-CN: "玩家出生坐标与朝向"

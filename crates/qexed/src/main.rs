@@ -1,6 +1,8 @@
 mod auth;
 mod bootstrap;
+mod commands;
 mod connection;
+mod inventory;
 mod lan_discovery;
 mod play;
 mod players;

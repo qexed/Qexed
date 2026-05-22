@@ -32,7 +32,10 @@ pub struct ServerContext {
 
 impl ServerContext {
     pub fn new(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<Self> {
-        let world = crate::world::WorldManager::new(config.server.world.path.clone());
+        let world = crate::world::WorldManager::with_light_mode(
+            config.server.world.path.clone(),
+            crate::world::WorldLightMode::from(&config.server.world.light),
+        );
         world.ensure_storage(&config.server.world.dimension)?;
         Ok(Self {
             config: std::sync::Arc::new(config),
