@@ -53,3 +53,28 @@ fn generated_configs_include_autodoc_comments() -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+#[test]
+fn existing_config_keeps_single_autodoc_header() -> anyhow::Result<()> {
+    let dir = temp_config_dir("autodoc_header");
+
+    Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+
+    let qexed_path = dir.join("qexed.toml");
+    let qexed = std::fs::read_to_string(&qexed_path)?;
+    let duplicate_header = r#"# ==== AutoDocHeader ====
+# 手动制造的重复 Header
+# ==== AutoDocHeader ====
+# 手动制造的重复 Header
+"#;
+    std::fs::write(&qexed_path, format!("{duplicate_header}{qexed}"))?;
+
+    Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+
+    let qexed = std::fs::read_to_string(qexed_path)?;
+    assert_eq!(qexed.matches("# ==== AutoDocHeader ====").count(), 1);
+    assert!(qexed.contains("服务器监听地址"));
+
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

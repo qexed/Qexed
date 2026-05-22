@@ -624,17 +624,98 @@ fn ensure_or_update_doc_header(doc: &mut DocumentMut, lang: &str) {
     let end_marker = "# =======================";
     let new_header_block = format!("{}\n{}\n{}", start_marker, processed_header, end_marker);
 
+    remove_doc_headers(doc, start_marker, end_marker);
+
     let current_prefix = doc
         .decor()
         .prefix()
         .map(|r| r.as_str().unwrap_or(""))
         .unwrap_or("")
         .to_string();
+    let new_prefix = if current_prefix.is_empty() {
+        format!("{}\n", new_header_block)
+    } else {
+        format!("{}\n\n{}", new_header_block, current_prefix)
+    };
 
-    let lines: Vec<&str> = current_prefix.lines().collect();
-    let mut new_prefix = String::new();
+    doc.decor_mut().set_prefix(RawString::from(new_prefix));
+}
+
+fn remove_doc_headers(doc: &mut DocumentMut, start_marker: &str, end_marker: &str) {
+    let current_prefix = doc
+        .decor()
+        .prefix()
+        .map(|r| r.as_str().unwrap_or(""))
+        .unwrap_or("")
+        .to_string();
+    let new_prefix = remove_doc_header_blocks(&current_prefix, start_marker, end_marker);
+    doc.decor_mut().set_prefix(RawString::from(new_prefix));
+
+    remove_doc_headers_from_table(doc.as_table_mut(), start_marker, end_marker);
+}
+
+fn remove_doc_headers_from_table(
+    table: &mut toml_edit::Table,
+    start_marker: &str,
+    end_marker: &str,
+) {
+    let keys = table
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .collect::<Vec<_>>();
+
+    for key in keys {
+        if let Some(mut key_mut) = table.key_mut(&key) {
+            let current_prefix = key_mut
+                .leaf_decor_mut()
+                .prefix()
+                .map(|r| r.as_str().unwrap_or(""))
+                .unwrap_or("")
+                .to_string();
+            let new_prefix = remove_doc_header_blocks(&current_prefix, start_marker, end_marker);
+            key_mut
+                .leaf_decor_mut()
+                .set_prefix(RawString::from(new_prefix));
+        }
+
+        if let Some(item) = table.get_mut(&key) {
+            match item {
+                toml_edit::Item::Table(table) => {
+                    let current_prefix = table
+                        .decor_mut()
+                        .prefix()
+                        .map(|r| r.as_str().unwrap_or(""))
+                        .unwrap_or("")
+                        .to_string();
+                    let new_prefix =
+                        remove_doc_header_blocks(&current_prefix, start_marker, end_marker);
+                    table.decor_mut().set_prefix(RawString::from(new_prefix));
+                    remove_doc_headers_from_table(table, start_marker, end_marker);
+                }
+                toml_edit::Item::ArrayOfTables(array) => {
+                    for table in array.iter_mut() {
+                        let current_prefix = table
+                            .decor_mut()
+                            .prefix()
+                            .map(|r| r.as_str().unwrap_or(""))
+                            .unwrap_or("")
+                            .to_string();
+                        let new_prefix =
+                            remove_doc_header_blocks(&current_prefix, start_marker, end_marker);
+                        table.decor_mut().set_prefix(RawString::from(new_prefix));
+                        remove_doc_headers_from_table(table, start_marker, end_marker);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn remove_doc_header_blocks(prefix: &str, start_marker: &str, end_marker: &str) -> String {
+    let lines: Vec<&str> = prefix.lines().collect();
+    let mut result = String::new();
     let mut i = 0;
-    let mut replaced = false;
 
     while i < lines.len() {
         let line = lines[i];
@@ -642,41 +723,34 @@ fn ensure_or_update_doc_header(doc: &mut DocumentMut, lang: &str) {
 
         if trimmed == start_marker {
             let mut j = i + 1;
-            let mut found_end = false;
             while j < lines.len() {
-                if lines[j].trim() == end_marker {
-                    found_end = true;
+                let next_trimmed = lines[j].trim();
+                if next_trimmed == start_marker
+                    || next_trimmed == "# ======= AutoDoc ======="
+                    || next_trimmed.starts_with('[')
+                    || (!next_trimmed.is_empty() && !next_trimmed.starts_with('#'))
+                {
+                    break;
+                }
+                if next_trimmed == end_marker {
+                    j += 1;
                     break;
                 }
                 j += 1;
             }
-            if found_end {
-                if !new_prefix.is_empty() && !new_prefix.ends_with('\n') {
-                    new_prefix.push('\n');
-                }
-                new_prefix.push_str(&new_header_block);
-                new_prefix.push('\n');
-                i = j + 1;
-                replaced = true;
-                continue;
-            }
+
+            i = j;
+            continue;
         }
-        new_prefix.push_str(line);
-        new_prefix.push('\n');
+
+        result.push_str(line);
+        result.push('\n');
         i += 1;
     }
 
-    if !replaced {
-        if !new_prefix.is_empty() {
-            new_prefix = format!("{}\n\n{}", new_header_block, new_prefix);
-        } else {
-            new_prefix = format!("{}\n", new_header_block);
-        }
-    } else {
-        while new_prefix.ends_with("\n\n") {
-            new_prefix.pop();
-        }
+    while result.starts_with('\n') {
+        result.remove(0);
     }
 
-    doc.decor_mut().set_prefix(RawString::from(new_prefix));
+    result
 }

@@ -142,6 +142,9 @@ config:
       motd:
         en: "Random server description lines"
         zh-CN: "服务器描述随机内容"
+      code_of_conduct:
+        en: "Server entry code of conduct. Empty disables the code-of-conduct prompt."
+        zh-CN: "入服准则内容。为空时不显示入服准则。"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

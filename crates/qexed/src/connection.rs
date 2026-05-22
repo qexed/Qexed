@@ -3,8 +3,12 @@ use qexed_packet::{Packet, PacketCodec};
 use qexed_protocol::{
     to_client,
     to_server::{
+        configuration::accept_code_of_conduct::AcceptCodeOfConduct,
         handshaking::set_protocol::SetProtocol,
-        login::{encryption_begin::EncryptionBegin as ServerboundKey, login_start::LoginStart},
+        login::{
+            encryption_begin::EncryptionBegin as ServerboundKey,
+            login_acknowledged::LoginAcknowledged, login_start::LoginStart,
+        },
         status::{ping::Ping as StatusPing, ping_start::PingStart},
     },
 };
@@ -130,7 +134,54 @@ where
     })
     .await?;
 
+    read_expected_packet::<LoginAcknowledged, _>(packets).await?;
+    handle_configuration(packets, sink, context).await?;
+
     Ok(())
+}
+
+async fn handle_configuration<R, W>(
+    packets: &mut qexed_tcp_connect::PacketStream<R>,
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    context: &ServerContext,
+) -> anyhow::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let code_of_conduct = context.config.server.code_of_conduct.trim();
+    if code_of_conduct.is_empty() {
+        return Ok(());
+    }
+
+    sink.send(to_client::configuration::code_of_conduct::CodeOfConduct {
+        code_of_conduct: code_of_conduct.to_string(),
+    })
+    .await?;
+    wait_for_code_of_conduct_accept(packets).await?;
+
+    Ok(())
+}
+
+async fn wait_for_code_of_conduct_accept<R>(
+    packets: &mut qexed_tcp_connect::PacketStream<R>,
+) -> anyhow::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    loop {
+        let Some(mut payload) = packets.read_packet().await? else {
+            anyhow::bail!("连接在等待接受入服准则时关闭");
+        };
+
+        let packet_id = read_packet_id(&mut payload)?;
+        if packet_id == AcceptCodeOfConduct::ID {
+            decode_payload::<AcceptCodeOfConduct>(&mut payload)?;
+            return Ok(());
+        }
+
+        log::debug!("等待接受入服准则时跳过配置态数据包 ID: {packet_id}");
+    }
 }
 
 async fn authenticate_online<R, W>(
@@ -229,9 +280,18 @@ fn random_verify_token() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use qexed_packet::{Packet, PacketCodec};
-    use qexed_protocol::to_server::handshaking::set_protocol::SetProtocol;
+    use qexed_protocol::{
+        to_client::configuration::code_of_conduct::CodeOfConduct,
+        to_server::{
+            configuration::{
+                accept_code_of_conduct::AcceptCodeOfConduct, custom_payload::CustomPayload,
+            },
+            handshaking::set_protocol::SetProtocol,
+        },
+    };
+    use tokio::io::duplex;
 
-    use super::{decode_payload, read_packet_id};
+    use super::{ServerContext, decode_payload, handle_configuration, read_packet_id};
 
     #[test]
     fn reading_packet_id_leaves_payload_at_packet_body() {
@@ -253,5 +313,103 @@ mod tests {
 
         assert_eq!(decoded.protocol_version.0, qexed_config::PROTOCOL_VERSION);
         assert_eq!(decoded.next_state.0, 2);
+    }
+
+    #[tokio::test]
+    async fn empty_code_of_conduct_sends_no_prompt() {
+        let context = ServerContext::new(qexed_config::app::qexed::Qexed::default()).unwrap();
+        let (server_io, mut client_io) = duplex(1024);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let mut packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut sink = qexed_tcp_connect::PacketSink::new(server_writer);
+
+        handle_configuration(&mut packets, &mut sink, &context)
+            .await
+            .unwrap();
+        sink.shutdown().await.unwrap();
+
+        let mut buf = [0_u8; 1];
+        let read = tokio::io::AsyncReadExt::read(&mut client_io, &mut buf)
+            .await
+            .unwrap();
+        assert_eq!(read, 0);
+    }
+
+    #[tokio::test]
+    async fn non_empty_code_of_conduct_sends_prompt_and_waits_for_accept() {
+        let mut config = qexed_config::app::qexed::Qexed::default();
+        config.server.code_of_conduct = "遵守服务器规则".to_string();
+        let context = ServerContext::new(config).unwrap();
+
+        let (server_io, client_io) = duplex(4096);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let (client_reader, mut client_writer) = tokio::io::split(client_io);
+        let mut server_packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut server_sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
+
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut server_packets, &mut server_sink, &context).await
+        });
+
+        let mut prompt_payload = client_packets.read_packet().await.unwrap().unwrap();
+        assert_eq!(
+            read_packet_id(&mut prompt_payload).unwrap(),
+            CodeOfConduct::ID
+        );
+        let prompt = decode_payload::<CodeOfConduct>(&mut prompt_payload).unwrap();
+        assert_eq!(prompt.code_of_conduct, "遵守服务器规则");
+
+        let accept_payload = qexed_tcp_connect::PacketSink::<
+            tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        >::build_send_packet(AcceptCodeOfConduct {})
+        .unwrap();
+        let mut client_sink = qexed_tcp_connect::PacketSink::new(&mut client_writer);
+        client_sink.send_raw(accept_payload).await.unwrap();
+        client_sink.flush().await.unwrap();
+
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn code_of_conduct_wait_skips_prior_configuration_packets() {
+        let mut config = qexed_config::app::qexed::Qexed::default();
+        config.server.code_of_conduct = "遵守服务器规则".to_string();
+        let context = ServerContext::new(config).unwrap();
+
+        let (server_io, client_io) = duplex(4096);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let (client_reader, mut client_writer) = tokio::io::split(client_io);
+        let mut server_packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut server_sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
+
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut server_packets, &mut server_sink, &context).await
+        });
+
+        let mut prompt_payload = client_packets.read_packet().await.unwrap().unwrap();
+        assert_eq!(
+            read_packet_id(&mut prompt_payload).unwrap(),
+            CodeOfConduct::ID
+        );
+
+        let custom_payload = qexed_tcp_connect::PacketSink::<
+            tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        >::build_send_packet(CustomPayload {
+            channel: "minecraft:brand".to_string(),
+            data: qexed_packet::net_types::RestBuffer(Vec::new()),
+        })
+        .unwrap();
+        let accept_payload = qexed_tcp_connect::PacketSink::<
+            tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        >::build_send_packet(AcceptCodeOfConduct {})
+        .unwrap();
+        let mut client_sink = qexed_tcp_connect::PacketSink::new(&mut client_writer);
+        client_sink.send_raw(custom_payload).await.unwrap();
+        client_sink.send_raw(accept_payload).await.unwrap();
+        client_sink.flush().await.unwrap();
+
+        server_task.await.unwrap().unwrap();
     }
 }
