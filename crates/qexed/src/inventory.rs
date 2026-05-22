@@ -8,6 +8,8 @@ use qexed_protocol::{
     types::Slot,
 };
 
+use crate::player_data::{StoredEquipment, StoredInventory, StoredSlot};
+
 const STONE_ITEM_ID: i32 = 1;
 pub const STONE_BLOCK_STATE_ID: i32 = 7760;
 const HOTBAR_SIZE: usize = 9;
@@ -45,6 +47,26 @@ impl Default for PlayerInventory {
 }
 
 impl PlayerInventory {
+    pub fn from_stored(stored: &StoredInventory) -> Self {
+        let mut inventory = Self::default();
+        for (index, slot) in stored.hotbar.iter().take(HOTBAR_SIZE).enumerate() {
+            inventory.hotbar[index] = slot.into();
+        }
+        inventory.selected = stored.selected.min(HOTBAR_SIZE - 1);
+        inventory.equipment = stored.equipment.iter().map(Equipment::from).collect();
+        let held = inventory.held_item().clone();
+        inventory.set_equipment_slot(Equipment::MAINHAND, held);
+        inventory
+    }
+
+    pub fn to_stored(&self) -> StoredInventory {
+        StoredInventory {
+            selected: self.selected,
+            hotbar: self.hotbar.iter().map(StoredSlot::from).collect(),
+            equipment: self.equipment.iter().map(StoredEquipment::from).collect(),
+        }
+    }
+
     pub fn set_selected(&mut self, slot: i16) -> Option<Slot> {
         let slot = usize::try_from(slot).ok()?;
         if slot >= HOTBAR_SIZE {

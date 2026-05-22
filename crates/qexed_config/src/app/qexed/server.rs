@@ -1,3 +1,4 @@
+use qexed_config::{public::mongodb::MongoConfig, public::mysql::MysqlConfig};
 use qexed_config_macros::AutoDoc;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize, de};
@@ -64,6 +65,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.world", sub)]
     pub world: World,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_data", sub)]
+    pub player_data: PlayerData,
+
     #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
@@ -89,10 +94,84 @@ impl Default for Server {
             ],
             code_of_conduct: String::new(),
             world: World::default(),
+            player_data: PlayerData::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct PlayerData {
+    #[serde(default = "default_player_data_enable")]
+    #[AutoDoc(key = "config.qexed.server.player_data.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_data.engine")]
+    pub engine: PlayerDataEngine,
+
+    #[serde(default = "default_player_data_collection")]
+    #[AutoDoc(key = "config.qexed.server.player_data.collection")]
+    pub collection: String,
+
+    #[serde(default = "default_player_data_table")]
+    #[AutoDoc(key = "config.qexed.server.player_data.table")]
+    pub table: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_data.mongodb", sub)]
+    pub mongodb: MongoConfig,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_data.mysql", sub)]
+    pub mysql: MysqlConfig,
+}
+
+impl Default for PlayerData {
+    fn default() -> Self {
+        Self {
+            enable: default_player_data_enable(),
+            engine: PlayerDataEngine::default(),
+            collection: default_player_data_collection(),
+            table: default_player_data_table(),
+            mongodb: MongoConfig {
+                username: Some("qexed".to_string()),
+                password: Some(nanoid::nanoid!()),
+                database: "qexed".to_string(),
+                app_name: Some("qexed".to_string()),
+                auth_source: Some("admin".to_string()),
+                ..MongoConfig::default()
+            },
+            mysql: MysqlConfig {
+                username: "qexed".to_string(),
+                password: nanoid::nanoid!(),
+                database: "qexed".to_string(),
+                ..MysqlConfig::default()
+            },
+        }
+    }
+}
+
+fn default_player_data_enable() -> bool {
+    true
+}
+
+fn default_player_data_collection() -> String {
+    "players".to_string()
+}
+
+fn default_player_data_table() -> String {
+    "qexed_players".to_string()
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerDataEngine {
+    #[default]
+    Vanilla,
+    Mongodb,
+    Mysql,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
@@ -117,6 +196,18 @@ impl Default for LanDiscovery {
 pub struct World {
     #[AutoDoc(key = "config.qexed.server.world.path")]
     pub path: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.read_only")]
+    pub read_only: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.game_mode")]
+    pub game_mode: GameMode,
+
+    #[serde(default = "default_spawn_protection_radius")]
+    #[AutoDoc(key = "config.qexed.server.world.spawn_protection_radius")]
+    pub spawn_protection_radius: i32,
 
     #[AutoDoc(key = "config.qexed.server.world.dimension")]
     pub dimension: String,
@@ -154,6 +245,9 @@ impl Default for World {
     fn default() -> Self {
         Self {
             path: "world".to_string(),
+            read_only: false,
+            game_mode: GameMode::default(),
+            spawn_protection_radius: default_spawn_protection_radius(),
             dimension: "minecraft:overworld".to_string(),
             dimension_type: "minecraft:overworld".to_string(),
             view_distance: 3,
@@ -169,6 +263,31 @@ impl Default for World {
 
 fn default_chunk_load_parallelism() -> usize {
     4
+}
+
+fn default_spawn_protection_radius() -> i32 {
+    16
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GameMode {
+    #[default]
+    Survival,
+    Creative,
+    Adventure,
+    Spectator,
+}
+
+impl GameMode {
+    pub fn protocol_id(self) -> u8 {
+        match self {
+            Self::Survival => 0,
+            Self::Creative => 1,
+            Self::Adventure => 2,
+            Self::Spectator => 3,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -450,7 +569,9 @@ impl std::str::FromStr for ForwardingMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{GpuDeviceSelector, LightAlgorithm, LightMode, World};
+    use super::{
+        GameMode, GpuDeviceSelector, LightAlgorithm, LightMode, PlayerData, PlayerDataEngine, World,
+    };
 
     #[test]
     fn parses_world_light_string_modes() {
@@ -463,6 +584,8 @@ view_distance = 3
 chunk_load_parallelism = 4
 simulation_distance = 3
 light = "static"
+game_mode = "creative"
+spawn_protection_radius = 0
 
 [spawn]
 x = 0.0
@@ -474,6 +597,8 @@ pitch = 0.0
         )
         .unwrap();
         assert_eq!(static_world.light, LightMode::Static);
+        assert_eq!(static_world.game_mode, GameMode::Creative);
+        assert_eq!(static_world.spawn_protection_radius, 0);
 
         let dynamic_world: World = toml::from_str(
             r#"
@@ -495,6 +620,8 @@ pitch = 0.0
         )
         .unwrap();
         assert_eq!(dynamic_world.light, LightMode::Dynamic);
+        assert_eq!(dynamic_world.game_mode, GameMode::Survival);
+        assert_eq!(dynamic_world.spawn_protection_radius, 16);
     }
 
     #[test]
@@ -606,5 +733,35 @@ pitch = 0.0
 
         assert!(!world.gpu.enable);
         assert_eq!(world.gpu.device, GpuDeviceSelector::Index(1));
+    }
+
+    #[test]
+    fn parses_player_data_settings() {
+        let player_data: PlayerData = toml::from_str(
+            r#"
+enable = false
+engine = "mysql"
+collection = "qexed_players"
+table = "qexed_player_data"
+
+[mongodb]
+host = "127.0.0.1"
+database = "qexed_player_test"
+
+[mysql]
+host = "127.0.0.1"
+username = "qexed"
+password = "qexed"
+database = "qexed_player_test"
+"#,
+        )
+        .unwrap();
+
+        assert!(!player_data.enable);
+        assert_eq!(player_data.engine, PlayerDataEngine::Mysql);
+        assert_eq!(player_data.collection, "qexed_players");
+        assert_eq!(player_data.table, "qexed_player_data");
+        assert_eq!(player_data.mongodb.database, "qexed_player_test");
+        assert_eq!(player_data.mysql.username, "qexed");
     }
 }

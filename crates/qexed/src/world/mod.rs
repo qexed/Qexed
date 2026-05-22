@@ -33,6 +33,7 @@ const PLAINS_BIOME_ID: i32 = 40;
 #[derive(Clone, Debug)]
 pub struct WorldManager {
     save_path: std::path::PathBuf,
+    read_only: bool,
     light_mode: WorldLightMode,
     light_algorithm: WorldLightAlgorithm,
     light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
@@ -49,6 +50,7 @@ impl WorldManager {
             WorldLightMode::default(),
             WorldLightAlgorithm::default(),
             None,
+            false,
         )
     }
 
@@ -57,9 +59,11 @@ impl WorldManager {
         light_mode: WorldLightMode,
         light_algorithm: WorldLightAlgorithm,
         light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
+        read_only: bool,
     ) -> Self {
         Self {
             save_path: save_path.into(),
+            read_only,
             light_mode,
             light_algorithm,
             light_gpu,
@@ -72,6 +76,10 @@ impl WorldManager {
 
     pub fn save_path(&self) -> &std::path::Path {
         &self.save_path
+    }
+
+    pub fn read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn begin_session(&self) -> WorldSession {
@@ -213,6 +221,10 @@ impl WorldManager {
         chunk_z: i32,
         chunk: region::ChunkData,
     ) -> Result<()> {
+        if self.read_only {
+            anyhow::bail!("world is read-only");
+        }
+
         log::trace!(
             "写入区块到存档: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), root={}",
             self.save_path.display()
@@ -237,6 +249,11 @@ impl WorldManager {
     }
 
     pub fn ensure_storage(&self, dimension: &str) -> Result<()> {
+        if self.read_only {
+            log::debug!("skipped world storage creation because world is read-only");
+            return Ok(());
+        }
+
         std::fs::create_dir_all(self.dimension_region_path(dimension))
             .with_context(|| format!("创建世界存档目录失败: {}", self.save_path.display()))
     }
@@ -247,6 +264,16 @@ impl WorldManager {
         position: qexed_packet::net_types::Position,
         block_state: i32,
     ) {
+        if self.read_only {
+            log::debug!(
+                "ignored block placement because world is read-only: dimension={dimension}, position=({}, {}, {})",
+                position.x,
+                position.y,
+                position.z
+            );
+            return;
+        }
+
         self.placed_blocks
             .lock()
             .expect("world block store poisoned")
@@ -1414,6 +1441,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(loaded.decompress().unwrap(), b"chunk");
+    }
+
+    #[test]
+    fn read_only_world_rejects_region_writes_and_block_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = WorldManager::with_light_mode(
+            dir.path(),
+            WorldLightMode::Static,
+            WorldLightAlgorithm::Fast,
+            None,
+            true,
+        );
+        let chunk = super::region::ChunkData::zlib(b"chunk").unwrap();
+        let position = qexed_packet::net_types::Position { x: 1, y: 64, z: 1 };
+
+        assert!(
+            manager
+                .write_region_chunk("minecraft:overworld", 0, 0, chunk)
+                .is_err()
+        );
+        manager.place_block("minecraft:overworld", position.clone(), 1);
+
+        assert_eq!(
+            manager.block_state_at("minecraft:overworld", &position),
+            None
+        );
     }
 
     #[test]

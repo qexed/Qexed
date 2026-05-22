@@ -28,22 +28,30 @@ pub struct ServerContext {
     pub authenticator: std::sync::Arc<Authenticator>,
     pub world: std::sync::Arc<crate::world::WorldManager>,
     pub players: std::sync::Arc<crate::players::PlayerManager>,
+    pub player_data: std::sync::Arc<crate::player_data::PlayerDataManager>,
 }
 
 impl ServerContext {
-    pub fn new(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<Self> {
+    pub async fn new(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<Self> {
         let world = crate::world::WorldManager::with_light_mode(
             config.server.world.path.clone(),
             crate::world::WorldLightMode::from(&config.server.world.light),
             crate::world::WorldLightAlgorithm::from(&config.server.world.light_algorithm),
             crate::world::light_gpu_from_config(&config.server.world.gpu),
+            config.server.world.read_only,
         );
         world.ensure_storage(&config.server.world.dimension)?;
+        let player_data = crate::player_data::PlayerDataManager::from_config(
+            config.server.world.path.clone(),
+            &config.server.player_data,
+        )
+        .await?;
         Ok(Self {
             config: std::sync::Arc::new(config),
             authenticator: std::sync::Arc::new(Authenticator::new()?),
             world: std::sync::Arc::new(world),
             players: std::sync::Arc::new(crate::players::PlayerManager::new()),
+            player_data: std::sync::Arc::new(player_data),
         })
     }
 }
@@ -160,6 +168,7 @@ where
         &context.authenticator,
         &context.world,
         &context.players,
+        &context.player_data,
         &profile,
     )
     .await?;
@@ -448,7 +457,9 @@ mod tests {
 
     #[tokio::test]
     async fn empty_code_of_conduct_skips_prompt_but_finishes_configuration() {
-        let context = ServerContext::new(qexed_config::app::qexed::Qexed::default()).unwrap();
+        let context = ServerContext::new(qexed_config::app::qexed::Qexed::default())
+            .await
+            .unwrap();
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
         let (server_reader, server_writer) = tokio::io::split(server_io);
         let (client_reader, client_writer) = tokio::io::split(client_io);
@@ -478,7 +489,7 @@ mod tests {
     async fn non_empty_code_of_conduct_sends_prompt_and_waits_for_accept() {
         let mut config = qexed_config::app::qexed::Qexed::default();
         config.server.code_of_conduct = "遵守服务器规则".to_string();
-        let context = ServerContext::new(config).unwrap();
+        let context = ServerContext::new(config).await.unwrap();
 
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
         let (server_reader, server_writer) = tokio::io::split(server_io);
@@ -516,7 +527,7 @@ mod tests {
     async fn code_of_conduct_wait_skips_prior_configuration_packets() {
         let mut config = qexed_config::app::qexed::Qexed::default();
         config.server.code_of_conduct = "遵守服务器规则".to_string();
-        let context = ServerContext::new(config).unwrap();
+        let context = ServerContext::new(config).await.unwrap();
 
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
         let (server_reader, server_writer) = tokio::io::split(server_io);

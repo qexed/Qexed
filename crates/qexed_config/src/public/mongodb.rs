@@ -97,13 +97,21 @@ fn default_max_idle_time_ms() -> Option<Duration> {
     Some(Duration::from_secs(60))
 }
 
+fn default_username() -> Option<String> {
+    Some("qexed".to_string())
+}
+
+fn default_password() -> Option<String> {
+    Some(nanoid::nanoid!())
+}
+
 impl Default for MongoConfig {
     fn default() -> Self {
         Self {
             host: default_host(),
             port: default_mongo_port(),
-            username: None,
-            password: None,
+            username: default_username(),
+            password: default_password(),
             database: String::new(),
             app_name: default_app_name(),
             replica_set: default_replica_set(),

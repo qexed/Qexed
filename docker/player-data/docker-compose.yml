@@ -1,0 +1,34 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: qexed-playerdata-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: qexed
+      MONGO_INITDB_ROOT_PASSWORD: qexed
+      MONGO_INITDB_DATABASE: qexed
+    volumes:
+      - mongodb-data:/data/db
+
+  mysql:
+    image: mysql:8.4
+    container_name: qexed-playerdata-mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: qexed-root
+      MYSQL_DATABASE: qexed
+      MYSQL_USER: qexed
+      MYSQL_PASSWORD: qexed
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+volumes:
+  mongodb-data:
+  mysql-data:

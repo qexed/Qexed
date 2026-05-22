@@ -5,6 +5,7 @@ mod connection;
 mod inventory;
 mod lan_discovery;
 mod play;
+mod player_data;
 mod players;
 mod registry_sync;
 mod secure_chat;
@@ -28,6 +29,6 @@ async fn run() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let context = connection::ServerContext::new(config)?;
+    let context = connection::ServerContext::new(config).await?;
     server::run(context).await
 }

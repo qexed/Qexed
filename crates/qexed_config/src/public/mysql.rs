@@ -78,13 +78,17 @@ fn default_charset() -> String {
     "utf8mb4".to_string()
 }
 
+fn default_password() -> String {
+    nanoid::nanoid!()
+}
+
 impl Default for MysqlConfig {
     fn default() -> Self {
         Self {
             ip: default_ip(),
             port: default_port(),
             username: String::new(),
-            password: String::new(),
+            password: default_password(),
             database: String::new(),
             pool_max_size: default_pool_max_size(),
             pool_min_idle: default_pool_min_idle(),

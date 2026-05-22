@@ -27,7 +27,7 @@ impl Default for PluginDownload {
         Self {
             enable: false,
             download: "https://api.example.com/plugins/".to_owned(),
-            download_token: "123456".to_owned(),
+            download_token: nanoid::nanoid!(),
         }
     }
 }

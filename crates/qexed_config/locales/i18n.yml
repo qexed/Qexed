@@ -151,6 +151,15 @@ config:
         path:
           en: "World save directory"
           zh-CN: "世界存档目录"
+        read_only:
+          en: "Enable read-only world mode. Player world edits are rejected and not written."
+          zh-CN: "启用只读世界模式。玩家世界修改会被拒绝，不会写入世界。"
+        game_mode:
+          en: "Default game mode: survival, creative, adventure, or spectator"
+          zh-CN: "默认游戏模式：survival、creative、adventure 或 spectator"
+        spawn_protection_radius:
+          en: "Spawn protection radius in blocks. 0 disables spawn protection."
+          zh-CN: "出生点保护半径，单位为方块。0 表示关闭出生点保护。"
         dimension:
           en: "Default dimension resource key"
           zh-CN: "默认维度资源键"
@@ -199,6 +208,27 @@ config:
           pitch:
             en: "Spawn pitch"
             zh-CN: "出生点俯仰角"
+      player_data:
+        en: "Player save data settings"
+        zh-CN: "玩家存档设置"
+        enable:
+          en: "Enable player data saving and loading"
+          zh-CN: "启用玩家数据保存与加载"
+        engine:
+          en: "Player data storage engine: vanilla, mongodb, or mysql"
+          zh-CN: "玩家数据存储引擎：vanilla、mongodb 或 mysql"
+        collection:
+          en: "MongoDB collection name for player data"
+          zh-CN: "MongoDB 玩家数据集合名"
+        table:
+          en: "MySQL table name for player data"
+          zh-CN: "MySQL 玩家数据表名"
+        mongodb:
+          en: "MongoDB settings for player data"
+          zh-CN: "玩家数据 MongoDB 设置"
+        mysql:
+          en: "MySQL settings for player data"
+          zh-CN: "玩家数据 MySQL 设置"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

@@ -78,3 +78,69 @@ fn existing_config_keeps_single_autodoc_header() -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+#[test]
+fn existing_config_gets_missing_nested_defaults() -> anyhow::Result<()> {
+    let dir = temp_config_dir("nested_defaults");
+    let qexed_path = dir.join("qexed.toml");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        &qexed_path,
+        r#"
+version = 0
+update_check = true
+language = "zh-CN"
+
+[plugin_download]
+enable = false
+download = "https://api.example.com/plugins/"
+download_token = "existing-token"
+
+[server]
+ip = "0.0.0.0:25565"
+online = false
+max_player = -1
+display_players = true
+online_mode = false
+network_compression_threshold = 256
+proxy = false
+proxy_protocol = "QTunnel"
+proxy_token = "existing-proxy-token"
+max_port_connections = 65535
+rate_limit_window_secs = 60
+rate_limit_max_attempts = 6
+motd = ["Welcome"]
+code_of_conduct = ""
+favicon = ""
+
+[server.world]
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[server.world.spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+    )?;
+
+    let config =
+        Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let qexed = std::fs::read_to_string(&qexed_path)?;
+
+    assert!(!config.server.world.read_only);
+    assert!(qexed.contains("game_mode = \"survival\""));
+    assert!(qexed.contains("spawn_protection_radius = 16"));
+    assert!(qexed.contains("[server.player_data]"));
+
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

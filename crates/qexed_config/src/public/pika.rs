@@ -85,13 +85,17 @@ fn default_connection_timeout_secs() -> Duration {
     Duration::from_secs(1)
 }
 
+fn default_password() -> Option<String> {
+    Some(nanoid::nanoid!())
+}
+
 impl Default for PikaConfig {
     fn default() -> Self {
         Self {
             mode: ConnectionMode::Standalone,
             host: default_redis_host(),
             port: default_redis_port(),
-            password: None,
+            password: default_password(),
             database: 0,
             pool_max_size: default_pool_size(),
             pool_min_idle: default_pool_idle_size(),

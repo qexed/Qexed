@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use qexed_config::app::qexed::server::{GameMode, Spawn};
 use qexed_packet::{Packet, net_types::VarInt};
 use qexed_protocol::to_client::play::{
     change_difficulty::ChangeDifficulty,
@@ -42,6 +43,7 @@ use qexed_protocol::to_server::play::{
     set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
+use crate::player_data::{PlayerData, PlayerDataManager};
 use crate::players::{OnlinePlayer, PlayerEvent, PlayerManager, PlayerSession};
 use crate::world::WorldManager;
 
@@ -60,6 +62,7 @@ pub async fn initialize<R, W>(
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     players: &PlayerManager,
+    player_data: &PlayerDataManager,
     profile: &qexed_packet::net_types::GameProfile,
 ) -> Result<()>
 where
@@ -67,40 +70,44 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let world_config = &config.server.world;
-    let spawn = &world_config.spawn;
+    let mut saved_player = player_data
+        .load_or_default(profile, &world_config.dimension, &world_config.spawn)
+        .await;
+    let play_dimension = if saved_player.dimension.is_empty() {
+        world_config.dimension.clone()
+    } else {
+        saved_player.dimension.clone()
+    };
+    let player_position = saved_player.entity_position();
     let view_distance = world_config.view_distance.max(1);
     let chunk_load_parallelism = chunk_load_parallelism_limit(world_config.chunk_load_parallelism);
     let simulation_distance = world_config.simulation_distance.max(1);
-    let spawn_chunk_x = chunk_coord(spawn.x);
-    let spawn_chunk_z = chunk_coord(spawn.z);
-    let position = qexed_protocol::to_client::play::add_entity::EntityPosition {
-        x: spawn.x,
-        y: spawn.y,
-        z: spawn.z,
-        yaw: spawn.yaw,
-        pitch: spawn.pitch,
-        on_ground: true,
-    };
-    let inventory = crate::inventory::PlayerInventory::default();
-    let session = players.join(profile.clone(), position, inventory.visible_equipment());
+    let spawn_chunk_x = chunk_coord(player_position.x);
+    let spawn_chunk_z = chunk_coord(player_position.z);
+    let inventory = saved_player.inventory();
+    let session = players.join(
+        profile.clone(),
+        player_position,
+        inventory.visible_equipment(),
+    );
     let world_session = world.begin_session();
     let leave_guard = PlayerLeaveGuard::new(players, profile.uuid);
     let player_entity_type = entity_type_id("minecraft:player")?;
 
     log::debug!(
         "初始化 Play 态: dimension={}, spawn=({}, {}, {}), yaw={}, pitch={}",
-        world_config.dimension,
-        spawn.x,
-        spawn.y,
-        spawn.z,
-        spawn.yaw,
-        spawn.pitch
+        play_dimension,
+        player_position.x,
+        player_position.y,
+        player_position.z,
+        player_position.yaw,
+        player_position.pitch
     );
 
     sink.send(Login {
         entity_id: session.player.entity_id,
         is_hardcore: false,
-        dimension_names: vec![world_config.dimension.clone()],
+        dimension_names: vec![play_dimension.clone()],
         max_player: VarInt(config.server.max_player.max(0)),
         view_distance: VarInt(view_distance),
         simulation_distance: VarInt(simulation_distance),
@@ -108,9 +115,9 @@ where
         enable_respawn_screen: true,
         do_limited_crafting: false,
         dimension_type: VarInt(dimension_type_holder_id(&world_config.dimension_type)),
-        dimension_name: world_config.dimension.clone(),
+        dimension_name: play_dimension.clone(),
         hashed_seed: 0,
-        game_mode: 1,
+        game_mode: world_config.game_mode.protocol_id(),
         previous_game_mode: -1,
         is_debug: false,
         is_flat: true,
@@ -123,19 +130,27 @@ where
     })
     .await?;
 
-    send_initial_player_state(sink, config, world_config, &session.player, &inventory).await?;
+    send_initial_player_state(
+        sink,
+        config,
+        world_config,
+        &play_dimension,
+        &session.player,
+        &inventory,
+    )
+    .await?;
     send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
 
     sink.send(Position {
         teleport_id: VarInt(TELEPORT_ID),
-        x: spawn.x,
-        y: spawn.y,
-        z: spawn.z,
+        x: player_position.x,
+        y: player_position.y,
+        z: player_position.z,
         dx: 0.0,
         dy: 0.0,
         dz: 0.0,
-        yaw: spawn.yaw,
-        pitch: spawn.pitch,
+        yaw: player_position.yaw,
+        pitch: player_position.pitch,
         flags: 0,
     })
     .await?;
@@ -147,7 +162,7 @@ where
     .await?;
 
     let chunk_state = ChunkSendState::new(
-        world_config.dimension.clone(),
+        play_dimension.clone(),
         spawn_chunk_x,
         spawn_chunk_z,
         view_distance,
@@ -162,9 +177,12 @@ where
         authenticator,
         world,
         players,
+        player_data,
         session,
         player_entity_type,
         profile,
+        &mut saved_player,
+        play_dimension,
         chunk_state,
         inventory,
         world_session,
@@ -178,6 +196,7 @@ async fn send_initial_player_state<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     config: &qexed_config::app::qexed::Qexed,
     world_config: &qexed_config::app::qexed::server::World,
+    play_dimension: &str,
     player: &OnlinePlayer,
     inventory: &crate::inventory::PlayerInventory,
 ) -> Result<()>
@@ -186,9 +205,6 @@ where
 {
     let view_distance = world_config.view_distance.max(1);
     let simulation_distance = world_config.simulation_distance.max(1);
-    let spawn_chunk_x = chunk_coord(world_config.spawn.x);
-    let spawn_chunk_z = chunk_coord(world_config.spawn.z);
-
     sink.send(ChangeDifficulty {
         difficulty: 2,
         locked: false,
@@ -196,15 +212,16 @@ where
     .await?;
 
     sink.send(PlayerAbilities {
-        flags: PlayerAbilities::INVULNERABLE
-            | PlayerAbilities::CAN_FLY
-            | PlayerAbilities::INSTABUILD,
+        flags: player_ability_flags(world_config.game_mode),
         flying_speed: 0.05,
         walking_speed: 0.1,
     })
     .await?;
 
-    sink.send(SetHeldSlot { slot: VarInt(0) }).await?;
+    sink.send(SetHeldSlot {
+        slot: VarInt(inventory.selected_slot() as i32),
+    })
+    .await?;
     for packet in inventory.set_player_inventory_packets() {
         sink.send(packet).await?;
     }
@@ -228,7 +245,10 @@ where
 
     sink.send(PlayerInfoUpdate {
         actions: PlayerInfoActions::player_initializing(),
-        entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
+        entries: vec![PlayerInfoEntry::from_profile(
+            &player.profile,
+            world_config.game_mode.protocol_id() as i32,
+        )],
     })
     .await?;
 
@@ -242,20 +262,20 @@ where
     .await?;
 
     sink.send(SetDefaultSpawnPosition {
-        dimension: world_config.dimension.clone(),
+        dimension: play_dimension.to_string(),
         position: qexed_packet::net_types::Position {
-            x: world_config.spawn.x.floor() as i32,
-            y: world_config.spawn.y.floor() as i32,
-            z: world_config.spawn.z.floor() as i32,
+            x: player.position.x.floor() as i32,
+            y: player.position.y.floor() as i32,
+            z: player.position.z.floor() as i32,
         },
-        yaw: world_config.spawn.yaw,
-        pitch: world_config.spawn.pitch,
+        yaw: player.position.yaw,
+        pitch: player.position.pitch,
     })
     .await?;
 
     sink.send(GameStateChange {
         reason: 13,
-        game_mode: 0.0,
+        game_mode: world_config.game_mode.protocol_id() as f32,
     })
     .await?;
     sink.send(TickingState::default()).await?;
@@ -276,8 +296,8 @@ where
     })
     .await?;
     sink.send(UpdateViewPosition {
-        chunk_x: VarInt(spawn_chunk_x),
-        chunk_z: VarInt(spawn_chunk_z),
+        chunk_x: VarInt(chunk_coord(player.position.x)),
+        chunk_z: VarInt(chunk_coord(player.position.z)),
     })
     .await?;
 
@@ -602,6 +622,42 @@ fn chunk_load_parallelism_limit(value: usize) -> usize {
     value.clamp(1, MAX_CHUNK_LOAD_PARALLELISM)
 }
 
+fn player_ability_flags(game_mode: GameMode) -> u8 {
+    match game_mode {
+        GameMode::Survival | GameMode::Adventure => 0,
+        GameMode::Creative => PlayerAbilities::CAN_FLY | PlayerAbilities::INSTABUILD,
+        GameMode::Spectator => {
+            PlayerAbilities::INVULNERABLE | PlayerAbilities::FLYING | PlayerAbilities::CAN_FLY
+        }
+    }
+}
+
+fn can_modify_world(
+    world_config: &qexed_config::app::qexed::server::World,
+    position: &qexed_packet::net_types::Position,
+) -> bool {
+    matches!(
+        world_config.game_mode,
+        GameMode::Survival | GameMode::Creative
+    ) && !world_config.read_only
+        && !is_spawn_protected(
+            &world_config.spawn,
+            world_config.spawn_protection_radius,
+            position,
+        )
+}
+
+fn is_spawn_protected(
+    spawn: &Spawn,
+    radius: i32,
+    position: &qexed_packet::net_types::Position,
+) -> bool {
+    let radius = radius.max(0);
+    radius > 0
+        && (position.x - spawn.x.floor() as i32).abs() <= radius
+        && (position.z - spawn.z.floor() as i32).abs() <= radius
+}
+
 fn visible_chunk_set(center_x: i32, center_z: i32, view_distance: i32) -> HashSet<(i32, i32)> {
     visible_chunks(center_x, center_z, view_distance)
         .into_iter()
@@ -644,9 +700,12 @@ async fn wait_for_play_packets<R, W>(
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     players: &PlayerManager,
+    player_data: &PlayerDataManager,
     mut session: PlayerSession,
     player_entity_type: i32,
     profile: &qexed_packet::net_types::GameProfile,
+    saved_player: &mut PlayerData,
+    play_dimension: String,
     mut chunk_state: ChunkSendState,
     mut inventory: crate::inventory::PlayerInventory,
     _world_session: crate::world::WorldSession,
@@ -671,7 +730,8 @@ where
     chunk_state.refresh_pending_chunks();
     chunk_state.start_next_chunk_load(world, Some(&chunk_sender));
 
-    loop {
+    let result: Result<()> = async {
+        loop {
         tokio::select! {
             loaded_chunk = chunk_receiver.recv(), if chunk_state.has_chunk_work() => {
                 let Some(loaded_chunk) = loaded_chunk else {
@@ -703,7 +763,7 @@ where
             }
             packet = packets.read_packet() => {
                 let Some(mut payload) = packet? else {
-                    return Ok(());
+                    break Ok(());
                 };
 
                 let packet_id = crate::connection::read_packet_id(&mut payload)?;
@@ -765,6 +825,13 @@ where
 
                 if packet_id == SetCreativeModeSlot::ID {
                     let slot = crate::connection::decode_payload::<SetCreativeModeSlot>(&mut payload)?;
+                    if world_config.game_mode != GameMode::Creative {
+                        log::debug!(
+                            "ignored creative slot update outside creative mode: uuid={}",
+                            profile.uuid
+                        );
+                        continue;
+                    }
                     if let Some(change) = inventory.set_creative_slot(slot.slot_num, slot.item_stack.clone()) {
                         match change {
                             crate::inventory::InventorySlotChange::Hotbar { slot: inventory_slot, item } => {
@@ -794,7 +861,7 @@ where
                 if packet_id == PickItemFromBlock::ID {
                     let pick = crate::connection::decode_payload::<PickItemFromBlock>(&mut payload)?;
                     let item_id = world
-                        .block_state_at(&world_config.dimension, &pick.position)
+                        .block_state_at(&play_dimension, &pick.position)
                         .and_then(|block_state| (block_state == crate::inventory::STONE_BLOCK_STATE_ID).then_some(1))
                         .unwrap_or(1);
                     let slot = inventory.pick_block(item_id);
@@ -818,11 +885,29 @@ where
                                 &use_item_on.block_hit.position,
                                 use_item_on.block_hit.face.0,
                             );
-                            world.place_block(&world_config.dimension, placed.clone(), block_state);
+                            if !can_modify_world(world_config, &placed) {
+                                log::debug!(
+                                    "blocked world edit: read_only={}, spawn_protection_radius={}, position=({}, {}, {})",
+                                    world_config.read_only,
+                                    world_config.spawn_protection_radius,
+                                    placed.x,
+                                    placed.y,
+                                    placed.z
+                                );
+                                sink.send(crate::inventory::block_update(
+                                    placed.clone(),
+                                    world
+                                        .block_state_at(&play_dimension, &placed)
+                                        .unwrap_or_default(),
+                                )).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
+                            world.place_block(&play_dimension, placed.clone(), block_state);
                             sink.send(crate::inventory::block_update(placed.clone(), block_state)).await?;
                             let light_update = if world.dynamic_light_enabled() {
                                 let update = world.light_update(
-                                    &world_config.dimension,
+                                    &play_dimension,
                                     placed.x.div_euclid(16),
                                     placed.z.div_euclid(16),
                                 );
@@ -973,6 +1058,15 @@ where
             }
         }
     }
+    }
+    .await;
+
+    saved_player.update_runtime(&play_dimension, position, &inventory);
+    if let Err(err) = player_data.save(saved_player).await {
+        log::warn!("保存玩家存档失败: uuid={}, error={err:#}", profile.uuid);
+    }
+
+    result
 }
 
 async fn handle_chat_command<W>(
@@ -1149,9 +1243,11 @@ fn workspace_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChunkSendState, chunk_coord, chunk_load_parallelism_limit, dimension_type_holder_id,
-        entity_type_id, keep_alive_id,
+        ChunkSendState, can_modify_world, chunk_coord, chunk_load_parallelism_limit,
+        dimension_type_holder_id, entity_type_id, keep_alive_id, player_ability_flags,
     };
+    use qexed_config::app::qexed::server::GameMode;
+    use qexed_protocol::to_client::play::player_abilities::PlayerAbilities;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1185,6 +1281,46 @@ mod tests {
             chunk_load_parallelism_limit(usize::MAX),
             super::MAX_CHUNK_LOAD_PARALLELISM
         );
+    }
+
+    #[test]
+    fn player_abilities_follow_game_mode() {
+        assert_eq!(player_ability_flags(GameMode::Survival), 0);
+        assert_eq!(
+            player_ability_flags(GameMode::Creative),
+            PlayerAbilities::CAN_FLY | PlayerAbilities::INSTABUILD
+        );
+        assert_eq!(
+            player_ability_flags(GameMode::Spectator),
+            PlayerAbilities::INVULNERABLE | PlayerAbilities::FLYING | PlayerAbilities::CAN_FLY
+        );
+    }
+
+    #[test]
+    fn world_edit_rules_apply_read_only_and_spawn_protection() {
+        let mut world = qexed_config::app::qexed::server::World::default();
+        let spawn = qexed_packet::net_types::Position { x: 1, y: 64, z: 1 };
+        let outside_spawn = qexed_packet::net_types::Position {
+            x: 100,
+            y: 64,
+            z: 100,
+        };
+
+        assert!(!can_modify_world(&world, &spawn));
+        assert!(can_modify_world(&world, &outside_spawn));
+
+        world.spawn_protection_radius = 0;
+        assert!(can_modify_world(&world, &spawn));
+
+        world.read_only = true;
+        assert!(!can_modify_world(&world, &outside_spawn));
+
+        world.read_only = false;
+        world.game_mode = GameMode::Adventure;
+        assert!(!can_modify_world(&world, &outside_spawn));
+
+        world.game_mode = GameMode::Spectator;
+        assert!(!can_modify_world(&world, &outside_spawn));
     }
 
     #[test]

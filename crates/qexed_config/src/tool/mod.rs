@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use toml_edit::{DocumentMut, RawString, value};
+use toml_edit::{DocumentMut, Item, RawString, value};
 
 use crate::build;
 
@@ -115,11 +115,7 @@ pub trait AppConfigTrait:
             .parse::<DocumentMut>()
             .expect("默认 TOML 必须合法");
 
-        for (k, v) in default_doc.iter() {
-            if !k.starts_with("auto_doc_") && !doc.contains_key(k) {
-                doc.insert(k, v.clone());
-            }
-        }
+        merge_missing_items(doc.as_item_mut(), default_doc.as_item());
 
         // 5. ✅ 更新字段注释（原地）
         if effective_enable {
@@ -320,6 +316,41 @@ fn item_exists_in_doc(doc: &DocumentMut, key: &str) -> bool {
 }
 
 // 根据路径获取 Item 引用
+fn merge_missing_items(target: &mut Item, defaults: &Item) {
+    match (target, defaults) {
+        (Item::Table(target_table), Item::Table(default_table)) => {
+            for (key, default_item) in default_table.iter() {
+                if key.starts_with("auto_doc_") {
+                    continue;
+                }
+
+                match target_table.get_mut(key) {
+                    Some(target_item) => merge_missing_items(target_item, default_item),
+                    None => {
+                        target_table.insert(key, default_item.clone());
+                    }
+                }
+            }
+        }
+        (Item::ArrayOfTables(target_tables), Item::ArrayOfTables(default_tables)) => {
+            if let (Some(target_table), Some(default_table)) = (
+                target_tables.iter_mut().next(),
+                default_tables.iter().next(),
+            ) {
+                for (key, default_item) in default_table.iter() {
+                    match target_table.get_mut(key) {
+                        Some(target_item) => merge_missing_items(target_item, default_item),
+                        None => {
+                            target_table.insert(key, default_item.clone());
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn get_item_by_path<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a toml_edit::Item> {
     let mut current = doc.as_item();
 
