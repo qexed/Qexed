@@ -1,3 +1,4 @@
+pub mod chunk_nbt;
 pub mod region;
 
 use anyhow::{Context, Result};
@@ -8,7 +9,7 @@ use qexed_protocol::to_client::play::map_chunk::{Chunk, Heightmaps, Light, MapCh
 const OVERWORLD_HEIGHT: i32 = 384;
 const SECTION_HEIGHT: i32 = 16;
 const AIR_BLOCK_STATE_ID: i32 = 0;
-const PLAINS_BIOME_ID: i32 = 1;
+const PLAINS_BIOME_ID: i32 = 40;
 
 #[derive(Clone, Debug)]
 pub struct WorldManager {
@@ -26,9 +27,24 @@ impl WorldManager {
         &self.save_path
     }
 
-    pub fn network_chunk(&self, chunk_x: i32, chunk_z: i32) -> Result<MapChunk> {
-        let _ = self.save_path();
-        log::trace!("生成空世界区块: ({chunk_x}, {chunk_z})");
+    pub fn network_chunk(&self, dimension: &str, chunk_x: i32, chunk_z: i32) -> Result<MapChunk> {
+        if let Some(chunk) = self.load_region_chunk(dimension, chunk_x, chunk_z)? {
+            match chunk_nbt::network_chunk_from_region(chunk_x, chunk_z, &chunk) {
+                Ok(packet) => {
+                    log::debug!(
+                        "loaded saved chunk as network chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z})"
+                    );
+                    return Ok(packet);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "failed to convert saved chunk, falling back to empty chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), error={err:#}"
+                    );
+                }
+            }
+        }
+
+        log::trace!("生成空世界区块: dimension={dimension}, chunk=({chunk_x}, {chunk_z})");
         Ok(empty_chunk_packet(chunk_x, chunk_z))
     }
 
@@ -102,7 +118,7 @@ impl WorldManager {
     }
 }
 
-fn empty_chunk_packet(chunk_x: i32, chunk_z: i32) -> MapChunk {
+pub(crate) fn empty_chunk_packet(chunk_x: i32, chunk_z: i32) -> MapChunk {
     MapChunk {
         chunk_x,
         chunk_z,
@@ -115,7 +131,7 @@ fn empty_chunk_packet(chunk_x: i32, chunk_z: i32) -> MapChunk {
     }
 }
 
-fn empty_heightmaps() -> Vec<Heightmaps> {
+pub(crate) fn empty_heightmaps() -> Vec<Heightmaps> {
     vec![
         Heightmaps {
             type_id: VarInt(1),
@@ -132,7 +148,7 @@ fn empty_heightmaps() -> Vec<Heightmaps> {
     ]
 }
 
-fn empty_light() -> Light {
+pub(crate) fn empty_light() -> Light {
     Light {
         sky_light_mask: qexed_packet::net_types::Bitset(Vec::new()),
         block_light_mask: qexed_packet::net_types::Bitset(Vec::new()),
@@ -154,7 +170,7 @@ fn empty_chunk_section_bytes() -> Vec<u8> {
     bytes.to_vec()
 }
 
-fn write_empty_section(writer: &mut PacketWriter) -> Result<()> {
+pub(crate) fn write_empty_section(writer: &mut PacketWriter) -> Result<()> {
     0_i16.serialize(writer)?;
     0_i16.serialize(writer)?;
     write_single_value_palette(writer, AIR_BLOCK_STATE_ID)?;
@@ -162,20 +178,23 @@ fn write_empty_section(writer: &mut PacketWriter) -> Result<()> {
     Ok(())
 }
 
-fn write_single_value_palette(writer: &mut PacketWriter, registry_id: i32) -> Result<()> {
+pub(crate) fn write_single_value_palette(
+    writer: &mut PacketWriter,
+    registry_id: i32,
+) -> Result<()> {
     0_u8.serialize(writer)?;
     VarInt(registry_id).serialize(writer)?;
     write_fixed_long_array(writer, &[])
 }
 
-fn write_fixed_long_array(writer: &mut PacketWriter, values: &[u64]) -> Result<()> {
+pub(crate) fn write_fixed_long_array(writer: &mut PacketWriter, values: &[u64]) -> Result<()> {
     for value in values {
         value.serialize(writer)?;
     }
     Ok(())
 }
 
-fn section_count() -> i32 {
+pub(crate) fn section_count() -> i32 {
     OVERWORLD_HEIGHT / SECTION_HEIGHT
 }
 
@@ -198,7 +217,7 @@ mod tests {
     #[test]
     fn empty_network_chunk_serializes() {
         let manager = WorldManager::new("world");
-        let chunk = manager.network_chunk(0, 0).unwrap();
+        let chunk = manager.network_chunk("minecraft:overworld", 0, 0).unwrap();
         let mut payload = bytes::BytesMut::new();
         let mut writer = qexed_packet::PacketWriter::new(&mut payload);
 

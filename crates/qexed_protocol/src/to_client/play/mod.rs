@@ -1,3 +1,4 @@
+pub mod add_entity;
 pub mod change_difficulty;
 pub mod chunk_batch_finished;
 pub mod chunk_batch_start;
@@ -6,6 +7,7 @@ pub mod commands;
 pub mod container_set_content;
 pub mod container_set_data;
 pub mod container_set_slot;
+pub mod forget_level_chunk;
 pub mod game_state_change;
 pub mod initialize_border;
 pub mod keep_alive;

@@ -1,9 +1,16 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
+
 use qexed_packet::{Packet, net_types::VarInt};
 use qexed_protocol::to_client::play::{
     change_difficulty::ChangeDifficulty,
     chunk_batch_finished::ChunkBatchFinished,
     chunk_batch_start::ChunkBatchStart,
+    forget_level_chunk::ForgetLevelChunk,
     game_state_change::GameStateChange,
     initialize_border::InitializeBorder,
     keep_alive::KeepAlive as ClientboundKeepAlive,
@@ -28,12 +35,16 @@ use qexed_protocol::to_server::play::{
     accept_teleportation::AcceptTeleportation, chat_ack::ChatAck, chat_command::ChatCommand,
     chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
     chunk_batch_received::ChunkBatchReceived, keep_alive::KeepAlive as ServerboundKeepAlive,
+    move_player_pos::MovePlayerPos, move_player_pos_rot::MovePlayerPosRot,
+    move_player_rot::MovePlayerRot, move_player_status_only::MovePlayerStatusOnly,
 };
 
+use crate::players::{OnlinePlayer, PlayerEvent, PlayerManager, PlayerSession};
 use crate::world::WorldManager;
 
 const TELEPORT_ID: i32 = 1;
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 pub async fn initialize<R, W>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
@@ -41,6 +52,7 @@ pub async fn initialize<R, W>(
     config: &qexed_config::app::qexed::Qexed,
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
+    players: &PlayerManager,
     profile: &qexed_packet::net_types::GameProfile,
 ) -> Result<()>
 where
@@ -53,6 +65,17 @@ where
     let simulation_distance = world_config.simulation_distance.max(1);
     let spawn_chunk_x = chunk_coord(spawn.x);
     let spawn_chunk_z = chunk_coord(spawn.z);
+    let position = qexed_protocol::to_client::play::add_entity::EntityPosition {
+        x: spawn.x,
+        y: spawn.y,
+        z: spawn.z,
+        yaw: spawn.yaw,
+        pitch: spawn.pitch,
+        on_ground: true,
+    };
+    let session = players.join(profile.clone(), position);
+    let leave_guard = PlayerLeaveGuard::new(players, profile.uuid);
+    let player_entity_type = entity_type_id("minecraft:player")?;
 
     log::debug!(
         "初始化 Play 态: dimension={}, spawn=({}, {}, {}), yaw={}, pitch={}",
@@ -65,7 +88,7 @@ where
     );
 
     sink.send(Login {
-        entity_id: 1,
+        entity_id: session.player.entity_id,
         is_hardcore: false,
         dimension_names: vec![world_config.dimension.clone()],
         max_player: VarInt(config.server.max_player.max(0)),
@@ -90,7 +113,8 @@ where
     })
     .await?;
 
-    send_initial_player_state(sink, config, world_config, profile).await?;
+    send_initial_player_state(sink, config, world_config, &session.player).await?;
+    send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
 
     sink.send(Position {
         teleport_id: VarInt(TELEPORT_ID),
@@ -112,24 +136,37 @@ where
     })
     .await?;
 
-    send_spawn_chunks(
-        sink,
-        world,
-        &world_config.dimension,
+    let mut chunk_state = ChunkSendState::new(
+        world_config.dimension.clone(),
         spawn_chunk_x,
         spawn_chunk_z,
-    )
-    .await?;
+        view_distance,
+    );
+    chunk_state.send_missing_chunks(sink, world).await?;
     sink.flush().await?;
 
-    wait_for_play_packets(packets, sink, config, authenticator, profile).await
+    let result = wait_for_play_packets(
+        packets,
+        sink,
+        config,
+        authenticator,
+        world,
+        players,
+        session,
+        player_entity_type,
+        profile,
+        chunk_state,
+    )
+    .await;
+    leave_guard.leave();
+    result
 }
 
 async fn send_initial_player_state<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     config: &qexed_config::app::qexed::Qexed,
     world_config: &qexed_config::app::qexed::server::World,
-    profile: &qexed_packet::net_types::GameProfile,
+    player: &OnlinePlayer,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -170,7 +207,7 @@ where
 
     sink.send(PlayerInfoUpdate {
         actions: PlayerInfoActions::player_initializing(),
-        entries: vec![PlayerInfoEntry::from_profile(profile, 1)],
+        entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
     })
     .await?;
 
@@ -224,6 +261,135 @@ where
     Ok(())
 }
 
+async fn send_existing_players<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    profile_id: uuid::Uuid,
+    player_entity_type: i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    for player in players.list_except(profile_id) {
+        for packet in crate::players::spawn_player_packets(&player, player_entity_type)? {
+            sink.send_raw(packet).await?;
+        }
+    }
+    Ok(())
+}
+
+struct ChunkSendState {
+    dimension: String,
+    center_x: i32,
+    center_z: i32,
+    view_distance: i32,
+    visible_chunks: HashSet<(i32, i32)>,
+}
+
+impl ChunkSendState {
+    fn new(dimension: String, center_x: i32, center_z: i32, view_distance: i32) -> Self {
+        Self {
+            dimension,
+            center_x,
+            center_z,
+            view_distance: view_distance.max(1),
+            visible_chunks: HashSet::new(),
+        }
+    }
+
+    async fn update_center<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        world: &WorldManager,
+        x: f64,
+        z: f64,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let chunk_x = chunk_coord(x);
+        let chunk_z = chunk_coord(z);
+        if chunk_x == self.center_x && chunk_z == self.center_z {
+            return Ok(());
+        }
+
+        let previous = self.visible_chunks.clone();
+        let next = visible_chunk_set(chunk_x, chunk_z, self.view_distance);
+        sink.send(UpdateViewPosition {
+            chunk_x: VarInt(chunk_x),
+            chunk_z: VarInt(chunk_z),
+        })
+        .await?;
+
+        for (chunk_x, chunk_z) in previous.difference(&next) {
+            sink.send(ForgetLevelChunk {
+                chunk_x: *chunk_x,
+                chunk_z: *chunk_z,
+            })
+            .await?;
+        }
+
+        self.center_x = chunk_x;
+        self.center_z = chunk_z;
+        self.visible_chunks = previous.intersection(&next).copied().collect();
+        self.send_missing_chunks(sink, world).await?;
+        sink.flush().await?;
+        log::debug!("玩家移动到新区块，已补发视距区块: center=({chunk_x}, {chunk_z})");
+        Ok(())
+    }
+
+    async fn send_missing_chunks<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        world: &WorldManager,
+    ) -> Result<usize>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let chunks = self.missing_chunks();
+        if chunks.is_empty() {
+            return Ok(0);
+        }
+
+        sink.send(ChunkBatchStart {}).await?;
+        for (chunk_x, chunk_z) in &chunks {
+            sink.send(world.network_chunk(&self.dimension, *chunk_x, *chunk_z)?)
+                .await?;
+            self.visible_chunks.insert((*chunk_x, *chunk_z));
+        }
+        sink.send(ChunkBatchFinished {
+            batch_size: VarInt(chunks.len() as i32),
+        })
+        .await?;
+        Ok(chunks.len())
+    }
+
+    fn missing_chunks(&self) -> Vec<(i32, i32)> {
+        visible_chunks(self.center_x, self.center_z, self.view_distance)
+            .into_iter()
+            .filter(|chunk| !self.visible_chunks.contains(chunk))
+            .collect()
+    }
+}
+
+fn visible_chunk_set(center_x: i32, center_z: i32, view_distance: i32) -> HashSet<(i32, i32)> {
+    visible_chunks(center_x, center_z, view_distance)
+        .into_iter()
+        .collect()
+}
+
+fn visible_chunks(center_x: i32, center_z: i32, view_distance: i32) -> Vec<(i32, i32)> {
+    let view_distance = view_distance.max(1);
+    let mut chunks = Vec::new();
+    for chunk_z in center_z - view_distance..=center_z + view_distance {
+        for chunk_x in center_x - view_distance..=center_x + view_distance {
+            chunks.push((chunk_x, chunk_z));
+        }
+    }
+    chunks
+}
+
+#[allow(dead_code)]
 async fn send_spawn_chunks<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -234,26 +400,8 @@ async fn send_spawn_chunks<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let mut batch_size = 0;
-    sink.send(ChunkBatchStart {}).await?;
-
-    for chunk_z in center_z - 1..=center_z + 1 {
-        for chunk_x in center_x - 1..=center_x + 1 {
-            if world
-                .load_region_chunk(dimension, chunk_x, chunk_z)?
-                .is_some()
-            {
-                log::debug!("存档区块暂未转换为网络区块，发送空区块占位: ({chunk_x}, {chunk_z})");
-            }
-            sink.send(world.network_chunk(chunk_x, chunk_z)?).await?;
-            batch_size += 1;
-        }
-    }
-
-    sink.send(ChunkBatchFinished {
-        batch_size: VarInt(batch_size),
-    })
-    .await?;
+    let mut chunk_state = ChunkSendState::new(dimension.to_string(), center_x, center_z, 1);
+    chunk_state.send_missing_chunks(sink, world).await?;
     Ok(())
 }
 
@@ -262,7 +410,12 @@ async fn wait_for_play_packets<R, W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     config: &qexed_config::app::qexed::Qexed,
     authenticator: &crate::auth::Authenticator,
+    world: &WorldManager,
+    players: &PlayerManager,
+    mut session: PlayerSession,
+    player_entity_type: i32,
     profile: &qexed_packet::net_types::GameProfile,
+    mut chunk_state: ChunkSendState,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -275,9 +428,22 @@ where
     let mut chat_session: Option<crate::secure_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0;
     let enforce_secure_chat = config.server.online_mode;
+    let mut position = session.player.position;
 
     loop {
         tokio::select! {
+            event = session.receiver.recv() => {
+                let Some(event) = event else {
+                    continue;
+                };
+                if event_is_self(&event, profile.uuid) {
+                    continue;
+                }
+                for packet in event.packets(player_entity_type)? {
+                    sink.send_raw(packet).await?;
+                }
+                sink.flush().await?;
+            }
             packet = packets.read_packet() => {
                 let Some(mut payload) = packet? else {
                     return Ok(());
@@ -317,6 +483,46 @@ where
                         "客户端已确认区块批次，期望区块速率: {} chunks/tick",
                         batch.desired_chunks_per_tick
                     );
+                    continue;
+                }
+
+                if packet_id == MovePlayerPos::ID {
+                    let movement = crate::connection::decode_payload::<MovePlayerPos>(&mut payload)?;
+                    position.x = movement.x;
+                    position.y = movement.y;
+                    position.z = movement.z;
+                    position.on_ground = movement.flags & 0x01 != 0;
+                    chunk_state.update_center(sink, world, movement.x, movement.z).await?;
+                    players.update_position(profile.uuid, position);
+                    continue;
+                }
+
+                if packet_id == MovePlayerPosRot::ID {
+                    let movement = crate::connection::decode_payload::<MovePlayerPosRot>(&mut payload)?;
+                    position.x = movement.x;
+                    position.y = movement.y;
+                    position.z = movement.z;
+                    position.yaw = movement.yaw;
+                    position.pitch = movement.pitch;
+                    position.on_ground = movement.flags & 0x01 != 0;
+                    chunk_state.update_center(sink, world, movement.x, movement.z).await?;
+                    players.update_position(profile.uuid, position);
+                    continue;
+                }
+
+                if packet_id == MovePlayerRot::ID {
+                    let movement = crate::connection::decode_payload::<MovePlayerRot>(&mut payload)?;
+                    position.yaw = movement.yaw;
+                    position.pitch = movement.pitch;
+                    position.on_ground = movement.flags & 0x01 != 0;
+                    players.update_position(profile.uuid, position);
+                    continue;
+                }
+
+                if packet_id == MovePlayerStatusOnly::ID {
+                    let movement = crate::connection::decode_payload::<MovePlayerStatusOnly>(&mut payload)?;
+                    position.on_ground = movement.flags & 0x01 != 0;
+                    players.update_position(profile.uuid, position);
                     continue;
                 }
 
@@ -409,6 +615,50 @@ where
     }
 }
 
+fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool {
+    match event {
+        PlayerEvent::Joined(player) => player.profile.uuid == profile_id,
+        PlayerEvent::Left {
+            profile_id: left_id,
+            entity_id: _,
+        } => *left_id == profile_id,
+        PlayerEvent::Moved {
+            profile_id: moved_id,
+            entity_id: _,
+            position: _,
+        } => *moved_id == profile_id,
+    }
+}
+
+struct PlayerLeaveGuard<'a> {
+    players: &'a PlayerManager,
+    profile_id: uuid::Uuid,
+    active: bool,
+}
+
+impl<'a> PlayerLeaveGuard<'a> {
+    fn new(players: &'a PlayerManager, profile_id: uuid::Uuid) -> Self {
+        Self {
+            players,
+            profile_id,
+            active: true,
+        }
+    }
+
+    fn leave(mut self) {
+        self.players.leave(self.profile_id);
+        self.active = false;
+    }
+}
+
+impl Drop for PlayerLeaveGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.players.leave(self.profile_id);
+        }
+    }
+}
+
 fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextComponent {
     let mut map = std::collections::HashMap::new();
     map.insert(
@@ -444,9 +694,61 @@ fn dimension_type_holder_id(dimension_type: &str) -> i32 {
     }
 }
 
+fn entity_type_id(name: &str) -> Result<i32> {
+    entity_type_registry()
+        .get(name)
+        .copied()
+        .with_context(|| format!("missing entity type registry id: {name}"))
+}
+
+fn entity_type_registry() -> &'static HashMap<String, i32> {
+    static REGISTRY: OnceLock<HashMap<String, i32>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        load_registry_id_map("minecraft:entity_type").unwrap_or_else(|err| {
+            log::warn!("failed to load entity type registry ids: {err:#}");
+            HashMap::from([("minecraft:player".to_string(), 155)])
+        })
+    })
+}
+
+fn load_registry_id_map(registry_id: &str) -> Result<HashMap<String, i32>> {
+    let path = workspace_root().join(REGISTRIES_REPORT);
+    let content =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
+    let entries = value
+        .get(registry_id)
+        .and_then(|registry| registry.get("entries"))
+        .and_then(serde_json::Value::as_object)
+        .with_context(|| format!("registry not found in {}: {registry_id}", path.display()))?;
+
+    let mut ids = HashMap::new();
+    for (name, value) in entries {
+        let Some(id) = value
+            .get("protocol_id")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|id| i32::try_from(id).ok())
+        else {
+            continue;
+        };
+        ids.insert(name.clone(), id);
+    }
+
+    Ok(ids)
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{chunk_coord, dimension_type_holder_id, keep_alive_id};
+    use super::{chunk_coord, dimension_type_holder_id, entity_type_id, keep_alive_id};
 
     #[test]
     fn chunk_coord_uses_floor_division() {
@@ -466,5 +768,10 @@ mod tests {
     #[test]
     fn keep_alive_id_is_non_negative() {
         assert!(keep_alive_id() >= 0);
+    }
+
+    #[test]
+    fn player_entity_type_id_is_loaded_from_current_report() {
+        assert_eq!(entity_type_id("minecraft:player").unwrap(), 155);
     }
 }

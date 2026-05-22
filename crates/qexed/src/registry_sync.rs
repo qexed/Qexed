@@ -19,7 +19,7 @@ use serde_json::Value;
 pub const VANILLA_FEATURE: &str = "minecraft:vanilla";
 
 const DATA_ROOT: &str = "assets/decompiled_source/src/data/minecraft";
-const REGISTRIES_REPORT: &str = "qexed_old/assets/registries.json";
+const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 const STATIC_TAG_REGISTRIES: &[&str] = &[
     "block",

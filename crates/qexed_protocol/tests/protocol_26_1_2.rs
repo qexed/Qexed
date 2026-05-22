@@ -42,6 +42,38 @@ fn existing_packet_types_use_26_1_2_ids() {
         0x46
     );
     assert_eq!(
+        qexed_protocol::to_client::play::forget_level_chunk::ForgetLevelChunk::ID,
+        0x25
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::add_entity::AddEntity::ID,
+        0x01
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::add_entity::PlayerInfoRemove::ID,
+        0x45
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::add_entity::RemoveEntities::ID,
+        0x4D
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::add_entity::RotateHead::ID,
+        0x53
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::add_entity::TeleportEntity::ID,
+        0x7D
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::add_entity::EntityPositionSync::ID,
+        0x23
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::set_entity_data::SetEntityData::ID,
+        0x63
+    );
+    assert_eq!(
         qexed_protocol::to_client::play::player_chat::PlayerChat::ID,
         0x41
     );
@@ -74,6 +106,22 @@ fn existing_packet_types_use_26_1_2_ids() {
     assert_eq!(
         qexed_protocol::to_server::play::keep_alive::KeepAlive::ID,
         0x1C
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::move_player_pos::MovePlayerPos::ID,
+        0x1E
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot::ID,
+        0x1F
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::move_player_rot::MovePlayerRot::ID,
+        0x20
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly::ID,
+        0x21
     );
     assert_eq!(
         qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate::ID,

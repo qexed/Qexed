@@ -9,12 +9,18 @@
 /doc
 /deploy
 /tmp
+/.tmp
 /
 /plugin
 /crates-old
 /qexed_old
 /Cargo.old.toml
 /assets
+!/assets/
+/assets/*
+!/assets/reports/
+!/assets/reports/*.json
+/world
 # 未使用的代码
 /crates/service/qexed/unuse
 # will have compiled files and executables

@@ -27,6 +27,7 @@ pub struct ServerContext {
     pub config: std::sync::Arc<qexed_config::app::qexed::Qexed>,
     pub authenticator: std::sync::Arc<Authenticator>,
     pub world: std::sync::Arc<crate::world::WorldManager>,
+    pub players: std::sync::Arc<crate::players::PlayerManager>,
 }
 
 impl ServerContext {
@@ -37,6 +38,7 @@ impl ServerContext {
             config: std::sync::Arc::new(config),
             authenticator: std::sync::Arc::new(Authenticator::new()?),
             world: std::sync::Arc::new(world),
+            players: std::sync::Arc::new(crate::players::PlayerManager::new()),
         })
     }
 }
@@ -152,6 +154,7 @@ where
         &context.config,
         &context.authenticator,
         &context.world,
+        &context.players,
         &profile,
     )
     .await?;

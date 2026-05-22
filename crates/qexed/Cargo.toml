@@ -28,8 +28,13 @@ serde_json.workspace = true
 sha1.workspace = true
 hex.workspace = true
 uuid.workspace = true
-
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_Console",
+    "Win32_Foundation"
+] }
 [dev-dependencies]
 tempfile.workspace = true
 [build-dependencies]
 shadow-rs.workspace = true
+winres.workspace = true

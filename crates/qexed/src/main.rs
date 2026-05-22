@@ -3,6 +3,7 @@ mod bootstrap;
 mod connection;
 mod lan_discovery;
 mod play;
+mod players;
 mod registry_sync;
 mod secure_chat;
 mod server;
