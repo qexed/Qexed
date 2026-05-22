@@ -1,4 +1,5 @@
 pub mod chunk_nbt;
+mod gpu_light;
 pub mod region;
 
 use anyhow::{Context, Result};
@@ -34,6 +35,7 @@ pub struct WorldManager {
     save_path: std::path::PathBuf,
     light_mode: WorldLightMode,
     light_algorithm: WorldLightAlgorithm,
+    light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, i32>>>,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
     active_sessions: Arc<AtomicUsize>,
@@ -46,6 +48,7 @@ impl WorldManager {
             save_path,
             WorldLightMode::default(),
             WorldLightAlgorithm::default(),
+            None,
         )
     }
 
@@ -53,11 +56,13 @@ impl WorldManager {
         save_path: impl Into<std::path::PathBuf>,
         light_mode: WorldLightMode,
         light_algorithm: WorldLightAlgorithm,
+        light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
     ) -> Self {
         Self {
             save_path: save_path.into(),
             light_mode,
             light_algorithm,
+            light_gpu,
             placed_blocks: Default::default(),
             chunk_light_dampening: Default::default(),
             active_sessions: Default::default(),
@@ -370,6 +375,13 @@ impl WorldManager {
             WorldLightAlgorithm::Fast => {
                 let neighbourhood =
                     self.chunk_light_neighbourhood(dimension, chunk_x, chunk_z, cache_epoch);
+                if let Some(light) = self
+                    .light_gpu
+                    .as_ref()
+                    .and_then(|engine| engine.fast_sky_light(&neighbourhood).ok())
+                {
+                    return light_from_sky_values(&light);
+                }
                 sky_light_from_neighbourhood(&neighbourhood, WorldLightAlgorithm::Fast)
             }
             WorldLightAlgorithm::RayTrace => {
@@ -551,8 +563,25 @@ impl From<&qexed_config::app::qexed::server::LightAlgorithm> for WorldLightAlgor
     }
 }
 
+pub fn light_gpu_from_config(
+    config: &qexed_config::app::qexed::server::WorldGpu,
+) -> Option<Arc<gpu_light::GpuLightEngine>> {
+    if !config.enable {
+        log::debug!("GPU 光照已在配置中关闭");
+        return None;
+    }
+
+    match gpu_light::GpuLightEngine::new(&config.device) {
+        Ok(engine) => Some(Arc::new(engine)),
+        Err(err) => {
+            log::warn!("GPU 光照初始化失败，已回退到 CPU: {err:#}");
+            None
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-struct LightDampeningNeighborhood {
+pub(crate) struct LightDampeningNeighborhood {
     chunks: [Option<Vec<u8>>; 9],
 }
 
@@ -592,13 +621,17 @@ impl LightDampeningNeighborhood {
             .copied()
     }
 
+    pub(crate) fn chunks(&self) -> &[Option<Vec<u8>>; 9] {
+        &self.chunks
+    }
+
     fn center(&self) -> Option<&[u8]> {
         self.chunks[Self::chunk_index(0, 0).expect("center chunk index")]
             .as_ref()
             .map(Vec::as_slice)
     }
 
-    fn chunk_index(offset_x: i32, offset_z: i32) -> Option<usize> {
+    pub(crate) fn chunk_index(offset_x: i32, offset_z: i32) -> Option<usize> {
         ((-1..=1).contains(&offset_x) && (-1..=1).contains(&offset_z))
             .then_some(((offset_z + 1) * 3 + (offset_x + 1)) as usize)
     }

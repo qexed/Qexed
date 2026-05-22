@@ -142,6 +142,10 @@ pub struct World {
     #[AutoDoc(key = "config.qexed.server.world.light_algorithm")]
     pub light_algorithm: LightAlgorithm,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.gpu", sub)]
+    pub gpu: WorldGpu,
+
     #[AutoDoc(key = "config.qexed.server.world.spawn", sub)]
     pub spawn: Spawn,
 }
@@ -157,6 +161,7 @@ impl Default for World {
             simulation_distance: 3,
             light: LightMode::default(),
             light_algorithm: LightAlgorithm::default(),
+            gpu: WorldGpu::default(),
             spawn: Spawn::default(),
         }
     }
@@ -264,6 +269,113 @@ pub enum LightAlgorithm {
     RayTrace,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct WorldGpu {
+    #[serde(default = "default_world_gpu_enable")]
+    #[AutoDoc(key = "config.qexed.server.world.gpu.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.gpu.device")]
+    pub device: GpuDeviceSelector,
+}
+
+impl Default for WorldGpu {
+    fn default() -> Self {
+        Self {
+            enable: default_world_gpu_enable(),
+            device: GpuDeviceSelector::default(),
+        }
+    }
+}
+
+fn default_world_gpu_enable() -> bool {
+    false
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuDeviceSelector {
+    Auto,
+    Discrete,
+    Integrated,
+    Cpu,
+    Index(usize),
+}
+
+impl Default for GpuDeviceSelector {
+    fn default() -> Self {
+        Self::Discrete
+    }
+}
+
+impl Serialize for GpuDeviceSelector {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Discrete => serializer.serialize_str("discrete"),
+            Self::Integrated => serializer.serialize_str("integrated"),
+            Self::Cpu => serializer.serialize_str("cpu"),
+            Self::Index(index) => serializer.serialize_u64(*index as u64),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GpuDeviceSelector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = GpuDeviceSelector;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(r#""auto", "discrete", "integrated", "cpu", or a GPU index"#)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value.trim().to_ascii_lowercase().as_str() {
+                    "auto" => Ok(GpuDeviceSelector::Auto),
+                    "discrete" => Ok(GpuDeviceSelector::Discrete),
+                    "integrated" => Ok(GpuDeviceSelector::Integrated),
+                    "cpu" => Ok(GpuDeviceSelector::Cpu),
+                    other => other
+                        .parse::<usize>()
+                        .map(GpuDeviceSelector::Index)
+                        .map_err(|_| E::custom(format!("unknown GPU device selector: {value}"))),
+                }
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                usize::try_from(value)
+                    .map(GpuDeviceSelector::Index)
+                    .map_err(|_| E::custom(format!("GPU index out of range: {value}")))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                usize::try_from(value)
+                    .map(GpuDeviceSelector::Index)
+                    .map_err(|_| E::custom(format!("GPU index out of range: {value}")))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
 pub struct Spawn {
     #[AutoDoc(key = "config.qexed.server.world.spawn.x")]
@@ -338,7 +450,7 @@ impl std::str::FromStr for ForwardingMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{LightAlgorithm, LightMode, World};
+    use super::{GpuDeviceSelector, LightAlgorithm, LightMode, World};
 
     #[test]
     fn parses_world_light_string_modes() {
@@ -433,5 +545,66 @@ pitch = 0.0
         .unwrap();
         assert_eq!(world.light_algorithm, LightAlgorithm::RayTrace);
         assert_eq!(world.chunk_load_parallelism, 6);
+    }
+
+    #[test]
+    fn parses_world_gpu_settings() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 6
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[gpu]
+enable = true
+device = "integrated"
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+
+        assert!(world.gpu.enable);
+        assert_eq!(world.gpu.device, GpuDeviceSelector::Integrated);
+    }
+
+    #[test]
+    fn parses_world_gpu_index() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 6
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[gpu]
+device = 1
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+
+        assert!(!world.gpu.enable);
+        assert_eq!(world.gpu.device, GpuDeviceSelector::Index(1));
     }
 }

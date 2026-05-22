@@ -172,6 +172,15 @@ config:
         light_algorithm:
           en: "World lighting calculation algorithm: fast or ray_trace"
           zh-CN: "世界光照计算算法：fast 或 ray_trace"
+        gpu:
+          en: "Experimental GPU calculation settings for world lighting. The fast algorithm is usually faster on CPU until GPU batching is implemented."
+          zh-CN: "世界光照 GPU 计算设置（实验性）。在 GPU 批量化完成前，fast 算法通常 CPU 更快。"
+          enable:
+            en: "Enable experimental GPU lighting calculation. Disabled uses CPU; unavailable GPU falls back to CPU."
+            zh-CN: "启用实验性 GPU 光照计算。关闭时使用 CPU；GPU 不可用时回退 CPU。"
+          device:
+            en: "GPU selector: discrete, integrated, cpu, auto, or a numeric adapter index"
+            zh-CN: "GPU 选择器：discrete、integrated、cpu、auto，或数字适配器索引"
         spawn:
           en: "Player spawn position and rotation"
           zh-CN: "玩家出生坐标与朝向"

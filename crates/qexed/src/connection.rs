@@ -36,6 +36,7 @@ impl ServerContext {
             config.server.world.path.clone(),
             crate::world::WorldLightMode::from(&config.server.world.light),
             crate::world::WorldLightAlgorithm::from(&config.server.world.light_algorithm),
+            crate::world::light_gpu_from_config(&config.server.world.gpu),
         );
         world.ensure_storage(&config.server.world.dimension)?;
         Ok(Self {
