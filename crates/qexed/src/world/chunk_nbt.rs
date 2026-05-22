@@ -8,11 +8,14 @@ use anyhow::{Context, Result};
 use bytes::BytesMut;
 use qexed_nbt::Tag;
 use qexed_packet::{PacketCodec, PacketWriter, net_types::VarInt};
-use qexed_protocol::to_client::play::map_chunk::{Chunk, Heightmaps, MapChunk};
+use qexed_protocol::to_client::play::map_chunk::{
+    Chunk, Heightmaps, LIGHT_ARRAY_BYTES, Light, LightArray, MapChunk,
+};
 
 use super::{
-    block_light_dampening_index, empty_heightmaps, section_count, sky_light_from_dampening,
-    write_empty_section, write_fixed_long_array,
+    WorldLightAlgorithm, block_light_dampening_index, empty_heightmaps, light_from_layers,
+    light_section_index, section_count, sky_light_from_dampening, write_empty_section,
+    write_fixed_long_array,
 };
 use crate::world::region::ChunkData;
 
@@ -29,32 +32,54 @@ pub fn network_chunk_from_region(
     chunk_z: i32,
     chunk: &ChunkData,
 ) -> Result<MapChunk> {
-    Ok(network_chunk_and_light_dampening_from_region(chunk_x, chunk_z, chunk)?.0)
+    Ok(network_chunk_and_light_dampening_from_region(
+        chunk_x,
+        chunk_z,
+        chunk,
+        WorldLightAlgorithm::default(),
+    )?
+    .0)
 }
 
 pub fn network_chunk_and_light_dampening_from_region(
     chunk_x: i32,
     chunk_z: i32,
     chunk: &ChunkData,
+    light_algorithm: WorldLightAlgorithm,
 ) -> Result<(MapChunk, Vec<u8>)> {
     let raw = chunk.decompress().context("decompress chunk nbt")?;
     let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
-    network_chunk_and_light_dampening_from_nbt(chunk_x, chunk_z, &root)
+    network_chunk_and_light_dampening_from_nbt(chunk_x, chunk_z, &root, light_algorithm)
+}
+
+pub fn light_dampening_from_region(chunk: &ChunkData) -> Result<Vec<u8>> {
+    let raw = chunk.decompress().context("decompress chunk nbt")?;
+    let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
+    light_dampening_from_nbt(&root)
 }
 
 pub fn network_chunk_from_nbt(chunk_x: i32, chunk_z: i32, root: &Tag) -> Result<MapChunk> {
-    Ok(network_chunk_and_light_dampening_from_nbt(chunk_x, chunk_z, root)?.0)
+    Ok(network_chunk_and_light_dampening_from_nbt(
+        chunk_x,
+        chunk_z,
+        root,
+        WorldLightAlgorithm::default(),
+    )?
+    .0)
 }
 
 pub fn network_chunk_and_light_dampening_from_nbt(
     chunk_x: i32,
     chunk_z: i32,
     root: &Tag,
+    light_algorithm: WorldLightAlgorithm,
 ) -> Result<(MapChunk, Vec<u8>)> {
     let root = compound(root).context("chunk root is not a compound")?;
     let sections = sections_by_y(root);
     let section_data = chunk_section_bytes(&sections)?;
     let block_dampening = chunk_light_dampening(&sections)?;
+    let light = saved_light(&sections)
+        .unwrap_or_else(|| sky_light_from_dampening(&block_dampening, light_algorithm));
     let packet = MapChunk {
         chunk_x,
         chunk_z,
@@ -63,9 +88,15 @@ pub fn network_chunk_and_light_dampening_from_nbt(
             data: section_data,
             block_entities: Vec::new(),
         },
-        light: sky_light_from_dampening(&block_dampening),
+        light,
     };
     Ok((packet, block_dampening))
+}
+
+pub fn light_dampening_from_nbt(root: &Tag) -> Result<Vec<u8>> {
+    let root = compound(root).context("chunk root is not a compound")?;
+    let sections = sections_by_y(root);
+    chunk_light_dampening(&sections)
 }
 
 fn chunk_section_bytes(sections: &HashMap<i32, &HashMap<String, Tag>>) -> Result<Vec<u8>> {
@@ -107,6 +138,48 @@ fn chunk_light_dampening(sections: &HashMap<i32, &HashMap<String, Tag>>) -> Resu
     }
 
     Ok(dampening)
+}
+
+fn saved_light(sections: &HashMap<i32, &HashMap<String, Tag>>) -> Option<Light> {
+    let mut sky_layers = vec![LightArray::default(); super::LIGHT_SECTION_COUNT];
+    let mut block_layers = vec![LightArray::default(); super::LIGHT_SECTION_COUNT];
+    let mut found_sky = false;
+    let mut found_block = false;
+
+    for (&section_y, section) in sections {
+        let Some(section_index) = light_section_index(section_y) else {
+            continue;
+        };
+
+        if let Some(layer) = light_array(section.get("SkyLight")) {
+            sky_layers[section_index] = layer;
+            found_sky = true;
+        }
+        if let Some(layer) = light_array(section.get("BlockLight")) {
+            block_layers[section_index] = layer;
+            found_block = true;
+        }
+    }
+
+    (found_sky || found_block).then(|| light_from_layers(sky_layers, block_layers))
+}
+
+fn light_array(tag: Option<&Tag>) -> Option<LightArray> {
+    let bytes = byte_array(tag?)?;
+    if bytes.len() != LIGHT_ARRAY_BYTES {
+        log::warn!(
+            "invalid saved light layer length: got {}, expected {}",
+            bytes.len(),
+            LIGHT_ARRAY_BYTES
+        );
+        return None;
+    }
+
+    let mut layer = LightArray::default();
+    for (target, source) in layer.0.iter_mut().zip(bytes.iter()) {
+        *target = *source as u8;
+    }
+    Some(layer)
 }
 
 fn write_section(writer: &mut PacketWriter, section: &HashMap<String, Tag>) -> Result<()> {
@@ -212,21 +285,22 @@ fn block_palette_entry(entry: &HashMap<String, Tag>) -> BlockPaletteEntry {
     let name = string_field(entry, "Name").unwrap_or("minecraft:air");
     let properties = string_properties(entry.get("Properties"));
     let key = state_key(name, &properties);
-    let id = block_state_registry()
-        .id_by_state
-        .get(&key)
-        .copied()
-        .unwrap_or_else(|| {
-            log::warn!("unknown block state in saved chunk, using air: {key}");
-            AIR_BLOCK_STATE_ID
-        });
+    let registry = block_state_registry();
+    let id = registry.id_by_state.get(&key).copied().unwrap_or_else(|| {
+        log::warn!("unknown block state in saved chunk, using air: {key}");
+        AIR_BLOCK_STATE_ID
+    });
+    let block_type = registry
+        .metadata_by_name
+        .get(name)
+        .map(|metadata| metadata.block_type.as_str());
 
     let has_fluid = has_fluid(name, &properties);
     BlockPaletteEntry {
         id,
         is_air: id == AIR_BLOCK_STATE_ID || is_air_block(name),
         has_fluid,
-        light_dampening: light_dampening(name, has_fluid),
+        light_dampening: light_dampening(name, block_type, has_fluid),
     }
 }
 
@@ -479,8 +553,17 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
         .with_context(|| format!("block report root is not object: {}", path.display()))?;
 
     let mut id_by_state = HashMap::new();
+    let mut metadata_by_name = HashMap::new();
     let mut max_id = AIR_BLOCK_STATE_ID;
     for (name, block) in blocks {
+        let block_type = block
+            .get("definition")
+            .and_then(|definition| definition.get("type"))
+            .and_then(serde_json::Value::as_str)
+            .map(normalize_identifier)
+            .unwrap_or_else(|| "minecraft:block".to_string());
+        metadata_by_name.insert(name.clone(), BlockMetadata { block_type });
+
         let Some(states) = block.get("states").and_then(serde_json::Value::as_array) else {
             continue;
         };
@@ -504,6 +587,7 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
 
     Ok(BlockStateRegistry {
         id_by_state,
+        metadata_by_name,
         global_bits: ceil_log2((max_id as usize) + 1).max(1),
     })
 }
@@ -645,53 +729,86 @@ fn is_always_water_filled_block(name: &str) -> bool {
     )
 }
 
-fn light_dampening(name: &str, has_fluid: bool) -> u8 {
-    if has_fluid {
+fn light_dampening(name: &str, block_type: Option<&str>, has_fluid: bool) -> u8 {
+    if has_fluid || is_one_light_dampening_block_type(block_type) {
         1
-    } else if is_air_block(name)
-        || has_transparent_name_hint(name)
-        || is_no_fluid_sky_passthrough_block(name)
-    {
+    } else if is_air_block(name) || is_zero_light_dampening_block_type(block_type, name) {
         0
     } else {
         15
     }
 }
 
-fn is_no_fluid_sky_passthrough_block(name: &str) -> bool {
+fn is_one_light_dampening_block_type(block_type: Option<&str>) -> bool {
     matches!(
-        name,
-        "minecraft:glass"
-            | "minecraft:ice"
-            | "minecraft:packed_ice"
-            | "minecraft:blue_ice"
-            | "minecraft:barrier"
-            | "minecraft:sea_pickle"
-            | "minecraft:structure_void"
+        block_type,
+        Some(
+            "minecraft:liquid"
+                | "minecraft:mangrove_leaves"
+                | "minecraft:tinted_particle_leaves"
+                | "minecraft:untinted_particle_leaves"
+        )
     )
 }
 
-fn has_transparent_name_hint(name: &str) -> bool {
-    name.ends_with("_button")
-        || name.ends_with("_door")
-        || name.ends_with("_fence")
-        || name.ends_with("_fence_gate")
-        || name.ends_with("_pane")
-        || name.ends_with("_pressure_plate")
-        || name.ends_with("_sign")
-        || name.ends_with("_slab")
-        || name.ends_with("_stairs")
-        || name.ends_with("_torch")
-        || name.ends_with("_trapdoor")
-        || name.ends_with("_wall")
-        || name.ends_with("_wall_sign")
-        || name.ends_with("_wall_torch")
-        || name.ends_with("_leaves")
-        || name.contains("carpet")
-        || name.contains("flower")
-        || name.contains("grass")
-        || name.contains("sapling")
-        || name.contains("torch")
+fn is_zero_light_dampening_block_type(block_type: Option<&str>, name: &str) -> bool {
+    matches!(
+        block_type,
+        Some(
+            "minecraft:air"
+                | "minecraft:barrier"
+                | "minecraft:bamboo_sapling"
+                | "minecraft:bamboo_stalk"
+                | "minecraft:big_dripleaf"
+                | "minecraft:big_dripleaf_stem"
+                | "minecraft:button"
+                | "minecraft:cave_vines"
+                | "minecraft:cave_vines_plant"
+                | "minecraft:cross_collision"
+                | "minecraft:door"
+                | "minecraft:end_portal"
+                | "minecraft:fence"
+                | "minecraft:fence_gate"
+                | "minecraft:fire"
+                | "minecraft:flower_pot"
+                | "minecraft:glow_lichen"
+                | "minecraft:hanging_moss"
+                | "minecraft:iron_bars"
+                | "minecraft:ladder"
+                | "minecraft:light"
+                | "minecraft:mossy_carpet"
+                | "minecraft:nether_sprouts"
+                | "minecraft:pressure_plate"
+                | "minecraft:seagrass"
+                | "minecraft:sea_pickle"
+                | "minecraft:short_dry_grass"
+                | "minecraft:small_dripleaf"
+                | "minecraft:snow_layer"
+                | "minecraft:tall_dry_grass"
+                | "minecraft:tall_grass"
+                | "minecraft:torch"
+                | "minecraft:transparent"
+                | "minecraft:trapdoor"
+                | "minecraft:twisting_vines"
+                | "minecraft:twisting_vines_plant"
+                | "minecraft:vine"
+                | "minecraft:void"
+                | "minecraft:wall_banner"
+                | "minecraft:wall_hanging_sign"
+                | "minecraft:wall_sign"
+                | "minecraft:wall_skull"
+                | "minecraft:wall_torch"
+                | "minecraft:weeping_vines"
+                | "minecraft:weeping_vines_plant"
+        )
+    ) || matches!(
+        name,
+        "minecraft:structure_void"
+            | "minecraft:glass"
+            | "minecraft:ice"
+            | "minecraft:packed_ice"
+            | "minecraft:blue_ice"
+    )
 }
 
 fn default_id(kind: PaletteKind) -> i32 {
@@ -726,6 +843,13 @@ fn list_items(tag: Option<&Tag>) -> Option<&[Tag]> {
 fn long_array(tag: &Tag) -> Option<&[i64]> {
     match tag {
         Tag::LongArray(values) => Some(values),
+        _ => None,
+    }
+}
+
+fn byte_array(tag: &Tag) -> Option<&[i8]> {
+    match tag {
+        Tag::ByteArray(values) => Some(values),
         _ => None,
     }
 }
@@ -792,7 +916,12 @@ impl BlockPaletteEntry {
 
 struct BlockStateRegistry {
     id_by_state: HashMap<String, i32>,
+    metadata_by_name: HashMap<String, BlockMetadata>,
     global_bits: usize,
+}
+
+struct BlockMetadata {
+    block_type: String,
 }
 
 impl BlockStateRegistry {
@@ -802,8 +931,34 @@ impl BlockStateRegistry {
         id_by_state.insert("minecraft:stone|".to_string(), 1);
         id_by_state.insert("minecraft:water|level=0;".to_string(), 86);
         id_by_state.insert("minecraft:lava|level=0;".to_string(), 102);
+        let mut metadata_by_name = HashMap::new();
+        metadata_by_name.insert(
+            "minecraft:air".to_string(),
+            BlockMetadata {
+                block_type: "minecraft:air".to_string(),
+            },
+        );
+        metadata_by_name.insert(
+            "minecraft:stone".to_string(),
+            BlockMetadata {
+                block_type: "minecraft:block".to_string(),
+            },
+        );
+        metadata_by_name.insert(
+            "minecraft:water".to_string(),
+            BlockMetadata {
+                block_type: "minecraft:liquid".to_string(),
+            },
+        );
+        metadata_by_name.insert(
+            "minecraft:lava".to_string(),
+            BlockMetadata {
+                block_type: "minecraft:liquid".to_string(),
+            },
+        );
         Self {
             id_by_state,
+            metadata_by_name,
             global_bits: 14,
         }
     }
@@ -910,7 +1065,9 @@ mod tests {
             paletted_container(vec![string("minecraft:plains")], None),
         )]);
 
-        let (packet, dampening) = network_chunk_and_light_dampening_from_nbt(0, 0, &root).unwrap();
+        let (packet, dampening) =
+            network_chunk_and_light_dampening_from_nbt(0, 0, &root, WorldLightAlgorithm::Fast)
+                .unwrap();
         let section_offset = ((0 - MIN_SECTION_Y) as usize) * 8;
         let world_y = 0;
 
@@ -927,8 +1084,82 @@ mod tests {
             "minecraft:sea_pickle",
             &[("waterlogged".to_string(), "true".to_string())]
         ));
-        assert_eq!(light_dampening("minecraft:sea_pickle", true), 1);
-        assert_eq!(light_dampening("minecraft:sea_pickle", false), 0);
+        assert_eq!(
+            light_dampening("minecraft:sea_pickle", Some("minecraft:sea_pickle"), true),
+            1
+        );
+        assert_eq!(
+            light_dampening("minecraft:sea_pickle", Some("minecraft:sea_pickle"), false),
+            0
+        );
+    }
+
+    #[test]
+    fn leaves_dampen_sky_light_like_minecraft() {
+        assert_eq!(
+            light_dampening(
+                "minecraft:oak_leaves",
+                Some("minecraft:tinted_particle_leaves"),
+                false
+            ),
+            1
+        );
+        assert_eq!(
+            light_dampening(
+                "minecraft:mangrove_leaves",
+                Some("minecraft:mangrove_leaves"),
+                false
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn transparent_block_types_use_report_metadata() {
+        assert_eq!(
+            light_dampening("minecraft:vine", Some("minecraft:vine"), false),
+            0
+        );
+        assert_eq!(
+            light_dampening(
+                "minecraft:glow_lichen",
+                Some("minecraft:glow_lichen"),
+                false
+            ),
+            0
+        );
+        assert_eq!(
+            light_dampening("minecraft:glass_pane", Some("minecraft:iron_bars"), false),
+            0
+        );
+        assert_eq!(
+            light_dampening("minecraft:iron_chain", Some("minecraft:chain"), false),
+            15
+        );
+        assert_eq!(
+            light_dampening("minecraft:iron_chain", Some("minecraft:chain"), true),
+            1
+        );
+    }
+
+    #[test]
+    fn saved_light_layers_are_used_when_present() {
+        let root = chunk_root(vec![section_with_light(
+            0,
+            paletted_container(vec![block_state("minecraft:air", &[])], None),
+            paletted_container(vec![string("minecraft:plains")], None),
+            Some(vec![0xff_u8; LIGHT_ARRAY_BYTES]),
+            Some(vec![0x77_u8; LIGHT_ARRAY_BYTES]),
+        )]);
+
+        let (packet, _) =
+            network_chunk_and_light_dampening_from_nbt(0, 0, &root, WorldLightAlgorithm::Fast)
+                .unwrap();
+
+        assert_eq!(packet.light.sky_light_arrays.len(), 1);
+        assert_eq!(packet.light.block_light_arrays.len(), 1);
+        assert_eq!(packet.light.sky_light_arrays[0].0[0], 0xff);
+        assert_eq!(packet.light.block_light_arrays[0].0[0], 0x77);
     }
 
     fn chunk_root(sections: Vec<Tag>) -> Tag {
@@ -961,11 +1192,33 @@ mod tests {
     }
 
     fn section(y: i8, block_states: Tag, biomes: Tag) -> Tag {
-        compound_tag([
-            ("Y", Tag::Byte(y)),
-            ("block_states", block_states),
-            ("biomes", biomes),
-        ])
+        section_with_light(y, block_states, biomes, None, None)
+    }
+
+    fn section_with_light(
+        y: i8,
+        block_states: Tag,
+        biomes: Tag,
+        sky_light: Option<Vec<u8>>,
+        block_light: Option<Vec<u8>>,
+    ) -> Tag {
+        let mut section = HashMap::new();
+        section.insert("Y".to_string(), Tag::Byte(y));
+        section.insert("block_states".to_string(), block_states);
+        section.insert("biomes".to_string(), biomes);
+        if let Some(sky_light) = sky_light {
+            section.insert(
+                "SkyLight".to_string(),
+                Tag::byte_array_from_u8_slice(&sky_light),
+            );
+        }
+        if let Some(block_light) = block_light {
+            section.insert(
+                "BlockLight".to_string(),
+                Tag::byte_array_from_u8_slice(&block_light),
+            );
+        }
+        Tag::Compound(Arc::new(section))
     }
 
     fn paletted_container(palette: Vec<Tag>, data: Option<Vec<i64>>) -> Tag {

@@ -35,6 +35,7 @@ impl ServerContext {
         let world = crate::world::WorldManager::with_light_mode(
             config.server.world.path.clone(),
             crate::world::WorldLightMode::from(&config.server.world.light),
+            crate::world::WorldLightAlgorithm::from(&config.server.world.light_algorithm),
         );
         world.ensure_storage(&config.server.world.dimension)?;
         Ok(Self {

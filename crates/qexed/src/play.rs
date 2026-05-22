@@ -49,6 +49,8 @@ const TELEPORT_ID: i32 = 1;
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
 const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
+const DEFAULT_CHUNK_LOAD_PARALLELISM: usize = 4;
+const MAX_CHUNK_LOAD_PARALLELISM: usize = 64;
 const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 pub async fn initialize<R, W>(
@@ -67,6 +69,7 @@ where
     let world_config = &config.server.world;
     let spawn = &world_config.spawn;
     let view_distance = world_config.view_distance.max(1);
+    let chunk_load_parallelism = chunk_load_parallelism_limit(world_config.chunk_load_parallelism);
     let simulation_distance = world_config.simulation_distance.max(1);
     let spawn_chunk_x = chunk_coord(spawn.x);
     let spawn_chunk_z = chunk_coord(spawn.z);
@@ -80,6 +83,7 @@ where
     };
     let inventory = crate::inventory::PlayerInventory::default();
     let session = players.join(profile.clone(), position, inventory.visible_equipment());
+    let world_session = world.begin_session();
     let leave_guard = PlayerLeaveGuard::new(players, profile.uuid);
     let player_entity_type = entity_type_id("minecraft:player")?;
 
@@ -147,6 +151,7 @@ where
         spawn_chunk_x,
         spawn_chunk_z,
         view_distance,
+        chunk_load_parallelism,
     );
     sink.flush().await?;
 
@@ -162,6 +167,7 @@ where
         profile,
         chunk_state,
         inventory,
+        world_session,
     )
     .await;
     leave_guard.leave();
@@ -300,10 +306,11 @@ struct ChunkSendState {
     center_x: i32,
     center_z: i32,
     view_distance: i32,
+    load_parallelism: usize,
     visible_chunks: HashSet<(i32, i32)>,
     pending_chunks: VecDeque<(i32, i32)>,
     pending_unloads: HashMap<(i32, i32), Instant>,
-    loading_chunk: bool,
+    loading_chunks: HashSet<(i32, i32)>,
 }
 
 struct ChunkLoadResult {
@@ -313,16 +320,23 @@ struct ChunkLoadResult {
 }
 
 impl ChunkSendState {
-    fn new(dimension: String, center_x: i32, center_z: i32, view_distance: i32) -> Self {
+    fn new(
+        dimension: String,
+        center_x: i32,
+        center_z: i32,
+        view_distance: i32,
+        load_parallelism: usize,
+    ) -> Self {
         Self {
             dimension,
             center_x,
             center_z,
             view_distance: view_distance.max(1),
+            load_parallelism: chunk_load_parallelism_limit(load_parallelism),
             visible_chunks: HashSet::new(),
             pending_chunks: VecDeque::new(),
             pending_unloads: HashMap::new(),
-            loading_chunk: false,
+            loading_chunks: HashSet::new(),
         }
     }
 
@@ -364,6 +378,7 @@ impl ChunkSendState {
         &mut self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         world: &WorldManager,
+        cache_epoch: u64,
     ) -> Result<usize>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -380,7 +395,7 @@ impl ChunkSendState {
             let chunk_x = *chunk_x;
             let chunk_z = *chunk_z;
             let chunk_payload = tokio::task::spawn_blocking(move || {
-                build_chunk_payload_sync(world_for_task, dimension, chunk_x, chunk_z)
+                build_chunk_payload_sync(world_for_task, dimension, chunk_x, chunk_z, cache_epoch)
             })
             .await
             .context("join chunk packet build task")??;
@@ -401,7 +416,9 @@ impl ChunkSendState {
         let mut chunks = self
             .target_chunks()
             .into_iter()
-            .filter(|chunk| !self.visible_chunks.contains(chunk))
+            .filter(|chunk| {
+                !self.visible_chunks.contains(chunk) && !self.loading_chunks.contains(chunk)
+            })
             .collect::<Vec<_>>();
         chunks.sort_by_key(|(chunk_x, chunk_z)| {
             let dx = *chunk_x - self.center_x;
@@ -485,36 +502,38 @@ impl ChunkSendState {
         world: &WorldManager,
         sender: Option<&tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>>,
     ) {
-        if self.loading_chunk {
-            return;
-        }
         let Some(sender) = sender else {
             return;
         };
 
-        while let Some((chunk_x, chunk_z)) = self.pending_chunks.pop_front() {
-            if self.visible_chunks.contains(&(chunk_x, chunk_z)) {
+        while self.loading_chunks.len() < self.load_parallelism {
+            let Some((chunk_x, chunk_z)) = self.pending_chunks.pop_front() else {
+                break;
+            };
+            let chunk = (chunk_x, chunk_z);
+            if self.visible_chunks.contains(&chunk) || self.loading_chunks.contains(&chunk) {
                 continue;
             }
 
             let world = world.clone();
             let dimension = self.dimension.clone();
             let sender = sender.clone();
+            let cache_epoch = world.cache_epoch();
             tokio::task::spawn_blocking(move || {
-                let payload = build_chunk_payload_sync(world, dimension, chunk_x, chunk_z);
+                let payload =
+                    build_chunk_payload_sync(world, dimension, chunk_x, chunk_z, cache_epoch);
                 let _ = sender.send(ChunkLoadResult {
                     chunk_x,
                     chunk_z,
                     payload,
                 });
             });
-            self.loading_chunk = true;
-            break;
+            self.loading_chunks.insert(chunk);
         }
     }
 
     fn has_chunk_work(&self) -> bool {
-        self.loading_chunk || !self.pending_chunks.is_empty()
+        !self.loading_chunks.is_empty() || !self.pending_chunks.is_empty()
     }
 
     fn has_pending_unloads(&self) -> bool {
@@ -531,9 +550,9 @@ impl ChunkSendState {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        self.loading_chunk = false;
         let chunk_x = loaded.chunk_x;
         let chunk_z = loaded.chunk_z;
+        self.loading_chunks.remove(&(chunk_x, chunk_z));
 
         if self.visible_chunks.contains(&(chunk_x, chunk_z))
             || !visible_chunks(self.center_x, self.center_z, self.view_distance)
@@ -567,10 +586,20 @@ fn build_chunk_payload_sync(
     dimension: String,
     chunk_x: i32,
     chunk_z: i32,
+    cache_epoch: u64,
 ) -> Result<bytes::Bytes> {
-    let chunk = world.network_chunk(&dimension, chunk_x, chunk_z)?;
+    let chunk = world.network_chunk_for_session(&dimension, chunk_x, chunk_z, cache_epoch)?;
     qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
         .context("encode chunk packet")
+}
+
+fn chunk_load_parallelism_limit(value: usize) -> usize {
+    let value = if value == 0 {
+        DEFAULT_CHUNK_LOAD_PARALLELISM
+    } else {
+        value
+    };
+    value.clamp(1, MAX_CHUNK_LOAD_PARALLELISM)
 }
 
 fn visible_chunk_set(center_x: i32, center_z: i32, view_distance: i32) -> HashSet<(i32, i32)> {
@@ -601,8 +630,10 @@ async fn send_spawn_chunks<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let mut chunk_state = ChunkSendState::new(dimension.to_string(), center_x, center_z, 1);
-    chunk_state.send_missing_chunks(sink, world).await?;
+    let mut chunk_state = ChunkSendState::new(dimension.to_string(), center_x, center_z, 1, 1);
+    chunk_state
+        .send_missing_chunks(sink, world, world.cache_epoch())
+        .await?;
     Ok(())
 }
 
@@ -618,6 +649,7 @@ async fn wait_for_play_packets<R, W>(
     profile: &qexed_packet::net_types::GameProfile,
     mut chunk_state: ChunkSendState,
     mut inventory: crate::inventory::PlayerInventory,
+    _world_session: crate::world::WorldSession,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -1117,7 +1149,8 @@ fn workspace_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChunkSendState, chunk_coord, dimension_type_holder_id, entity_type_id, keep_alive_id,
+        ChunkSendState, chunk_coord, chunk_load_parallelism_limit, dimension_type_holder_id,
+        entity_type_id, keep_alive_id,
     };
     use std::time::{Duration, Instant};
 
@@ -1142,8 +1175,34 @@ mod tests {
     }
 
     #[test]
+    fn chunk_load_parallelism_is_bounded() {
+        assert_eq!(
+            chunk_load_parallelism_limit(0),
+            super::DEFAULT_CHUNK_LOAD_PARALLELISM
+        );
+        assert_eq!(chunk_load_parallelism_limit(1), 1);
+        assert_eq!(
+            chunk_load_parallelism_limit(usize::MAX),
+            super::MAX_CHUNK_LOAD_PARALLELISM
+        );
+    }
+
+    #[test]
+    fn missing_chunks_skips_in_flight_chunks() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+        state.loading_chunks.insert((0, 0));
+        state.visible_chunks.insert((1, 0));
+
+        let missing = state.missing_chunks();
+
+        assert!(!missing.contains(&(0, 0)));
+        assert!(!missing.contains(&(1, 0)));
+        assert_eq!(missing.len(), 7);
+    }
+
+    #[test]
     fn delayed_unload_keeps_recently_left_chunks_visible() {
-        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1);
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 1);
         state.visible_chunks.insert((-1, 0));
         state.visible_chunks.insert((0, 0));
 
@@ -1157,7 +1216,7 @@ mod tests {
 
     #[test]
     fn delayed_unload_is_cancelled_when_chunk_returns_to_view() {
-        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1);
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 1);
         state.visible_chunks.insert((-1, 0));
 
         state.center_x = 2;

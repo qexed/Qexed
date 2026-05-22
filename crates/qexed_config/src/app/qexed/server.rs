@@ -127,12 +127,20 @@ pub struct World {
     #[AutoDoc(key = "config.qexed.server.world.view_distance")]
     pub view_distance: i32,
 
+    #[serde(default = "default_chunk_load_parallelism")]
+    #[AutoDoc(key = "config.qexed.server.world.chunk_load_parallelism")]
+    pub chunk_load_parallelism: usize,
+
     #[AutoDoc(key = "config.qexed.server.world.simulation_distance")]
     pub simulation_distance: i32,
 
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.world.light")]
     pub light: LightMode,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.light_algorithm")]
+    pub light_algorithm: LightAlgorithm,
 
     #[AutoDoc(key = "config.qexed.server.world.spawn", sub)]
     pub spawn: Spawn,
@@ -145,11 +153,17 @@ impl Default for World {
             dimension: "minecraft:overworld".to_string(),
             dimension_type: "minecraft:overworld".to_string(),
             view_distance: 3,
+            chunk_load_parallelism: default_chunk_load_parallelism(),
             simulation_distance: 3,
             light: LightMode::default(),
+            light_algorithm: LightAlgorithm::default(),
             spawn: Spawn::default(),
         }
     }
+}
+
+fn default_chunk_load_parallelism() -> usize {
+    4
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -242,6 +256,14 @@ impl<'de> Deserialize<'de> for LightMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LightAlgorithm {
+    #[default]
+    Fast,
+    RayTrace,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
 pub struct Spawn {
     #[AutoDoc(key = "config.qexed.server.world.spawn.x")]
@@ -316,7 +338,7 @@ impl std::str::FromStr for ForwardingMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{LightMode, World};
+    use super::{LightAlgorithm, LightMode, World};
 
     #[test]
     fn parses_world_light_string_modes() {
@@ -326,6 +348,7 @@ path = "world"
 dimension = "minecraft:overworld"
 dimension_type = "minecraft:overworld"
 view_distance = 3
+chunk_load_parallelism = 4
 simulation_distance = 3
 light = "static"
 
@@ -346,6 +369,7 @@ path = "world"
 dimension = "minecraft:overworld"
 dimension_type = "minecraft:overworld"
 view_distance = 3
+chunk_load_parallelism = 4
 simulation_distance = 3
 light = "dynamic"
 
@@ -369,6 +393,7 @@ path = "world"
 dimension = "minecraft:overworld"
 dimension_type = "minecraft:overworld"
 view_distance = 3
+chunk_load_parallelism = 4
 simulation_distance = 3
 light = 12
 
@@ -382,5 +407,31 @@ pitch = 0.0
         )
         .unwrap();
         assert_eq!(world.light, LightMode::Fixed(12));
+    }
+
+    #[test]
+    fn parses_world_light_algorithm() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 6
+simulation_distance = 3
+light = "static"
+light_algorithm = "ray_trace"
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+        assert_eq!(world.light_algorithm, LightAlgorithm::RayTrace);
+        assert_eq!(world.chunk_load_parallelism, 6);
     }
 }

@@ -160,12 +160,18 @@ config:
         view_distance:
           en: "Initial chunk view distance"
           zh-CN: "初始区块视距"
+        chunk_load_parallelism:
+          en: "Maximum number of chunk build tasks per player"
+          zh-CN: "每名玩家同时构建区块的最大任务数"
         simulation_distance:
           en: "Initial simulation distance"
           zh-CN: "初始模拟距离"
         light:
           en: "World lighting mode: static, dynamic, or a fixed brightness integer from 0 to 15"
           zh-CN: "世界光照模式：static、dynamic，或 0 到 15 的固定亮度整数"
+        light_algorithm:
+          en: "World lighting calculation algorithm: fast or ray_trace"
+          zh-CN: "世界光照计算算法：fast 或 ray_trace"
         spawn:
           en: "Player spawn position and rotation"
           zh-CN: "玩家出生坐标与朝向"
