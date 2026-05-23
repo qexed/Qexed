@@ -373,7 +373,7 @@ fn unpack_lp_value(value: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use qexed_packet::{Packet, PacketCodec};
+    use qexed_packet::Packet;
 
     use super::{AddEntity, EntityPosition, TeleportEntity};
 

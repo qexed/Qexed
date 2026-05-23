@@ -5,7 +5,7 @@ use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::token::Comma;
-use syn::{Attribute, Data, DeriveInput, Expr, Fields, FieldsNamed, FieldsUnnamed, Lit, Meta, parse_macro_input};
+use syn::{Data, DeriveInput, Fields, FieldsNamed, FieldsUnnamed, Meta, parse_macro_input};
 #[proc_macro_derive(I18nErrorDisplay, attributes(error))]
 pub fn i18n_error_display_derive(input: TokenStream) -> TokenStream {
     let input: DeriveInput = parse_macro_input!(input as DeriveInput);
@@ -14,11 +14,10 @@ pub fn i18n_error_display_derive(input: TokenStream) -> TokenStream {
     // 检查是否是枚举
     match &input.data {
         Data::Enum(data) => return enum_derive(enum_name, &data.variants),
-        _ => {
-            quote! {
-                 panic!("AutoEnum只能用于枚举类型"),
-            }.into()
+        _ => quote! {
+             panic!("AutoEnum只能用于枚举类型"),
         }
+        .into(),
     }
 }
 fn enum_derive(
@@ -29,7 +28,6 @@ fn enum_derive(
         .iter()
         .map(|variant| {
             let variant_ident = &variant.ident;
-            let fields = &variant.fields;
             let pattern = match &variant.fields {
                 // 单元变体：没有字段
                 Fields::Unit => {
@@ -47,7 +45,7 @@ fn enum_derive(
                             quote! { #field_name }
                         })
                         .collect();
-                    
+
                     quote! { #name::#variant_ident(#(#field_patterns),*) }
                 }
                 // 命名结构体变体：有命名字段
@@ -60,7 +58,7 @@ fn enum_derive(
                             quote! { #field_name: _ }
                         })
                         .collect();
-                    
+
                     quote! { #name::#variant_ident { #(#field_patterns),* } }
                 }
             };
@@ -76,18 +74,17 @@ fn enum_derive(
                     //     Fields::Unit => todo!(),
                     // }
                     // #[error("qexed_tcp_connect.addr_in_use",addr = field_0.to_string(),ip = field_0.ip().to_string(),port = field_0.port())]
-                    let meta = attr.meta.clone();
-                    match &meta {
-                        Meta::Path(_)=>{
+                    match &attr.meta {
+                        Meta::Path(_) => {
                             quote! {
                                 #pattern => ::core::fmt::Display::fmt(&::rust_i18n::t!("#pattern"), f),
                             }
                         }
-                        Meta::NameValue(meta_name_value) => {
+                        Meta::NameValue(_) => {
                             quote! {
                                 #pattern => ::core::fmt::Display::fmt(&::rust_i18n::t!("#meta_name_value"), f),
                             }
-                        },
+                        }
                         Meta::List(meta_list) => {
                             let parser = Punctuated::<syn::Expr, Comma>::parse_separated_nonempty;
                             match parser.parse2(meta_list.tokens.clone()) {
@@ -108,7 +105,7 @@ fn enum_derive(
                                                 }
                                             }
                                         }
-                                        _ =>{
+                                        _ => {
                                             return quote! {
                                                 #pattern => panic("First argument must be a string literal (error code)"),
                                             };
@@ -118,17 +115,15 @@ fn enum_derive(
                                     quote! {
                                         #pattern => ::core::fmt::Display::fmt(&::rust_i18n::t!(#error_code,#(#args),*), f),
                                     }
-                                },
-                                Err(e) =>{
+                                }
+                                Err(_) => {
                                     quote! {
                                         #pattern => panic("Failed to parse [error] attribute"),
                                     }
-                                },
+                                }
                             }
-                        },
-                        
+                        }
                     }
-
                 }
                 None => {
                     quote! {

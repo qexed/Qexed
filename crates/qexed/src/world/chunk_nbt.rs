@@ -27,11 +27,8 @@ const PLAINS_BIOME_ID: i32 = 40;
 const BLOCKS_REPORT: &str = "assets/reports/blocks.json";
 const BIOME_REGISTRY_DIR: &str = "assets/decompiled_source/src/data/minecraft/worldgen/biome";
 
-pub fn network_chunk_from_region(
-    chunk_x: i32,
-    chunk_z: i32,
-    chunk: &ChunkData,
-) -> Result<MapChunk> {
+#[cfg(test)]
+fn network_chunk_from_region(chunk_x: i32, chunk_z: i32, chunk: &ChunkData) -> Result<MapChunk> {
     Ok(network_chunk_and_light_dampening_from_region(
         chunk_x,
         chunk_z,
@@ -58,7 +55,8 @@ pub fn light_dampening_from_region(chunk: &ChunkData) -> Result<Vec<u8>> {
     light_dampening_from_nbt(&root)
 }
 
-pub fn network_chunk_from_nbt(chunk_x: i32, chunk_z: i32, root: &Tag) -> Result<MapChunk> {
+#[cfg(test)]
+fn network_chunk_from_nbt(chunk_x: i32, chunk_z: i32, root: &Tag) -> Result<MapChunk> {
     Ok(network_chunk_and_light_dampening_from_nbt(
         chunk_x,
         chunk_z,

@@ -44,6 +44,7 @@ pub struct WorldManager {
 }
 
 impl WorldManager {
+    #[cfg(test)]
     pub fn new(save_path: impl Into<std::path::PathBuf>) -> Self {
         Self::with_light_mode(
             save_path,
@@ -74,10 +75,12 @@ impl WorldManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn save_path(&self) -> &std::path::Path {
         &self.save_path
     }
 
+    #[allow(dead_code)]
     pub fn read_only(&self) -> bool {
         self.read_only
     }
@@ -102,7 +105,8 @@ impl WorldManager {
             .len()
     }
 
-    pub fn network_chunk(&self, dimension: &str, chunk_x: i32, chunk_z: i32) -> Result<MapChunk> {
+    #[cfg(test)]
+    fn network_chunk(&self, dimension: &str, chunk_x: i32, chunk_z: i32) -> Result<MapChunk> {
         self.network_chunk_inner(dimension, chunk_x, chunk_z, None)
     }
 
@@ -214,6 +218,7 @@ impl WorldManager {
             .with_context(|| format!("读取区块失败: {chunk_x}, {chunk_z}"))
     }
 
+    #[allow(dead_code)]
     pub fn write_region_chunk(
         &self,
         dimension: &str,
@@ -712,10 +717,6 @@ pub(crate) fn empty_heightmaps() -> Vec<Heightmaps> {
             data: vec![0; 37],
         },
     ]
-}
-
-pub(crate) fn empty_light() -> Light {
-    light_for_mode(WorldLightMode::Static)
 }
 
 pub(crate) fn light_for_mode(mode: WorldLightMode) -> Light {

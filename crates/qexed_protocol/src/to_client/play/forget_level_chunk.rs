@@ -28,7 +28,7 @@ fn chunk_pos(chunk_x: i32, chunk_z: i32) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use qexed_packet::{Packet, PacketCodec};
+    use qexed_packet::Packet;
 
     use super::ForgetLevelChunk;
 

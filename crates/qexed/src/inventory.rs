@@ -234,13 +234,6 @@ impl BlockUpdateAck {
     }
 }
 
-pub fn item_id_from_slot(slot: &Slot) -> Option<i32> {
-    if slot.item_count.0 <= 0 {
-        return None;
-    }
-    slot.item_id.as_ref().map(|id| id.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

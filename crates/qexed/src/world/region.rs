@@ -6,11 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::{Buf, BufMut, BytesMut};
-use flate2::{
-    Compression,
-    read::{GzDecoder, ZlibDecoder},
-    write::ZlibEncoder,
-};
+use flate2::read::{GzDecoder, ZlibDecoder};
 
 const SECTOR_SIZE: usize = 4096;
 const HEADER_SIZE: usize = SECTOR_SIZE * 2;
@@ -29,8 +25,10 @@ pub struct ChunkData {
 }
 
 impl ChunkData {
+    #[cfg(test)]
     pub fn zlib(data: &[u8]) -> Result<Self> {
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(data)?;
         Ok(Self {
             compression: COMPRESSION_ZLIB,
@@ -68,6 +66,7 @@ pub struct AnvilRegion {
 }
 
 impl AnvilRegion {
+    #[allow(dead_code)]
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -132,6 +131,7 @@ impl AnvilRegion {
         }))
     }
 
+    #[allow(dead_code)]
     pub fn write_chunk(&mut self, chunk_x: i32, chunk_z: i32, chunk: ChunkData) -> Result<()> {
         let mut payload = BytesMut::new();
         payload.put_u32((chunk.data.len() + 1) as u32);
@@ -157,6 +157,7 @@ impl AnvilRegion {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;

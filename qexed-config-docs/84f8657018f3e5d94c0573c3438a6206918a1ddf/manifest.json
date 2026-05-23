@@ -1,0 +1,29 @@
+{
+  "commit": "84f8657018f3e5d94c0573c3438a6206918a1ddf",
+  "generator": "qexed_config_to_mdx",
+  "generated_formats": [
+    "mdbook"
+  ],
+  "languages": [
+    "zh-CN",
+    "en"
+  ],
+  "apps": [
+    {
+      "name": "qexed",
+      "config_file": "qexed.toml",
+      "field_count": 80
+    },
+    {
+      "name": "qexed_warden",
+      "config_file": "qexed_warden.toml",
+      "field_count": 49
+    },
+    {
+      "name": "qexed_ip_connect_speed_test",
+      "config_file": "qexed_ip_connect_speed_test.toml",
+      "field_count": 24
+    }
+  ],
+  "asset_logo": "assets/logo.ico"
+}
