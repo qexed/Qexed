@@ -315,3 +315,19 @@ fn configuration_code_of_conduct_packets_use_26_1_2_ids() {
         0x09
     );
 }
+
+#[test]
+fn configuration_resource_pack_packets_use_26_1_2_ids() {
+    assert_eq!(
+        qexed_protocol::to_client::configuration::add_resource_pack::AddResourcePack::ID,
+        0x09
+    );
+    assert_eq!(
+        qexed_protocol::to_client::configuration::remove_resource_pack::RemoveResourcePack::ID,
+        0x08
+    );
+    assert_eq!(
+        qexed_protocol::to_server::configuration::resource_pack_receive::ResourcePackReceive::ID,
+        0x06
+    );
+}

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use toml_edit::{DocumentMut, Item, RawString, value};
+use toml_edit::{DocumentMut, Item, RawString, Value, value};
 
 use crate::build;
 
@@ -108,6 +108,8 @@ pub trait AppConfigTrait:
         );
 
         // 4. ✅ 原地补充缺失字段（不破坏顺序和注释）
+        // 字段完整性以 Default 序列化出的 TOML 结构为准。
+        // 不能用 serde 反序列化是否成功判断完整性，因为 #[serde(default)] 会掩盖缺失字段。
         let default_config = Self::default();
         let default_toml =
             toml::to_string_pretty(&default_config).with_context(|| "序列化默认配置失败")?;
@@ -115,7 +117,7 @@ pub trait AppConfigTrait:
             .parse::<DocumentMut>()
             .expect("默认 TOML 必须合法");
 
-        merge_missing_items(doc.as_item_mut(), default_doc.as_item());
+        merge_missing_default_items(doc.as_item_mut(), default_doc.as_item());
 
         // 5. ✅ 更新字段注释（原地）
         if effective_enable {
@@ -316,39 +318,128 @@ fn item_exists_in_doc(doc: &DocumentMut, key: &str) -> bool {
 }
 
 // 根据路径获取 Item 引用
-fn merge_missing_items(target: &mut Item, defaults: &Item) {
+fn merge_missing_default_items(target: &mut Item, defaults: &Item) {
     match (target, defaults) {
         (Item::Table(target_table), Item::Table(default_table)) => {
-            for (key, default_item) in default_table.iter() {
-                if key.starts_with("auto_doc_") {
-                    continue;
-                }
-
-                match target_table.get_mut(key) {
-                    Some(target_item) => merge_missing_items(target_item, default_item),
-                    None => {
-                        target_table.insert(key, default_item.clone());
-                    }
-                }
-            }
+            merge_missing_table_items(target_table, default_table);
+        }
+        (Item::Table(target_table), Item::Value(Value::InlineTable(default_table))) => {
+            merge_missing_table_from_inline_table(target_table, default_table);
+        }
+        (Item::Value(target_value), default_item) => {
+            merge_missing_value_items(target_value, default_item);
         }
         (Item::ArrayOfTables(target_tables), Item::ArrayOfTables(default_tables)) => {
-            if let (Some(target_table), Some(default_table)) = (
-                target_tables.iter_mut().next(),
-                default_tables.iter().next(),
-            ) {
-                for (key, default_item) in default_table.iter() {
-                    match target_table.get_mut(key) {
-                        Some(target_item) => merge_missing_items(target_item, default_item),
-                        None => {
-                            target_table.insert(key, default_item.clone());
-                        }
-                    }
+            if let Some(default_table) = default_tables.iter().next() {
+                for target_table in target_tables.iter_mut() {
+                    merge_missing_table_items(target_table, default_table);
                 }
             }
         }
         _ => {}
     }
+}
+
+fn merge_missing_table_items(
+    target_table: &mut toml_edit::Table,
+    default_table: &toml_edit::Table,
+) {
+    for (key, default_item) in default_table.iter() {
+        if key.starts_with("auto_doc_") {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_item) => merge_missing_default_items(target_item, default_item),
+            None => {
+                target_table.insert(key, default_item.clone());
+            }
+        }
+    }
+}
+
+fn merge_missing_table_from_inline_table(
+    target_table: &mut toml_edit::Table,
+    default_table: &toml_edit::InlineTable,
+) {
+    for (key, default_value) in default_table.iter() {
+        if key.starts_with("auto_doc_") {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_item) => {
+                let default_item = Item::Value(default_value.clone());
+                merge_missing_default_items(target_item, &default_item);
+            }
+            None => {
+                target_table.insert(key, Item::Value(default_value.clone()));
+            }
+        }
+    }
+}
+
+fn merge_missing_value_items(target_value: &mut Value, defaults: &Item) {
+    match (target_value, defaults) {
+        (Value::InlineTable(target_table), Item::Table(default_table)) => {
+            merge_missing_inline_table_from_table(target_table, default_table);
+        }
+        (Value::InlineTable(target_table), Item::Value(Value::InlineTable(default_table))) => {
+            merge_missing_inline_table_items(target_table, default_table);
+        }
+        (Value::Array(target_array), Item::Value(Value::Array(default_array))) => {
+            for (target_value, default_value) in target_array.iter_mut().zip(default_array.iter()) {
+                let default_item = Item::Value(default_value.clone());
+                merge_missing_value_items(target_value, &default_item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn merge_missing_inline_table_from_table(
+    target_table: &mut toml_edit::InlineTable,
+    default_table: &toml_edit::Table,
+) {
+    for (key, default_item) in default_table.iter() {
+        if key.starts_with("auto_doc_") {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_value) => merge_missing_value_items(target_value, default_item),
+            None => {
+                if let Some(default_value) = default_item_to_value(default_item) {
+                    target_table.insert(key, default_value);
+                }
+            }
+        }
+    }
+}
+
+fn merge_missing_inline_table_items(
+    target_table: &mut toml_edit::InlineTable,
+    default_table: &toml_edit::InlineTable,
+) {
+    for (key, default_value) in default_table.iter() {
+        if key.starts_with("auto_doc_") {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_value) => {
+                let default_item = Item::Value(default_value.clone());
+                merge_missing_value_items(target_value, &default_item);
+            }
+            None => {
+                target_table.insert(key, default_value.clone());
+            }
+        }
+    }
+}
+
+fn default_item_to_value(default_item: &Item) -> Option<Value> {
+    default_item.clone().into_value().ok()
 }
 
 fn get_item_by_path<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a toml_edit::Item> {

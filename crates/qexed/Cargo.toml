@@ -35,6 +35,7 @@ mongodb.workspace = true
 mysql_async.workspace = true
 uuid.workspace = true
 wgpu.workspace = true
+wasmtime.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
     "Win32_System_Console",

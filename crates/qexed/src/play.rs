@@ -63,6 +63,8 @@ pub async fn initialize<R, W>(
     world: &WorldManager,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
+    plugins: &crate::plugins::PluginManager,
+    content_filter: &crate::content_filter::ContentFilter,
     profile: &qexed_packet::net_types::GameProfile,
 ) -> Result<()>
 where
@@ -91,7 +93,8 @@ where
         inventory.visible_equipment(),
     );
     let world_session = world.begin_session();
-    let leave_guard = PlayerLeaveGuard::new(players, profile.uuid);
+    plugins.emit_player_join(&session.player);
+    let leave_guard = PlayerLeaveGuard::new(players, plugins, session.player.clone());
     let player_entity_type = entity_type_id("minecraft:player")?;
 
     log::debug!(
@@ -178,6 +181,8 @@ where
         world,
         players,
         player_data,
+        plugins,
+        content_filter,
         session,
         player_entity_type,
         profile,
@@ -478,6 +483,7 @@ impl ChunkSendState {
     async fn unload_expired_chunks<W>(
         &mut self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
+        plugins: &crate::plugins::PluginManager,
         now: Instant,
     ) -> Result<usize>
     where
@@ -508,6 +514,7 @@ impl ChunkSendState {
                     chunk_z: *chunk_z,
                 })
                 .await?;
+                plugins.emit_chunk_unload(&self.dimension, *chunk_x, *chunk_z);
             }
         }
 
@@ -564,6 +571,7 @@ impl ChunkSendState {
         &mut self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         world: &WorldManager,
+        plugins: &crate::plugins::PluginManager,
         loaded: ChunkLoadResult,
         sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
     ) -> Result<()>
@@ -590,6 +598,7 @@ impl ChunkSendState {
             sink.send(update).await?;
         }
         self.visible_chunks.insert((chunk_x, chunk_z));
+        plugins.emit_chunk_load(&self.dimension, chunk_x, chunk_z);
         sink.send(ChunkBatchFinished {
             batch_size: VarInt(1),
         })
@@ -701,6 +710,8 @@ async fn wait_for_play_packets<R, W>(
     world: &WorldManager,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
+    plugins: &crate::plugins::PluginManager,
+    content_filter: &crate::content_filter::ContentFilter,
     mut session: PlayerSession,
     player_entity_type: i32,
     profile: &qexed_packet::net_types::GameProfile,
@@ -738,12 +749,12 @@ where
                     anyhow::bail!("区块加载任务通道已关闭");
                 };
                 chunk_state
-                    .send_loaded_chunk(sink, world, loaded_chunk, &chunk_sender)
+                    .send_loaded_chunk(sink, world, plugins, loaded_chunk, &chunk_sender)
                     .await?;
             }
             _ = chunk_unload_sweep.tick(), if chunk_state.has_pending_unloads() => {
                 let unloaded = chunk_state
-                    .unload_expired_chunks(sink, Instant::now())
+                    .unload_expired_chunks(sink, plugins, Instant::now())
                     .await?;
                 if unloaded > 0 {
                     log::debug!("延迟卸载区块完成: count={unloaded}");
@@ -758,6 +769,13 @@ where
                 }
                 for packet in event.packets(player_entity_type)? {
                     sink.send_raw(packet).await?;
+                }
+                if let Some(message) = player_event_message(config, &event) {
+                    sink.send(SystemChat {
+                        content: text_component(message),
+                        overlay: false,
+                    })
+                    .await?;
                 }
                 sink.flush().await?;
             }
@@ -985,6 +1003,23 @@ where
                 if packet_id == ChatMessage::ID {
                     let chat = crate::connection::decode_payload::<ChatMessage>(&mut payload)?;
                     log::debug!("收到聊天消息: {}", chat.message);
+                    let filtered_message = match content_filter.check_chat(&chat.message).await? {
+                        crate::content_filter::FilterAction::Allow(message) => message,
+                        crate::content_filter::FilterAction::Block { reason } => {
+                            let reason = if reason.trim().is_empty() {
+                                content_filter.block_message()
+                            } else {
+                                &reason
+                            };
+                            sink.send(SystemChat {
+                                content: text_component(reason),
+                                overlay: false,
+                            })
+                            .await?;
+                            sink.flush().await?;
+                            continue;
+                        }
+                    };
                     if let Some(chat_session) = chat_session.as_mut() {
                         let verified = chat_session.verify_message(profile.uuid, &chat)?;
                         sink.send(PlayerChat::pass_through(
@@ -997,7 +1032,7 @@ where
                                 .into_iter()
                                 .map(PackedMessageSignature::full)
                                 .collect(),
-                            chat.message,
+                            filtered_message,
                             chat.timestamp,
                             chat.salt,
                             text_component(&profile.username),
@@ -1008,7 +1043,7 @@ where
                         anyhow::bail!("客户端未初始化 Mojang secure chat 会话");
                     } else {
                         sink.send(SystemChat {
-                            content: text_component(format!("<{}> {}", profile.username, chat.message)),
+                            content: text_component(format!("<{}> {}", profile.username, filtered_message)),
                             overlay: false,
                         }).await?;
                     }
@@ -1104,6 +1139,7 @@ fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool {
         PlayerEvent::Left {
             profile_id: left_id,
             entity_id: _,
+            username: _,
         } => *left_id == profile_id,
         PlayerEvent::Moved {
             profile_id: moved_id,
@@ -1124,31 +1160,67 @@ fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool {
     }
 }
 
+fn player_event_message(
+    config: &qexed_config::app::qexed::Qexed,
+    event: &PlayerEvent,
+) -> Option<String> {
+    let messages = &config.server.player_messages;
+    if !messages.enable {
+        return None;
+    }
+
+    match event {
+        PlayerEvent::Joined(player) => Some(render_player_message(
+            &messages.join,
+            &player.profile.username,
+        )),
+        PlayerEvent::Left { username, .. } => {
+            Some(render_player_message(&messages.leave, username))
+        }
+        _ => None,
+    }
+}
+
+fn render_player_message(template: &str, username: &str) -> String {
+    template.replace("{player}", username)
+}
+
 struct PlayerLeaveGuard<'a> {
     players: &'a PlayerManager,
-    profile_id: uuid::Uuid,
+    plugins: &'a crate::plugins::PluginManager,
+    player: OnlinePlayer,
     active: bool,
 }
 
 impl<'a> PlayerLeaveGuard<'a> {
-    fn new(players: &'a PlayerManager, profile_id: uuid::Uuid) -> Self {
+    fn new(
+        players: &'a PlayerManager,
+        plugins: &'a crate::plugins::PluginManager,
+        player: OnlinePlayer,
+    ) -> Self {
         Self {
             players,
-            profile_id,
+            plugins,
+            player,
             active: true,
         }
     }
 
     fn leave(mut self) {
-        self.players.leave(self.profile_id);
+        self.leave_inner();
         self.active = false;
+    }
+
+    fn leave_inner(&self) {
+        self.plugins.emit_player_leave(&self.player);
+        self.players.leave(self.player.profile.uuid);
     }
 }
 
 impl Drop for PlayerLeaveGuard<'_> {
     fn drop(&mut self) {
         if self.active {
-            self.players.leave(self.profile_id);
+            self.leave_inner();
         }
     }
 }

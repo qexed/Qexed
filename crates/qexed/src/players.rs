@@ -23,6 +23,7 @@ pub enum PlayerEvent {
     Left {
         profile_id: uuid::Uuid,
         entity_id: i32,
+        username: String,
     },
     Moved {
         profile_id: uuid::Uuid,
@@ -202,6 +203,7 @@ impl PlayerManager {
             PlayerEvent::Left {
                 profile_id,
                 entity_id: handle.player.entity_id,
+                username: handle.player.profile.username,
             },
         );
     }
@@ -214,6 +216,7 @@ impl PlayerEvent {
             Self::Left {
                 profile_id,
                 entity_id,
+                username: _,
             } => Ok(vec![
                 packet_bytes(RemoveEntities::one(*entity_id))?,
                 packet_bytes(PlayerInfoRemove::one(*profile_id))?,

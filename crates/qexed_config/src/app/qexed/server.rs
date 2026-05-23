@@ -69,6 +69,18 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.player_data", sub)]
     pub player_data: PlayerData,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_messages", sub)]
+    pub player_messages: PlayerMessages,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter", sub)]
+    pub content_filter: ContentFilter,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack", sub)]
+    pub resource_pack: ResourcePack,
+
     #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
@@ -95,10 +107,206 @@ impl Default for Server {
             code_of_conduct: String::new(),
             world: World::default(),
             player_data: PlayerData::default(),
+            player_messages: PlayerMessages::default(),
+            content_filter: ContentFilter::default(),
+            resource_pack: ResourcePack::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct ResourcePack {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.source")]
+    pub source: ResourcePackSource,
+
+    #[serde(default = "default_resource_pack_id")]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.id")]
+    pub id: uuid::Uuid,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.url")]
+    pub url: String,
+
+    #[serde(default = "default_resource_pack_path")]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.path")]
+    pub path: String,
+
+    #[serde(default = "default_resource_pack_download_bind")]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.download_bind")]
+    pub download_bind: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.download_host")]
+    pub download_host: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.hash")]
+    pub hash: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.required")]
+    pub required: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.prompt")]
+    pub prompt: String,
+
+    #[serde(default = "default_resource_pack_disconnect_message")]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.disconnect_message")]
+    pub disconnect_message: String,
+}
+
+impl Default for ResourcePack {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            source: ResourcePackSource::default(),
+            id: default_resource_pack_id(),
+            url: String::new(),
+            path: default_resource_pack_path(),
+            download_bind: default_resource_pack_download_bind(),
+            download_host: String::new(),
+            hash: String::new(),
+            required: false,
+            prompt: String::new(),
+            disconnect_message: default_resource_pack_disconnect_message(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePackSource {
+    #[default]
+    Url,
+    Local,
+}
+
+fn default_resource_pack_id() -> uuid::Uuid {
+    uuid::Uuid::from_u128(0x11111111_2222_3333_4444_555555555555)
+}
+
+fn default_resource_pack_path() -> String {
+    "resourcepacks/server.zip".to_string()
+}
+
+fn default_resource_pack_download_bind() -> String {
+    "0.0.0.0:25566".to_string()
+}
+
+fn default_resource_pack_disconnect_message() -> String {
+    "This server requires its resource pack.".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct PlayerMessages {
+    #[serde(default = "default_player_messages_enable")]
+    #[AutoDoc(key = "config.qexed.server.player_messages.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_player_join_message")]
+    #[AutoDoc(key = "config.qexed.server.player_messages.join")]
+    pub join: String,
+
+    #[serde(default = "default_player_leave_message")]
+    #[AutoDoc(key = "config.qexed.server.player_messages.leave")]
+    pub leave: String,
+}
+
+impl Default for PlayerMessages {
+    fn default() -> Self {
+        Self {
+            enable: default_player_messages_enable(),
+            join: default_player_join_message(),
+            leave: default_player_leave_message(),
+        }
+    }
+}
+
+fn default_player_messages_enable() -> bool {
+    true
+}
+
+fn default_player_join_message() -> String {
+    "{player} joined the server".to_string()
+}
+
+fn default_player_leave_message() -> String {
+    "{player} left the server".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct ContentFilter {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter.engine")]
+    pub engine: ContentFilterEngine,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter.words")]
+    pub words: Vec<String>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter.knowledge_path")]
+    pub knowledge_path: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter.api_url")]
+    pub api_url: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.content_filter.api_token")]
+    pub api_token: String,
+
+    #[serde(default = "default_content_filter_replacement")]
+    #[AutoDoc(key = "config.qexed.server.content_filter.replacement")]
+    pub replacement: String,
+
+    #[serde(default = "default_content_filter_block_message")]
+    #[AutoDoc(key = "config.qexed.server.content_filter.block_message")]
+    pub block_message: String,
+}
+
+impl Default for ContentFilter {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            engine: ContentFilterEngine::default(),
+            words: Vec::new(),
+            knowledge_path: String::new(),
+            api_url: String::new(),
+            api_token: String::new(),
+            replacement: default_content_filter_replacement(),
+            block_message: default_content_filter_block_message(),
+        }
+    }
+}
+
+fn default_content_filter_replacement() -> String {
+    "***".to_string()
+}
+
+fn default_content_filter_block_message() -> String {
+    "Your message was blocked by the server content filter.".to_string()
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentFilterEngine {
+    #[default]
+    Fixed,
+    Knowledge,
+    Api,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
@@ -570,7 +778,8 @@ impl std::str::FromStr for ForwardingMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        GameMode, GpuDeviceSelector, LightAlgorithm, LightMode, PlayerData, PlayerDataEngine, World,
+        ContentFilter, ContentFilterEngine, GameMode, GpuDeviceSelector, LightAlgorithm, LightMode,
+        PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack, ResourcePackSource, World,
     };
 
     #[test]
@@ -763,5 +972,74 @@ database = "qexed_player_test"
         assert_eq!(player_data.table, "qexed_player_data");
         assert_eq!(player_data.mongodb.database, "qexed_player_test");
         assert_eq!(player_data.mysql.username, "qexed");
+    }
+
+    #[test]
+    fn parses_player_message_settings() {
+        let player_messages: PlayerMessages = toml::from_str(
+            r#"
+enable = true
+join = "{player} joined"
+leave = "{player} left"
+"#,
+        )
+        .unwrap();
+
+        assert!(player_messages.enable);
+        assert_eq!(player_messages.join, "{player} joined");
+        assert_eq!(player_messages.leave, "{player} left");
+    }
+
+    #[test]
+    fn parses_content_filter_settings() {
+        let content_filter: ContentFilter = toml::from_str(
+            r#"
+enable = true
+engine = "knowledge"
+words = ["bad"]
+knowledge_path = "config/sensitive_words.txt"
+replacement = "***"
+block_message = "blocked"
+"#,
+        )
+        .unwrap();
+
+        assert!(content_filter.enable);
+        assert_eq!(content_filter.engine, ContentFilterEngine::Knowledge);
+        assert_eq!(content_filter.words, vec!["bad"]);
+        assert_eq!(content_filter.knowledge_path, "config/sensitive_words.txt");
+    }
+
+    #[test]
+    fn parses_resource_pack_settings() {
+        let resource_pack: ResourcePack = toml::from_str(
+            r#"
+enable = true
+source = "local"
+id = "00112233-4455-6677-8899-aabbccddeeff"
+url = "https://example.com/qexed.zip"
+path = "resourcepacks/test.zip"
+download_bind = "127.0.0.1:25566"
+download_host = "example.org"
+hash = "0123456789abcdef0123456789abcdef01234567"
+required = true
+prompt = "Install server resources"
+disconnect_message = "Resource pack required"
+"#,
+        )
+        .unwrap();
+
+        assert!(resource_pack.enable);
+        assert_eq!(
+            resource_pack.id,
+            uuid::Uuid::from_u128(0x00112233_4455_6677_8899_aabbccddeeff)
+        );
+        assert_eq!(resource_pack.source, ResourcePackSource::Local);
+        assert_eq!(resource_pack.url, "https://example.com/qexed.zip");
+        assert_eq!(resource_pack.path, "resourcepacks/test.zip");
+        assert_eq!(resource_pack.download_bind, "127.0.0.1:25566");
+        assert_eq!(resource_pack.download_host, "example.org");
+        assert!(resource_pack.required);
+        assert_eq!(resource_pack.prompt, "Install server resources");
     }
 }

@@ -6,6 +6,7 @@ use qexed_protocol::{
         configuration::{
             accept_code_of_conduct::AcceptCodeOfConduct,
             finish_configuration::FinishConfiguration as ServerboundFinishConfiguration,
+            resource_pack_receive::ResourcePackReceive,
             select_known_packs::SelectKnownPacks as ServerboundSelectKnownPacks,
         },
         handshaking::set_protocol::SetProtocol,
@@ -29,10 +30,18 @@ pub struct ServerContext {
     pub world: std::sync::Arc<crate::world::WorldManager>,
     pub players: std::sync::Arc<crate::players::PlayerManager>,
     pub player_data: std::sync::Arc<crate::player_data::PlayerDataManager>,
+    pub plugins: std::sync::Arc<crate::plugins::PluginManager>,
+    pub content_filter: std::sync::Arc<crate::content_filter::ContentFilter>,
+    pub resource_pack: std::sync::Arc<crate::resource_pack::ResourcePackManager>,
 }
 
 impl ServerContext {
     pub async fn new(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<Self> {
+        let plugins = std::sync::Arc::new(crate::plugins::PluginManager::load_default());
+        plugins.emit_init();
+        plugins.emit_config_reload("config/qexed.toml");
+        plugins.emit_language_change(&config.language);
+
         let world = crate::world::WorldManager::with_light_mode(
             config.server.world.path.clone(),
             crate::world::WorldLightMode::from(&config.server.world.light),
@@ -46,21 +55,30 @@ impl ServerContext {
             &config.server.player_data,
         )
         .await?;
+        let content_filter =
+            crate::content_filter::ContentFilter::from_config(&config.server.content_filter)?;
+        let mut resource_pack =
+            crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
+                .await?;
+        resource_pack.start().await?;
         Ok(Self {
             config: std::sync::Arc::new(config),
             authenticator: std::sync::Arc::new(Authenticator::new()?),
             world: std::sync::Arc::new(world),
             players: std::sync::Arc::new(crate::players::PlayerManager::new()),
             player_data: std::sync::Arc::new(player_data),
+            plugins,
+            content_filter: std::sync::Arc::new(content_filter),
+            resource_pack: std::sync::Arc::new(resource_pack),
         })
     }
 }
 
 pub async fn handle(stream: TcpStream, peer_addr: std::net::SocketAddr, context: ServerContext) {
     if let Err(err) = handle_inner(stream, peer_addr, context).await {
-        log::error!("连接处理错误: {err}");
+        log::error!("connection handling error: {err}");
     }
-    log::info!("连接关闭: {peer_addr}");
+    log::info!("connection closed: {peer_addr}");
 }
 
 async fn handle_inner(
@@ -76,7 +94,7 @@ async fn handle_inner(
     match handshake.next_state.0 {
         1 => handle_status(&mut packets, &mut sink, &context).await,
         2 => handle_login(handshake, &mut packets, &mut sink, &context).await,
-        state => anyhow::bail!("不支持的握手目标状态: {state}"),
+        state => anyhow::bail!("unsupported handshake target state: {state}"),
     }
 }
 
@@ -160,7 +178,7 @@ where
     .await?;
 
     read_expected_packet::<LoginAcknowledged, _>(packets).await?;
-    handle_configuration(packets, sink, context).await?;
+    handle_configuration(packets, sink, context, &handshake.server_host).await?;
     crate::play::initialize(
         packets,
         sink,
@@ -169,6 +187,8 @@ where
         &context.world,
         &context.players,
         &context.player_data,
+        &context.plugins,
+        &context.content_filter,
         &profile,
     )
     .await?;
@@ -180,12 +200,13 @@ async fn handle_configuration<R, W>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     context: &ServerContext,
+    login_host: &str,
 ) -> anyhow::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    log::debug!("发送配置态服务端品牌: {SERVER_BRAND}");
+    log::debug!("send configuration server brand: {SERVER_BRAND}");
     sink.send(to_client::configuration::custom_payload::CustomPayload {
         channel: "minecraft:brand".to_string(),
         data: qexed_packet::net_types::RestBuffer(string_payload(SERVER_BRAND)?),
@@ -193,7 +214,7 @@ where
     .await?;
 
     log::debug!(
-        "发送配置态功能标志: {}",
+        "send configuration feature flag: {}",
         crate::registry_sync::VANILLA_FEATURE
     );
     sink.send(to_client::configuration::feature_flags::FeatureFlags {
@@ -202,47 +223,203 @@ where
     .await?;
 
     let known_packs = crate::registry_sync::known_packs();
-    log::debug!("请求客户端确认已知资源包: {known_packs:?}");
+    log::debug!("request client known-pack selection: {known_packs:?}");
     sink.send(to_client::configuration::select_known_packs::SelectKnownPacks { known_packs })
         .await?;
     sink.flush().await?;
 
     let selected_packs = wait_for_known_packs(packets).await?;
-    log::debug!("客户端选择已知资源包: {:?}", selected_packs.entries);
+    log::debug!("client selected known packs: {:?}", selected_packs.entries);
     let include_registry_contents =
         !crate::registry_sync::accepts_vanilla_core_pack(&selected_packs.entries);
-    log::debug!("发送注册表数据，包含完整内容: {include_registry_contents}");
+    log::debug!("send registry data, include full contents: {include_registry_contents}");
 
     let registry_packets = crate::registry_sync::load_registry_packets(include_registry_contents)?;
-    log::debug!("准备发送注册表数据包数量: {}", registry_packets.len());
+    log::debug!(
+        "prepared registry data packet count: {}",
+        registry_packets.len()
+    );
     for packet in registry_packets {
-        log::trace!("发送注册表: {}", packet.id);
+        log::trace!("send registry: {}", packet.id);
         sink.send(packet).await?;
     }
 
     let tag_packet = crate::registry_sync::load_tag_packet()?;
-    log::debug!("发送标签数据，注册表数量: {}", tag_packet.tags.len());
+    log::debug!("send tags, registry count: {}", tag_packet.tags.len());
     sink.send(tag_packet).await?;
 
     let code_of_conduct = context.config.server.code_of_conduct.trim();
     if !code_of_conduct.is_empty() {
-        log::debug!("发送入服准则并等待客户端接受");
+        log::debug!("send code of conduct and wait for client acceptance");
         sink.send(to_client::configuration::code_of_conduct::CodeOfConduct {
             code_of_conduct: code_of_conduct.to_string(),
         })
         .await?;
         wait_for_code_of_conduct_accept(packets).await?;
-        log::debug!("客户端已接受入服准则");
+        log::debug!("client accepted code of conduct");
     }
 
-    log::debug!("发送配置完成包");
+    send_configured_resource_pack(packets, sink, context, login_host).await?;
+
+    log::debug!("send finish configuration packet");
     sink.send(to_client::configuration::finish_configuration::FinishConfiguration {})
         .await?;
     sink.flush().await?;
     wait_for_finish_configuration(packets).await?;
-    log::debug!("客户端已完成配置");
+    log::debug!("client finished configuration");
 
     Ok(())
+}
+
+async fn send_configured_resource_pack<R, W>(
+    packets: &mut qexed_tcp_connect::PacketStream<R>,
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    context: &ServerContext,
+    login_host: &str,
+) -> anyhow::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let resource_pack = &context.config.server.resource_pack;
+    if !resource_pack.enable {
+        return Ok(());
+    }
+
+    let Some(offer) = context.resource_pack.offer(resource_pack, login_host) else {
+        log::warn!("resource pack is enabled but no download URL is available; skipping");
+        return Ok(());
+    };
+
+    sink.send(
+        to_client::configuration::add_resource_pack::AddResourcePack {
+            id: resource_pack.id,
+            url: offer.url,
+            hash: offer.hash,
+            required: resource_pack.required,
+            prompt: optional_text_component(&resource_pack.prompt),
+        },
+    )
+    .await?;
+    sink.flush().await?;
+
+    wait_for_resource_pack_result(packets, sink, resource_pack).await
+}
+
+async fn wait_for_resource_pack_result<R, W>(
+    packets: &mut qexed_tcp_connect::PacketStream<R>,
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    resource_pack: &qexed_config::app::qexed::server::ResourcePack,
+) -> anyhow::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        let Some(mut payload) = packets.read_packet().await? else {
+            anyhow::bail!("connection closed while waiting for resource pack response");
+        };
+
+        let packet_id = read_packet_id(&mut payload)?;
+        if packet_id != ResourcePackReceive::ID {
+            log::debug!(
+                "skip configuration packet while waiting for resource pack response: {packet_id}"
+            );
+            continue;
+        }
+
+        let result = decode_payload::<ResourcePackReceive>(&mut payload)?;
+        if result.uuid != resource_pack.id {
+            log::debug!(
+                "ignore resource pack response for another pack: expected={}, actual={}, status={}",
+                resource_pack.id,
+                result.uuid,
+                result.result.0
+            );
+            continue;
+        }
+
+        let status = ResourcePackStatus::from_protocol_id(result.result.0);
+        log::debug!("client resource pack response: {}", status.as_str());
+        if status.is_successfully_loaded() {
+            return Ok(());
+        }
+
+        if resource_pack.required && status.is_terminal_failure() {
+            sink.send(to_client::configuration::disconnect::Disconnect {
+                reason: text_component(&resource_pack.disconnect_message),
+            })
+            .await?;
+            sink.flush().await?;
+            anyhow::bail!(
+                "client did not accept required resource pack: {}",
+                status.as_str()
+            );
+        }
+
+        if !resource_pack.required && status.is_terminal_failure() {
+            return Ok(());
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResourcePackStatus {
+    SuccessfullyLoaded,
+    Declined,
+    FailedDownload,
+    Accepted,
+    Downloaded,
+    InvalidUrl,
+    FailedReload,
+    Discarded,
+    Unknown(i32),
+}
+
+impl ResourcePackStatus {
+    fn from_protocol_id(id: i32) -> Self {
+        match id {
+            0 => Self::SuccessfullyLoaded,
+            1 => Self::Declined,
+            2 => Self::FailedDownload,
+            3 => Self::Accepted,
+            4 => Self::Downloaded,
+            5 => Self::InvalidUrl,
+            6 => Self::FailedReload,
+            7 => Self::Discarded,
+            other => Self::Unknown(other),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SuccessfullyLoaded => "successfully_loaded",
+            Self::Declined => "declined",
+            Self::FailedDownload => "failed_download",
+            Self::Accepted => "accepted",
+            Self::Downloaded => "downloaded",
+            Self::InvalidUrl => "invalid_url",
+            Self::FailedReload => "failed_reload",
+            Self::Discarded => "discarded",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+
+    fn is_successfully_loaded(self) -> bool {
+        matches!(self, Self::SuccessfullyLoaded)
+    }
+
+    fn is_terminal_failure(self) -> bool {
+        matches!(
+            self,
+            Self::Declined
+                | Self::FailedDownload
+                | Self::InvalidUrl
+                | Self::FailedReload
+                | Self::Discarded
+                | Self::Unknown(_)
+        )
+    }
 }
 
 async fn wait_for_known_packs<R>(
@@ -253,7 +430,7 @@ where
 {
     loop {
         let Some(mut payload) = packets.read_packet().await? else {
-            anyhow::bail!("连接在等待已知资源包选择时关闭");
+            anyhow::bail!("connection closed while waiting for known-pack selection");
         };
 
         let packet_id = read_packet_id(&mut payload)?;
@@ -261,7 +438,9 @@ where
             return decode_payload::<ServerboundSelectKnownPacks>(&mut payload);
         }
 
-        log::debug!("等待已知资源包选择时跳过配置态数据包 ID: {packet_id}");
+        log::debug!(
+            "skip configuration packet while waiting for known-pack selection: {packet_id}"
+        );
     }
 }
 
@@ -273,7 +452,7 @@ where
 {
     loop {
         let Some(mut payload) = packets.read_packet().await? else {
-            anyhow::bail!("连接在等待接受入服准则时关闭");
+            anyhow::bail!("connection closed while waiting for code-of-conduct acceptance");
         };
 
         let packet_id = read_packet_id(&mut payload)?;
@@ -282,7 +461,9 @@ where
             return Ok(());
         }
 
-        log::debug!("等待接受入服准则时跳过配置态数据包 ID: {packet_id}");
+        log::debug!(
+            "skip configuration packet while waiting for code-of-conduct acceptance: {packet_id}"
+        );
     }
 }
 
@@ -294,7 +475,7 @@ where
 {
     loop {
         let Some(mut payload) = packets.read_packet().await? else {
-            anyhow::bail!("连接在等待完成配置时关闭");
+            anyhow::bail!("connection closed while waiting for finish configuration");
         };
 
         let packet_id = read_packet_id(&mut payload)?;
@@ -303,7 +484,9 @@ where
             return Ok(());
         }
 
-        log::debug!("等待完成配置时跳过配置态数据包 ID: {packet_id}");
+        log::debug!(
+            "skip configuration packet while waiting for finish configuration: {packet_id}"
+        );
     }
 }
 
@@ -366,12 +549,16 @@ where
     R: tokio::io::AsyncRead + Unpin,
 {
     let Some(mut payload) = packets.read_packet().await? else {
-        anyhow::bail!("连接在读取数据包时关闭");
+        anyhow::bail!("connection closed while reading packet");
     };
 
     let packet_id = read_packet_id(&mut payload)?;
     if packet_id != T::ID {
-        anyhow::bail!("数据包 ID 不匹配: 期望 {}, 实际 {}", T::ID, packet_id);
+        anyhow::bail!(
+            "packet ID mismatch: expected {}, actual {}",
+            T::ID,
+            packet_id
+        );
     }
 
     decode_payload::<T>(&mut payload)
@@ -407,12 +594,29 @@ fn random_verify_token() -> Vec<u8> {
     token
 }
 
+fn optional_text_component(text: &str) -> Option<qexed_protocol::types::TextComponent> {
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text_component(text))
+    }
+}
+
+fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextComponent {
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "text".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from(text.into())),
+    );
+    qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
+}
+
 #[cfg(test)]
 mod tests {
     use qexed_packet::{Packet, PacketCodec};
     use qexed_protocol::{
         to_client::configuration::{
-            code_of_conduct::CodeOfConduct,
+            add_resource_pack::AddResourcePack, code_of_conduct::CodeOfConduct,
             custom_payload::CustomPayload as ClientboundCustomPayload, feature_flags::FeatureFlags,
             finish_configuration::FinishConfiguration as ClientboundFinishConfiguration,
             registry_data::RegistryData,
@@ -422,6 +626,7 @@ mod tests {
             configuration::{
                 accept_code_of_conduct::AcceptCodeOfConduct, custom_payload::CustomPayload,
                 finish_configuration::FinishConfiguration as ServerboundFinishConfiguration,
+                resource_pack_receive::ResourcePackReceive,
                 select_known_packs::SelectKnownPacks as ServerboundSelectKnownPacks,
             },
             handshaking::set_protocol::SetProtocol,
@@ -468,10 +673,9 @@ mod tests {
         let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
         let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
 
-        let server_task =
-            tokio::spawn(
-                async move { handle_configuration(&mut packets, &mut sink, &context).await },
-            );
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut packets, &mut sink, &context, "127.0.0.1").await
+        });
 
         drive_known_pack_selection(&mut client_packets, &mut client_sink).await;
 
@@ -488,7 +692,7 @@ mod tests {
     #[tokio::test]
     async fn non_empty_code_of_conduct_sends_prompt_and_waits_for_accept() {
         let mut config = qexed_config::app::qexed::Qexed::default();
-        config.server.code_of_conduct = "遵守服务器规则".to_string();
+        config.server.code_of_conduct = "Follow the server rules".to_string();
         let context = ServerContext::new(config).await.unwrap();
 
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
@@ -500,13 +704,13 @@ mod tests {
         let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
 
         let server_task = tokio::spawn(async move {
-            handle_configuration(&mut server_packets, &mut server_sink, &context).await
+            handle_configuration(&mut server_packets, &mut server_sink, &context, "127.0.0.1").await
         });
 
         drive_known_pack_selection(&mut client_packets, &mut client_sink).await;
 
         let prompt = read_configuration_until_code_of_conduct(&mut client_packets).await;
-        assert_eq!(prompt.code_of_conduct, "遵守服务器规则");
+        assert_eq!(prompt.code_of_conduct, "Follow the server rules");
 
         client_sink.send(AcceptCodeOfConduct {}).await.unwrap();
         client_sink.flush().await.unwrap();
@@ -526,7 +730,7 @@ mod tests {
     #[tokio::test]
     async fn code_of_conduct_wait_skips_prior_configuration_packets() {
         let mut config = qexed_config::app::qexed::Qexed::default();
-        config.server.code_of_conduct = "遵守服务器规则".to_string();
+        config.server.code_of_conduct = "Follow the server rules".to_string();
         let context = ServerContext::new(config).await.unwrap();
 
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
@@ -538,12 +742,12 @@ mod tests {
         let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
 
         let server_task = tokio::spawn(async move {
-            handle_configuration(&mut server_packets, &mut server_sink, &context).await
+            handle_configuration(&mut server_packets, &mut server_sink, &context, "127.0.0.1").await
         });
 
         drive_known_pack_selection(&mut client_packets, &mut client_sink).await;
         let prompt = read_configuration_until_code_of_conduct(&mut client_packets).await;
-        assert_eq!(prompt.code_of_conduct, "遵守服务器规则");
+        assert_eq!(prompt.code_of_conduct, "Follow the server rules");
 
         let custom_payload = qexed_tcp_connect::PacketSink::<
             tokio::io::WriteHalf<tokio::io::DuplexStream>,
@@ -570,6 +774,181 @@ mod tests {
         client_sink.flush().await.unwrap();
 
         server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn enabled_resource_pack_is_sent_and_waits_for_loaded_status() {
+        let mut config = qexed_config::app::qexed::Qexed::default();
+        config.server.resource_pack.enable = true;
+        config.server.resource_pack.id =
+            uuid::Uuid::from_u128(0x00112233_4455_6677_8899_aabbccddeeff);
+        config.server.resource_pack.url = "https://example.com/qexed.zip".to_string();
+        config.server.resource_pack.hash = "0123456789abcdef0123456789abcdef01234567".to_string();
+        config.server.resource_pack.prompt = "Install resources".to_string();
+        let resource_pack_id = config.server.resource_pack.id;
+        let context = ServerContext::new(config).await.unwrap();
+
+        let (server_io, client_io) = duplex(32 * 1024 * 1024);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let (client_reader, client_writer) = tokio::io::split(client_io);
+        let mut server_packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut server_sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
+        let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
+
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut server_packets, &mut server_sink, &context, "127.0.0.1").await
+        });
+
+        drive_known_pack_selection(&mut client_packets, &mut client_sink).await;
+
+        let resource_pack = read_configuration_until_resource_pack(&mut client_packets).await;
+        assert_eq!(resource_pack.id, resource_pack_id);
+        assert_eq!(resource_pack.url, "https://example.com/qexed.zip");
+        assert_eq!(
+            resource_pack.hash,
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+        assert!(!resource_pack.required);
+        assert!(resource_pack.prompt.is_some());
+
+        client_sink
+            .send(ResourcePackReceive {
+                uuid: resource_pack_id,
+                result: qexed_packet::net_types::VarInt(0),
+            })
+            .await
+            .unwrap();
+        client_sink.flush().await.unwrap();
+
+        let finish =
+            read_server_packet_as::<ClientboundFinishConfiguration, _>(&mut client_packets).await;
+        assert_eq!(finish, ClientboundFinishConfiguration {});
+        client_sink
+            .send(ServerboundFinishConfiguration {})
+            .await
+            .unwrap();
+        client_sink.flush().await.unwrap();
+
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_resource_pack_uses_generated_download_url_and_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let pack_path = dir.path().join("server.zip");
+        tokio::fs::write(&pack_path, b"pack-data").await.unwrap();
+
+        let mut config = qexed_config::app::qexed::Qexed::default();
+        config.server.resource_pack.enable = true;
+        config.server.resource_pack.source =
+            qexed_config::app::qexed::server::ResourcePackSource::Local;
+        config.server.resource_pack.id =
+            uuid::Uuid::from_u128(0x00112233_4455_6677_8899_aabbccddeeff);
+        config.server.resource_pack.path = pack_path.to_string_lossy().to_string();
+        config.server.resource_pack.download_bind = "127.0.0.1:0".to_string();
+        let resource_pack_id = config.server.resource_pack.id;
+        let context = ServerContext::new(config).await.unwrap();
+
+        let (server_io, client_io) = duplex(32 * 1024 * 1024);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let (client_reader, client_writer) = tokio::io::split(client_io);
+        let mut server_packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut server_sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
+        let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
+
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut server_packets, &mut server_sink, &context, "127.0.0.1").await
+        });
+
+        drive_known_pack_selection(&mut client_packets, &mut client_sink).await;
+
+        let resource_pack = read_configuration_until_resource_pack(&mut client_packets).await;
+        assert_eq!(resource_pack.id, resource_pack_id);
+        assert!(resource_pack.url.starts_with("http://127.0.0.1:"));
+        assert!(
+            resource_pack
+                .url
+                .ends_with(&format!("/resource-pack/{resource_pack_id}.zip"))
+        );
+        assert_eq!(
+            resource_pack.hash,
+            "8923b3ae3180a64d86da4d2080c540f501e453c2"
+        );
+
+        let response = reqwest::get(&resource_pack.url).await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.bytes().await.unwrap(), "pack-data");
+
+        client_sink
+            .send(ResourcePackReceive {
+                uuid: resource_pack_id,
+                result: qexed_packet::net_types::VarInt(0),
+            })
+            .await
+            .unwrap();
+        client_sink.flush().await.unwrap();
+
+        let finish =
+            read_server_packet_as::<ClientboundFinishConfiguration, _>(&mut client_packets).await;
+        assert_eq!(finish, ClientboundFinishConfiguration {});
+        client_sink
+            .send(ServerboundFinishConfiguration {})
+            .await
+            .unwrap();
+        client_sink.flush().await.unwrap();
+
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn required_resource_pack_decline_disconnects_configuration() {
+        let mut config = qexed_config::app::qexed::Qexed::default();
+        config.server.resource_pack.enable = true;
+        config.server.resource_pack.required = true;
+        config.server.resource_pack.id =
+            uuid::Uuid::from_u128(0x00112233_4455_6677_8899_aabbccddeeff);
+        config.server.resource_pack.url = "https://example.com/qexed.zip".to_string();
+        config.server.resource_pack.disconnect_message = "Resource pack required".to_string();
+        let resource_pack_id = config.server.resource_pack.id;
+        let context = ServerContext::new(config).await.unwrap();
+
+        let (server_io, client_io) = duplex(32 * 1024 * 1024);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let (client_reader, client_writer) = tokio::io::split(client_io);
+        let mut server_packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut server_sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
+        let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
+
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut server_packets, &mut server_sink, &context, "127.0.0.1").await
+        });
+
+        drive_known_pack_selection(&mut client_packets, &mut client_sink).await;
+        let resource_pack = read_configuration_until_resource_pack(&mut client_packets).await;
+        assert!(resource_pack.required);
+
+        client_sink
+            .send(ResourcePackReceive {
+                uuid: resource_pack_id,
+                result: qexed_packet::net_types::VarInt(1),
+            })
+            .await
+            .unwrap();
+        client_sink.flush().await.unwrap();
+
+        let disconnect = read_server_packet_as::<
+            qexed_protocol::to_client::configuration::disconnect::Disconnect,
+            _,
+        >(&mut client_packets)
+        .await;
+        assert_eq!(
+            disconnect.reason,
+            super::text_component("Resource pack required")
+        );
+        assert!(server_task.await.unwrap().is_err());
     }
 
     async fn drive_known_pack_selection<R, W>(
@@ -633,7 +1012,42 @@ mod tests {
                     return decode_payload::<CodeOfConduct>(&mut payload).unwrap();
                 }
                 ClientboundFinishConfiguration::ID => {
-                    panic!("入服准则未确认前不应完成配置");
+                    panic!("configuration should not finish before code-of-conduct acceptance");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn read_configuration_until_resource_pack<R>(
+        client_packets: &mut qexed_tcp_connect::PacketStream<R>,
+    ) -> AddResourcePack
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        let mut saw_registry_data = false;
+        let mut saw_tags = false;
+
+        loop {
+            let (packet_id, mut payload) = read_server_packet(client_packets).await;
+            match packet_id {
+                RegistryData::ID => {
+                    let packet = decode_payload::<RegistryData>(&mut payload).unwrap();
+                    assert!(!packet.entries.is_empty());
+                    saw_registry_data = true;
+                }
+                Tags::ID => {
+                    let packet = decode_payload::<Tags>(&mut payload).unwrap();
+                    assert!(!packet.tags.is_empty());
+                    saw_tags = true;
+                }
+                AddResourcePack::ID => {
+                    assert!(saw_registry_data);
+                    assert!(saw_tags);
+                    return decode_payload::<AddResourcePack>(&mut payload).unwrap();
+                }
+                ClientboundFinishConfiguration::ID => {
+                    panic!("configuration should not finish before resource-pack response");
                 }
                 _ => {}
             }
@@ -668,7 +1082,7 @@ mod tests {
                     saw_tags = true;
                 }
                 CodeOfConduct::ID if !expect_code_of_conduct => {
-                    panic!("空入服准则配置不应发送入服准则提示");
+                    panic!("empty code-of-conduct configuration should not send prompt");
                 }
                 ClientboundFinishConfiguration::ID => {
                     decode_payload::<ClientboundFinishConfiguration>(&mut payload).unwrap();

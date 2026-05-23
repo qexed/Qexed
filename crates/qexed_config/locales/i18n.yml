@@ -229,6 +229,81 @@ config:
         mysql:
           en: "MySQL settings for player data"
           zh-CN: "玩家数据 MySQL 设置"
+      player_messages:
+        en: "Player join and leave announcement settings"
+        zh-CN: "玩家进退服提示设置"
+        enable:
+          en: "Enable player join and leave announcements"
+          zh-CN: "启用玩家进服和退服提示"
+        join:
+          en: "Join announcement template. Use {player} as the player name placeholder."
+          zh-CN: "玩家进服提示模板，使用 {player} 作为玩家名占位符"
+        leave:
+          en: "Leave announcement template. Use {player} as the player name placeholder."
+          zh-CN: "玩家退服提示模板，使用 {player} 作为玩家名占位符"
+      content_filter:
+        en: "Chat content filter settings"
+        zh-CN: "聊天内容审核设置"
+        enable:
+          en: "Enable chat content filtering. Disabled by default."
+          zh-CN: "启用聊天内容审核，默认关闭"
+        engine:
+          en: "Content filter engine: fixed, knowledge, or api"
+          zh-CN: "内容审核引擎：fixed、knowledge 或 api"
+        words:
+          en: "Inline sensitive words used by fixed and knowledge engines"
+          zh-CN: "fixed 和 knowledge 引擎使用的内置敏感词"
+        knowledge_path:
+          en: "Sensitive-word knowledge base file path. One word per line; lines starting with # are ignored."
+          zh-CN: "敏感词知识库文件路径，每行一个词，# 开头的行会被忽略"
+        api_url:
+          en: "HTTP API URL for external content filtering. The server posts JSON { text }."
+          zh-CN: "外部内容审核 HTTP API 地址，服务端发送 JSON { text }"
+        api_token:
+          en: "Bearer token for the content filter API"
+          zh-CN: "内容审核 API Bearer token"
+        replacement:
+          en: "Replacement text for matched words"
+          zh-CN: "命中敏感词后的替换文本"
+        block_message:
+          en: "Message shown to the player when the API blocks chat"
+          zh-CN: "API 拦截聊天时发送给玩家的提示"
+      resource_pack:
+        en: "Server resource pack settings"
+        zh-CN: "服务器资源包设置"
+        enable:
+          en: "Enable server resource pack delivery during the configuration phase"
+          zh-CN: "启用配置阶段服务端资源包下发"
+        source:
+          en: "Resource pack source: url or local. Local files are served by Qexed over HTTP."
+          zh-CN: "资源包来源：url 或 local。本地文件会由 Qexed 通过 HTTP 提供下载。"
+        id:
+          en: "Resource pack UUID used by the client to track this pack"
+          zh-CN: "资源包 UUID，客户端使用它跟踪该资源包"
+        url:
+          en: "Resource pack download URL. Leave empty to disable sending the pack."
+          zh-CN: "资源包下载地址。为空时不会发送资源包。"
+        path:
+          en: "Local resource pack zip path used when source is local"
+          zh-CN: "source 为 local 时使用的本地资源包 zip 路径"
+        download_bind:
+          en: "HTTP bind address for serving the local resource pack"
+          zh-CN: "本地资源包 HTTP 下载服务监听地址"
+        download_host:
+          en: "Public host or URL used by clients to download the local resource pack. Empty uses the login host."
+          zh-CN: "客户端下载本地资源包时使用的公网主机名或 URL。为空时使用登录地址。"
+        hash:
+          en: "Resource pack SHA-1 hash. Leave empty if the pack should not be hash-checked."
+          zh-CN: "资源包 SHA-1 哈希。为空时客户端不按哈希校验。"
+        required:
+          en: "Require players to accept and download the resource pack"
+          zh-CN: "要求玩家接受并下载该资源包"
+        prompt:
+          en: "Optional prompt shown by the client before applying the resource pack"
+          zh-CN: "客户端应用资源包前显示的可选提示"
+        disconnect_message:
+          en: "Disconnect message used when a required resource pack is rejected or fails"
+          zh-CN: "强制资源包被拒绝或下载失败时的断开提示"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

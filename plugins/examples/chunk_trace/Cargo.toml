@@ -1,0 +1,12 @@
+[package]
+name = "chunk_trace"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+qexed_plugin_sdk = { path = "../qexed_plugin_sdk" }

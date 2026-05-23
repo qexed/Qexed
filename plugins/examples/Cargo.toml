@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = [
+    "qexed_plugin_sdk",
+    "hello_world",
+    "player_audit",
+    "chunk_trace",
+]

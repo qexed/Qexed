@@ -21,6 +21,10 @@
 !/assets/reports/
 !/assets/reports/*.json
 /world
+/plugins/examples/target/
+/qexed-config-docs
+/META-INF
+.idea
 # 未使用的代码
 /crates/service/qexed/unuse
 # will have compiled files and executables
