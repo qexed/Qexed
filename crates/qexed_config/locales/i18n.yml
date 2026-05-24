@@ -154,6 +154,12 @@ config:
         read_only:
           en: "Enable read-only world mode. Player world edits are rejected and not written."
           zh-CN: "启用只读世界模式。玩家世界修改会被拒绝，不会写入世界。"
+        generator:
+          en: "World generator used when no saved chunk exists: empty or vanilla_flat"
+          zh-CN: "存档区块不存在时使用的世界生成器：empty 或 vanilla_flat"
+        generator_preset:
+          en: "World generator preset. vanilla_flat uses Minecraft flat_level_generator_preset IDs such as minecraft:classic_flat."
+          zh-CN: "世界生成器预设。vanilla_flat 使用 Minecraft flat_level_generator_preset ID，例如 minecraft:classic_flat。"
         game_mode:
           en: "Default game mode: survival, creative, adventure, or spectator"
           zh-CN: "默认游戏模式：survival、creative、adventure 或 spectator"
@@ -268,6 +274,36 @@ config:
         block_message:
           en: "Message shown to the player when the API blocks chat"
           zh-CN: "API 拦截聊天时发送给玩家的提示"
+      permissions:
+        en: "Command permission settings. The permission system is always active; the local engine has no database dependency."
+        zh-CN: "指令权限设置。权限系统始终启用；local 引擎不依赖数据库。"
+        engine:
+          en: "Permission storage engine: local or luckperms_mysql."
+          zh-CN: "权限存储引擎：local 或 luckperms_mysql。"
+        local_path:
+          en: "Local permission file path used by the local engine"
+          zh-CN: "local 引擎使用的本地权限文件路径"
+        table_prefix:
+          en: "LuckPerms SQL table prefix, usually luckperms_"
+          zh-CN: "LuckPerms SQL 表前缀，通常为 luckperms_"
+        server:
+          en: "LuckPerms server context used by Qexed. global accepts globally assigned permissions."
+          zh-CN: "Qexed 使用的 LuckPerms server 上下文。global 表示接受全局权限。"
+        world:
+          en: "LuckPerms world context used by Qexed. global accepts globally assigned permissions."
+          zh-CN: "Qexed 使用的 LuckPerms world 上下文。global 表示接受全局权限。"
+        default_group:
+          en: "Group inherited by players with no saved primary group"
+          zh-CN: "没有保存主组的玩家默认继承的组"
+        allow_by_default:
+          en: "Allow commands when no matching permission node is found"
+          zh-CN: "找不到匹配权限节点时是否允许执行指令"
+        denied_message:
+          en: "Message shown when a command is denied"
+          zh-CN: "指令被拒绝时发送给玩家的提示"
+        mysql:
+          en: "MySQL settings for LuckPerms storage"
+          zh-CN: "LuckPerms 存储使用的 MySQL 设置"
       resource_pack:
         en: "Server resource pack settings"
         zh-CN: "服务器资源包设置"

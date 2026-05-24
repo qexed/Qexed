@@ -63,6 +63,7 @@ pub async fn initialize<R, W>(
     world: &WorldManager,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
+    permissions: &crate::permissions::PermissionManager,
     plugins: &crate::plugins::PluginManager,
     content_filter: &crate::content_filter::ContentFilter,
     profile: &qexed_packet::net_types::GameProfile,
@@ -140,6 +141,7 @@ where
         &play_dimension,
         &session.player,
         &inventory,
+        permissions,
     )
     .await?;
     send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
@@ -181,6 +183,7 @@ where
         world,
         players,
         player_data,
+        permissions,
         plugins,
         content_filter,
         session,
@@ -204,6 +207,7 @@ async fn send_initial_player_state<W>(
     play_dimension: &str,
     player: &OnlinePlayer,
     inventory: &crate::inventory::PlayerInventory,
+    permissions: &crate::permissions::PermissionManager,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -257,7 +261,13 @@ where
     })
     .await?;
 
-    sink.send(crate::commands::command_tree()).await?;
+    let visible_commands = crate::commands::visible_commands(permissions, &player.profile).await?;
+    let command_tree = if visible_commands.as_slice() == ["help", "list"] {
+        crate::commands::command_tree()
+    } else {
+        crate::commands::command_tree_for(&visible_commands)
+    };
+    sink.send(command_tree).await?;
 
     sink.send(InitializeBorder::default()).await?;
     sink.send(SetTime {
@@ -710,6 +720,7 @@ async fn wait_for_play_packets<R, W>(
     world: &WorldManager,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
+    permissions: &crate::permissions::PermissionManager,
     plugins: &crate::plugins::PluginManager,
     content_filter: &crate::content_filter::ContentFilter,
     mut session: PlayerSession,
@@ -1073,7 +1084,7 @@ where
                 if packet_id == ChatCommand::ID {
                     let command = crate::connection::decode_payload::<ChatCommand>(&mut payload)?;
                     log::debug!("收到聊天命令: /{}", command.command);
-                    handle_chat_command(sink, config, players, &command.command).await?;
+                    handle_chat_command(sink, config, players, permissions, profile, &command.command).await?;
                     sink.flush().await?;
                     continue;
                 }
@@ -1108,12 +1119,23 @@ async fn handle_chat_command<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     config: &qexed_config::app::qexed::Qexed,
     players: &PlayerManager,
+    permissions: &crate::permissions::PermissionManager,
+    profile: &qexed_packet::net_types::GameProfile,
     command: &str,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let command = command.trim();
+    if !permissions.can_run_command(profile, command).await? {
+        sink.send(SystemChat {
+            content: text_component(permissions.denied_message()),
+            overlay: false,
+        })
+        .await?;
+        return Ok(());
+    }
+
     let messages = crate::commands::messages();
     let content = match command {
         "help" => messages.render_help(),

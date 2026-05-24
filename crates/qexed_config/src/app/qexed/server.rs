@@ -78,6 +78,10 @@ pub struct Server {
     pub content_filter: ContentFilter,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.permissions", sub)]
+    pub permissions: Permissions,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.resource_pack", sub)]
     pub resource_pack: ResourcePack,
 
@@ -109,6 +113,7 @@ impl Default for Server {
             player_data: PlayerData::default(),
             player_messages: PlayerMessages::default(),
             content_filter: ContentFilter::default(),
+            permissions: Permissions::default(),
             resource_pack: ResourcePack::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
@@ -373,6 +378,102 @@ pub enum ContentFilterEngine {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct Permissions {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.permissions.engine")]
+    pub engine: PermissionEngine,
+
+    #[serde(default = "default_permissions_local_path")]
+    #[AutoDoc(key = "config.qexed.server.permissions.local_path")]
+    pub local_path: String,
+
+    #[serde(default = "default_permissions_table_prefix")]
+    #[AutoDoc(key = "config.qexed.server.permissions.table_prefix")]
+    pub table_prefix: String,
+
+    #[serde(default = "default_permissions_server")]
+    #[AutoDoc(key = "config.qexed.server.permissions.server")]
+    pub server: String,
+
+    #[serde(default = "default_permissions_world")]
+    #[AutoDoc(key = "config.qexed.server.permissions.world")]
+    pub world: String,
+
+    #[serde(default = "default_permissions_default_group")]
+    #[AutoDoc(key = "config.qexed.server.permissions.default_group")]
+    pub default_group: String,
+
+    #[serde(default = "default_permissions_allow_by_default")]
+    #[AutoDoc(key = "config.qexed.server.permissions.allow_by_default")]
+    pub allow_by_default: bool,
+
+    #[serde(default = "default_permissions_denied_message")]
+    #[AutoDoc(key = "config.qexed.server.permissions.denied_message")]
+    pub denied_message: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.permissions.mysql", sub)]
+    pub mysql: MysqlConfig,
+}
+
+impl Default for Permissions {
+    fn default() -> Self {
+        Self {
+            engine: PermissionEngine::default(),
+            local_path: default_permissions_local_path(),
+            table_prefix: default_permissions_table_prefix(),
+            server: default_permissions_server(),
+            world: default_permissions_world(),
+            default_group: default_permissions_default_group(),
+            allow_by_default: default_permissions_allow_by_default(),
+            denied_message: default_permissions_denied_message(),
+            mysql: MysqlConfig {
+                username: "luckperms".to_string(),
+                password: nanoid::nanoid!(),
+                database: "minecraft".to_string(),
+                ..MysqlConfig::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionEngine {
+    #[default]
+    Local,
+    LuckpermsMysql,
+}
+
+fn default_permissions_local_path() -> String {
+    "config/qexed_permissions.toml".to_string()
+}
+
+fn default_permissions_table_prefix() -> String {
+    "luckperms_".to_string()
+}
+
+fn default_permissions_server() -> String {
+    "global".to_string()
+}
+
+fn default_permissions_world() -> String {
+    "global".to_string()
+}
+
+fn default_permissions_default_group() -> String {
+    "default".to_string()
+}
+
+fn default_permissions_allow_by_default() -> bool {
+    true
+}
+
+fn default_permissions_denied_message() -> String {
+    "You do not have permission to use this command.".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
 pub struct PlayerData {
     #[serde(default = "default_player_data_enable")]
     #[AutoDoc(key = "config.qexed.server.player_data.enable")]
@@ -473,6 +574,14 @@ pub struct World {
     pub read_only: bool,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.generator")]
+    pub generator: WorldGenerator,
+
+    #[serde(default = "default_world_generator_preset")]
+    #[AutoDoc(key = "config.qexed.server.world.generator_preset")]
+    pub generator_preset: String,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.world.game_mode")]
     pub game_mode: GameMode,
 
@@ -517,6 +626,8 @@ impl Default for World {
         Self {
             path: "world".to_string(),
             read_only: false,
+            generator: WorldGenerator::default(),
+            generator_preset: default_world_generator_preset(),
             game_mode: GameMode::default(),
             spawn_protection_radius: default_spawn_protection_radius(),
             dimension: "minecraft:overworld".to_string(),
@@ -530,6 +641,18 @@ impl Default for World {
             spawn: Spawn::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldGenerator {
+    #[default]
+    Empty,
+    VanillaFlat,
+}
+
+fn default_world_generator_preset() -> String {
+    "minecraft:classic_flat".to_string()
 }
 
 fn default_chunk_load_parallelism() -> usize {
@@ -842,8 +965,8 @@ impl std::str::FromStr for ForwardingMode {
 mod tests {
     use super::{
         ContentFilter, ContentFilterEngine, GameMode, GpuDeviceSelector, LightAlgorithm, LightMode,
-        PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
-        ResourcePackObjectStorageProvider, ResourcePackSource, World,
+        PermissionEngine, Permissions, PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
+        ResourcePackObjectStorageProvider, ResourcePackSource, World, WorldGenerator,
     };
 
     #[test]
@@ -945,6 +1068,37 @@ pitch = 0.0
         .unwrap();
         assert_eq!(world.light_algorithm, LightAlgorithm::RayTrace);
         assert_eq!(world.chunk_load_parallelism, 6);
+    }
+
+    #[test]
+    fn parses_world_generator_settings() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+read_only = true
+generator = "vanilla_flat"
+generator_preset = "minecraft:classic_flat"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 6
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[spawn]
+x = 0.0
+y = 0.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+
+        assert!(world.read_only);
+        assert_eq!(world.generator, WorldGenerator::VanillaFlat);
+        assert_eq!(world.generator_preset, "minecraft:classic_flat");
     }
 
     #[test]
@@ -1072,6 +1226,39 @@ block_message = "blocked"
         assert_eq!(content_filter.engine, ContentFilterEngine::Knowledge);
         assert_eq!(content_filter.words, vec!["bad"]);
         assert_eq!(content_filter.knowledge_path, "config/sensitive_words.txt");
+    }
+
+    #[test]
+    fn parses_permission_settings() {
+        let permissions: Permissions = toml::from_str(
+            r#"
+engine = "luckperms_mysql"
+local_path = "config/local_permissions.toml"
+table_prefix = "luckperms_"
+server = "survival"
+world = "world"
+default_group = "member"
+allow_by_default = false
+denied_message = "denied"
+
+[mysql]
+ip = "127.0.0.1"
+username = "luckperms"
+password = "secret"
+database = "minecraft"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(permissions.engine, PermissionEngine::LuckpermsMysql);
+        assert_eq!(permissions.local_path, "config/local_permissions.toml");
+        assert_eq!(permissions.table_prefix, "luckperms_");
+        assert_eq!(permissions.server, "survival");
+        assert_eq!(permissions.world, "world");
+        assert_eq!(permissions.default_group, "member");
+        assert!(!permissions.allow_by_default);
+        assert_eq!(permissions.denied_message, "denied");
+        assert_eq!(permissions.mysql.username, "luckperms");
     }
 
     #[test]

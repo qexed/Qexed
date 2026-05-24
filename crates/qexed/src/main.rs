@@ -6,6 +6,7 @@ mod connection;
 mod content_filter;
 mod inventory;
 mod lan_discovery;
+mod permissions;
 mod play;
 mod player_data;
 mod players;

@@ -141,12 +141,18 @@ pitch = 0.0
     let qexed = std::fs::read_to_string(&qexed_path)?;
 
     assert!(!config.server.world.read_only);
+    assert!(qexed.contains("generator = \"empty\""));
+    assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
     assert!(qexed.contains("game_mode = \"survival\""));
     assert!(qexed.contains("spawn_protection_radius = 16"));
     assert!(qexed.contains("[server.player_data]"));
     assert!(qexed.contains("[server.player_messages]"));
     assert!(qexed.contains("join = \"{player} joined the server\""));
     assert!(qexed.contains("[server.content_filter]"));
+    assert!(qexed.contains("[server.permissions]"));
+    assert!(qexed.contains("engine = \"local\""));
+    assert!(qexed.contains("local_path = \"config/qexed_permissions.toml\""));
+    assert!(qexed.contains("table_prefix = \"luckperms_\""));
     assert!(qexed.contains("replacement = \"***\""));
 
     let _ = std::fs::remove_dir_all(dir);
@@ -228,6 +234,8 @@ enable = true
         saved_config.server.world.gpu.device,
         GpuDeviceSelector::Discrete
     );
+    assert!(qexed.contains("generator = \"empty\""));
+    assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
     assert_eq!(
         saved_config.server.content_filter.engine,
         ContentFilterEngine::Fixed
@@ -241,6 +249,9 @@ enable = true
         qexed
             .contains("block_message = \"Your message was blocked by the server content filter.\"")
     );
+    assert!(qexed.contains("[server.permissions]"));
+    assert!(qexed.contains("engine = \"local\""));
+    assert!(qexed.contains("allow_by_default = true"));
     assert!(qexed.contains("device = \"discrete\""));
 
     let _ = std::fs::remove_dir_all(dir);
@@ -347,14 +358,20 @@ options = []
     assert!(toml::from_str::<Qexed>(original).is_ok());
     assert!(!original.contains("[server.player_messages]"));
     assert!(!original.contains("[server.content_filter]"));
+    assert!(!original.contains("[server.permissions]"));
+    assert!(!original.contains("generator ="));
 
     Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     let qexed = std::fs::read_to_string(&qexed_path)?;
 
     assert!(qexed.contains("[server.player_messages]"));
+    assert!(qexed.contains("generator = \"empty\""));
+    assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
     assert!(qexed.contains("join = \"{player} joined the server\""));
     assert!(qexed.contains("[server.content_filter]"));
+    assert!(qexed.contains("[server.permissions]"));
     assert!(qexed.contains("engine = \"fixed\""));
+    assert!(qexed.contains("engine = \"local\""));
     assert!(qexed.contains("password = \"existing-mongo-password\""));
     assert!(qexed.contains("password = \"existing-mysql-password\""));
 

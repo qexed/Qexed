@@ -24,6 +24,7 @@
 /plugins/examples/target/
 /qexed-config-docs
 /META-INF
+/assets/LuckPerms-master
 .idea
 # 未使用的代码
 /crates/service/qexed/unuse

@@ -78,18 +78,45 @@ impl CommandMessages {
 }
 
 pub fn command_tree() -> Commands {
+    command_tree_for(&["help", "list"])
+}
+
+pub fn command_tree_for(commands: &[&str]) -> Commands {
+    let mut nodes = vec![Node {
+        flags: 0x00,
+        children: (1..=commands.len() as i32).map(VarInt).collect(),
+        ..Node::default()
+    }];
+    nodes.extend(commands.iter().map(|command| executable_literal(command)));
+
     Commands {
-        nodes: vec![
-            Node {
-                flags: 0x00,
-                children: vec![VarInt(1), VarInt(2)],
-                ..Node::default()
-            },
-            executable_literal("help"),
-            executable_literal("list"),
-        ],
+        nodes,
         root_index: VarInt(0),
     }
+}
+
+pub async fn visible_commands(
+    permissions: &crate::permissions::PermissionManager,
+    profile: &qexed_packet::net_types::GameProfile,
+) -> anyhow::Result<Vec<&'static str>> {
+    let mut commands = Vec::new();
+    for command in ["help", "list"] {
+        if permissions.can_run_command(profile, command).await? {
+            commands.push(command);
+        }
+    }
+    Ok(commands)
+}
+
+pub fn permission_node(command: &str) -> Option<String> {
+    let name = command
+        .trim()
+        .trim_start_matches('/')
+        .split_ascii_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    (!name.is_empty()).then(|| format!("qexed.command.{name}"))
 }
 
 pub fn messages() -> &'static CommandMessages {
@@ -159,5 +186,30 @@ mod tests {
         let mut writer = qexed_packet::PacketWriter::new(&mut buf);
         tree.serialize(&mut writer).unwrap();
         assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn command_tree_can_be_filtered_by_permissions() {
+        let tree = super::command_tree_for(&["list"]);
+        assert_eq!(tree.root_index.0, 0);
+        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(
+            tree.nodes[0].children,
+            vec![qexed_packet::net_types::VarInt(1)]
+        );
+        assert_eq!(tree.nodes[1].name.as_deref(), Some("list"));
+    }
+
+    #[test]
+    fn command_permission_nodes_are_stable() {
+        assert_eq!(
+            super::permission_node("list").as_deref(),
+            Some("qexed.command.list")
+        );
+        assert_eq!(
+            super::permission_node("/help extra").as_deref(),
+            Some("qexed.command.help")
+        );
+        assert_eq!(super::permission_node("   "), None);
     }
 }

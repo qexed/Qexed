@@ -284,10 +284,24 @@ fn block_palette_entry(entry: &HashMap<String, Tag>) -> BlockPaletteEntry {
     let properties = string_properties(entry.get("Properties"));
     let key = state_key(name, &properties);
     let registry = block_state_registry();
-    let id = registry.id_by_state.get(&key).copied().unwrap_or_else(|| {
-        log::warn!("unknown block state in saved chunk, using air: {key}");
-        AIR_BLOCK_STATE_ID
-    });
+    let id = registry
+        .id_by_state
+        .get(&key)
+        .copied()
+        .or_else(|| {
+            if properties.is_empty() {
+                registry
+                    .default_state_by_name
+                    .get(&normalize_identifier(name))
+                    .map(|state| state.id)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| {
+            log::warn!("unknown block state in saved chunk, using air: {key}");
+            AIR_BLOCK_STATE_ID
+        });
     let block_type = registry
         .metadata_by_name
         .get(name)
@@ -530,6 +544,32 @@ fn block_state_registry() -> &'static BlockStateRegistry {
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BlockStateDefinition {
+    pub id: i32,
+    pub properties: Vec<(String, String)>,
+}
+
+pub(crate) fn default_block_state(name: &str) -> BlockStateDefinition {
+    let name = normalize_identifier(name);
+    block_state_registry()
+        .default_state_by_name
+        .get(&name)
+        .cloned()
+        .unwrap_or_else(|| {
+            log::warn!("unknown default block state, using air: {name}");
+            BlockStateDefinition {
+                id: AIR_BLOCK_STATE_ID,
+                properties: Vec::new(),
+            }
+        })
+}
+
+#[cfg(test)]
+pub(crate) fn default_block_state_id(name: &str) -> i32 {
+    default_block_state(name).id
+}
+
 fn biome_registry() -> &'static BiomeRegistry {
     static REGISTRY: OnceLock<BiomeRegistry> = OnceLock::new();
     REGISTRY.get_or_init(|| {
@@ -551,6 +591,7 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
         .with_context(|| format!("block report root is not object: {}", path.display()))?;
 
     let mut id_by_state = HashMap::new();
+    let mut default_state_by_name = HashMap::new();
     let mut metadata_by_name = HashMap::new();
     let mut max_id = AIR_BLOCK_STATE_ID;
     for (name, block) in blocks {
@@ -575,7 +616,34 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
             };
             let properties = json_string_properties(state.get("properties"));
             id_by_state.insert(state_key(name, &properties), id);
+            if state
+                .get("default")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                default_state_by_name.insert(
+                    name.clone(),
+                    BlockStateDefinition {
+                        id,
+                        properties: properties.clone(),
+                    },
+                );
+            }
             max_id = max_id.max(id);
+        }
+
+        if !default_state_by_name.contains_key(name)
+            && let Some(state) = states.first()
+            && let Some(id) = state.get("id").and_then(serde_json::Value::as_i64)
+            && let Ok(id) = i32::try_from(id)
+        {
+            default_state_by_name.insert(
+                name.clone(),
+                BlockStateDefinition {
+                    id,
+                    properties: json_string_properties(state.get("properties")),
+                },
+            );
         }
     }
 
@@ -585,6 +653,7 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
 
     Ok(BlockStateRegistry {
         id_by_state,
+        default_state_by_name,
         metadata_by_name,
         global_bits: ceil_log2((max_id as usize) + 1).max(1),
     })
@@ -914,6 +983,7 @@ impl BlockPaletteEntry {
 
 struct BlockStateRegistry {
     id_by_state: HashMap<String, i32>,
+    default_state_by_name: HashMap<String, BlockStateDefinition>,
     metadata_by_name: HashMap<String, BlockMetadata>,
     global_bits: usize,
 }
@@ -929,6 +999,35 @@ impl BlockStateRegistry {
         id_by_state.insert("minecraft:stone|".to_string(), 1);
         id_by_state.insert("minecraft:water|level=0;".to_string(), 86);
         id_by_state.insert("minecraft:lava|level=0;".to_string(), 102);
+        let mut default_state_by_name = HashMap::new();
+        default_state_by_name.insert(
+            "minecraft:air".to_string(),
+            BlockStateDefinition {
+                id: AIR_BLOCK_STATE_ID,
+                properties: Vec::new(),
+            },
+        );
+        default_state_by_name.insert(
+            "minecraft:stone".to_string(),
+            BlockStateDefinition {
+                id: 1,
+                properties: Vec::new(),
+            },
+        );
+        default_state_by_name.insert(
+            "minecraft:water".to_string(),
+            BlockStateDefinition {
+                id: 86,
+                properties: vec![("level".to_string(), "0".to_string())],
+            },
+        );
+        default_state_by_name.insert(
+            "minecraft:lava".to_string(),
+            BlockStateDefinition {
+                id: 102,
+                properties: vec![("level".to_string(), "0".to_string())],
+            },
+        );
         let mut metadata_by_name = HashMap::new();
         metadata_by_name.insert(
             "minecraft:air".to_string(),
@@ -956,6 +1055,7 @@ impl BlockStateRegistry {
         );
         Self {
             id_by_state,
+            default_state_by_name,
             metadata_by_name,
             global_bits: 14,
         }

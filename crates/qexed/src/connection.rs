@@ -31,6 +31,7 @@ pub struct ServerContext {
     pub world: std::sync::Arc<crate::world::WorldManager>,
     pub players: std::sync::Arc<crate::players::PlayerManager>,
     pub player_data: std::sync::Arc<crate::player_data::PlayerDataManager>,
+    pub permissions: std::sync::Arc<crate::permissions::PermissionManager>,
     pub plugins: std::sync::Arc<crate::plugins::PluginManager>,
     pub content_filter: std::sync::Arc<crate::content_filter::ContentFilter>,
     pub resource_pack: std::sync::Arc<crate::resource_pack::ResourcePackManager>,
@@ -55,12 +56,14 @@ impl ServerContext {
         plugins.emit_config_reload("config/qexed.toml");
         plugins.emit_language_change(&config.language);
 
-        let world = crate::world::WorldManager::with_light_mode(
+        let world_generator = crate::world::generator::from_config(&config.server.world);
+        let world = crate::world::WorldManager::with_generator(
             config.server.world.path.clone(),
             crate::world::WorldLightMode::from(&config.server.world.light),
             crate::world::WorldLightAlgorithm::from(&config.server.world.light_algorithm),
             crate::world::light_gpu_from_config(&config.server.world.gpu),
             config.server.world.read_only,
+            world_generator,
         );
         world.ensure_storage(&config.server.world.dimension)?;
         let player_data = crate::player_data::PlayerDataManager::from_config(
@@ -68,6 +71,8 @@ impl ServerContext {
             &config.server.player_data,
         )
         .await?;
+        let permissions =
+            crate::permissions::PermissionManager::from_config(&config.server.permissions).await?;
         let content_filter =
             crate::content_filter::ContentFilter::from_config(&config.server.content_filter)?;
         let mut resource_pack =
@@ -84,6 +89,7 @@ impl ServerContext {
             world: std::sync::Arc::new(world),
             players: std::sync::Arc::new(crate::players::PlayerManager::new()),
             player_data: std::sync::Arc::new(player_data),
+            permissions: std::sync::Arc::new(permissions),
             plugins,
             content_filter: std::sync::Arc::new(content_filter),
             resource_pack: std::sync::Arc::new(resource_pack),
@@ -205,6 +211,7 @@ where
         &context.world,
         &context.players,
         &context.player_data,
+        &context.permissions,
         &context.plugins,
         &context.content_filter,
         &profile,

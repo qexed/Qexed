@@ -1,4 +1,5 @@
 pub mod chunk_nbt;
+pub mod generator;
 mod gpu_light;
 pub mod region;
 
@@ -37,6 +38,7 @@ pub struct WorldManager {
     light_mode: WorldLightMode,
     light_algorithm: WorldLightAlgorithm,
     light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
+    generator: Arc<dyn generator::WorldChunkGenerator>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, i32>>>,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
     active_sessions: Arc<AtomicUsize>,
@@ -55,6 +57,7 @@ impl WorldManager {
         )
     }
 
+    #[cfg(test)]
     pub fn with_light_mode(
         save_path: impl Into<std::path::PathBuf>,
         light_mode: WorldLightMode,
@@ -62,12 +65,31 @@ impl WorldManager {
         light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
         read_only: bool,
     ) -> Self {
+        Self::with_generator(
+            save_path,
+            light_mode,
+            light_algorithm,
+            light_gpu,
+            read_only,
+            Arc::new(generator::EmptyWorldGenerator),
+        )
+    }
+
+    pub fn with_generator(
+        save_path: impl Into<std::path::PathBuf>,
+        light_mode: WorldLightMode,
+        light_algorithm: WorldLightAlgorithm,
+        light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
+        read_only: bool,
+        generator: Arc<dyn generator::WorldChunkGenerator>,
+    ) -> Self {
         Self {
             save_path: save_path.into(),
             read_only,
             light_mode,
             light_algorithm,
             light_gpu,
+            generator,
             placed_blocks: Default::default(),
             chunk_light_dampening: Default::default(),
             active_sessions: Default::default(),
@@ -165,15 +187,30 @@ impl WorldManager {
             }
         }
 
-        log::trace!("生成空世界区块: dimension={dimension}, chunk=({chunk_x}, {chunk_z})");
+        log::trace!("generating chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z})");
+        let generated =
+            self.generator
+                .generate(dimension, chunk_x, chunk_z, self.light_algorithm)?;
         self.remember_chunk_light_dampening(
             dimension,
             chunk_x,
             chunk_z,
-            vec![0; CHUNK_DAMPENING_LEN],
+            generated.light_dampening,
             cache_epoch,
         );
-        Ok(empty_chunk_packet(chunk_x, chunk_z, self.light_mode))
+        let mut packet = generated.packet;
+        packet.light = match self.light_mode {
+            WorldLightMode::Fixed(_) => self.chunk_light(),
+            WorldLightMode::Static => {
+                let mut light = packet.light;
+                replace_sky_light(&mut light, self.chunk_light());
+                light
+            }
+            WorldLightMode::Dynamic => {
+                self.calculated_chunk_light(dimension, chunk_x, chunk_z, cache_epoch)
+            }
+        };
+        Ok(packet)
     }
 
     pub fn dynamic_light_enabled(&self) -> bool {
@@ -299,11 +336,17 @@ impl WorldManager {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
-        self.placed_blocks
+        if let Some(block_state) = self
+            .placed_blocks
             .lock()
             .expect("world block store poisoned")
             .get(&BlockKey::new(dimension, position))
             .copied()
+        {
+            return Some(block_state);
+        }
+
+        self.generator.block_state_at(dimension, position)
     }
 
     pub fn placed_block_updates(
@@ -469,7 +512,31 @@ impl WorldManager {
 
         let chunk = match self.load_region_chunk(dimension, chunk_x, chunk_z) {
             Ok(Some(chunk)) => chunk,
-            Ok(None) => return Some(vec![0; CHUNK_DAMPENING_LEN]),
+            Ok(None) => {
+                return match self.generator.light_dampening(
+                    dimension,
+                    chunk_x,
+                    chunk_z,
+                    self.light_algorithm,
+                ) {
+                    Ok(dampening) => {
+                        self.remember_chunk_light_dampening(
+                            dimension,
+                            chunk_x,
+                            chunk_z,
+                            dampening.clone(),
+                            cache_epoch,
+                        );
+                        Some(dampening)
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "failed to generate neighbour chunk light data: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), error={err:#}"
+                        );
+                        None
+                    }
+                };
+            }
             Err(err) => {
                 log::warn!(
                     "failed to load neighbour chunk light data: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), error={err:#}"
@@ -1241,10 +1308,11 @@ mod tests {
 
     use super::{
         LIGHT_SECTION_COUNT, WORLD_MAX_Y, WorldLightAlgorithm, WorldLightMode, WorldManager,
-        block_light_dampening_index, empty_chunk_section_bytes, light_for_mode, section_count,
-        sky_light_from_dampening, sky_light_from_neighbourhood,
+        block_light_dampening_index, empty_chunk_section_bytes, generator, light_for_mode,
+        section_count, sky_light_from_dampening, sky_light_from_neighbourhood,
     };
     use qexed_protocol::to_client::play::map_chunk::LIGHT_ARRAY_BYTES;
+    use std::sync::Arc;
 
     #[test]
     fn empty_chunk_has_all_overworld_sections() {
@@ -1262,6 +1330,43 @@ mod tests {
         chunk.serialize(&mut writer).unwrap();
 
         assert!(!payload.is_empty());
+    }
+
+    #[test]
+    fn generated_flat_chunk_is_used_when_save_chunk_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = WorldManager::with_generator(
+            dir.path(),
+            WorldLightMode::Static,
+            WorldLightAlgorithm::Fast,
+            None,
+            true,
+            Arc::new(generator::VanillaFlatGenerator::from_preset(
+                "minecraft:classic_flat",
+            )),
+        );
+        let chunk = manager.network_chunk("minecraft:overworld", 0, 0).unwrap();
+        let grass = super::chunk_nbt::default_block_state_id("minecraft:grass_block");
+        let grass_position = qexed_packet::net_types::Position {
+            x: 0,
+            y: super::WORLD_MIN_Y + 3,
+            z: 0,
+        };
+        let air_position = qexed_packet::net_types::Position {
+            x: 0,
+            y: super::WORLD_MIN_Y + 4,
+            z: 0,
+        };
+
+        assert_eq!(
+            manager.block_state_at("minecraft:overworld", &grass_position),
+            Some(grass)
+        );
+        assert_eq!(
+            manager.block_state_at("minecraft:overworld", &air_position),
+            None
+        );
+        assert!(chunk.data.data.len() > section_count() as usize * 8);
     }
 
     #[test]
