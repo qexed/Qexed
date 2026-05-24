@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 const GOLDEN_RATIO_64: u64 = 0x9e37_79b9_7f4a_7c15;
 const SILVER_RATIO_64: u64 = 0x6a09_e667_f3bc_c909;
 const INPUT_WRAP: f64 = 33_554_432.0;
@@ -23,9 +25,15 @@ const GRADIENT: [[i32; 3]; 16] = [
 ];
 
 const OFFSET_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 0.0];
+const TEMPERATURE_AMPLITUDES: [f64; 6] = [1.5, 0.0, 1.0, 0.0, 0.0, 0.0];
+const VEGETATION_AMPLITUDES: [f64; 6] = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0];
 const CONTINENTALNESS_AMPLITUDES: [f64; 9] = [1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0];
 const EROSION_AMPLITUDES: [f64; 5] = [1.0, 1.0, 0.0, 1.0, 1.0];
 const RIDGE_AMPLITUDES: [f64; 6] = [1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
+const TEMPERATURE_LARGE_FIRST_OCTAVE: i32 = -12;
+const VEGETATION_LARGE_FIRST_OCTAVE: i32 = -10;
+const CONTINENTALNESS_LARGE_FIRST_OCTAVE: i32 = -11;
+const EROSION_LARGE_FIRST_OCTAVE: i32 = -11;
 const JAGGED_AMPLITUDES: [f64; 16] = [1.0; 16];
 const NOODLE_AMPLITUDES: [f64; 1] = [1.0];
 const NOODLE_THICKNESS_AMPLITUDES: [f64; 1] = [1.0];
@@ -45,6 +53,21 @@ const SPAGHETTI_2D_THICKNESS_AMPLITUDES: [f64; 1] = [1.0];
 const PILLAR_AMPLITUDES: [f64; 2] = [1.0, 1.0];
 const PILLAR_RARENESS_AMPLITUDES: [f64; 1] = [1.0];
 const PILLAR_THICKNESS_AMPLITUDES: [f64; 1] = [1.0];
+const AQUIFER_FLOODEDNESS_AMPLITUDES: [f64; 1] = [1.0];
+const AQUIFER_SPREAD_AMPLITUDES: [f64; 1] = [1.0];
+const AQUIFER_LAVA_AMPLITUDES: [f64; 1] = [1.0];
+const AQUIFER_BARRIER_AMPLITUDES: [f64; 1] = [1.0];
+const ORE_VEININESS_AMPLITUDES: [f64; 1] = [1.0];
+const ORE_VEIN_RIDGE_AMPLITUDES: [f64; 1] = [1.0];
+const ORE_GAP_AMPLITUDES: [f64; 1] = [1.0];
+const SURFACE_AMPLITUDES: [f64; 3] = [1.0, 1.0, 1.0];
+const SURFACE_SWAMP_AMPLITUDES: [f64; 1] = [1.0];
+const CALCITE_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
+const GRAVEL_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
+const PACKED_ICE_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
+const ICE_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
+const POWDER_SNOW_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
+const CLAY_BANDS_OFFSET_AMPLITUDES: [f64; 1] = [1.0];
 const OVERWORLD_OFFSET_SPLINE: &str = include_str!(
     "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld/offset.json"
 );
@@ -53,6 +76,24 @@ const OVERWORLD_FACTOR_SPLINE: &str = include_str!(
 );
 const OVERWORLD_JAGGEDNESS_SPLINE: &str = include_str!(
     "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld/jaggedness.json"
+);
+const OVERWORLD_LARGE_OFFSET_SPLINE: &str = include_str!(
+    "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld_large_biomes/offset.json"
+);
+const OVERWORLD_LARGE_FACTOR_SPLINE: &str = include_str!(
+    "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld_large_biomes/factor.json"
+);
+const OVERWORLD_LARGE_JAGGEDNESS_SPLINE: &str = include_str!(
+    "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld_large_biomes/jaggedness.json"
+);
+const OVERWORLD_AMPLIFIED_OFFSET_SPLINE: &str = include_str!(
+    "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld_amplified/offset.json"
+);
+const OVERWORLD_AMPLIFIED_FACTOR_SPLINE: &str = include_str!(
+    "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld_amplified/factor.json"
+);
+const OVERWORLD_AMPLIFIED_JAGGEDNESS_SPLINE: &str = include_str!(
+    "../../../../assets/decompiled_source/src/data/minecraft/worldgen/density_function/overworld_amplified/jaggedness.json"
 );
 
 #[derive(Clone, Debug)]
@@ -151,6 +192,8 @@ impl BlendedNoise {
 #[derive(Clone, Debug)]
 pub(crate) struct OverworldClimateNoise {
     shift: NormalNoise,
+    temperature: NormalNoise,
+    vegetation: NormalNoise,
     continentalness: NormalNoise,
     erosion: NormalNoise,
     ridge: NormalNoise,
@@ -158,20 +201,40 @@ pub(crate) struct OverworldClimateNoise {
 
 impl OverworldClimateNoise {
     pub(crate) fn new(seed: i64) -> Self {
+        Self::with_kind(seed, OverworldNoiseKind::Default)
+    }
+
+    pub(crate) fn large_biomes(seed: i64) -> Self {
+        Self::with_kind(seed, OverworldNoiseKind::LargeBiomes)
+    }
+
+    fn with_kind(seed: i64, kind: OverworldNoiseKind) -> Self {
         let mut random = XoroshiroRandomSource::new(seed);
         let factory = random.fork_positional();
         Self {
             shift: NormalNoise::from_factory(&factory, "minecraft:offset", -3, &OFFSET_AMPLITUDES),
+            temperature: NormalNoise::from_factory(
+                &factory,
+                kind.temperature_noise(),
+                kind.temperature_first_octave(),
+                &TEMPERATURE_AMPLITUDES,
+            ),
+            vegetation: NormalNoise::from_factory(
+                &factory,
+                kind.vegetation_noise(),
+                kind.vegetation_first_octave(),
+                &VEGETATION_AMPLITUDES,
+            ),
             continentalness: NormalNoise::from_factory(
                 &factory,
-                "minecraft:continentalness",
-                -9,
+                kind.continentalness_noise(),
+                kind.continentalness_first_octave(),
                 &CONTINENTALNESS_AMPLITUDES,
             ),
             erosion: NormalNoise::from_factory(
                 &factory,
-                "minecraft:erosion",
-                -9,
+                kind.erosion_noise(),
+                kind.erosion_first_octave(),
                 &EROSION_AMPLITUDES,
             ),
             ridge: NormalNoise::from_factory(&factory, "minecraft:ridge", -7, &RIDGE_AMPLITUDES),
@@ -188,6 +251,8 @@ impl OverworldClimateNoise {
         let ridges = self.ridge.get_value(sample_x, 0.0, sample_z);
 
         OverworldClimateSample {
+            temperature: self.temperature.get_value(sample_x, 0.0, sample_z),
+            vegetation: self.vegetation.get_value(sample_x, 0.0, sample_z),
             continentalness: self.continentalness.get_value(sample_x, 0.0, sample_z),
             erosion: self.erosion.get_value(sample_x, 0.0, sample_z),
             ridges,
@@ -198,10 +263,121 @@ impl OverworldClimateNoise {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OverworldClimateSample {
+    pub(crate) temperature: f64,
+    pub(crate) vegetation: f64,
     pub(crate) continentalness: f64,
     pub(crate) erosion: f64,
     pub(crate) ridges: f64,
     pub(crate) peaks_and_valleys: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OverworldNoiseKind {
+    Default,
+    LargeBiomes,
+    Amplified,
+}
+
+impl OverworldNoiseKind {
+    pub(crate) fn from_preset(preset: &str) -> Self {
+        let name = preset
+            .strip_prefix("minecraft:")
+            .or_else(|| preset.strip_prefix(':'))
+            .unwrap_or(preset);
+        match name {
+            "large_biomes" => Self::LargeBiomes,
+            "amplified" => Self::Amplified,
+            _ => Self::Default,
+        }
+    }
+
+    fn temperature_noise(self) -> &'static str {
+        if matches!(self, Self::LargeBiomes) {
+            "minecraft:temperature_large"
+        } else {
+            "minecraft:temperature"
+        }
+    }
+
+    fn vegetation_noise(self) -> &'static str {
+        if matches!(self, Self::LargeBiomes) {
+            "minecraft:vegetation_large"
+        } else {
+            "minecraft:vegetation"
+        }
+    }
+
+    fn continentalness_noise(self) -> &'static str {
+        if matches!(self, Self::LargeBiomes) {
+            "minecraft:continentalness_large"
+        } else {
+            "minecraft:continentalness"
+        }
+    }
+
+    fn erosion_noise(self) -> &'static str {
+        if matches!(self, Self::LargeBiomes) {
+            "minecraft:erosion_large"
+        } else {
+            "minecraft:erosion"
+        }
+    }
+
+    fn temperature_first_octave(self) -> i32 {
+        if matches!(self, Self::LargeBiomes) {
+            TEMPERATURE_LARGE_FIRST_OCTAVE
+        } else {
+            -10
+        }
+    }
+
+    fn vegetation_first_octave(self) -> i32 {
+        if matches!(self, Self::LargeBiomes) {
+            VEGETATION_LARGE_FIRST_OCTAVE
+        } else {
+            -8
+        }
+    }
+
+    fn continentalness_first_octave(self) -> i32 {
+        if matches!(self, Self::LargeBiomes) {
+            CONTINENTALNESS_LARGE_FIRST_OCTAVE
+        } else {
+            -9
+        }
+    }
+
+    fn erosion_first_octave(self) -> i32 {
+        if matches!(self, Self::LargeBiomes) {
+            EROSION_LARGE_FIRST_OCTAVE
+        } else {
+            -9
+        }
+    }
+
+    fn offset_spline(self) -> &'static str {
+        match self {
+            Self::Default => OVERWORLD_OFFSET_SPLINE,
+            Self::LargeBiomes => OVERWORLD_LARGE_OFFSET_SPLINE,
+            Self::Amplified => OVERWORLD_AMPLIFIED_OFFSET_SPLINE,
+        }
+    }
+
+    fn factor_spline(self) -> &'static str {
+        match self {
+            Self::Default => OVERWORLD_FACTOR_SPLINE,
+            Self::LargeBiomes => OVERWORLD_LARGE_FACTOR_SPLINE,
+            Self::Amplified => OVERWORLD_AMPLIFIED_FACTOR_SPLINE,
+        }
+    }
+
+    fn jaggedness_spline(self) -> &'static str {
+        match self {
+            Self::Default => OVERWORLD_JAGGEDNESS_SPLINE,
+            Self::LargeBiomes => OVERWORLD_LARGE_JAGGEDNESS_SPLINE,
+            Self::Amplified => OVERWORLD_AMPLIFIED_JAGGEDNESS_SPLINE,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -216,11 +392,15 @@ pub(crate) struct OverworldTerrainNoise {
 }
 
 impl OverworldTerrainNoise {
-    pub(crate) fn new(seed: i64) -> Self {
+    pub(crate) fn with_kind(seed: i64, kind: OverworldNoiseKind) -> Self {
         let mut random = XoroshiroRandomSource::new(seed);
         let factory = random.fork_positional();
         Self {
-            climate: OverworldClimateNoise::new(seed),
+            climate: if matches!(kind, OverworldNoiseKind::LargeBiomes) {
+                OverworldClimateNoise::large_biomes(seed)
+            } else {
+                OverworldClimateNoise::new(seed)
+            },
             jagged: NormalNoise::from_factory(
                 &factory,
                 "minecraft:jagged",
@@ -229,9 +409,9 @@ impl OverworldTerrainNoise {
             ),
             caves: CaveNoise::new(&factory),
             noodle: NoodleNoise::new(&factory),
-            offset: terrain_spline_from_density_json(OVERWORLD_OFFSET_SPLINE),
-            factor: terrain_spline_from_density_json(OVERWORLD_FACTOR_SPLINE),
-            jaggedness: terrain_spline_from_density_json(OVERWORLD_JAGGEDNESS_SPLINE),
+            offset: terrain_spline_from_density_json(kind.offset_spline()),
+            factor: terrain_spline_from_density_json(kind.factor_spline()),
+            jaggedness: terrain_spline_from_density_json(kind.jaggedness_spline()),
         }
     }
 
@@ -242,6 +422,12 @@ impl OverworldTerrainNoise {
             factor: self.factor.apply(&climate),
             jaggedness: self.jaggedness.apply(&climate),
         }
+    }
+
+    pub(crate) fn biome(&self, block_x: i32, block_y: i32, block_z: i32) -> &'static str {
+        let climate = self.climate.sample(block_x, block_z);
+        let profile = self.profile(block_x, block_z);
+        select_overworld_biome(&climate, profile.depth(block_y))
     }
 
     pub(crate) fn final_density(
@@ -263,6 +449,42 @@ impl OverworldTerrainNoise {
         };
         let post_processed = post_process_density(slide_overworld(block_y, caves));
         post_processed.min(self.noodle.sample(block_x, block_y, block_z))
+    }
+
+    pub(crate) fn preliminary_surface_height(
+        &self,
+        profile: &OverworldTerrainProfile,
+        _block_x: i32,
+        _block_z: i32,
+    ) -> i32 {
+        let upper = map(
+            0.273_437_5 / profile.factor - profile.offset,
+            1.5,
+            -1.5,
+            -64.0,
+            320.0,
+        )
+        .clamp(-40.0, 320.0);
+        let top_y = (upper / 8.0).floor() as i32 * 8;
+        if top_y <= -64 {
+            return -64;
+        }
+
+        let mut y = top_y;
+        while y >= -64 {
+            if self.preliminary_surface_density(profile, y) > 0.0 {
+                return y;
+            }
+            y -= 8;
+        }
+        -64
+    }
+
+    fn preliminary_surface_density(&self, profile: &OverworldTerrainProfile, block_y: i32) -> f64 {
+        let depth = y_clamped_gradient(block_y, -64, 320, 1.5, -1.5) + profile.offset;
+        let density =
+            (4.0 * quarter_negative(depth * profile.factor) - 0.703_125).clamp(-64.0, 64.0);
+        slide_overworld(block_y, density) - 0.390_625
     }
 
     fn sloped_cheese_density(
@@ -291,10 +513,25 @@ pub(crate) struct OverworldTerrainProfile {
     jaggedness: f64,
 }
 
+impl OverworldTerrainProfile {
+    fn depth(&self, block_y: i32) -> f64 {
+        y_clamped_gradient(block_y, -64, 320, 1.5, -1.5) + self.offset
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct OverworldSurfaceRules {
     bedrock_floor: PositionalRandomFactory,
     deepslate: PositionalRandomFactory,
+    surface: NormalNoise,
+    swamp: NormalNoise,
+    calcite: NormalNoise,
+    gravel: NormalNoise,
+    packed_ice: NormalNoise,
+    ice: NormalNoise,
+    powder_snow: NormalNoise,
+    clay_bands_offset: NormalNoise,
+    clay_bands: [SurfaceBlock; 192],
 }
 
 impl OverworldSurfaceRules {
@@ -303,9 +540,39 @@ impl OverworldSurfaceRules {
         let root = random.fork_positional();
         let mut bedrock_floor = root.from_hash_of("minecraft:bedrock_floor");
         let mut deepslate = root.from_hash_of("minecraft:deepslate");
+        let mut clay_bands_random = root.from_hash_of("minecraft:clay_bands");
         Self {
             bedrock_floor: bedrock_floor.fork_positional(),
             deepslate: deepslate.fork_positional(),
+            surface: NormalNoise::from_factory(&root, "minecraft:surface", -6, &SURFACE_AMPLITUDES),
+            swamp: NormalNoise::from_factory(
+                &root,
+                "minecraft:surface_swamp",
+                -2,
+                &SURFACE_SWAMP_AMPLITUDES,
+            ),
+            calcite: NormalNoise::from_factory(&root, "minecraft:calcite", -9, &CALCITE_AMPLITUDES),
+            gravel: NormalNoise::from_factory(&root, "minecraft:gravel", -8, &GRAVEL_AMPLITUDES),
+            packed_ice: NormalNoise::from_factory(
+                &root,
+                "minecraft:packed_ice",
+                -7,
+                &PACKED_ICE_AMPLITUDES,
+            ),
+            ice: NormalNoise::from_factory(&root, "minecraft:ice", -4, &ICE_AMPLITUDES),
+            powder_snow: NormalNoise::from_factory(
+                &root,
+                "minecraft:powder_snow",
+                -6,
+                &POWDER_SNOW_AMPLITUDES,
+            ),
+            clay_bands_offset: NormalNoise::from_factory(
+                &root,
+                "minecraft:clay_bands_offset",
+                -8,
+                &CLAY_BANDS_OFFSET_AMPLITUDES,
+            ),
+            clay_bands: generate_clay_bands(&mut clay_bands_random),
         }
     }
 
@@ -328,6 +595,967 @@ impl OverworldSurfaceRules {
 
     pub(crate) fn is_deepslate(&self, block_x: i32, block_y: i32, block_z: i32) -> bool {
         vertical_gradient(&self.deepslate, block_x, block_y, block_z, 0, 8)
+    }
+
+    pub(crate) fn block_at(&self, context: SurfaceRuleContext<'_>) -> Option<SurfaceBlock> {
+        if context.y <= context.min_y {
+            return Some(SurfaceBlock::Bedrock);
+        }
+
+        if self.is_bedrock_floor(context.x, context.y, context.z, context.min_y) {
+            return Some(SurfaceBlock::Bedrock);
+        }
+
+        if context.y < context.surface_height - 8 {
+            return self
+                .is_deepslate(context.x, context.y, context.z)
+                .then_some(SurfaceBlock::Deepslate);
+        }
+
+        let surface_depth = context.surface_height - context.y;
+        if surface_depth < 0 {
+            return None;
+        }
+
+        let on_floor = surface_depth == 0;
+        let under_floor = (1..=3).contains(&surface_depth);
+        let deep_under_floor = (4..=6).contains(&surface_depth);
+        let very_deep_under_floor = surface_depth > 6;
+        let above_water = context.y >= context.sea_level;
+        let steep = context.slope > 2;
+
+        if is_badlands(context.biome) {
+            return self.badlands_block(context, on_floor, under_floor, above_water);
+        }
+
+        if on_floor {
+            return Some(self.surface_block(context, above_water, steep));
+        }
+
+        if under_floor {
+            return Some(self.under_surface_block(context, above_water, steep));
+        }
+
+        if deep_under_floor && has_sandstone_under_surface(context.biome) {
+            return Some(SurfaceBlock::Sandstone);
+        }
+
+        if very_deep_under_floor && context.biome == "minecraft:desert" {
+            return Some(SurfaceBlock::Sandstone);
+        }
+
+        self.is_deepslate(context.x, context.y, context.z)
+            .then_some(SurfaceBlock::Deepslate)
+    }
+
+    fn surface_block(
+        &self,
+        context: SurfaceRuleContext<'_>,
+        above_water: bool,
+        steep: bool,
+    ) -> SurfaceBlock {
+        match context.biome {
+            "minecraft:frozen_peaks" => self.frozen_peak_block(context, above_water, steep, true),
+            "minecraft:snowy_slopes" => self.snowy_slope_block(context, above_water, steep, true),
+            "minecraft:jagged_peaks" => {
+                if steep {
+                    SurfaceBlock::Stone
+                } else if above_water {
+                    SurfaceBlock::SnowBlock
+                } else {
+                    SurfaceBlock::Stone
+                }
+            }
+            "minecraft:grove" => self
+                .powder_snow_block(context, 0.35, 0.6)
+                .unwrap_or(SurfaceBlock::SnowBlock),
+            "minecraft:stony_peaks" => self.stony_peak_block(context),
+            "minecraft:stony_shore" => self.stony_shore_block(context),
+            "minecraft:windswept_hills" => {
+                if self.surface_noise(context) > 1.0 {
+                    SurfaceBlock::Stone
+                } else {
+                    self.grass_or_dirt(above_water)
+                }
+            }
+            "minecraft:windswept_savanna" => {
+                if self.surface_noise(context) > 1.75 {
+                    SurfaceBlock::Stone
+                } else if self.surface_noise(context) > -0.5 {
+                    SurfaceBlock::CoarseDirt
+                } else {
+                    self.grass_or_dirt(above_water)
+                }
+            }
+            "minecraft:windswept_gravelly_hills" => {
+                let noise = self.surface_noise(context);
+                if noise > 2.0 {
+                    SurfaceBlock::Gravel
+                } else if noise > 1.0 {
+                    SurfaceBlock::Stone
+                } else if noise > -1.0 {
+                    self.grass_or_dirt(above_water)
+                } else {
+                    SurfaceBlock::Gravel
+                }
+            }
+            "minecraft:old_growth_pine_taiga" | "minecraft:old_growth_spruce_taiga" => {
+                let noise = self.surface_noise(context);
+                if noise > 1.75 {
+                    SurfaceBlock::CoarseDirt
+                } else if noise > -0.95 {
+                    SurfaceBlock::Podzol
+                } else {
+                    self.grass_or_dirt(above_water)
+                }
+            }
+            "minecraft:ice_spikes" => {
+                if above_water {
+                    SurfaceBlock::SnowBlock
+                } else {
+                    self.grass_or_dirt(above_water)
+                }
+            }
+            "minecraft:mangrove_swamp" => SurfaceBlock::Mud,
+            "minecraft:swamp" => self.swamp_surface_block(context),
+            "minecraft:mushroom_fields" => SurfaceBlock::Mycelium,
+            "minecraft:warm_ocean"
+            | "minecraft:beach"
+            | "minecraft:snowy_beach"
+            | "minecraft:desert" => SurfaceBlock::Sand,
+            "minecraft:lukewarm_ocean" | "minecraft:deep_lukewarm_ocean" => SurfaceBlock::Sand,
+            "minecraft:dripstone_caves" => SurfaceBlock::Stone,
+            _ => self.grass_or_dirt(above_water),
+        }
+    }
+
+    fn under_surface_block(
+        &self,
+        context: SurfaceRuleContext<'_>,
+        above_water: bool,
+        steep: bool,
+    ) -> SurfaceBlock {
+        match context.biome {
+            "minecraft:frozen_peaks" => self.frozen_peak_block(context, above_water, steep, false),
+            "minecraft:snowy_slopes" => self.snowy_slope_block(context, above_water, steep, false),
+            "minecraft:jagged_peaks" => SurfaceBlock::Stone,
+            "minecraft:grove" => self
+                .powder_snow_block(context, 0.45, 0.58)
+                .unwrap_or(SurfaceBlock::Dirt),
+            "minecraft:stony_peaks" => self.stony_peak_block(context),
+            "minecraft:stony_shore" => self.stony_shore_block(context),
+            "minecraft:windswept_savanna" => {
+                if self.surface_noise(context) > 1.75 {
+                    SurfaceBlock::Stone
+                } else {
+                    SurfaceBlock::Dirt
+                }
+            }
+            "minecraft:windswept_gravelly_hills" => {
+                let noise = self.surface_noise(context);
+                if noise > 2.0 {
+                    SurfaceBlock::Gravel
+                } else if noise > 1.0 {
+                    SurfaceBlock::Stone
+                } else if noise > -1.0 {
+                    SurfaceBlock::Dirt
+                } else {
+                    SurfaceBlock::Gravel
+                }
+            }
+            "minecraft:mangrove_swamp" => SurfaceBlock::Mud,
+            "minecraft:warm_ocean"
+            | "minecraft:beach"
+            | "minecraft:snowy_beach"
+            | "minecraft:desert"
+            | "minecraft:lukewarm_ocean"
+            | "minecraft:deep_lukewarm_ocean" => SurfaceBlock::Sand,
+            "minecraft:dripstone_caves" => SurfaceBlock::Stone,
+            _ => SurfaceBlock::Dirt,
+        }
+    }
+
+    fn frozen_peak_block(
+        &self,
+        context: SurfaceRuleContext<'_>,
+        above_water: bool,
+        steep: bool,
+        on_surface: bool,
+    ) -> SurfaceBlock {
+        if steep || self.packed_ice_noise(context, on_surface) {
+            return SurfaceBlock::PackedIce;
+        }
+        if self.ice_noise(context, on_surface) {
+            return SurfaceBlock::Ice;
+        }
+        if above_water {
+            SurfaceBlock::SnowBlock
+        } else {
+            SurfaceBlock::Stone
+        }
+    }
+
+    fn snowy_slope_block(
+        &self,
+        context: SurfaceRuleContext<'_>,
+        above_water: bool,
+        steep: bool,
+        on_surface: bool,
+    ) -> SurfaceBlock {
+        if steep {
+            SurfaceBlock::Stone
+        } else {
+            let (min, max) = if on_surface {
+                (0.35, 0.6)
+            } else {
+                (0.45, 0.58)
+            };
+            self.powder_snow_block(context, min, max)
+                .unwrap_or(if above_water {
+                    SurfaceBlock::SnowBlock
+                } else {
+                    SurfaceBlock::Dirt
+                })
+        }
+    }
+
+    fn stony_peak_block(&self, context: SurfaceRuleContext<'_>) -> SurfaceBlock {
+        if self.noise_between(&self.calcite, context, -0.0125, 0.0125) {
+            SurfaceBlock::Calcite
+        } else {
+            SurfaceBlock::Stone
+        }
+    }
+
+    fn stony_shore_block(&self, context: SurfaceRuleContext<'_>) -> SurfaceBlock {
+        if self.noise_between(&self.gravel, context, -0.05, 0.05) {
+            SurfaceBlock::Gravel
+        } else {
+            SurfaceBlock::Stone
+        }
+    }
+
+    fn swamp_surface_block(&self, context: SurfaceRuleContext<'_>) -> SurfaceBlock {
+        let puddle_y = if context.biome == "minecraft:mangrove_swamp" {
+            60
+        } else {
+            62
+        };
+        if context.y <= puddle_y && context.y < context.sea_level && self.swamp_noise(context) > 0.0
+        {
+            SurfaceBlock::Water
+        } else {
+            self.grass_or_dirt(context.y >= context.sea_level)
+        }
+    }
+
+    fn badlands_block(
+        &self,
+        context: SurfaceRuleContext<'_>,
+        on_floor: bool,
+        under_floor: bool,
+        above_water: bool,
+    ) -> Option<SurfaceBlock> {
+        if on_floor {
+            if context.biome == "minecraft:wooded_badlands" && context.y >= 97 {
+                let surface = self.surface_noise(context);
+                if (-0.909..=-0.5454).contains(&surface)
+                    || (-0.1818..=0.1818).contains(&surface)
+                    || (0.5454..=0.909).contains(&surface)
+                {
+                    return Some(SurfaceBlock::CoarseDirt);
+                }
+                return Some(self.grass_or_dirt(above_water));
+            }
+
+            if context.y >= 256 {
+                return Some(SurfaceBlock::OrangeTerracotta);
+            }
+
+            if context.y >= 74 {
+                let surface = self.surface_noise(context);
+                if (-0.909..=-0.5454).contains(&surface)
+                    || (-0.1818..=0.1818).contains(&surface)
+                    || (0.5454..=0.909).contains(&surface)
+                {
+                    return Some(SurfaceBlock::Terracotta);
+                }
+                return Some(self.clay_band(context.x, context.y, context.z));
+            }
+
+            if above_water {
+                return Some(SurfaceBlock::RedSand);
+            }
+
+            return Some(SurfaceBlock::OrangeTerracotta);
+        }
+
+        if context.y >= 63 {
+            if context.y < 74 {
+                return Some(SurfaceBlock::OrangeTerracotta);
+            }
+            return Some(self.clay_band(context.x, context.y, context.z));
+        }
+
+        if under_floor {
+            return Some(SurfaceBlock::WhiteTerracotta);
+        }
+
+        None
+    }
+
+    fn grass_or_dirt(&self, above_water: bool) -> SurfaceBlock {
+        if above_water {
+            SurfaceBlock::GrassBlock
+        } else {
+            SurfaceBlock::Dirt
+        }
+    }
+
+    fn powder_snow_block(
+        &self,
+        context: SurfaceRuleContext<'_>,
+        min: f64,
+        max: f64,
+    ) -> Option<SurfaceBlock> {
+        (self.noise_between(&self.powder_snow, context, min, max) && context.y >= context.sea_level)
+            .then_some(SurfaceBlock::PowderSnow)
+    }
+
+    fn packed_ice_noise(&self, context: SurfaceRuleContext<'_>, on_surface: bool) -> bool {
+        let min = if on_surface { 0.0 } else { -0.5 };
+        self.noise_between(&self.packed_ice, context, min, 0.2)
+    }
+
+    fn ice_noise(&self, context: SurfaceRuleContext<'_>, on_surface: bool) -> bool {
+        let min = if on_surface { 0.0 } else { -0.0625 };
+        self.noise_between(&self.ice, context, min, 0.025)
+    }
+
+    fn surface_noise(&self, context: SurfaceRuleContext<'_>) -> f64 {
+        self.surface
+            .get_value(context.x as f64, 0.0, context.z as f64)
+    }
+
+    fn swamp_noise(&self, context: SurfaceRuleContext<'_>) -> f64 {
+        self.swamp
+            .get_value(context.x as f64, 0.0, context.z as f64)
+    }
+
+    fn noise_between(
+        &self,
+        noise: &NormalNoise,
+        context: SurfaceRuleContext<'_>,
+        min: f64,
+        max: f64,
+    ) -> bool {
+        let value = noise.get_value(context.x as f64, 0.0, context.z as f64);
+        (min..=max).contains(&value)
+    }
+
+    fn clay_band(&self, x: i32, y: i32, z: i32) -> SurfaceBlock {
+        let offset =
+            (self.clay_bands_offset.get_value(x as f64, 0.0, z as f64) * 4.0).round() as i32;
+        let index = (y + offset).rem_euclid(self.clay_bands.len() as i32) as usize;
+        self.clay_bands[index]
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SurfaceRuleContext<'a> {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) z: i32,
+    pub(crate) surface_height: i32,
+    pub(crate) sea_level: i32,
+    pub(crate) min_y: i32,
+    pub(crate) biome: &'a str,
+    pub(crate) slope: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SurfaceBlock {
+    Bedrock,
+    Stone,
+    Deepslate,
+    Dirt,
+    GrassBlock,
+    Podzol,
+    CoarseDirt,
+    Mycelium,
+    Calcite,
+    Gravel,
+    Sand,
+    Sandstone,
+    PackedIce,
+    Ice,
+    SnowBlock,
+    PowderSnow,
+    Mud,
+    Water,
+    Terracotta,
+    OrangeTerracotta,
+    WhiteTerracotta,
+    YellowTerracotta,
+    BrownTerracotta,
+    RedTerracotta,
+    LightGrayTerracotta,
+    RedSand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AquiferFluid {
+    Air,
+    Water,
+    Lava,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AquiferSubstance {
+    DefaultBlock,
+    Fluid(AquiferFluid),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FluidStatus {
+    level: i32,
+    fluid: AquiferFluid,
+}
+
+impl FluidStatus {
+    fn at(self, block_y: i32) -> AquiferFluid {
+        if block_y < self.level {
+            self.fluid
+        } else {
+            AquiferFluid::Air
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OreVeinBlock {
+    CopperOre,
+    RawCopperBlock,
+    Granite,
+    DeepslateIronOre,
+    RawIronBlock,
+    Tuff,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OreVeinType {
+    Copper,
+    Iron,
+}
+
+impl OreVeinType {
+    fn min_y(self) -> i32 {
+        match self {
+            Self::Copper => 0,
+            Self::Iron => -60,
+        }
+    }
+
+    fn max_y(self) -> i32 {
+        match self {
+            Self::Copper => 50,
+            Self::Iron => -8,
+        }
+    }
+
+    fn ore(self) -> OreVeinBlock {
+        match self {
+            Self::Copper => OreVeinBlock::CopperOre,
+            Self::Iron => OreVeinBlock::DeepslateIronOre,
+        }
+    }
+
+    fn raw_ore_block(self) -> OreVeinBlock {
+        match self {
+            Self::Copper => OreVeinBlock::RawCopperBlock,
+            Self::Iron => OreVeinBlock::RawIronBlock,
+        }
+    }
+
+    fn filler(self) -> OreVeinBlock {
+        match self {
+            Self::Copper => OreVeinBlock::Granite,
+            Self::Iron => OreVeinBlock::Tuff,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OreVeinNoise {
+    veininess: NormalNoise,
+    vein_a: NormalNoise,
+    vein_b: NormalNoise,
+    gap: NormalNoise,
+    random: PositionalRandomFactory,
+}
+
+impl OreVeinNoise {
+    pub(crate) fn new(seed: i64) -> Self {
+        let mut random = XoroshiroRandomSource::new(seed);
+        let root = random.fork_positional();
+        let mut ore_random = root.from_hash_of("minecraft:ore");
+        Self {
+            veininess: NormalNoise::from_factory(
+                &root,
+                "minecraft:ore_veininess",
+                -8,
+                &ORE_VEININESS_AMPLITUDES,
+            ),
+            vein_a: NormalNoise::from_factory(
+                &root,
+                "minecraft:ore_vein_a",
+                -7,
+                &ORE_VEIN_RIDGE_AMPLITUDES,
+            ),
+            vein_b: NormalNoise::from_factory(
+                &root,
+                "minecraft:ore_vein_b",
+                -7,
+                &ORE_VEIN_RIDGE_AMPLITUDES,
+            ),
+            gap: NormalNoise::from_factory(&root, "minecraft:ore_gap", -5, &ORE_GAP_AMPLITUDES),
+            random: ore_random.fork_positional(),
+        }
+    }
+
+    pub(crate) fn block_at(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+    ) -> Option<OreVeinBlock> {
+        if !(-60..=50).contains(&block_y) {
+            return None;
+        }
+
+        let x = block_x as f64;
+        let y = block_y as f64;
+        let z = block_z as f64;
+        let veininess = self.veininess.get_value(x * 1.5, y * 1.5, z * 1.5);
+        let vein_type = if veininess > 0.0 {
+            OreVeinType::Copper
+        } else {
+            OreVeinType::Iron
+        };
+        let ridged = veininess.abs();
+        let distance_from_top = vein_type.max_y() - block_y;
+        let distance_from_bottom = block_y - vein_type.min_y();
+        if distance_from_bottom < 0 || distance_from_top < 0 {
+            return None;
+        }
+
+        let distance_from_edge = distance_from_top.min(distance_from_bottom);
+        let edge_roundoff = clamped_map(distance_from_edge as f64, 0.0, 20.0, -0.2, 0.0);
+        if ridged + edge_roundoff < 0.4 {
+            return None;
+        }
+
+        let mut random = self.random.at(block_x, block_y, block_z);
+        if random.next_float() > 0.7 {
+            return None;
+        }
+
+        let ridge_a = self.vein_a.get_value(x * 4.0, y * 4.0, z * 4.0).abs();
+        let ridge_b = self.vein_b.get_value(x * 4.0, y * 4.0, z * 4.0).abs();
+        if -0.08 + ridge_a.max(ridge_b) >= 0.0 {
+            return None;
+        }
+
+        let richness = clamped_map(ridged, 0.4, 0.6, 0.1, 0.3);
+        let gap = self.gap.get_value(x, y, z);
+        if random.next_float() < richness as f32 && gap > -0.3 {
+            if random.next_float() < 0.02 {
+                Some(vein_type.raw_ore_block())
+            } else {
+                Some(vein_type.ore())
+            }
+        } else {
+            Some(vein_type.filler())
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OverworldAquifer {
+    barrier: NormalNoise,
+    fluid_level_floodedness: NormalNoise,
+    fluid_level_spread: NormalNoise,
+    lava: NormalNoise,
+    random: PositionalRandomFactory,
+    sea_level: i32,
+}
+
+impl OverworldAquifer {
+    pub(crate) fn new(seed: i64, sea_level: i32) -> Self {
+        let mut random = XoroshiroRandomSource::new(seed);
+        let factory = random.fork_positional();
+        let mut aquifer_random = factory.from_hash_of("minecraft:aquifer");
+        Self {
+            barrier: NormalNoise::from_factory(
+                &factory,
+                "minecraft:aquifer_barrier",
+                -3,
+                &AQUIFER_BARRIER_AMPLITUDES,
+            ),
+            fluid_level_floodedness: NormalNoise::from_factory(
+                &factory,
+                "minecraft:aquifer_fluid_level_floodedness",
+                -7,
+                &AQUIFER_FLOODEDNESS_AMPLITUDES,
+            ),
+            fluid_level_spread: NormalNoise::from_factory(
+                &factory,
+                "minecraft:aquifer_fluid_level_spread",
+                -5,
+                &AQUIFER_SPREAD_AMPLITUDES,
+            ),
+            lava: NormalNoise::from_factory(
+                &factory,
+                "minecraft:aquifer_lava",
+                -1,
+                &AQUIFER_LAVA_AMPLITUDES,
+            ),
+            random: aquifer_random.fork_positional(),
+            sea_level,
+        }
+    }
+
+    pub(crate) fn substance_at(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        density: f64,
+        preliminary_surface: i32,
+    ) -> AquiferSubstance {
+        if density > 0.0 {
+            return AquiferSubstance::DefaultBlock;
+        }
+
+        let global_status = self.global_status(block_y);
+        let global_fluid = global_status.at(block_y);
+        if matches!(global_fluid, AquiferFluid::Lava) {
+            return AquiferSubstance::Fluid(AquiferFluid::Lava);
+        }
+
+        let nearest =
+            self.nearest_aquifer_locations(block_x, block_y, block_z, preliminary_surface);
+        let closest_status = nearest[0].status;
+        let similarity12 = aquifer_similarity(nearest[0].distance_sqr, nearest[1].distance_sqr);
+        let fluid = closest_status.at(block_y);
+        if similarity12 <= 0.0 {
+            return AquiferSubstance::Fluid(fluid);
+        }
+
+        if matches!(fluid, AquiferFluid::Water)
+            && matches!(
+                self.global_status(block_y - 1).at(block_y - 1),
+                AquiferFluid::Lava
+            )
+        {
+            return AquiferSubstance::Fluid(fluid);
+        }
+
+        let barrier12 = similarity12
+            * self.calculate_pressure(block_x, block_y, block_z, closest_status, nearest[1].status);
+        if density + barrier12 > 0.0 {
+            return AquiferSubstance::DefaultBlock;
+        }
+
+        let similarity13 = aquifer_similarity(nearest[0].distance_sqr, nearest[2].distance_sqr);
+        if similarity13 > 0.0 {
+            let barrier13 = similarity12
+                * similarity13
+                * self.calculate_pressure(
+                    block_x,
+                    block_y,
+                    block_z,
+                    closest_status,
+                    nearest[2].status,
+                );
+            if density + barrier13 > 0.0 {
+                return AquiferSubstance::DefaultBlock;
+            }
+        }
+
+        let similarity23 = aquifer_similarity(nearest[1].distance_sqr, nearest[2].distance_sqr);
+        if similarity23 > 0.0 {
+            let barrier23 = similarity12
+                * similarity23
+                * self.calculate_pressure(
+                    block_x,
+                    block_y,
+                    block_z,
+                    nearest[1].status,
+                    nearest[2].status,
+                );
+            if density + barrier23 > 0.0 {
+                return AquiferSubstance::DefaultBlock;
+            }
+        }
+
+        AquiferSubstance::Fluid(fluid)
+    }
+
+    fn nearest_aquifer_locations(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        preliminary_surface: i32,
+    ) -> [AquiferSample; 4] {
+        let x_anchor = grid_x(block_x - 5);
+        let y_anchor = grid_y(block_y + 1);
+        let z_anchor = grid_z(block_z - 5);
+        let mut nearest = [AquiferSample::empty(); 4];
+
+        for x_offset in 0..=1 {
+            for y_offset in -1..=1 {
+                for z_offset in 0..=1 {
+                    let cell_x = x_anchor + x_offset;
+                    let cell_y = y_anchor + y_offset;
+                    let cell_z = z_anchor + z_offset;
+                    let location = self.aquifer_location(cell_x, cell_y, cell_z);
+                    let dx = location.x - block_x;
+                    let dy = location.y - block_y;
+                    let dz = location.z - block_z;
+                    let distance_sqr = dx * dx + dy * dy + dz * dz;
+                    let status = self.compute_status(
+                        location.x,
+                        location.y,
+                        location.z,
+                        preliminary_surface,
+                    );
+                    insert_aquifer_sample(
+                        &mut nearest,
+                        AquiferSample {
+                            distance_sqr,
+                            status,
+                        },
+                    );
+                }
+            }
+        }
+
+        nearest
+    }
+
+    fn aquifer_location(&self, cell_x: i32, cell_y: i32, cell_z: i32) -> AquiferLocation {
+        let mut random = self.random.at(cell_x, cell_y, cell_z);
+        AquiferLocation {
+            x: from_grid_x(cell_x, random.next_int(10) as i32),
+            y: from_grid_y(cell_y, random.next_int(9) as i32),
+            z: from_grid_z(cell_z, random.next_int(10) as i32),
+        }
+    }
+
+    fn compute_status(&self, x: i32, y: i32, z: i32, preliminary_surface: i32) -> FluidStatus {
+        let global_status = self.global_status(y);
+        let global_fluid = global_status.at(y);
+        if matches!(global_fluid, AquiferFluid::Lava) {
+            return global_status;
+        }
+
+        let adjusted_surface = preliminary_surface + 8;
+        let top_of_cell = y + 12;
+        let bottom_of_cell = y - 12;
+        if bottom_of_cell > adjusted_surface {
+            return global_status;
+        }
+
+        let global_at_surface = self.global_status(adjusted_surface);
+        let surface_is_under_global_fluid =
+            !matches!(global_at_surface.at(adjusted_surface), AquiferFluid::Air);
+        if top_of_cell > adjusted_surface && surface_is_under_global_fluid {
+            return global_at_surface;
+        }
+
+        let surface_level = self.fluid_surface_level(
+            x,
+            y,
+            z,
+            preliminary_surface,
+            global_status.level,
+            surface_is_under_global_fluid,
+        );
+        FluidStatus {
+            level: surface_level,
+            fluid: self.fluid_type(x, y, z, global_status.fluid, surface_level),
+        }
+    }
+
+    fn global_status(&self, block_y: i32) -> FluidStatus {
+        if block_y < self.global_lava_cutoff() {
+            FluidStatus {
+                level: -54,
+                fluid: AquiferFluid::Lava,
+            }
+        } else {
+            FluidStatus {
+                level: self.sea_level,
+                fluid: AquiferFluid::Water,
+            }
+        }
+    }
+
+    fn calculate_pressure(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        first: FluidStatus,
+        second: FluidStatus,
+    ) -> f64 {
+        let type_1 = first.at(block_y);
+        let type_2 = second.at(block_y);
+        if matches!(
+            (type_1, type_2),
+            (AquiferFluid::Lava, AquiferFluid::Water) | (AquiferFluid::Water, AquiferFluid::Lava)
+        ) {
+            return 2.0;
+        }
+
+        let fluid_y_diff = (first.level - second.level).abs();
+        if fluid_y_diff == 0 {
+            return 0.0;
+        }
+
+        let average_fluid_y = 0.5 * (first.level + second.level) as f64;
+        let above_average = block_y as f64 + 0.5 - average_fluid_y;
+        let distance_from_edge = fluid_y_diff as f64 / 2.0 - above_average.abs();
+        let gradient = if above_average > 0.0 {
+            let center = distance_from_edge;
+            if center > 0.0 {
+                center / 1.5
+            } else {
+                center / 2.5
+            }
+        } else {
+            let center = 3.0 + distance_from_edge;
+            if center > 0.0 {
+                center / 3.0
+            } else {
+                center / 10.0
+            }
+        };
+        let noise = if (-2.0..=2.0).contains(&gradient) {
+            self.barrier
+                .get_value(block_x as f64, block_y as f64 * 0.5, block_z as f64)
+        } else {
+            0.0
+        };
+        2.0 * (noise + gradient)
+    }
+
+    fn global_lava_cutoff(&self) -> i32 {
+        self.sea_level.min(-54)
+    }
+
+    fn fluid_surface_level(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        preliminary_surface: i32,
+        global_level: i32,
+        surface_is_under_global_fluid: bool,
+    ) -> i32 {
+        let adjusted_surface = preliminary_surface + 8;
+        let distance_below_surface = adjusted_surface - block_y;
+        let floodedness_factor = if surface_is_under_global_fluid {
+            clamped_map(distance_below_surface as f64, 0.0, 64.0, 1.0, 0.0)
+        } else {
+            0.0
+        };
+        let floodedness = self
+            .fluid_level_floodedness
+            .get_value(block_x as f64, block_y as f64 * 0.67, block_z as f64)
+            .clamp(-1.0, 1.0);
+        let fully_flooded_threshold = map(floodedness_factor, 1.0, 0.0, -0.3, 0.8);
+        let partially_flooded_threshold = map(floodedness_factor, 1.0, 0.0, -0.8, 0.4);
+
+        if floodedness - fully_flooded_threshold > 0.0 {
+            global_level
+        } else if floodedness - partially_flooded_threshold > 0.0 {
+            self.randomized_fluid_surface_level(block_x, block_y, block_z, preliminary_surface)
+        } else {
+            i32::MIN / 2
+        }
+    }
+
+    fn randomized_fluid_surface_level(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        preliminary_surface: i32,
+    ) -> i32 {
+        let cell_x = block_x.div_euclid(16);
+        let cell_y = block_y.div_euclid(40);
+        let cell_z = block_z.div_euclid(16);
+        let cell_middle_y = cell_y * 40 + 20;
+        let spread = self.fluid_level_spread.get_value(
+            cell_x as f64,
+            cell_y as f64 * (5.0 / 7.0),
+            cell_z as f64,
+        ) * 10.0;
+        let target = cell_middle_y + quantize(spread, 3);
+        preliminary_surface.min(target)
+    }
+
+    fn fluid_type(
+        &self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        global_fluid: AquiferFluid,
+        fluid_level: i32,
+    ) -> AquiferFluid {
+        if fluid_level > -10 || matches!(global_fluid, AquiferFluid::Lava) {
+            return global_fluid;
+        }
+
+        let cell_x = block_x.div_euclid(64);
+        let cell_y = block_y.div_euclid(40);
+        let cell_z = block_z.div_euclid(64);
+        let lava = self
+            .lava
+            .get_value(cell_x as f64, cell_y as f64, cell_z as f64);
+        if lava.abs() > 0.3 {
+            AquiferFluid::Lava
+        } else {
+            global_fluid
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AquiferLocation {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AquiferSample {
+    distance_sqr: i32,
+    status: FluidStatus,
+}
+
+impl AquiferSample {
+    fn empty() -> Self {
+        Self {
+            distance_sqr: i32::MAX,
+            status: FluidStatus {
+                level: i32::MIN / 2,
+                fluid: AquiferFluid::Air,
+            },
+        }
     }
 }
 
@@ -733,8 +1961,12 @@ enum TerrainCoordinate {
 impl TerrainCoordinate {
     fn parse(value: &str) -> Self {
         match value {
-            "minecraft:overworld/continents" => Self::Continents,
-            "minecraft:overworld/erosion" => Self::Erosion,
+            "minecraft:overworld/continents" | "minecraft:overworld_large_biomes/continents" => {
+                Self::Continents
+            }
+            "minecraft:overworld/erosion" | "minecraft:overworld_large_biomes/erosion" => {
+                Self::Erosion
+            }
             "minecraft:overworld/ridges" => Self::Ridges,
             "minecraft:overworld/ridges_folded" => Self::RidgesFolded,
             other => panic!("unsupported vanilla terrain spline coordinate: {other}"),
@@ -970,12 +2202,12 @@ impl PositionalRandomFactory {
 }
 
 #[derive(Clone, Debug)]
-struct XoroshiroRandomSource {
+pub(crate) struct XoroshiroRandomSource {
     random: Xoroshiro128PlusPlus,
 }
 
 impl XoroshiroRandomSource {
-    fn new(seed: i64) -> Self {
+    pub(crate) fn new(seed: i64) -> Self {
         Self::from_seed128(upgrade_seed_to_128bit(seed))
     }
 
@@ -998,11 +2230,11 @@ impl XoroshiroRandomSource {
         }
     }
 
-    fn next_long(&mut self) -> u64 {
+    pub(crate) fn next_long(&mut self) -> u64 {
         self.random.next_long()
     }
 
-    fn next_int(&mut self, bound: usize) -> usize {
+    pub(crate) fn next_int(&mut self, bound: usize) -> usize {
         assert!(bound > 0);
         let bound = bound as u64;
         let mut random_bits = self.next_int_raw() as u64;
@@ -1023,12 +2255,16 @@ impl XoroshiroRandomSource {
         self.random.next_long() as u32
     }
 
-    fn next_double(&mut self) -> f64 {
+    pub(crate) fn next_double(&mut self) -> f64 {
         (self.random.next_long() >> 11) as f64 * (1.110_223e-16_f32 as f64)
     }
 
-    fn next_float(&mut self) -> f32 {
+    pub(crate) fn next_float(&mut self) -> f32 {
         (self.random.next_long() >> 40) as f32 * 5.960_464_5e-8_f32
+    }
+
+    fn next_bool(&mut self) -> bool {
+        (self.random.next_long() & 1) != 0
     }
 
     fn consume_count(&mut self, rounds: usize) {
@@ -1213,6 +2449,1828 @@ fn half_negative(value: f64) -> f64 {
 
 fn quarter_negative(value: f64) -> f64 {
     if value > 0.0 { value } else { value * 0.25 }
+}
+
+fn map(value: f64, from_min: f64, from_max: f64, to_min: f64, to_max: f64) -> f64 {
+    lerp((value - from_min) / (from_max - from_min), to_min, to_max)
+}
+
+fn clamped_map(value: f64, from_min: f64, from_max: f64, to_min: f64, to_max: f64) -> f64 {
+    clamped_lerp((value - from_min) / (from_max - from_min), to_min, to_max)
+}
+
+fn quantize(value: f64, resolution: i32) -> i32 {
+    (value.floor() as i32).div_euclid(resolution) * resolution
+}
+
+fn aquifer_similarity(distance_sqr_1: i32, distance_sqr_2: i32) -> f64 {
+    1.0 - (distance_sqr_2 - distance_sqr_1) as f64 / 25.0
+}
+
+fn insert_aquifer_sample(samples: &mut [AquiferSample; 4], sample: AquiferSample) {
+    if samples[0].distance_sqr >= sample.distance_sqr {
+        samples[3] = samples[2];
+        samples[2] = samples[1];
+        samples[1] = samples[0];
+        samples[0] = sample;
+    } else if samples[1].distance_sqr >= sample.distance_sqr {
+        samples[3] = samples[2];
+        samples[2] = samples[1];
+        samples[1] = sample;
+    } else if samples[2].distance_sqr >= sample.distance_sqr {
+        samples[3] = samples[2];
+        samples[2] = sample;
+    } else if samples[3].distance_sqr >= sample.distance_sqr {
+        samples[3] = sample;
+    }
+}
+
+fn grid_x(block_x: i32) -> i32 {
+    block_x >> 4
+}
+
+fn from_grid_x(grid_x: i32, offset: i32) -> i32 {
+    (grid_x << 4) + offset
+}
+
+fn grid_y(block_y: i32) -> i32 {
+    block_y.div_euclid(12)
+}
+
+fn from_grid_y(grid_y: i32, offset: i32) -> i32 {
+    grid_y * 12 + offset
+}
+
+fn grid_z(block_z: i32) -> i32 {
+    block_z >> 4
+}
+
+fn from_grid_z(grid_z: i32, offset: i32) -> i32 {
+    (grid_z << 4) + offset
+}
+
+fn select_overworld_biome(climate: &OverworldClimateSample, depth: f64) -> &'static str {
+    let target = ClimateTarget::new(
+        climate.temperature,
+        climate.vegetation,
+        climate.continentalness,
+        climate.erosion,
+        depth,
+        climate.ridges,
+    );
+    overworld_biome_points()
+        .iter()
+        .min_by_key(|point| point.fitness(target))
+        .map(|point| point.biome)
+        .unwrap_or("minecraft:plains")
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClimateParameter {
+    min: i64,
+    max: i64,
+}
+
+impl ClimateParameter {
+    fn point(value: f64) -> Self {
+        Self::span(value, value)
+    }
+
+    fn span(min: f64, max: f64) -> Self {
+        Self {
+            min: quantize_climate(min),
+            max: quantize_climate(max),
+        }
+    }
+
+    fn span_parameters(min: Self, max: Self) -> Self {
+        Self {
+            min: min.min,
+            max: max.max,
+        }
+    }
+
+    fn distance(self, target: i64) -> i64 {
+        let above = target - self.max;
+        let below = self.min - target;
+        if above > 0 { above } else { below.max(0) }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClimateTarget {
+    values: [i64; 6],
+}
+
+impl ClimateTarget {
+    fn new(
+        temperature: f64,
+        humidity: f64,
+        continentalness: f64,
+        erosion: f64,
+        depth: f64,
+        weirdness: f64,
+    ) -> Self {
+        Self {
+            values: [
+                quantize_climate(temperature),
+                quantize_climate(humidity),
+                quantize_climate(continentalness),
+                quantize_climate(erosion),
+                quantize_climate(depth),
+                quantize_climate(weirdness),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BiomeParameterPoint {
+    parameters: [ClimateParameter; 6],
+    offset: i64,
+    biome: &'static str,
+}
+
+impl BiomeParameterPoint {
+    fn fitness(self, target: ClimateTarget) -> i64 {
+        self.parameters
+            .iter()
+            .zip(target.values)
+            .map(|(parameter, target)| {
+                let distance = parameter.distance(target);
+                distance * distance
+            })
+            .sum::<i64>()
+            + self.offset * self.offset
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OverworldBiomeBuilder {
+    full_range: ClimateParameter,
+    temperatures: [ClimateParameter; 5],
+    humidities: [ClimateParameter; 5],
+    erosions: [ClimateParameter; 7],
+    frozen_range: ClimateParameter,
+    unfrozen_range: ClimateParameter,
+    mushroom_fields_continentalness: ClimateParameter,
+    deep_ocean_continentalness: ClimateParameter,
+    ocean_continentalness: ClimateParameter,
+    coast_continentalness: ClimateParameter,
+    inland_continentalness: ClimateParameter,
+    near_inland_continentalness: ClimateParameter,
+    mid_inland_continentalness: ClimateParameter,
+    far_inland_continentalness: ClimateParameter,
+}
+
+impl OverworldBiomeBuilder {
+    fn new() -> Self {
+        let full_range = ClimateParameter::span(-1.0, 1.0);
+        let temperatures = [
+            ClimateParameter::span(-1.0, -0.45),
+            ClimateParameter::span(-0.45, -0.15),
+            ClimateParameter::span(-0.15, 0.2),
+            ClimateParameter::span(0.2, 0.55),
+            ClimateParameter::span(0.55, 1.0),
+        ];
+        let humidities = [
+            ClimateParameter::span(-1.0, -0.35),
+            ClimateParameter::span(-0.35, -0.1),
+            ClimateParameter::span(-0.1, 0.1),
+            ClimateParameter::span(0.1, 0.3),
+            ClimateParameter::span(0.3, 1.0),
+        ];
+        let erosions = [
+            ClimateParameter::span(-1.0, -0.78),
+            ClimateParameter::span(-0.78, -0.375),
+            ClimateParameter::span(-0.375, -0.2225),
+            ClimateParameter::span(-0.2225, 0.05),
+            ClimateParameter::span(0.05, 0.45),
+            ClimateParameter::span(0.45, 0.55),
+            ClimateParameter::span(0.55, 1.0),
+        ];
+
+        Self {
+            full_range,
+            temperatures,
+            humidities,
+            erosions,
+            frozen_range: temperatures[0],
+            unfrozen_range: ClimateParameter::span_parameters(temperatures[1], temperatures[4]),
+            mushroom_fields_continentalness: ClimateParameter::span(-1.2, -1.05),
+            deep_ocean_continentalness: ClimateParameter::span(-1.05, -0.455),
+            ocean_continentalness: ClimateParameter::span(-0.455, -0.19),
+            coast_continentalness: ClimateParameter::span(-0.19, -0.11),
+            inland_continentalness: ClimateParameter::span(-0.11, 0.55),
+            near_inland_continentalness: ClimateParameter::span(-0.11, 0.03),
+            mid_inland_continentalness: ClimateParameter::span(0.03, 0.3),
+            far_inland_continentalness: ClimateParameter::span(0.3, 1.0),
+        }
+    }
+
+    fn build(self) -> Vec<BiomeParameterPoint> {
+        let mut points = Vec::with_capacity(900);
+        self.add_off_coast_biomes(&mut points);
+        self.add_inland_biomes(&mut points);
+        self.add_underground_biomes(&mut points);
+        points
+    }
+
+    fn add_off_coast_biomes(&self, points: &mut Vec<BiomeParameterPoint>) {
+        self.add_surface_biome(
+            points,
+            self.full_range,
+            self.full_range,
+            self.mushroom_fields_continentalness,
+            self.full_range,
+            self.full_range,
+            0.0,
+            "minecraft:mushroom_fields",
+        );
+
+        for temperature_index in 0..self.temperatures.len() {
+            let temperature = self.temperatures[temperature_index];
+            self.add_surface_biome(
+                points,
+                temperature,
+                self.full_range,
+                self.deep_ocean_continentalness,
+                self.full_range,
+                self.full_range,
+                0.0,
+                OCEANS[0][temperature_index],
+            );
+            self.add_surface_biome(
+                points,
+                temperature,
+                self.full_range,
+                self.ocean_continentalness,
+                self.full_range,
+                self.full_range,
+                0.0,
+                OCEANS[1][temperature_index],
+            );
+        }
+    }
+
+    fn add_inland_biomes(&self, points: &mut Vec<BiomeParameterPoint>) {
+        self.add_mid_slice(points, ClimateParameter::span(-1.0, -0.93333334));
+        self.add_high_slice(points, ClimateParameter::span(-0.93333334, -0.7666667));
+        self.add_peaks(points, ClimateParameter::span(-0.7666667, -0.56666666));
+        self.add_high_slice(points, ClimateParameter::span(-0.56666666, -0.4));
+        self.add_mid_slice(points, ClimateParameter::span(-0.4, -0.26666668));
+        self.add_low_slice(points, ClimateParameter::span(-0.26666668, -0.05));
+        self.add_valleys(points, ClimateParameter::span(-0.05, 0.05));
+        self.add_low_slice(points, ClimateParameter::span(0.05, 0.26666668));
+        self.add_mid_slice(points, ClimateParameter::span(0.26666668, 0.4));
+        self.add_high_slice(points, ClimateParameter::span(0.4, 0.56666666));
+        self.add_peaks(points, ClimateParameter::span(0.56666666, 0.7666667));
+        self.add_high_slice(points, ClimateParameter::span(0.7666667, 0.93333334));
+        self.add_mid_slice(points, ClimateParameter::span(0.93333334, 1.0));
+    }
+
+    fn add_peaks(&self, points: &mut Vec<BiomeParameterPoint>, weirdness: ClimateParameter) {
+        for temperature_index in 0..self.temperatures.len() {
+            let temperature = self.temperatures[temperature_index];
+            for humidity_index in 0..self.humidities.len() {
+                let humidity = self.humidities[humidity_index];
+                let middle_biome =
+                    self.pick_middle_biome(temperature_index, humidity_index, weirdness);
+                let middle_or_badlands = self.pick_middle_biome_or_badlands_if_hot(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                );
+                let middle_badlands_or_slope = self
+                    .pick_middle_biome_or_badlands_if_hot_or_slope_if_cold(
+                        temperature_index,
+                        humidity_index,
+                        weirdness,
+                    );
+                let plateau_biome =
+                    self.pick_plateau_biome(temperature_index, humidity_index, weirdness);
+                let shattered_biome =
+                    self.pick_shattered_biome(temperature_index, humidity_index, weirdness);
+                let shattered_or_savanna = self.maybe_pick_windswept_savanna_biome(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                    shattered_biome,
+                );
+                let peak_biome = self.pick_peak_biome(temperature_index, humidity_index, weirdness);
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[0],
+                    weirdness,
+                    0.0,
+                    peak_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.near_inland_continentalness,
+                    ),
+                    self.erosions[1],
+                    weirdness,
+                    0.0,
+                    middle_badlands_or_slope,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[1],
+                    weirdness,
+                    0.0,
+                    peak_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.near_inland_continentalness,
+                    ),
+                    ClimateParameter::span_parameters(self.erosions[2], self.erosions[3]),
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[2],
+                    weirdness,
+                    0.0,
+                    plateau_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.mid_inland_continentalness,
+                    self.erosions[3],
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.far_inland_continentalness,
+                    self.erosions[3],
+                    weirdness,
+                    0.0,
+                    plateau_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[4],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.near_inland_continentalness,
+                    ),
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    shattered_or_savanna,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    shattered_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[6],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+            }
+        }
+    }
+
+    fn add_high_slice(&self, points: &mut Vec<BiomeParameterPoint>, weirdness: ClimateParameter) {
+        for temperature_index in 0..self.temperatures.len() {
+            let temperature = self.temperatures[temperature_index];
+            for humidity_index in 0..self.humidities.len() {
+                let humidity = self.humidities[humidity_index];
+                let middle_biome =
+                    self.pick_middle_biome(temperature_index, humidity_index, weirdness);
+                let middle_or_badlands = self.pick_middle_biome_or_badlands_if_hot(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                );
+                let middle_badlands_or_slope = self
+                    .pick_middle_biome_or_badlands_if_hot_or_slope_if_cold(
+                        temperature_index,
+                        humidity_index,
+                        weirdness,
+                    );
+                let plateau_biome =
+                    self.pick_plateau_biome(temperature_index, humidity_index, weirdness);
+                let shattered_biome =
+                    self.pick_shattered_biome(temperature_index, humidity_index, weirdness);
+                let middle_or_savanna = self.maybe_pick_windswept_savanna_biome(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                    middle_biome,
+                );
+                let slope_biome =
+                    self.pick_slope_biome(temperature_index, humidity_index, weirdness);
+                let peak_biome = self.pick_peak_biome(temperature_index, humidity_index, weirdness);
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.coast_continentalness,
+                    ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    self.erosions[0],
+                    weirdness,
+                    0.0,
+                    slope_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[0],
+                    weirdness,
+                    0.0,
+                    peak_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    self.erosions[1],
+                    weirdness,
+                    0.0,
+                    middle_badlands_or_slope,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[1],
+                    weirdness,
+                    0.0,
+                    slope_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.near_inland_continentalness,
+                    ),
+                    ClimateParameter::span_parameters(self.erosions[2], self.erosions[3]),
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[2],
+                    weirdness,
+                    0.0,
+                    plateau_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.mid_inland_continentalness,
+                    self.erosions[3],
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.far_inland_continentalness,
+                    self.erosions[3],
+                    weirdness,
+                    0.0,
+                    plateau_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[4],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.near_inland_continentalness,
+                    ),
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    middle_or_savanna,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    shattered_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[6],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+            }
+        }
+    }
+
+    fn add_mid_slice(&self, points: &mut Vec<BiomeParameterPoint>, weirdness: ClimateParameter) {
+        self.add_surface_biome(
+            points,
+            self.full_range,
+            self.full_range,
+            self.coast_continentalness,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[2]),
+            weirdness,
+            0.0,
+            "minecraft:stony_shore",
+        );
+        self.add_surface_biome(
+            points,
+            ClimateParameter::span_parameters(self.temperatures[1], self.temperatures[2]),
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.near_inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:swamp",
+        );
+        self.add_surface_biome(
+            points,
+            ClimateParameter::span_parameters(self.temperatures[3], self.temperatures[4]),
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.near_inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:mangrove_swamp",
+        );
+
+        for temperature_index in 0..self.temperatures.len() {
+            let temperature = self.temperatures[temperature_index];
+            for humidity_index in 0..self.humidities.len() {
+                let humidity = self.humidities[humidity_index];
+                let middle_biome =
+                    self.pick_middle_biome(temperature_index, humidity_index, weirdness);
+                let middle_or_badlands = self.pick_middle_biome_or_badlands_if_hot(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                );
+                let middle_badlands_or_slope = self
+                    .pick_middle_biome_or_badlands_if_hot_or_slope_if_cold(
+                        temperature_index,
+                        humidity_index,
+                        weirdness,
+                    );
+                let shattered_biome =
+                    self.pick_shattered_biome(temperature_index, humidity_index, weirdness);
+                let plateau_biome =
+                    self.pick_plateau_biome(temperature_index, humidity_index, weirdness);
+                let beach_biome = self.pick_beach_biome(temperature_index);
+                let middle_or_savanna = self.maybe_pick_windswept_savanna_biome(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                    middle_biome,
+                );
+                let shattered_coast_biome =
+                    self.pick_shattered_coast_biome(temperature_index, humidity_index, weirdness);
+                let slope_biome =
+                    self.pick_slope_biome(temperature_index, humidity_index, weirdness);
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.near_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[0],
+                    weirdness,
+                    0.0,
+                    slope_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.near_inland_continentalness,
+                        self.mid_inland_continentalness,
+                    ),
+                    self.erosions[1],
+                    weirdness,
+                    0.0,
+                    middle_badlands_or_slope,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.far_inland_continentalness,
+                    self.erosions[1],
+                    weirdness,
+                    0.0,
+                    if temperature_index == 0 {
+                        slope_biome
+                    } else {
+                        plateau_biome
+                    },
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    self.erosions[2],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.mid_inland_continentalness,
+                    self.erosions[2],
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.far_inland_continentalness,
+                    self.erosions[2],
+                    weirdness,
+                    0.0,
+                    plateau_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.coast_continentalness,
+                        self.near_inland_continentalness,
+                    ),
+                    self.erosions[3],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[3],
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+                if weirdness.max < 0 {
+                    self.add_surface_biome(
+                        points,
+                        temperature,
+                        humidity,
+                        self.coast_continentalness,
+                        self.erosions[4],
+                        weirdness,
+                        0.0,
+                        beach_biome,
+                    );
+                    self.add_surface_biome(
+                        points,
+                        temperature,
+                        humidity,
+                        ClimateParameter::span_parameters(
+                            self.near_inland_continentalness,
+                            self.far_inland_continentalness,
+                        ),
+                        self.erosions[4],
+                        weirdness,
+                        0.0,
+                        middle_biome,
+                    );
+                } else {
+                    self.add_surface_biome(
+                        points,
+                        temperature,
+                        humidity,
+                        ClimateParameter::span_parameters(
+                            self.coast_continentalness,
+                            self.far_inland_continentalness,
+                        ),
+                        self.erosions[4],
+                        weirdness,
+                        0.0,
+                        middle_biome,
+                    );
+                }
+
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.coast_continentalness,
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    shattered_coast_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    middle_or_savanna,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    shattered_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.coast_continentalness,
+                    self.erosions[6],
+                    weirdness,
+                    0.0,
+                    if weirdness.max < 0 {
+                        beach_biome
+                    } else {
+                        middle_biome
+                    },
+                );
+
+                if temperature_index == 0 {
+                    self.add_surface_biome(
+                        points,
+                        temperature,
+                        humidity,
+                        ClimateParameter::span_parameters(
+                            self.near_inland_continentalness,
+                            self.far_inland_continentalness,
+                        ),
+                        self.erosions[6],
+                        weirdness,
+                        0.0,
+                        middle_biome,
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_low_slice(&self, points: &mut Vec<BiomeParameterPoint>, weirdness: ClimateParameter) {
+        self.add_surface_biome(
+            points,
+            self.full_range,
+            self.full_range,
+            self.coast_continentalness,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[2]),
+            weirdness,
+            0.0,
+            "minecraft:stony_shore",
+        );
+        self.add_surface_biome(
+            points,
+            ClimateParameter::span_parameters(self.temperatures[1], self.temperatures[2]),
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.near_inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:swamp",
+        );
+        self.add_surface_biome(
+            points,
+            ClimateParameter::span_parameters(self.temperatures[3], self.temperatures[4]),
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.near_inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:mangrove_swamp",
+        );
+
+        for temperature_index in 0..self.temperatures.len() {
+            let temperature = self.temperatures[temperature_index];
+            for humidity_index in 0..self.humidities.len() {
+                let humidity = self.humidities[humidity_index];
+                let middle_biome =
+                    self.pick_middle_biome(temperature_index, humidity_index, weirdness);
+                let middle_or_badlands = self.pick_middle_biome_or_badlands_if_hot(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                );
+                let middle_badlands_or_slope = self
+                    .pick_middle_biome_or_badlands_if_hot_or_slope_if_cold(
+                        temperature_index,
+                        humidity_index,
+                        weirdness,
+                    );
+                let beach_biome = self.pick_beach_biome(temperature_index);
+                let middle_or_savanna = self.maybe_pick_windswept_savanna_biome(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                    middle_biome,
+                );
+                let shattered_coast_biome =
+                    self.pick_shattered_coast_biome(temperature_index, humidity_index, weirdness);
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+                    weirdness,
+                    0.0,
+                    middle_badlands_or_slope,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    ClimateParameter::span_parameters(self.erosions[2], self.erosions[3]),
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    ClimateParameter::span_parameters(self.erosions[2], self.erosions[3]),
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.coast_continentalness,
+                    ClimateParameter::span_parameters(self.erosions[3], self.erosions[4]),
+                    weirdness,
+                    0.0,
+                    beach_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.near_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[4],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.coast_continentalness,
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    shattered_coast_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.near_inland_continentalness,
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    middle_or_savanna,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    self.erosions[5],
+                    weirdness,
+                    0.0,
+                    middle_biome,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    self.coast_continentalness,
+                    self.erosions[6],
+                    weirdness,
+                    0.0,
+                    beach_biome,
+                );
+                if temperature_index == 0 {
+                    self.add_surface_biome(
+                        points,
+                        temperature,
+                        humidity,
+                        ClimateParameter::span_parameters(
+                            self.near_inland_continentalness,
+                            self.far_inland_continentalness,
+                        ),
+                        self.erosions[6],
+                        weirdness,
+                        0.0,
+                        middle_biome,
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_valleys(&self, points: &mut Vec<BiomeParameterPoint>, weirdness: ClimateParameter) {
+        self.add_surface_biome(
+            points,
+            self.frozen_range,
+            self.full_range,
+            self.coast_continentalness,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+            weirdness,
+            0.0,
+            if weirdness.max < 0 {
+                "minecraft:stony_shore"
+            } else {
+                "minecraft:frozen_river"
+            },
+        );
+        self.add_surface_biome(
+            points,
+            self.unfrozen_range,
+            self.full_range,
+            self.coast_continentalness,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+            weirdness,
+            0.0,
+            if weirdness.max < 0 {
+                "minecraft:stony_shore"
+            } else {
+                "minecraft:river"
+            },
+        );
+        self.add_surface_biome(
+            points,
+            self.frozen_range,
+            self.full_range,
+            self.near_inland_continentalness,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+            weirdness,
+            0.0,
+            "minecraft:frozen_river",
+        );
+        self.add_surface_biome(
+            points,
+            self.unfrozen_range,
+            self.full_range,
+            self.near_inland_continentalness,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+            weirdness,
+            0.0,
+            "minecraft:river",
+        );
+        self.add_surface_biome(
+            points,
+            self.frozen_range,
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.coast_continentalness,
+                self.far_inland_continentalness,
+            ),
+            ClimateParameter::span_parameters(self.erosions[2], self.erosions[5]),
+            weirdness,
+            0.0,
+            "minecraft:frozen_river",
+        );
+        self.add_surface_biome(
+            points,
+            self.unfrozen_range,
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.coast_continentalness,
+                self.far_inland_continentalness,
+            ),
+            ClimateParameter::span_parameters(self.erosions[2], self.erosions[5]),
+            weirdness,
+            0.0,
+            "minecraft:river",
+        );
+        self.add_surface_biome(
+            points,
+            self.frozen_range,
+            self.full_range,
+            self.coast_continentalness,
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:frozen_river",
+        );
+        self.add_surface_biome(
+            points,
+            self.unfrozen_range,
+            self.full_range,
+            self.coast_continentalness,
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:river",
+        );
+        self.add_surface_biome(
+            points,
+            ClimateParameter::span_parameters(self.temperatures[1], self.temperatures[2]),
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:swamp",
+        );
+        self.add_surface_biome(
+            points,
+            ClimateParameter::span_parameters(self.temperatures[3], self.temperatures[4]),
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:mangrove_swamp",
+        );
+        self.add_surface_biome(
+            points,
+            self.frozen_range,
+            self.full_range,
+            ClimateParameter::span_parameters(
+                self.inland_continentalness,
+                self.far_inland_continentalness,
+            ),
+            self.erosions[6],
+            weirdness,
+            0.0,
+            "minecraft:frozen_river",
+        );
+
+        for temperature_index in 0..self.temperatures.len() {
+            let temperature = self.temperatures[temperature_index];
+            for humidity_index in 0..self.humidities.len() {
+                let humidity = self.humidities[humidity_index];
+                let middle_or_badlands = self.pick_middle_biome_or_badlands_if_hot(
+                    temperature_index,
+                    humidity_index,
+                    weirdness,
+                );
+                self.add_surface_biome(
+                    points,
+                    temperature,
+                    humidity,
+                    ClimateParameter::span_parameters(
+                        self.mid_inland_continentalness,
+                        self.far_inland_continentalness,
+                    ),
+                    ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+                    weirdness,
+                    0.0,
+                    middle_or_badlands,
+                );
+            }
+        }
+    }
+
+    fn add_underground_biomes(&self, points: &mut Vec<BiomeParameterPoint>) {
+        self.add_underground_biome(
+            points,
+            self.full_range,
+            self.full_range,
+            ClimateParameter::span(0.8, 1.0),
+            self.full_range,
+            self.full_range,
+            0.0,
+            "minecraft:dripstone_caves",
+        );
+        self.add_underground_biome(
+            points,
+            self.full_range,
+            ClimateParameter::span(0.7, 1.0),
+            self.full_range,
+            self.full_range,
+            self.full_range,
+            0.0,
+            "minecraft:lush_caves",
+        );
+        self.add_bottom_biome(
+            points,
+            self.full_range,
+            self.full_range,
+            self.full_range,
+            ClimateParameter::span_parameters(self.erosions[0], self.erosions[1]),
+            self.full_range,
+            0.0,
+            "minecraft:deep_dark",
+        );
+    }
+
+    fn pick_middle_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if weirdness.max < 0 {
+            return MIDDLE_BIOMES[temperature_index][humidity_index];
+        }
+
+        MIDDLE_BIOMES_VARIANT[temperature_index][humidity_index]
+            .unwrap_or(MIDDLE_BIOMES[temperature_index][humidity_index])
+    }
+
+    fn pick_middle_biome_or_badlands_if_hot(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if temperature_index == 4 {
+            self.pick_badlands_biome(humidity_index, weirdness)
+        } else {
+            self.pick_middle_biome(temperature_index, humidity_index, weirdness)
+        }
+    }
+
+    fn pick_middle_biome_or_badlands_if_hot_or_slope_if_cold(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if temperature_index == 0 {
+            self.pick_slope_biome(temperature_index, humidity_index, weirdness)
+        } else {
+            self.pick_middle_biome_or_badlands_if_hot(temperature_index, humidity_index, weirdness)
+        }
+    }
+
+    fn maybe_pick_windswept_savanna_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+        underlying_biome: &'static str,
+    ) -> &'static str {
+        if temperature_index > 1 && humidity_index < 4 && weirdness.max >= 0 {
+            "minecraft:windswept_savanna"
+        } else {
+            underlying_biome
+        }
+    }
+
+    fn pick_shattered_coast_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        let beach_or_middle = if weirdness.max >= 0 {
+            self.pick_middle_biome(temperature_index, humidity_index, weirdness)
+        } else {
+            self.pick_beach_biome(temperature_index)
+        };
+        self.maybe_pick_windswept_savanna_biome(
+            temperature_index,
+            humidity_index,
+            weirdness,
+            beach_or_middle,
+        )
+    }
+
+    fn pick_beach_biome(&self, temperature_index: usize) -> &'static str {
+        match temperature_index {
+            0 => "minecraft:snowy_beach",
+            4 => "minecraft:desert",
+            _ => "minecraft:beach",
+        }
+    }
+
+    fn pick_badlands_biome(
+        &self,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if humidity_index < 2 {
+            if weirdness.max < 0 {
+                "minecraft:badlands"
+            } else {
+                "minecraft:eroded_badlands"
+            }
+        } else if humidity_index < 3 {
+            "minecraft:badlands"
+        } else {
+            "minecraft:wooded_badlands"
+        }
+    }
+
+    fn pick_plateau_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if weirdness.max >= 0
+            && let Some(variant) = PLATEAU_BIOMES_VARIANT[temperature_index][humidity_index]
+        {
+            return variant;
+        }
+
+        PLATEAU_BIOMES[temperature_index][humidity_index]
+    }
+
+    fn pick_peak_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if temperature_index <= 2 {
+            if weirdness.max < 0 {
+                "minecraft:jagged_peaks"
+            } else {
+                "minecraft:frozen_peaks"
+            }
+        } else if temperature_index == 3 {
+            "minecraft:stony_peaks"
+        } else {
+            self.pick_badlands_biome(humidity_index, weirdness)
+        }
+    }
+
+    fn pick_slope_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        if temperature_index >= 3 {
+            self.pick_plateau_biome(temperature_index, humidity_index, weirdness)
+        } else if humidity_index <= 1 {
+            "minecraft:snowy_slopes"
+        } else {
+            "minecraft:grove"
+        }
+    }
+
+    fn pick_shattered_biome(
+        &self,
+        temperature_index: usize,
+        humidity_index: usize,
+        weirdness: ClimateParameter,
+    ) -> &'static str {
+        SHATTERED_BIOMES[temperature_index][humidity_index]
+            .unwrap_or_else(|| self.pick_middle_biome(temperature_index, humidity_index, weirdness))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_surface_biome(
+        &self,
+        points: &mut Vec<BiomeParameterPoint>,
+        temperature: ClimateParameter,
+        humidity: ClimateParameter,
+        continentalness: ClimateParameter,
+        erosion: ClimateParameter,
+        weirdness: ClimateParameter,
+        offset: f64,
+        biome: &'static str,
+    ) {
+        self.push(
+            points,
+            temperature,
+            humidity,
+            continentalness,
+            erosion,
+            ClimateParameter::point(0.0),
+            weirdness,
+            offset,
+            biome,
+        );
+        self.push(
+            points,
+            temperature,
+            humidity,
+            continentalness,
+            erosion,
+            ClimateParameter::point(1.0),
+            weirdness,
+            offset,
+            biome,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_underground_biome(
+        &self,
+        points: &mut Vec<BiomeParameterPoint>,
+        temperature: ClimateParameter,
+        humidity: ClimateParameter,
+        continentalness: ClimateParameter,
+        erosion: ClimateParameter,
+        weirdness: ClimateParameter,
+        offset: f64,
+        biome: &'static str,
+    ) {
+        self.push(
+            points,
+            temperature,
+            humidity,
+            continentalness,
+            erosion,
+            ClimateParameter::span(0.2, 0.9),
+            weirdness,
+            offset,
+            biome,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_bottom_biome(
+        &self,
+        points: &mut Vec<BiomeParameterPoint>,
+        temperature: ClimateParameter,
+        humidity: ClimateParameter,
+        continentalness: ClimateParameter,
+        erosion: ClimateParameter,
+        weirdness: ClimateParameter,
+        offset: f64,
+        biome: &'static str,
+    ) {
+        self.push(
+            points,
+            temperature,
+            humidity,
+            continentalness,
+            erosion,
+            ClimateParameter::point(1.1),
+            weirdness,
+            offset,
+            biome,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &self,
+        points: &mut Vec<BiomeParameterPoint>,
+        temperature: ClimateParameter,
+        humidity: ClimateParameter,
+        continentalness: ClimateParameter,
+        erosion: ClimateParameter,
+        depth: ClimateParameter,
+        weirdness: ClimateParameter,
+        offset: f64,
+        biome: &'static str,
+    ) {
+        points.push(BiomeParameterPoint {
+            parameters: [
+                temperature,
+                humidity,
+                continentalness,
+                erosion,
+                depth,
+                weirdness,
+            ],
+            offset: quantize_climate(offset),
+            biome,
+        });
+    }
+}
+
+const OCEANS: [[&str; 5]; 2] = [
+    [
+        "minecraft:deep_frozen_ocean",
+        "minecraft:deep_cold_ocean",
+        "minecraft:deep_ocean",
+        "minecraft:deep_lukewarm_ocean",
+        "minecraft:warm_ocean",
+    ],
+    [
+        "minecraft:frozen_ocean",
+        "minecraft:cold_ocean",
+        "minecraft:ocean",
+        "minecraft:lukewarm_ocean",
+        "minecraft:warm_ocean",
+    ],
+];
+
+const MIDDLE_BIOMES: [[&str; 5]; 5] = [
+    [
+        "minecraft:snowy_plains",
+        "minecraft:snowy_plains",
+        "minecraft:snowy_plains",
+        "minecraft:snowy_taiga",
+        "minecraft:taiga",
+    ],
+    [
+        "minecraft:plains",
+        "minecraft:plains",
+        "minecraft:forest",
+        "minecraft:taiga",
+        "minecraft:old_growth_spruce_taiga",
+    ],
+    [
+        "minecraft:flower_forest",
+        "minecraft:plains",
+        "minecraft:forest",
+        "minecraft:birch_forest",
+        "minecraft:dark_forest",
+    ],
+    [
+        "minecraft:savanna",
+        "minecraft:savanna",
+        "minecraft:forest",
+        "minecraft:jungle",
+        "minecraft:jungle",
+    ],
+    [
+        "minecraft:desert",
+        "minecraft:desert",
+        "minecraft:desert",
+        "minecraft:desert",
+        "minecraft:desert",
+    ],
+];
+
+const MIDDLE_BIOMES_VARIANT: [[Option<&str>; 5]; 5] = [
+    [
+        Some("minecraft:ice_spikes"),
+        None,
+        Some("minecraft:snowy_taiga"),
+        None,
+        None,
+    ],
+    [
+        None,
+        None,
+        None,
+        None,
+        Some("minecraft:old_growth_pine_taiga"),
+    ],
+    [
+        Some("minecraft:sunflower_plains"),
+        None,
+        None,
+        Some("minecraft:old_growth_birch_forest"),
+        None,
+    ],
+    [
+        None,
+        None,
+        Some("minecraft:plains"),
+        Some("minecraft:sparse_jungle"),
+        Some("minecraft:bamboo_jungle"),
+    ],
+    [None, None, None, None, None],
+];
+
+const PLATEAU_BIOMES: [[&str; 5]; 5] = [
+    [
+        "minecraft:snowy_plains",
+        "minecraft:snowy_plains",
+        "minecraft:snowy_plains",
+        "minecraft:snowy_taiga",
+        "minecraft:snowy_taiga",
+    ],
+    [
+        "minecraft:meadow",
+        "minecraft:meadow",
+        "minecraft:forest",
+        "minecraft:taiga",
+        "minecraft:old_growth_spruce_taiga",
+    ],
+    [
+        "minecraft:meadow",
+        "minecraft:meadow",
+        "minecraft:meadow",
+        "minecraft:meadow",
+        "minecraft:pale_garden",
+    ],
+    [
+        "minecraft:savanna_plateau",
+        "minecraft:savanna_plateau",
+        "minecraft:forest",
+        "minecraft:forest",
+        "minecraft:jungle",
+    ],
+    [
+        "minecraft:badlands",
+        "minecraft:badlands",
+        "minecraft:badlands",
+        "minecraft:wooded_badlands",
+        "minecraft:wooded_badlands",
+    ],
+];
+
+const PLATEAU_BIOMES_VARIANT: [[Option<&str>; 5]; 5] = [
+    [Some("minecraft:ice_spikes"), None, None, None, None],
+    [
+        Some("minecraft:cherry_grove"),
+        None,
+        Some("minecraft:meadow"),
+        Some("minecraft:meadow"),
+        Some("minecraft:old_growth_pine_taiga"),
+    ],
+    [
+        Some("minecraft:cherry_grove"),
+        Some("minecraft:cherry_grove"),
+        Some("minecraft:forest"),
+        Some("minecraft:birch_forest"),
+        None,
+    ],
+    [None, None, None, None, None],
+    [
+        Some("minecraft:eroded_badlands"),
+        Some("minecraft:eroded_badlands"),
+        None,
+        None,
+        None,
+    ],
+];
+
+const SHATTERED_BIOMES: [[Option<&str>; 5]; 5] = [
+    [
+        Some("minecraft:windswept_gravelly_hills"),
+        Some("minecraft:windswept_gravelly_hills"),
+        Some("minecraft:windswept_hills"),
+        Some("minecraft:windswept_forest"),
+        Some("minecraft:windswept_forest"),
+    ],
+    [
+        Some("minecraft:windswept_gravelly_hills"),
+        Some("minecraft:windswept_gravelly_hills"),
+        Some("minecraft:windswept_hills"),
+        Some("minecraft:windswept_forest"),
+        Some("minecraft:windswept_forest"),
+    ],
+    [
+        Some("minecraft:windswept_hills"),
+        Some("minecraft:windswept_hills"),
+        Some("minecraft:windswept_hills"),
+        Some("minecraft:windswept_forest"),
+        Some("minecraft:windswept_forest"),
+    ],
+    [None, None, None, None, None],
+    [None, None, None, None, None],
+];
+
+fn overworld_biome_points() -> &'static [BiomeParameterPoint] {
+    static POINTS: OnceLock<Vec<BiomeParameterPoint>> = OnceLock::new();
+    POINTS.get_or_init(|| OverworldBiomeBuilder::new().build())
+}
+
+fn quantize_climate(value: f64) -> i64 {
+    ((value as f32) * 10000.0) as i64
+}
+
+fn is_badlands(biome: &str) -> bool {
+    matches!(
+        biome,
+        "minecraft:badlands" | "minecraft:eroded_badlands" | "minecraft:wooded_badlands"
+    )
+}
+
+fn has_sandstone_under_surface(biome: &str) -> bool {
+    matches!(
+        biome,
+        "minecraft:warm_ocean" | "minecraft:beach" | "minecraft:snowy_beach" | "minecraft:desert"
+    )
+}
+
+fn generate_clay_bands(random: &mut XoroshiroRandomSource) -> [SurfaceBlock; 192] {
+    let mut clay_bands = [SurfaceBlock::Terracotta; 192];
+    let mut index = 0;
+    while index < clay_bands.len() {
+        index += random.next_int(5) + 1;
+        if index < clay_bands.len() {
+            clay_bands[index] = SurfaceBlock::OrangeTerracotta;
+        }
+    }
+
+    make_clay_bands(random, &mut clay_bands, 1, SurfaceBlock::YellowTerracotta);
+    make_clay_bands(random, &mut clay_bands, 2, SurfaceBlock::BrownTerracotta);
+    make_clay_bands(random, &mut clay_bands, 1, SurfaceBlock::RedTerracotta);
+
+    let white_band_count = 9 + random.next_int(7);
+    let mut placed = 0;
+    let mut start = 0;
+    while placed < white_band_count && start < clay_bands.len() {
+        clay_bands[start] = SurfaceBlock::WhiteTerracotta;
+        if start > 1 && random.next_bool() {
+            clay_bands[start - 1] = SurfaceBlock::LightGrayTerracotta;
+        }
+        if start + 1 < clay_bands.len() && random.next_bool() {
+            clay_bands[start + 1] = SurfaceBlock::LightGrayTerracotta;
+        }
+
+        placed += 1;
+        start += random.next_int(16) + 4;
+    }
+
+    clay_bands
+}
+
+fn make_clay_bands(
+    random: &mut XoroshiroRandomSource,
+    clay_bands: &mut [SurfaceBlock; 192],
+    base_width: usize,
+    state: SurfaceBlock,
+) {
+    let band_count = 6 + random.next_int(10);
+    for _ in 0..band_count {
+        let width = base_width + random.next_int(3);
+        let start = random.next_int(clay_bands.len());
+        for offset in 0..width {
+            if start + offset < clay_bands.len() {
+                clay_bands[start + offset] = state;
+            }
+        }
+    }
 }
 
 fn vertical_gradient(
@@ -1415,6 +4473,94 @@ mod tests {
         assert_ne!(
             noise.compute(0, 64, 0).to_bits(),
             BlendedNoise::overworld(1).compute(0, 64, 0).to_bits()
+        );
+    }
+
+    #[test]
+    fn ore_vein_noise_places_seeded_vein_blocks() {
+        let veins = OreVeinNoise::new(12345);
+        let has_vein = (-32..=32)
+            .any(|x| (-32..=32).any(|z| (-60..=50).any(|y| veins.block_at(x, y, z).is_some())));
+
+        assert!(has_vein);
+    }
+
+    #[test]
+    fn overworld_biome_builder_covers_vanilla_special_biomes() {
+        let mushroom_fields = select_overworld_biome(
+            &OverworldClimateSample {
+                temperature: 0.0,
+                vegetation: 0.0,
+                continentalness: -1.1,
+                erosion: 0.0,
+                ridges: 0.0,
+                peaks_and_valleys: peaks_and_valleys(0.0),
+            },
+            0.0,
+        );
+        let lush_caves = select_overworld_biome(
+            &OverworldClimateSample {
+                temperature: 0.0,
+                vegetation: 0.8,
+                continentalness: 0.0,
+                erosion: 0.0,
+                ridges: 0.0,
+                peaks_and_valleys: peaks_and_valleys(0.0),
+            },
+            0.5,
+        );
+        let deep_dark = select_overworld_biome(
+            &OverworldClimateSample {
+                temperature: 0.0,
+                vegetation: 0.0,
+                continentalness: 0.0,
+                erosion: -0.7,
+                ridges: 0.0,
+                peaks_and_valleys: peaks_and_valleys(0.0),
+            },
+            1.1,
+        );
+
+        assert_eq!(mushroom_fields, "minecraft:mushroom_fields");
+        assert_eq!(lush_caves, "minecraft:lush_caves");
+        assert_eq!(deep_dark, "minecraft:deep_dark");
+    }
+
+    #[test]
+    fn overworld_surface_rules_apply_biome_specific_blocks() {
+        let rules = OverworldSurfaceRules::new(12345);
+        let base = SurfaceRuleContext {
+            x: 0,
+            y: 80,
+            z: 0,
+            surface_height: 80,
+            sea_level: 63,
+            min_y: -64,
+            biome: "minecraft:plains",
+            slope: 0,
+        };
+
+        assert_eq!(
+            rules.block_at(SurfaceRuleContext {
+                biome: "minecraft:mushroom_fields",
+                ..base
+            }),
+            Some(SurfaceBlock::Mycelium)
+        );
+        assert_eq!(
+            rules.block_at(SurfaceRuleContext {
+                biome: "minecraft:desert",
+                ..base
+            }),
+            Some(SurfaceBlock::Sand)
+        );
+        assert_eq!(
+            rules.block_at(SurfaceRuleContext {
+                biome: "minecraft:frozen_peaks",
+                slope: 4,
+                ..base
+            }),
+            Some(SurfaceBlock::PackedIce)
         );
     }
 }
