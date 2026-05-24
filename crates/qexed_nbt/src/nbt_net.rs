@@ -1,8 +1,8 @@
 // src/codec/nbt_net.rs
+use anyhow::{Result, anyhow};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Read, Write};
-use anyhow::{anyhow, Result};
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 use crate::{ListHeader, Tag, tag_id};
@@ -34,7 +34,10 @@ pub fn deserialize_java<R: Read>(r: &mut R) -> Result<Tag> {
             let map = read_compound_content_java(r)?;
             Ok(Tag::Compound(Arc::new(map)))
         }
-        _ => Err(anyhow!("网络NBT根元素必须是Compound或End，实际是: 0x{:02X}", tag_id)),
+        _ => Err(anyhow!(
+            "网络NBT根元素必须是Compound或End，实际是: 0x{:02X}",
+            tag_id
+        )),
     }
 }
 
@@ -117,8 +120,7 @@ fn read_compound_content_java<R: Read>(r: &mut R) -> Result<HashMap<String, Tag>
         let name_len = r.read_u16::<BigEndian>()? as usize;
         let mut name_bytes = vec![0u8; name_len];
         r.read_exact(&mut name_bytes)?;
-        let name = String::from_utf8(name_bytes)
-            .map_err(|e| anyhow!("标签名UTF-8错误: {}", e))?;
+        let name = String::from_utf8(name_bytes).map_err(|e| anyhow!("标签名UTF-8错误: {}", e))?;
         // 读取标签值
         let tag = read_tag_value_java(r, tag_id)?;
         map.insert(name, tag);
@@ -138,8 +140,7 @@ fn read_tag_value_java<R: Read>(r: &mut R, tag_id: u8) -> Result<Tag> {
             let len = r.read_u16::<BigEndian>()? as usize;
             let mut bytes = vec![0u8; len];
             r.read_exact(&mut bytes)?;
-            let s = String::from_utf8(bytes)
-                .map_err(|e| anyhow!("字符串UTF-8错误: {}", e))?;
+            let s = String::from_utf8(bytes).map_err(|e| anyhow!("字符串UTF-8错误: {}", e))?;
             Ok(Tag::String(Arc::from(s)))
         }
         tag_id::BYTE_ARRAY => {
@@ -174,7 +175,10 @@ fn read_tag_value_java<R: Read>(r: &mut R, tag_id: u8) -> Result<Tag> {
                 items.push(read_tag_value_java(r, elem_type)?);
             }
             Ok(Tag::List(
-                ListHeader { tag_id: elem_type, length },
+                ListHeader {
+                    tag_id: elem_type,
+                    length,
+                },
                 Arc::from(items),
             ))
         }

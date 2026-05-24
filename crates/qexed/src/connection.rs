@@ -8,6 +8,7 @@ use qexed_protocol::{
             finish_configuration::FinishConfiguration as ServerboundFinishConfiguration,
             resource_pack_receive::ResourcePackReceive,
             select_known_packs::SelectKnownPacks as ServerboundSelectKnownPacks,
+            settings::Settings as ServerboundSettings,
         },
         handshaking::set_protocol::SetProtocol,
         login::{
@@ -33,10 +34,22 @@ pub struct ServerContext {
     pub plugins: std::sync::Arc<crate::plugins::PluginManager>,
     pub content_filter: std::sync::Arc<crate::content_filter::ContentFilter>,
     pub resource_pack: std::sync::Arc<crate::resource_pack::ResourcePackManager>,
+    pub code_of_conducts: std::sync::Arc<crate::code_of_conduct::CodeOfConductTexts>,
 }
 
 impl ServerContext {
     pub async fn new(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<Self> {
+        Self::new_with_code_of_conduct_dir(
+            config,
+            crate::code_of_conduct::DEFAULT_CODE_OF_CONDUCT_DIR,
+        )
+        .await
+    }
+
+    pub async fn new_with_code_of_conduct_dir(
+        config: qexed_config::app::qexed::Qexed,
+        code_of_conduct_dir: impl AsRef<std::path::Path>,
+    ) -> anyhow::Result<Self> {
         let plugins = std::sync::Arc::new(crate::plugins::PluginManager::load_default());
         plugins.emit_init();
         plugins.emit_config_reload("config/qexed.toml");
@@ -61,6 +74,10 @@ impl ServerContext {
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
                 .await?;
         resource_pack.start().await?;
+        let code_of_conducts = crate::code_of_conduct::CodeOfConductTexts::load(
+            config.server.code_of_conduct,
+            code_of_conduct_dir,
+        )?;
         Ok(Self {
             config: std::sync::Arc::new(config),
             authenticator: std::sync::Arc::new(Authenticator::new()?),
@@ -70,6 +87,7 @@ impl ServerContext {
             plugins,
             content_filter: std::sync::Arc::new(content_filter),
             resource_pack: std::sync::Arc::new(resource_pack),
+            code_of_conducts: std::sync::Arc::new(code_of_conducts),
         })
     }
 }
@@ -228,7 +246,8 @@ where
         .await?;
     sink.flush().await?;
 
-    let selected_packs = wait_for_known_packs(packets).await?;
+    let configuration_start = wait_for_known_packs(packets).await?;
+    let selected_packs = configuration_start.selected_packs;
     log::debug!("client selected known packs: {:?}", selected_packs.entries);
     let include_registry_contents =
         !crate::registry_sync::accepts_vanilla_core_pack(&selected_packs.entries);
@@ -248,8 +267,10 @@ where
     log::debug!("send tags, registry count: {}", tag_packet.tags.len());
     sink.send(tag_packet).await?;
 
-    let code_of_conduct = context.config.server.code_of_conduct.trim();
-    if !code_of_conduct.is_empty() {
+    if let Some(code_of_conduct) = context
+        .code_of_conducts
+        .select(configuration_start.client_locale.as_deref())
+    {
         log::debug!("send code of conduct and wait for client acceptance");
         sink.send(to_client::configuration::code_of_conduct::CodeOfConduct {
             code_of_conduct: code_of_conduct.to_string(),
@@ -424,10 +445,11 @@ impl ResourcePackStatus {
 
 async fn wait_for_known_packs<R>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
-) -> anyhow::Result<ServerboundSelectKnownPacks>
+) -> anyhow::Result<ConfigurationStart>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
+    let mut client_locale = None;
     loop {
         let Some(mut payload) = packets.read_packet().await? else {
             anyhow::bail!("connection closed while waiting for known-pack selection");
@@ -435,13 +457,29 @@ where
 
         let packet_id = read_packet_id(&mut payload)?;
         if packet_id == ServerboundSelectKnownPacks::ID {
-            return decode_payload::<ServerboundSelectKnownPacks>(&mut payload);
+            return Ok(ConfigurationStart {
+                selected_packs: decode_payload::<ServerboundSelectKnownPacks>(&mut payload)?,
+                client_locale,
+            });
+        }
+
+        if packet_id == ServerboundSettings::ID {
+            let settings = decode_payload::<ServerboundSettings>(&mut payload)?;
+            log::debug!("client locale: {}", settings.locale);
+            client_locale = Some(settings.locale);
+            continue;
         }
 
         log::debug!(
             "skip configuration packet while waiting for known-pack selection: {packet_id}"
         );
     }
+}
+
+#[derive(Debug)]
+struct ConfigurationStart {
+    selected_packs: ServerboundSelectKnownPacks,
+    client_locale: Option<String>,
 }
 
 async fn wait_for_code_of_conduct_accept<R>(
@@ -628,6 +666,7 @@ mod tests {
                 finish_configuration::FinishConfiguration as ServerboundFinishConfiguration,
                 resource_pack_receive::ResourcePackReceive,
                 select_known_packs::SelectKnownPacks as ServerboundSelectKnownPacks,
+                settings::Settings as ServerboundSettings,
             },
             handshaking::set_protocol::SetProtocol,
         },
@@ -691,9 +730,14 @@ mod tests {
 
     #[tokio::test]
     async fn non_empty_code_of_conduct_sends_prompt_and_waits_for_accept() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("en_us.txt"), "Follow the server rules").unwrap();
+
         let mut config = qexed_config::app::qexed::Qexed::default();
-        config.server.code_of_conduct = "Follow the server rules".to_string();
-        let context = ServerContext::new(config).await.unwrap();
+        config.server.code_of_conduct = true;
+        let context = ServerContext::new_with_code_of_conduct_dir(config, dir.path())
+            .await
+            .unwrap();
 
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
         let (server_reader, server_writer) = tokio::io::split(server_io);
@@ -729,9 +773,14 @@ mod tests {
 
     #[tokio::test]
     async fn code_of_conduct_wait_skips_prior_configuration_packets() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("en_us.txt"), "Follow the server rules").unwrap();
+
         let mut config = qexed_config::app::qexed::Qexed::default();
-        config.server.code_of_conduct = "Follow the server rules".to_string();
-        let context = ServerContext::new(config).await.unwrap();
+        config.server.code_of_conduct = true;
+        let context = ServerContext::new_with_code_of_conduct_dir(config, dir.path())
+            .await
+            .unwrap();
 
         let (server_io, client_io) = duplex(32 * 1024 * 1024);
         let (server_reader, server_writer) = tokio::io::split(server_io);
@@ -762,6 +811,51 @@ mod tests {
         .unwrap();
         client_sink.send_raw(custom_payload).await.unwrap();
         client_sink.send_raw(accept_payload).await.unwrap();
+        client_sink.flush().await.unwrap();
+
+        let finish =
+            read_server_packet_as::<ClientboundFinishConfiguration, _>(&mut client_packets).await;
+        assert_eq!(finish, ClientboundFinishConfiguration {});
+        client_sink
+            .send(ServerboundFinishConfiguration {})
+            .await
+            .unwrap();
+        client_sink.flush().await.unwrap();
+
+        server_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn code_of_conduct_uses_client_language_with_english_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("en_us.txt"), "English rules").unwrap();
+        std::fs::write(dir.path().join("zh_cn.txt"), "Chinese rules").unwrap();
+
+        let mut config = qexed_config::app::qexed::Qexed::default();
+        config.server.code_of_conduct = true;
+        let context = ServerContext::new_with_code_of_conduct_dir(config, dir.path())
+            .await
+            .unwrap();
+
+        let (server_io, client_io) = duplex(32 * 1024 * 1024);
+        let (server_reader, server_writer) = tokio::io::split(server_io);
+        let (client_reader, client_writer) = tokio::io::split(client_io);
+        let mut server_packets = qexed_tcp_connect::PacketStream::new(server_reader);
+        let mut server_sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut client_packets = qexed_tcp_connect::PacketStream::new(client_reader);
+        let mut client_sink = qexed_tcp_connect::PacketSink::new(client_writer);
+
+        let server_task = tokio::spawn(async move {
+            handle_configuration(&mut server_packets, &mut server_sink, &context, "127.0.0.1").await
+        });
+
+        drive_known_pack_selection_with_locale(&mut client_packets, &mut client_sink, "zh_CN")
+            .await;
+
+        let prompt = read_configuration_until_code_of_conduct(&mut client_packets).await;
+        assert_eq!(prompt.code_of_conduct, "Chinese rules");
+
+        client_sink.send(AcceptCodeOfConduct {}).await.unwrap();
         client_sink.flush().await.unwrap();
 
         let finish =
@@ -877,7 +971,8 @@ mod tests {
             "8923b3ae3180a64d86da4d2080c540f501e453c2"
         );
 
-        let response = reqwest::get(&resource_pack.url).await.unwrap();
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let response = http.get(&resource_pack.url).send().await.unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         assert_eq!(response.bytes().await.unwrap(), "pack-data");
 
@@ -958,6 +1053,28 @@ mod tests {
         R: tokio::io::AsyncRead + Unpin,
         W: tokio::io::AsyncWrite + Unpin,
     {
+        drive_known_pack_selection_inner(client_packets, client_sink, None).await;
+    }
+
+    async fn drive_known_pack_selection_with_locale<R, W>(
+        client_packets: &mut qexed_tcp_connect::PacketStream<R>,
+        client_sink: &mut qexed_tcp_connect::PacketSink<W>,
+        locale: &str,
+    ) where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        drive_known_pack_selection_inner(client_packets, client_sink, Some(locale)).await;
+    }
+
+    async fn drive_known_pack_selection_inner<R, W>(
+        client_packets: &mut qexed_tcp_connect::PacketStream<R>,
+        client_sink: &mut qexed_tcp_connect::PacketSink<W>,
+        locale: Option<&str>,
+    ) where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
         let brand = read_server_packet_as::<ClientboundCustomPayload, _>(client_packets).await;
         assert_eq!(brand.channel, "minecraft:brand");
         assert_eq!(decode_string_payload(&brand.data.0), SERVER_BRAND);
@@ -970,6 +1087,22 @@ mod tests {
 
         let known_packs =
             read_server_packet_as::<ClientboundSelectKnownPacks, _>(client_packets).await;
+        if let Some(locale) = locale {
+            client_sink
+                .send(ServerboundSettings {
+                    locale: locale.to_string(),
+                    view_distance: 10,
+                    chat_mode: qexed_packet::net_types::VarInt(0),
+                    chat_colors: true,
+                    displayed_skin_parts: 0x7f,
+                    main_hand: qexed_packet::net_types::VarInt(1),
+                    enable_text_filtering: false,
+                    allow_server_listings: true,
+                    particle_status: qexed_packet::net_types::VarInt(0),
+                })
+                .await
+                .unwrap();
+        }
         client_sink
             .send(ServerboundSelectKnownPacks {
                 entries: known_packs.known_packs,

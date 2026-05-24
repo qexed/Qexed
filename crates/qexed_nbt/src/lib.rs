@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error; // 用于清晰、链式的错误处理
-pub mod net;
 pub mod nbt_net;
 pub mod nbt_serde;
+pub mod net;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tag {
     // 基础数值类型
@@ -33,7 +33,7 @@ impl Default for Tag {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListHeader {
-    pub tag_id: u8,  // 内部元素的NBT类型ID
+    pub tag_id: u8, // 内部元素的NBT类型ID
     pub length: i32,
 }
 
@@ -146,17 +146,18 @@ impl Tag {
     pub fn new_list(tag_id: u8, items: Vec<Tag>) -> Result<Self, NbtError> {
         if items.is_empty() {
             // 空列表是允许的，header中的tag_id通常为End (0)
-            return Ok(Tag::List(
-                ListHeader { tag_id, length: 0 },
-                Arc::new([]),
-            ));
+            return Ok(Tag::List(ListHeader { tag_id, length: 0 }, Arc::new([])));
         }
         // 检查所有元素类型是否一致
         let first_id = items[0].tag_id();
         if !items.iter().all(|tag| tag.tag_id() == first_id) {
             return Err(NbtError::ListTypeMismatch {
                 expected: first_id,
-                actual: items.iter().find(|t| t.tag_id() != first_id).unwrap().tag_id(),
+                actual: items
+                    .iter()
+                    .find(|t| t.tag_id() != first_id)
+                    .unwrap()
+                    .tag_id(),
             });
         }
         if first_id != tag_id {
@@ -193,8 +194,8 @@ impl Tag {
 }
 
 // crates/data/qexed_nbt/src/lib.rs 新增部分
-use std::io::{Read, Write, Cursor, Seek, SeekFrom};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 /// NBT 读写器，封装了所有二进制格式操作
 pub struct NbtIo;
@@ -203,20 +204,20 @@ impl NbtIo {
     /// 从字节流读取一个完整的 NBT 结构（含根标签名）
     pub fn from_reader<R: Read>(mut reader: R) -> Result<(String, Tag), NbtError> {
         let tag_id = reader.read_u8()?;
-        
+
         if tag_id != tag_id::COMPOUND {
             return Err(NbtError::Deserialize(format!(
                 "根标签必须是 Compound (0x0A)，实际是 0x{:02X}",
                 tag_id
             )));
         }
-        
+
         let name = Self::read_string(&mut reader)?;
         let compound = Self::read_compound(&mut reader)?;
-        
+
         Ok((name, Tag::Compound(Arc::new(compound))))
     }
-    
+
     /// 将 NBT 结构写入字节流
     pub fn to_writer<W: Write>(mut writer: W, name: &str, tag: &Tag) -> Result<(), NbtError> {
         match tag {
@@ -229,7 +230,7 @@ impl NbtIo {
             _ => Err(NbtError::Serialize("根标签必须是 Compound".to_string())),
         }
     }
-    
+
     /// 读取单个标签（不包含标签ID）
     fn read_tag<R: Read>(reader: &mut R, tag_id: u8) -> Result<Tag, NbtError> {
         match tag_id {
@@ -249,14 +250,14 @@ impl NbtIo {
             id => Err(NbtError::Deserialize(format!("未知的标签ID: 0x{:02X}", id))),
         }
     }
-    
+
     /// 写入单个命名标签（包含标签ID和名字）
     fn write_tag<W: Write>(writer: &mut W, name: &str, tag: &Tag) -> Result<(), NbtError> {
         writer.write_u8(tag.tag_id())?;
         Self::write_string(writer, name)?;
         Self::write_tag_value(writer, tag)
     }
-    
+
     /// 写入标签值（不包含标签ID和名字）
     fn write_tag_value<W: Write>(writer: &mut W, tag: &Tag) -> Result<(), NbtError> {
         match tag {
@@ -275,38 +276,39 @@ impl NbtIo {
             Tag::Compound(map) => Self::write_compound_content(writer, map),
         }
     }
-    
+
     // === 各种类型的读写实现 ===
-    
+
     fn read_string<R: Read>(reader: &mut R) -> Result<String, NbtError> {
         let length = reader.read_u16::<BigEndian>()? as usize;
         if length == 0 {
             return Ok(String::new());
         }
-        
+
         let mut buffer = vec![0u8; length];
         reader.read_exact(&mut buffer)?;
-        
+
         String::from_utf8(buffer)
             .map_err(|e| NbtError::Deserialize(format!("字符串UTF-8错误: {}", e)))
     }
-    
+
     fn write_string<W: Write>(writer: &mut W, s: &str) -> Result<(), NbtError> {
         let bytes = s.as_bytes();
         let length = bytes.len();
-        
+
         if length > u16::MAX as usize {
             return Err(NbtError::Serialize(format!(
                 "字符串过长: {}字节 (最大: {})",
-                length, u16::MAX
+                length,
+                u16::MAX
             )));
         }
-        
+
         writer.write_u16::<BigEndian>(length as u16)?;
         writer.write_all(bytes)?;
         Ok(())
     }
-    
+
     fn read_byte_array<R: Read>(reader: &mut R) -> Result<Vec<i8>, NbtError> {
         let length = reader.read_i32::<BigEndian>()?;
         if length < 0 {
@@ -315,18 +317,18 @@ impl NbtIo {
                 length
             )));
         }
-        
+
         let mut array = vec![0i8; length as usize];
         let mut byte_buf = vec![0u8; length as usize];
         reader.read_exact(&mut byte_buf)?;
-        
+
         for (i, &byte) in byte_buf.iter().enumerate() {
             array[i] = byte as i8;
         }
-        
+
         Ok(array)
     }
-    
+
     fn write_byte_array<W: Write>(writer: &mut W, array: &[i8]) -> Result<(), NbtError> {
         writer.write_i32::<BigEndian>(array.len() as i32)?;
         for &byte in array {
@@ -334,7 +336,7 @@ impl NbtIo {
         }
         Ok(())
     }
-    
+
     fn read_int_array<R: Read>(reader: &mut R) -> Result<Vec<i32>, NbtError> {
         let length = reader.read_i32::<BigEndian>()?;
         if length < 0 {
@@ -343,14 +345,14 @@ impl NbtIo {
                 length
             )));
         }
-        
+
         let mut array = vec![0i32; length as usize];
         for i in 0..length as usize {
             array[i] = reader.read_i32::<BigEndian>()?;
         }
         Ok(array)
     }
-    
+
     fn write_int_array<W: Write>(writer: &mut W, array: &[i32]) -> Result<(), NbtError> {
         writer.write_i32::<BigEndian>(array.len() as i32)?;
         for &value in array {
@@ -358,7 +360,7 @@ impl NbtIo {
         }
         Ok(())
     }
-    
+
     fn read_long_array<R: Read>(reader: &mut R) -> Result<Vec<i64>, NbtError> {
         let length = reader.read_i32::<BigEndian>()?;
         if length < 0 {
@@ -367,14 +369,14 @@ impl NbtIo {
                 length
             )));
         }
-        
+
         let mut array = vec![0i64; length as usize];
         for i in 0..length as usize {
             array[i] = reader.read_i64::<BigEndian>()?;
         }
         Ok(array)
     }
-    
+
     fn write_long_array<W: Write>(writer: &mut W, array: &[i64]) -> Result<(), NbtError> {
         writer.write_i32::<BigEndian>(array.len() as i32)?;
         for &value in array {
@@ -382,38 +384,32 @@ impl NbtIo {
         }
         Ok(())
     }
-    
+
     fn read_list<R: Read>(reader: &mut R) -> Result<Tag, NbtError> {
         let tag_id = reader.read_u8()?;
         let length = reader.read_i32::<BigEndian>()?;
-        
+
         if length == 0 {
-            return Ok(Tag::List(
-                ListHeader { tag_id, length: 0 },
-                Arc::new([]),
-            ));
+            return Ok(Tag::List(ListHeader { tag_id, length: 0 }, Arc::new([])));
         }
-        
+
         let mut items = Vec::with_capacity(length as usize);
         for _ in 0..length {
             let item = Self::read_tag(reader, tag_id)?;
-            
+
             if item.tag_id() != tag_id {
                 return Err(NbtError::ListTypeMismatch {
                     expected: tag_id,
                     actual: item.tag_id(),
                 });
             }
-            
+
             items.push(item);
         }
-        
-        Ok(Tag::List(
-            ListHeader { tag_id, length },
-            Arc::from(items),
-        ))
+
+        Ok(Tag::List(ListHeader { tag_id, length }, Arc::from(items)))
     }
-    
+
     /// 写入List内容（包含头部）
     fn write_list_content<W: Write>(
         writer: &mut W,
@@ -422,30 +418,30 @@ impl NbtIo {
     ) -> Result<(), NbtError> {
         writer.write_u8(header.tag_id)?;
         writer.write_i32::<BigEndian>(header.length)?;
-        
+
         for item in items {
             Self::write_tag_value(writer, item)?;
         }
         Ok(())
     }
-    
+
     fn read_compound<R: Read>(reader: &mut R) -> Result<HashMap<String, Tag>, NbtError> {
         let mut map = HashMap::new();
-        
+
         loop {
             let tag_id = reader.read_u8()?;
             if tag_id == tag_id::END {
                 break;
             }
-            
+
             let name = Self::read_string(reader)?;
             let tag = Self::read_tag(reader, tag_id)?;
             map.insert(name, tag);
         }
-        
+
         Ok(map)
     }
-    
+
     /// 写入Compound内容（不包含标签ID和名字）
     fn write_compound_content<W: Write>(
         writer: &mut W,
@@ -461,20 +457,20 @@ impl NbtIo {
 
 /// 便捷函数：从文件读取（自动处理Gzip压缩）
 pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<(String, Tag), NbtError> {
+    use flate2::read::GzDecoder;
     use std::fs::File;
     use std::io::BufReader;
-    use flate2::read::GzDecoder;
-    
+
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    
+
     // 检查Gzip魔数
     let mut magic_bytes = [0u8; 2];
     reader.read_exact(&mut magic_bytes)?;
     reader.seek(SeekFrom::Start(0))?; // 重置位置
-    
+
     let is_gzipped = magic_bytes == [0x1F, 0x8B];
-    
+
     if is_gzipped {
         let decoder = GzDecoder::new(reader);
         NbtIo::from_reader(decoder)
@@ -490,12 +486,12 @@ pub fn to_file<P: AsRef<std::path::Path>>(
     tag: &Tag,
     compress: bool,
 ) -> Result<(), NbtError> {
+    use flate2::{Compression, write::GzEncoder};
     use std::fs::File;
     use std::io::BufWriter;
-    use flate2::{write::GzEncoder, Compression};
-    
+
     let file = File::create(path)?;
-    
+
     if compress {
         let encoder = GzEncoder::new(BufWriter::new(file), Compression::default());
         NbtIo::to_writer(encoder, name, tag)

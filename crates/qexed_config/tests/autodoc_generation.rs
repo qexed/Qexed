@@ -114,7 +114,7 @@ max_port_connections = 65535
 rate_limit_window_secs = 60
 rate_limit_max_attempts = 6
 motd = ["Welcome"]
-code_of_conduct = ""
+code_of_conduct = false
 favicon = ""
 
 [server.world]
@@ -182,7 +182,7 @@ max_port_connections = 65535
 rate_limit_window_secs = 60
 rate_limit_max_attempts = 6
 motd = ["Welcome"]
-code_of_conduct = ""
+code_of_conduct = false
 favicon = ""
 
 [server.world]
@@ -276,7 +276,7 @@ max_port_connections = 65535
 rate_limit_window_secs = 60
 rate_limit_max_attempts = 6
 motd = ["Welcome"]
-code_of_conduct = ""
+code_of_conduct = false
 favicon = ""
 
 [server.lan_discovery]

@@ -1,14 +1,14 @@
 // crates/data/qexed_nbt/src/nbt_serde.rs
+use super::{ListHeader, NbtError, Tag, tag_id};
 use serde::de::{self, Deserialize, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{self, Serialize, SerializeSeq, Serializer};
-use super::{Tag, ListHeader, NbtError, tag_id};
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 为 NBT 提供 Serde 序列化/反序列化支持
 pub mod nbt_serde {
     use super::*;
-    
+
     /// 将 Rust 值序列化为 NBT Tag
     pub fn to_tag<T>(value: &T) -> Result<Tag, NbtError>
     where
@@ -16,7 +16,7 @@ pub mod nbt_serde {
     {
         value.serialize(NbtSerializer)
     }
-    
+
     /// 从 NBT Tag 反序列化为 Rust 值
     pub fn from_tag<'a, T>(tag: &'a Tag) -> Result<T, NbtError>
     where
@@ -24,7 +24,7 @@ pub mod nbt_serde {
     {
         T::deserialize(NbtDeserializer::new(tag))
     }
-    
+
     /// 从命名 NBT 结构体反序列化
     pub fn from_named_tag<'a, T>(name: &str, tag: &'a Tag) -> Result<T, NbtError>
     where
@@ -353,11 +353,7 @@ impl ser::SerializeMap for NbtMapSerializer {
         let key_tag = key.serialize(NbtSerializer)?;
         self.next_key = match key_tag {
             Tag::String(s) => Some(s.to_string()),
-            _ => {
-                return Err(NbtError::Serialize(
-                    "Map 键必须是字符串类型".to_string(),
-                ))
-            }
+            _ => return Err(NbtError::Serialize("Map 键必须是字符串类型".to_string())),
         };
         Ok(())
     }
@@ -488,23 +484,24 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
             Tag::Long(v) => visitor.visit_i64(*v),
             Tag::Float(v) => visitor.visit_f32(*v),
             Tag::Double(v) => visitor.visit_f64(*v),
-            Tag::String(v) => visitor.visit_borrowed_str(&*v),  // 修复：使用 &*v 而不是 v.as_str()
+            Tag::String(v) => visitor.visit_borrowed_str(&*v), // 修复：使用 &*v 而不是 v.as_str()
             Tag::ByteArray(v) => {
                 let u8_slice: Vec<u8> = v.iter().map(|&b| b as u8).collect();
                 visitor.visit_bytes(&u8_slice)
             }
-            Tag::IntArray(v) => {
-                visitor.visit_seq(IntArrayAccess { iter: v.iter(), len: v.len() })
-            }
-            Tag::LongArray(v) => {
-                visitor.visit_seq(LongArrayAccess { iter: v.iter(), len: v.len() })
-            }
-            Tag::List(_, v) => {
-                visitor.visit_seq(ListAccess { iter: v.iter() })
-            }
-            Tag::Compound(map) => {
-                visitor.visit_map(CompoundAccess { iter: map.iter(), value: None })
-            }
+            Tag::IntArray(v) => visitor.visit_seq(IntArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
+            Tag::LongArray(v) => visitor.visit_seq(LongArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
+            Tag::List(_, v) => visitor.visit_seq(ListAccess { iter: v.iter() }),
+            Tag::Compound(map) => visitor.visit_map(CompoundAccess {
+                iter: map.iter(),
+                value: None,
+            }),
             Tag::End => visitor.visit_none(),
         }
     }
@@ -521,7 +518,10 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 } else if v.to_lowercase() == "false" {
                     visitor.visit_bool(false)
                 } else {
-                    Err(NbtError::Deserialize(format!("无法将字符串 '{}' 解析为布尔值", v)))
+                    Err(NbtError::Deserialize(format!(
+                        "无法将字符串 '{}' 解析为布尔值",
+                        v
+                    )))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -541,30 +541,21 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= i8::MIN as i16 && *v <= i8::MAX as i16 {
                     visitor.visit_i8(*v as i8)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 i8 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 i8 范围", v)))
                 }
             }
             Tag::Int(v) => {
                 if *v >= i8::MIN as i32 && *v <= i8::MAX as i32 {
                     visitor.visit_i8(*v as i8)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 i8 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 i8 范围", v)))
                 }
             }
             Tag::Long(v) => {
                 if *v >= i8::MIN as i64 && *v <= i8::MAX as i64 {
                     visitor.visit_i8(*v as i8)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 i8 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 i8 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -585,20 +576,14 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= i16::MIN as i32 && *v <= i16::MAX as i32 {
                     visitor.visit_i16(*v as i16)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 i16 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 i16 范围", v)))
                 }
             }
             Tag::Long(v) => {
                 if *v >= i16::MIN as i64 && *v <= i16::MAX as i64 {
                     visitor.visit_i16(*v as i16)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 i16 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 i16 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -620,10 +605,7 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
                     visitor.visit_i32(*v as i32)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 i32 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 i32 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -658,20 +640,14 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= 0 {
                     visitor.visit_u8(*v as u8)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u8 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u8 范围", v)))
                 }
             }
             Tag::Short(v) => {
                 if *v >= 0 && *v <= u8::MAX as i16 {
                     visitor.visit_u8(*v as u8)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u8 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u8 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -690,30 +666,21 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= 0 {
                     visitor.visit_u16(*v as u16)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u16 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u16 范围", v)))
                 }
             }
             Tag::Short(v) => {
                 if *v >= 0 {
                     visitor.visit_u16(*v as u16)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u16 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u16 范围", v)))
                 }
             }
             Tag::Int(v) => {
                 if *v >= 0 && *v <= u16::MAX as i32 {
                     visitor.visit_u16(*v as u16)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u16 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u16 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -732,40 +699,28 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= 0 {
                     visitor.visit_u32(*v as u32)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u32 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u32 范围", v)))
                 }
             }
             Tag::Long(v) => {
                 if *v >= 0 && *v <= u32::MAX as i64 {
                     visitor.visit_u32(*v as u32)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u32 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u32 范围", v)))
                 }
             }
             Tag::Byte(v) => {
                 if *v >= 0 {
                     visitor.visit_u32(*v as u32)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u32 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u32 范围", v)))
                 }
             }
             Tag::Short(v) => {
                 if *v >= 0 {
                     visitor.visit_u32(*v as u32)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u32 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u32 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -784,40 +739,28 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
                 if *v >= 0 {
                     visitor.visit_u64(*v as u64)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u64 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u64 范围", v)))
                 }
             }
             Tag::Int(v) => {
                 if *v >= 0 {
                     visitor.visit_u64(*v as u64)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u64 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u64 范围", v)))
                 }
             }
             Tag::Byte(v) => {
                 if *v >= 0 {
                     visitor.visit_u64(*v as u64)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u64 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u64 范围", v)))
                 }
             }
             Tag::Short(v) => {
                 if *v >= 0 {
                     visitor.visit_u64(*v as u64)
                 } else {
-                    Err(NbtError::Deserialize(format!(
-                        "值 {} 超出 u64 范围",
-                        v
-                    )))
+                    Err(NbtError::Deserialize(format!("值 {} 超出 u64 范围", v)))
                 }
             }
             _ => Err(NbtError::Deserialize(format!(
@@ -886,7 +829,7 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
         V: Visitor<'de>,
     {
         match self.tag {
-            Tag::String(s) => visitor.visit_borrowed_str(&*s),  // 修复：使用 &*s 而不是 s.as_str()
+            Tag::String(s) => visitor.visit_borrowed_str(&*s), // 修复：使用 &*s 而不是 s.as_str()
             _ => Err(NbtError::Deserialize(format!(
                 "无法将 {:?} 反序列化为字符串",
                 self.tag
@@ -976,11 +919,18 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
     {
         match self.tag {
             Tag::List(_, v) => visitor.visit_seq(ListAccess { iter: v.iter() }),
-            Tag::IntArray(v) => visitor.visit_seq(IntArrayAccess { iter: v.iter(), len: v.len() }),
-            Tag::LongArray(v) => visitor.visit_seq(LongArrayAccess { iter: v.iter(), len: v.len() }),
-            Tag::ByteArray(v) => {
-                visitor.visit_seq(ByteArrayAccess { iter: v.iter(), len: v.len() })
-            }
+            Tag::IntArray(v) => visitor.visit_seq(IntArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
+            Tag::LongArray(v) => visitor.visit_seq(LongArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
+            Tag::ByteArray(v) => visitor.visit_seq(ByteArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
             _ => Err(NbtError::Deserialize(format!(
                 "无法将 {:?} 反序列化为序列",
                 self.tag
@@ -993,15 +943,15 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
         V: Visitor<'de>,
     {
         match self.tag {
-            Tag::List(_, v) if v.len() == len => {
-                visitor.visit_seq(ListAccess { iter: v.iter() })
-            }
-            Tag::IntArray(v) if v.len() == len => {
-                visitor.visit_seq(IntArrayAccess { iter: v.iter(), len: v.len() })
-            }
-            Tag::LongArray(v) if v.len() == len => {
-                visitor.visit_seq(LongArrayAccess { iter: v.iter(), len: v.len() })
-            }
+            Tag::List(_, v) if v.len() == len => visitor.visit_seq(ListAccess { iter: v.iter() }),
+            Tag::IntArray(v) if v.len() == len => visitor.visit_seq(IntArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
+            Tag::LongArray(v) if v.len() == len => visitor.visit_seq(LongArrayAccess {
+                iter: v.iter(),
+                len: v.len(),
+            }),
             _ => Err(NbtError::Deserialize(format!(
                 "无法将 {:?} 反序列化为长度为 {} 的元组",
                 self.tag, len
@@ -1026,9 +976,10 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
         V: Visitor<'de>,
     {
         match self.tag {
-            Tag::Compound(map) => {
-                visitor.visit_map(CompoundAccess { iter: map.iter(), value: None })
-            }
+            Tag::Compound(map) => visitor.visit_map(CompoundAccess {
+                iter: map.iter(),
+                value: None,
+            }),
             _ => Err(NbtError::Deserialize(format!(
                 "无法将 {:?} 反序列化为映射",
                 self.tag
@@ -1058,7 +1009,7 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
         V: Visitor<'de>,
     {
         match self.tag {
-            Tag::String(variant) => visitor.visit_enum((&**variant).into_deserializer()),  // 修复：使用 as_str() 是稳定的
+            Tag::String(variant) => visitor.visit_enum((&**variant).into_deserializer()), // 修复：使用 as_str() 是稳定的
             Tag::Compound(map) if map.len() == 1 => {
                 let (variant, value) = map.iter().next().unwrap();
                 visitor.visit_enum(EnumDeserializer {
@@ -1069,7 +1020,7 @@ impl<'de> Deserializer<'de> for NbtDeserializer<'de> {
             _ => Err(NbtError::Deserialize(format!(
                 "无法将 {:?} 反序列化为枚举，期望字符串或单个键的Compound",
                 self.tag
-            ))),  // 修复：移除不支持的枚举反序列化
+            ))), // 修复：移除不支持的枚举反序列化
         }
     }
 
@@ -1125,7 +1076,9 @@ impl<'de> SeqAccess<'de> for IntArrayAccess<'de> {
         T: de::DeserializeSeed<'de>,
     {
         match self.iter.next() {
-            Some(&v) => seed.deserialize(de::value::I32Deserializer::new(v)).map(Some),
+            Some(&v) => seed
+                .deserialize(de::value::I32Deserializer::new(v))
+                .map(Some),
             None => Ok(None),
         }
     }
@@ -1149,7 +1102,9 @@ impl<'de> SeqAccess<'de> for LongArrayAccess<'de> {
         T: de::DeserializeSeed<'de>,
     {
         match self.iter.next() {
-            Some(&v) => seed.deserialize(de::value::I64Deserializer::new(v)).map(Some),
+            Some(&v) => seed
+                .deserialize(de::value::I64Deserializer::new(v))
+                .map(Some),
             None => Ok(None),
         }
     }
@@ -1173,7 +1128,9 @@ impl<'de> SeqAccess<'de> for ByteArrayAccess<'de> {
         T: de::DeserializeSeed<'de>,
     {
         match self.iter.next() {
-            Some(&v) => seed.deserialize(de::value::I8Deserializer::new(v)).map(Some),
+            Some(&v) => seed
+                .deserialize(de::value::I8Deserializer::new(v))
+                .map(Some),
             None => Ok(None),
         }
     }
@@ -1199,7 +1156,7 @@ impl<'de> MapAccess<'de> for CompoundAccess<'de> {
         match self.iter.next() {
             Some((key, value)) => {
                 self.value = Some(value);
-                seed.deserialize(de::value::StrDeserializer::<NbtError>::new(key.as_str()))  // 修复：添加类型注解
+                seed.deserialize(de::value::StrDeserializer::<NbtError>::new(key.as_str())) // 修复：添加类型注解
                     .map(Some)
             }
             None => Ok(None),
@@ -1231,7 +1188,8 @@ impl<'de> de::EnumAccess<'de> for EnumDeserializer<'de> {
     where
         V: de::DeserializeSeed<'de>,
     {
-        let variant = seed.deserialize(de::value::StrDeserializer::<NbtError>::new(self.variant))?;  // 修复：添加类型注解
+        let variant =
+            seed.deserialize(de::value::StrDeserializer::<NbtError>::new(self.variant))?; // 修复：添加类型注解
         let deserializer = EnumVariantDeserializer { value: self.value };
         Ok((variant, deserializer))
     }
@@ -1291,14 +1249,17 @@ impl<'de> de::VariantAccess<'de> for EnumVariantDeserializer<'de> {
         V: de::Visitor<'de>,
     {
         match self.value {
-            Some(Tag::Compound(map)) => {
-                visitor.visit_map(CompoundAccess { iter: map.iter(), value: None })
-            }
+            Some(Tag::Compound(map)) => visitor.visit_map(CompoundAccess {
+                iter: map.iter(),
+                value: None,
+            }),
             Some(value) => Err(NbtError::Deserialize(format!(
                 "期望结构体变体，但找到了 {:?}",
                 value
             ))),
-            None => Err(NbtError::Deserialize("期望结构体变体，但缺少值".to_string())),
+            None => Err(NbtError::Deserialize(
+                "期望结构体变体，但缺少值".to_string(),
+            )),
         }
     }
 }
@@ -1309,7 +1270,7 @@ impl Tag {
     pub fn from_serializable<T: Serialize>(value: &T) -> Result<Self, NbtError> {
         nbt_serde::to_tag(value)
     }
-    
+
     /// 将 Tag 转换为实现了 Deserialize 的类型
     pub fn to_deserializable<'a, T: Deserialize<'a>>(&'a self) -> Result<T, NbtError> {
         nbt_serde::from_tag(self)

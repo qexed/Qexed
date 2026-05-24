@@ -59,7 +59,7 @@ pub struct Server {
 
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.code_of_conduct")]
-    pub code_of_conduct: String,
+    pub code_of_conduct: bool,
 
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.world", sub)]
@@ -104,7 +104,7 @@ impl Default for Server {
                 t!("qexed_config.config.server.motd1").to_string(),
                 t!("qexed_config.config.server.motd2").to_string(),
             ],
-            code_of_conduct: String::new(),
+            code_of_conduct: false,
             world: World::default(),
             player_data: PlayerData::default(),
             player_messages: PlayerMessages::default(),
@@ -147,6 +147,10 @@ pub struct ResourcePack {
     pub download_host: String,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage", sub)]
+    pub object_storage: ResourcePackObjectStorage,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.resource_pack.hash")]
     pub hash: String,
 
@@ -173,6 +177,7 @@ impl Default for ResourcePack {
             path: default_resource_pack_path(),
             download_bind: default_resource_pack_download_bind(),
             download_host: String::new(),
+            object_storage: ResourcePackObjectStorage::default(),
             hash: String::new(),
             required: false,
             prompt: String::new(),
@@ -187,6 +192,60 @@ pub enum ResourcePackSource {
     #[default]
     Url,
     Local,
+    ObjectStorage,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct ResourcePackObjectStorage {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.provider")]
+    pub provider: ResourcePackObjectStorageProvider,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.public_base_url")]
+    pub public_base_url: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.endpoint")]
+    pub endpoint: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.bucket")]
+    pub bucket: String,
+
+    #[serde(default = "default_resource_pack_object_key")]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.object_key")]
+    pub object_key: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.force_path_style")]
+    pub force_path_style: bool,
+}
+
+impl Default for ResourcePackObjectStorage {
+    fn default() -> Self {
+        Self {
+            provider: ResourcePackObjectStorageProvider::default(),
+            public_base_url: String::new(),
+            endpoint: String::new(),
+            bucket: String::new(),
+            object_key: default_resource_pack_object_key(),
+            force_path_style: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePackObjectStorageProvider {
+    #[default]
+    Generic,
+    TencentCos,
+    TencentEo,
+    HuaweiObs,
+    HuaweiCdn,
+    AliyunOss,
+    AwsS3,
 }
 
 fn default_resource_pack_id() -> uuid::Uuid {
@@ -194,6 +253,10 @@ fn default_resource_pack_id() -> uuid::Uuid {
 }
 
 fn default_resource_pack_path() -> String {
+    "resourcepacks/server.zip".to_string()
+}
+
+fn default_resource_pack_object_key() -> String {
     "resourcepacks/server.zip".to_string()
 }
 
@@ -779,7 +842,8 @@ impl std::str::FromStr for ForwardingMode {
 mod tests {
     use super::{
         ContentFilter, ContentFilterEngine, GameMode, GpuDeviceSelector, LightAlgorithm, LightMode,
-        PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack, ResourcePackSource, World,
+        PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
+        ResourcePackObjectStorageProvider, ResourcePackSource, World,
     };
 
     #[test]
@@ -1025,6 +1089,14 @@ hash = "0123456789abcdef0123456789abcdef01234567"
 required = true
 prompt = "Install server resources"
 disconnect_message = "Resource pack required"
+
+[object_storage]
+provider = "tencent_eo"
+public_base_url = "https://packs.example.com"
+endpoint = "cos.ap-guangzhou.myqcloud.com"
+bucket = "qexed-1250000000"
+object_key = "minecraft/server.zip"
+force_path_style = false
 "#,
         )
         .unwrap();
@@ -1039,6 +1111,23 @@ disconnect_message = "Resource pack required"
         assert_eq!(resource_pack.path, "resourcepacks/test.zip");
         assert_eq!(resource_pack.download_bind, "127.0.0.1:25566");
         assert_eq!(resource_pack.download_host, "example.org");
+        assert_eq!(
+            resource_pack.object_storage.provider,
+            ResourcePackObjectStorageProvider::TencentEo
+        );
+        assert_eq!(
+            resource_pack.object_storage.public_base_url,
+            "https://packs.example.com"
+        );
+        assert_eq!(
+            resource_pack.object_storage.endpoint,
+            "cos.ap-guangzhou.myqcloud.com"
+        );
+        assert_eq!(resource_pack.object_storage.bucket, "qexed-1250000000");
+        assert_eq!(
+            resource_pack.object_storage.object_key,
+            "minecraft/server.zip"
+        );
         assert!(resource_pack.required);
         assert_eq!(resource_pack.prompt, "Install server resources");
     }

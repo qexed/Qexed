@@ -15,6 +15,7 @@ pub struct ResourcePackManager {
 enum ResourcePackState {
     Disabled,
     Url,
+    ObjectStorage,
     Local(LocalResourcePack),
 }
 
@@ -44,6 +45,9 @@ impl ResourcePackManager {
         match config.source {
             ResourcePackSource::Url => Ok(Self {
                 state: ResourcePackState::Url,
+            }),
+            ResourcePackSource::ObjectStorage => Ok(Self {
+                state: ResourcePackState::ObjectStorage,
             }),
             ResourcePackSource::Local => Self::local(config).await,
         }
@@ -120,12 +124,76 @@ impl ResourcePackManager {
                     })
                 }
             }
+            ResourcePackState::ObjectStorage => {
+                object_storage_download_url(config).map(|url| ResourcePackOffer {
+                    url,
+                    hash: config.hash.trim().to_string(),
+                })
+            }
             ResourcePackState::Local(local) => Some(ResourcePackOffer {
                 url: local_download_url(config, login_host, local),
                 hash: local.hash.clone(),
             }),
         }
     }
+}
+
+fn object_storage_download_url(config: &ResourcePack) -> Option<String> {
+    let storage = &config.object_storage;
+    let object_key = storage.object_key.trim().trim_start_matches('/');
+    if object_key.is_empty() {
+        return None;
+    }
+
+    let public_base_url = storage.public_base_url.trim();
+    if !public_base_url.is_empty() {
+        return Some(join_url_path(public_base_url, object_key));
+    }
+
+    let endpoint = storage.endpoint.trim();
+    let bucket = storage.bucket.trim();
+    if endpoint.is_empty() || bucket.is_empty() {
+        return None;
+    }
+
+    let endpoint = endpoint_with_scheme(endpoint);
+    if storage.force_path_style {
+        Some(join_url_path(
+            &join_url_path(&endpoint, bucket.trim_matches('/')),
+            object_key,
+        ))
+    } else {
+        Some(join_url_path(
+            &virtual_host_endpoint(&endpoint, bucket),
+            object_key,
+        ))
+    }
+}
+
+fn endpoint_with_scheme(endpoint: &str) -> String {
+    if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        endpoint.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", endpoint.trim_end_matches('/'))
+    }
+}
+
+fn virtual_host_endpoint(endpoint: &str, bucket: &str) -> String {
+    if let Some(rest) = endpoint.strip_prefix("https://") {
+        format!("https://{bucket}.{}", rest.trim_start_matches('/'))
+    } else if let Some(rest) = endpoint.strip_prefix("http://") {
+        format!("http://{bucket}.{}", rest.trim_start_matches('/'))
+    } else {
+        format!("https://{bucket}.{}", endpoint.trim_start_matches('/'))
+    }
+}
+
+fn join_url_path(base: &str, path: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
 }
 
 fn bind_download_addr(bind: &str) -> Result<std::net::SocketAddr> {
@@ -206,9 +274,8 @@ async fn handle_download(
     mut stream: tokio::net::TcpStream,
     local: LocalResourcePack,
 ) -> Result<()> {
-    let mut buffer = [0_u8; 2048];
-    let size = stream.read(&mut buffer).await?;
-    let request = std::str::from_utf8(&buffer[..size]).unwrap_or_default();
+    let request_bytes = read_http_headers(&mut stream).await?;
+    let request = std::str::from_utf8(&request_bytes).unwrap_or_default();
     let path = request_path(request);
 
     if path == Some(local.route.as_str()) {
@@ -225,12 +292,56 @@ async fn handle_download(
     }
 }
 
+async fn read_http_headers(stream: &mut tokio::net::TcpStream) -> Result<Vec<u8>> {
+    const MAX_HEADER_SIZE: usize = 8192;
+
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+
+    loop {
+        let size = stream.read(&mut buffer).await?;
+        if size == 0 {
+            break;
+        }
+
+        request.extend_from_slice(&buffer[..size]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n")
+            || request.windows(2).any(|window| window == b"\n\n")
+            || request.len() >= MAX_HEADER_SIZE
+        {
+            break;
+        }
+    }
+
+    Ok(request)
+}
+
 fn request_path(request: &str) -> Option<&str> {
     let request_line = request.lines().next()?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next()?;
-    let path = parts.next()?;
-    if method == "GET" { Some(path) } else { None }
+    let target = parts.next()?;
+    if method == "GET" {
+        request_target_path(target)
+    } else {
+        None
+    }
+}
+
+fn request_target_path(target: &str) -> Option<&str> {
+    let path = if target.starts_with('/') {
+        target
+    } else if let Some(rest) = target
+        .strip_prefix("http://")
+        .or_else(|| target.strip_prefix("https://"))
+    {
+        let path_start = rest.find('/')?;
+        &rest[path_start..]
+    } else {
+        return None;
+    };
+
+    Some(path.split_once('?').map_or(path, |(path, _)| path))
 }
 
 async fn write_response(
@@ -301,6 +412,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn object_storage_url_prefers_public_base_url_for_cdn_and_edgeone() {
+        let mut config = ResourcePack {
+            enable: true,
+            source: ResourcePackSource::ObjectStorage,
+            ..ResourcePack::default()
+        };
+        config.object_storage.public_base_url = "https://packs.example.com/cache/".to_string();
+        config.object_storage.object_key = "/minecraft/server.zip".to_string();
+
+        assert_eq!(
+            object_storage_download_url(&config).as_deref(),
+            Some("https://packs.example.com/cache/minecraft/server.zip")
+        );
+    }
+
+    #[test]
+    fn object_storage_url_builds_virtual_host_endpoint() {
+        let mut config = ResourcePack {
+            enable: true,
+            source: ResourcePackSource::ObjectStorage,
+            ..ResourcePack::default()
+        };
+        config.object_storage.endpoint = "obs.cn-north-4.myhuaweicloud.com".to_string();
+        config.object_storage.bucket = "qexed-pack".to_string();
+        config.object_storage.object_key = "resourcepacks/server.zip".to_string();
+
+        assert_eq!(
+            object_storage_download_url(&config).as_deref(),
+            Some("https://qexed-pack.obs.cn-north-4.myhuaweicloud.com/resourcepacks/server.zip")
+        );
+    }
+
+    #[test]
+    fn object_storage_url_builds_path_style_endpoint() {
+        let mut config = ResourcePack {
+            enable: true,
+            source: ResourcePackSource::ObjectStorage,
+            ..ResourcePack::default()
+        };
+        config.object_storage.endpoint = "https://cos.ap-guangzhou.myqcloud.com".to_string();
+        config.object_storage.bucket = "qexed-1250000000".to_string();
+        config.object_storage.object_key = "resourcepacks/server.zip".to_string();
+        config.object_storage.force_path_style = true;
+
+        assert_eq!(
+            object_storage_download_url(&config).as_deref(),
+            Some("https://cos.ap-guangzhou.myqcloud.com/qexed-1250000000/resourcepacks/server.zip")
+        );
+    }
+
+    #[test]
+    fn request_path_accepts_origin_and_absolute_form_targets() {
+        let request = "GET /resource-pack/test.zip HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        assert_eq!(request_path(request), Some("/resource-pack/test.zip"));
+
+        let request = "GET http://127.0.0.1:25566/resource-pack/test.zip?cache=1 HTTP/1.1\r\n\r\n";
+        assert_eq!(request_path(request), Some("/resource-pack/test.zip"));
+    }
+
     #[tokio::test]
     async fn local_server_returns_pack_bytes() {
         let dir = tempfile::tempdir().unwrap();
@@ -319,9 +490,12 @@ mod tests {
         manager.start().await.unwrap();
         let offer = manager.offer(&config, "127.0.0.1").unwrap();
 
-        let response = reqwest::get(&offer.url).await.unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::OK);
-        assert_eq!(response.bytes().await.unwrap(), "zip-bytes");
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let response = http.get(&offer.url).send().await.unwrap();
+        let status = response.status();
+        let body = response.bytes().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(body, "zip-bytes");
         assert_eq!(offer.hash, sha1_hex(b"zip-bytes"));
     }
 }

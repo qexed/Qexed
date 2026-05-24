@@ -1,5 +1,6 @@
 mod auth;
 mod bootstrap;
+mod code_of_conduct;
 mod commands;
 mod connection;
 mod content_filter;

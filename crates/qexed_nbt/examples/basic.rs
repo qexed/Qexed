@@ -27,7 +27,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tag_id::DOUBLE,
         vec![Tag::Double(100.5), Tag::Double(64.0), Tag::Double(300.0)],
     )?;
-    println!("\nPosition list created successfully: {:?}", pos_list.tag_id());
+    println!(
+        "\nPosition list created successfully: {:?}",
+        pos_list.tag_id()
+    );
 
     Ok(())
 }

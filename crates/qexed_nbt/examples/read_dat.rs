@@ -1,4 +1,4 @@
-use qexed_nbt::{ Tag, from_file};
+use qexed_nbt::{Tag, from_file};
 use std::path::Path;
 use std::{env, io::Read};
 

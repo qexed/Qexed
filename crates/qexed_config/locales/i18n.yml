@@ -143,8 +143,8 @@ config:
         en: "Random server description lines"
         zh-CN: "服务器描述随机内容"
       code_of_conduct:
-        en: "Server entry code of conduct. Empty disables the code-of-conduct prompt."
-        zh-CN: "入服准则内容。为空时不显示入服准则。"
+        en: "Enable the server entry code-of-conduct prompt. Text files are loaded from config/enable-code-of-conduct/<language>.txt."
+        zh-CN: "启用入服准则提示。正文从 config/enable-code-of-conduct/<语言>.txt 读取。"
       world:
         en: "World and spawn settings"
         zh-CN: "世界与出生点设置"
@@ -275,14 +275,14 @@ config:
           en: "Enable server resource pack delivery during the configuration phase"
           zh-CN: "启用配置阶段服务端资源包下发"
         source:
-          en: "Resource pack source: url or local. Local files are served by Qexed over HTTP."
-          zh-CN: "资源包来源：url 或 local。本地文件会由 Qexed 通过 HTTP 提供下载。"
+          en: "Resource pack source: url, local, or object_storage. Local files are served by Qexed over HTTP."
+          zh-CN: "资源包来源：url、local 或 object_storage。本地文件会由 Qexed 通过 HTTP 提供下载。"
         id:
           en: "Resource pack UUID used by the client to track this pack"
           zh-CN: "资源包 UUID，客户端使用它跟踪该资源包"
         url:
-          en: "Resource pack download URL. Leave empty to disable sending the pack."
-          zh-CN: "资源包下载地址。为空时不会发送资源包。"
+          en: "Resource pack download URL. Supports public URLs and full presigned URLs. Leave empty to disable sending the pack."
+          zh-CN: "资源包下载地址。支持公开 URL 和完整预签名 URL。为空时不会发送资源包。"
         path:
           en: "Local resource pack zip path used when source is local"
           zh-CN: "source 为 local 时使用的本地资源包 zip 路径"
@@ -292,6 +292,27 @@ config:
         download_host:
           en: "Public host or URL used by clients to download the local resource pack. Empty uses the login host."
           zh-CN: "客户端下载本地资源包时使用的公网主机名或 URL。为空时使用登录地址。"
+        object_storage:
+          en: "Object storage and CDN settings used when source is object_storage"
+          zh-CN: "source 为 object_storage 时使用的对象存储与 CDN 设置"
+          provider:
+            en: "Object storage/CDN provider hint: generic, tencent_cos, tencent_eo, huawei_obs, huawei_cdn, aliyun_oss, or aws_s3"
+            zh-CN: "对象存储/CDN 提供商提示：generic、tencent_cos、tencent_eo、huawei_obs、huawei_cdn、aliyun_oss 或 aws_s3"
+          public_base_url:
+            en: "Public CDN or object URL prefix. Prefer this for Tencent Cloud EdgeOne, CDN acceleration domains, and custom domains."
+            zh-CN: "公网 CDN 或对象 URL 前缀。腾讯云 EdgeOne、CDN 加速域名和自定义域名优先使用此字段。"
+          endpoint:
+            en: "Object storage endpoint host or URL used when public_base_url is empty"
+            zh-CN: "public_base_url 为空时使用的对象存储 endpoint 主机名或 URL"
+          bucket:
+            en: "Object storage bucket name used when public_base_url is empty"
+            zh-CN: "public_base_url 为空时使用的对象存储 bucket 名称"
+          object_key:
+            en: "Object key/path of the resource pack zip in the bucket or under public_base_url"
+            zh-CN: "资源包 zip 在 bucket 或 public_base_url 下的对象键/路径"
+          force_path_style:
+            en: "Use path-style URL: endpoint/bucket/object_key. Disabled uses virtual-host style: bucket.endpoint/object_key."
+            zh-CN: "使用路径风格 URL：endpoint/bucket/object_key。关闭时使用虚拟主机风格：bucket.endpoint/object_key。"
         hash:
           en: "Resource pack SHA-1 hash. Leave empty if the pack should not be hash-checked."
           zh-CN: "资源包 SHA-1 哈希。为空时客户端不按哈希校验。"
