@@ -582,6 +582,10 @@ pub struct World {
     pub generator_preset: String,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.seed")]
+    pub seed: i64,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.world.game_mode")]
     pub game_mode: GameMode,
 
@@ -628,6 +632,7 @@ impl Default for World {
             read_only: false,
             generator: WorldGenerator::default(),
             generator_preset: default_world_generator_preset(),
+            seed: 0,
             game_mode: GameMode::default(),
             spawn_protection_radius: default_spawn_protection_radius(),
             dimension: "minecraft:overworld".to_string(),
@@ -649,6 +654,7 @@ pub enum WorldGenerator {
     #[default]
     Empty,
     VanillaFlat,
+    VanillaNoise,
 }
 
 fn default_world_generator_preset() -> String {
@@ -1078,6 +1084,7 @@ path = "world"
 read_only = true
 generator = "vanilla_flat"
 generator_preset = "minecraft:classic_flat"
+seed = 12345
 dimension = "minecraft:overworld"
 dimension_type = "minecraft:overworld"
 view_distance = 3
@@ -1099,6 +1106,7 @@ pitch = 0.0
         assert!(world.read_only);
         assert_eq!(world.generator, WorldGenerator::VanillaFlat);
         assert_eq!(world.generator_preset, "minecraft:classic_flat");
+        assert_eq!(world.seed, 12345);
     }
 
     #[test]

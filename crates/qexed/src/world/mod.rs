@@ -2,6 +2,7 @@ pub mod chunk_nbt;
 pub mod generator;
 mod gpu_light;
 pub mod region;
+mod vanilla_noise;
 
 use anyhow::{Context, Result};
 use bytes::BytesMut;

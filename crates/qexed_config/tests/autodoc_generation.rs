@@ -143,6 +143,7 @@ pitch = 0.0
     assert!(!config.server.world.read_only);
     assert!(qexed.contains("generator = \"empty\""));
     assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
+    assert!(qexed.contains("seed = 0"));
     assert!(qexed.contains("game_mode = \"survival\""));
     assert!(qexed.contains("spawn_protection_radius = 16"));
     assert!(qexed.contains("[server.player_data]"));
@@ -236,6 +237,7 @@ enable = true
     );
     assert!(qexed.contains("generator = \"empty\""));
     assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
+    assert!(qexed.contains("seed = 0"));
     assert_eq!(
         saved_config.server.content_filter.engine,
         ContentFilterEngine::Fixed
@@ -367,6 +369,7 @@ options = []
     assert!(qexed.contains("[server.player_messages]"));
     assert!(qexed.contains("generator = \"empty\""));
     assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
+    assert!(qexed.contains("seed = 0"));
     assert!(qexed.contains("join = \"{player} joined the server\""));
     assert!(qexed.contains("[server.content_filter]"));
     assert!(qexed.contains("[server.permissions]"));

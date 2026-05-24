@@ -155,11 +155,14 @@ config:
           en: "Enable read-only world mode. Player world edits are rejected and not written."
           zh-CN: "启用只读世界模式。玩家世界修改会被拒绝，不会写入世界。"
         generator:
-          en: "World generator used when no saved chunk exists: empty or vanilla_flat"
-          zh-CN: "存档区块不存在时使用的世界生成器：empty 或 vanilla_flat"
+          en: "World generator used when no saved chunk exists: empty, vanilla_flat, or vanilla_noise"
+          zh-CN: "存档区块不存在时使用的世界生成器：empty、vanilla_flat 或 vanilla_noise"
         generator_preset:
           en: "World generator preset. vanilla_flat uses Minecraft flat_level_generator_preset IDs such as minecraft:classic_flat."
           zh-CN: "世界生成器预设。vanilla_flat 使用 Minecraft flat_level_generator_preset ID，例如 minecraft:classic_flat。"
+        seed:
+          en: "World generation seed used by vanilla_noise. 0 matches the default Minecraft seed value."
+          zh-CN: "vanilla_noise 使用的世界生成种子。0 对应 Minecraft 默认种子值。"
         game_mode:
           en: "Default game mode: survival, creative, adventure, or spectator"
           zh-CN: "默认游戏模式：survival、creative、adventure 或 spectator"
