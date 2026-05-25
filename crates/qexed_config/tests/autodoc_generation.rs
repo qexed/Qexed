@@ -340,6 +340,9 @@ enable = true
     assert!(qexed.contains("generator = \"empty\""));
     assert!(qexed.contains("generator_preset = \"minecraft:classic_flat\""));
     assert!(qexed.contains("seed = 0"));
+    assert!(qexed.contains("[server.entities]"));
+    assert!(qexed.contains("dimension = \"minecraft:overworld\""));
+    assert!(!qexed.contains("list = []"));
     assert_eq!(
         saved_config.server.content_filter.engine,
         ContentFilterEngine::Fixed

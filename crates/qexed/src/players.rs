@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        Mutex,
-        atomic::{AtomicI32, Ordering},
-    },
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use bytes::{Bytes, BytesMut};
 use qexed_packet::{Packet, PacketCodec};
@@ -41,6 +35,9 @@ pub enum PlayerEvent {
         block_state: i32,
         light_update: Option<Bytes>,
     },
+    ClientboundPackets {
+        packets: Vec<Bytes>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -59,14 +56,14 @@ pub struct PlayerSession {
 
 #[derive(Debug, Default)]
 pub struct PlayerManager {
-    next_entity_id: AtomicI32,
+    entity_ids: std::sync::Arc<crate::entities::EntityIdAllocator>,
     players: Mutex<HashMap<uuid::Uuid, PlayerHandle>>,
 }
 
 impl PlayerManager {
-    pub fn new() -> Self {
+    pub fn new(entity_ids: std::sync::Arc<crate::entities::EntityIdAllocator>) -> Self {
         Self {
-            next_entity_id: AtomicI32::new(1),
+            entity_ids,
             players: Mutex::new(HashMap::new()),
         }
     }
@@ -77,7 +74,7 @@ impl PlayerManager {
         position: EntityPosition,
         equipment: Vec<Equipment>,
     ) -> PlayerSession {
-        let entity_id = self.next_entity_id.fetch_add(1, Ordering::Relaxed);
+        let entity_id = self.entity_ids.next();
         let player = OnlinePlayer {
             profile,
             entity_id,
@@ -179,6 +176,11 @@ impl PlayerManager {
         );
     }
 
+    pub fn broadcast_packets(&self, packets: Vec<Bytes>) {
+        let players = self.players.lock().expect("player manager poisoned");
+        broadcast_all_locked(&players, PlayerEvent::ClientboundPackets { packets });
+    }
+
     pub fn online_names(&self) -> Vec<String> {
         self.players
             .lock()
@@ -254,6 +256,7 @@ impl PlayerEvent {
                 }
                 Ok(packets)
             }
+            Self::ClientboundPackets { packets } => Ok(packets.clone()),
         }
     }
 }
@@ -283,7 +286,7 @@ pub fn spawn_player_packets(
     ])
 }
 
-fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {
+pub(crate) fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {
     let mut buf = BytesMut::new();
     let mut writer = qexed_packet::PacketWriter::new(&mut buf);
     qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;
@@ -306,5 +309,11 @@ fn broadcast_locked(
         if *id != except {
             let _ = handle.sender.send(event.clone());
         }
+    }
+}
+
+fn broadcast_all_locked(players: &HashMap<uuid::Uuid, PlayerHandle>, event: PlayerEvent) {
+    for handle in players.values() {
+        let _ = handle.sender.send(event.clone());
     }
 }

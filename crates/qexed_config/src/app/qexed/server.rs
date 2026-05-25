@@ -87,6 +87,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.resource_pack", sub)]
     pub resource_pack: ResourcePack,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities", sub)]
+    pub entities: Entities,
+
     #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
@@ -117,10 +121,117 @@ impl Default for Server {
             content_filter: ContentFilter::default(),
             permissions: Permissions::default(),
             resource_pack: ResourcePack::default(),
+            entities: Entities::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct Entities {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_entities_dimension")]
+    #[AutoDoc(key = "config.qexed.server.entities.dimension")]
+    pub dimension: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.entities.list")]
+    pub list: Vec<Entity>,
+}
+
+impl Default for Entities {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            dimension: default_entities_dimension(),
+            list: Vec::new(),
+        }
+    }
+}
+
+fn default_entities_dimension() -> String {
+    "minecraft:overworld".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct Entity {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.id")]
+    pub id: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.kind")]
+    pub kind: EntityKind,
+
+    #[serde(default = "default_entity_type")]
+    #[AutoDoc(key = "config.qexed.server.entities.list.entity_type")]
+    pub entity_type: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.name")]
+    pub name: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.x")]
+    pub x: f64,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.y")]
+    pub y: f64,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.z")]
+    pub z: f64,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.yaw")]
+    pub yaw: f32,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.pitch")]
+    pub pitch: f32,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.on_ground")]
+    pub on_ground: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.data")]
+    pub data: i32,
+}
+
+impl Default for Entity {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: EntityKind::default(),
+            entity_type: default_entity_type(),
+            name: String::new(),
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+            data: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityKind {
+    #[default]
+    Entity,
+    Npc,
+}
+
+fn default_entity_type() -> String {
+    "minecraft:armor_stand".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -979,10 +1090,10 @@ impl std::str::FromStr for ForwardingMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentFilter, ContentFilterEngine, ForwardingMode, GameMode, GpuDeviceSelector,
-        LightAlgorithm, LightMode, PermissionEngine, Permissions, PlayerData, PlayerDataEngine,
-        PlayerMessages, ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource, World,
-        WorldGenerator,
+        ContentFilter, ContentFilterEngine, EntityKind, ForwardingMode, GameMode,
+        GpuDeviceSelector, LightAlgorithm, LightMode, PermissionEngine, Permissions, PlayerData,
+        PlayerDataEngine, PlayerMessages, ResourcePack, ResourcePackObjectStorageProvider,
+        ResourcePackSource, Server, World, WorldGenerator,
     };
 
     #[test]
@@ -1350,5 +1461,76 @@ force_path_style = false
         );
         assert!(resource_pack.required);
         assert_eq!(resource_pack.prompt, "Install server resources");
+    }
+
+    #[test]
+    fn parses_static_entity_settings() {
+        let server: Server = toml::from_str(
+            r#"
+ip = "0.0.0.0:25565"
+online = false
+max_player = -1
+display_players = true
+online_mode = false
+network_compression_threshold = 256
+proxy = false
+proxy_protocol = "QTunnel"
+proxy_token = "secret"
+max_port_connections = 65535
+rate_limit_window_secs = 60
+rate_limit_max_attempts = 6
+motd = ["Welcome"]
+code_of_conduct = false
+favicon = ""
+
+[world]
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[world.spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+
+[entities]
+enable = true
+dimension = "minecraft:overworld"
+
+[[entities.list]]
+id = "spawn-guide"
+kind = "npc"
+name = "Guide"
+x = 1.0
+y = 65.0
+z = 2.0
+yaw = 90.0
+pitch = 0.0
+on_ground = true
+
+[[entities.list]]
+id = "marker"
+kind = "entity"
+entity_type = "minecraft:armor_stand"
+x = 3.0
+y = 64.0
+z = 4.0
+"#,
+        )
+        .unwrap();
+
+        assert!(server.entities.enable);
+        assert_eq!(server.entities.list.len(), 2);
+        assert_eq!(server.entities.list[0].kind, EntityKind::Npc);
+        assert_eq!(server.entities.list[0].name, "Guide");
+        assert_eq!(server.entities.list[1].kind, EntityKind::Entity);
+        assert_eq!(server.entities.list[1].entity_type, "minecraft:armor_stand");
     }
 }
