@@ -355,6 +355,9 @@ const OLD_GROWTH_MUSHROOM_BIOMES: &[&str] = &[
     "minecraft:old_growth_spruce_taiga",
 ];
 const SWAMP_MUSHROOM_BIOMES: &[&str] = &["minecraft:swamp"];
+const PLAINS_TREE_BIOMES: &[&str] = &["minecraft:plains", "minecraft:sunflower_plains"];
+const BIRCH_TREE_BIOMES: &[&str] = &["minecraft:birch_forest"];
+const TALL_BIRCH_TREE_BIOMES: &[&str] = &["minecraft:old_growth_birch_forest"];
 const PLAINS_FLOWER_LOW_BLOCKS: &[&str] = &[
     "minecraft:orange_tulip",
     "minecraft:red_tulip",
@@ -2631,7 +2634,7 @@ struct OverworldOreFeatures {
     glow_lichen: PlacedMultifaceGrowthFeature,
     vegetation_patches: Vec<PlacedSimpleVegetationFeature>,
     block_columns: Vec<PlacedBlockColumnFeature>,
-    trees_plains: PlacedTreeFeature,
+    trees: Vec<PlacedTreeFeature>,
     freeze_top_layer: PlacedFreezeTopLayerFeature,
 }
 
@@ -3039,7 +3042,14 @@ impl OverworldOreFeatures {
                 PlacedBlockColumnFeature::cactus(19, 13)
                     .with_biome_filter(FeatureBiomeFilter::Include(CACTUS_DECORATED_BIOMES)),
             ],
-            trees_plains: PlacedTreeFeature::trees_plains(3),
+            trees: vec![
+                PlacedTreeFeature::trees_plains(3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PLAINS_TREE_BIOMES)),
+                PlacedTreeFeature::trees_birch(42)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BIRCH_TREE_BIOMES)),
+                PlacedTreeFeature::trees_tall_birch(43)
+                    .with_biome_filter(FeatureBiomeFilter::Include(TALL_BIRCH_TREE_BIOMES)),
+            ],
             freeze_top_layer: PlacedFreezeTopLayerFeature::new(0),
         }
     }
@@ -3064,7 +3074,8 @@ impl OverworldOreFeatures {
                 + self.monster_rooms.len()
                 + self.vegetation_patches.len()
                 + self.block_columns.len()
-                + 4,
+                + self.trees.len()
+                + 3,
         );
         features.extend(self.lakes.iter().map(PlacedUndergroundFeature::Lake));
         features.extend(self.geodes.iter().map(PlacedUndergroundFeature::Geode));
@@ -3090,7 +3101,7 @@ impl OverworldOreFeatures {
                 .iter()
                 .map(PlacedUndergroundFeature::BlockColumn),
         );
-        features.push(PlacedUndergroundFeature::Tree(&self.trees_plains));
+        features.extend(self.trees.iter().map(PlacedUndergroundFeature::Tree));
         features.push(PlacedUndergroundFeature::FreezeTopLayer(
             &self.freeze_top_layer,
         ));
@@ -5268,6 +5279,33 @@ impl PlacedTreeFeature {
         }
     }
 
+    fn trees_birch(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::birch_bees_0002(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_tall_birch(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::tall_birch_bees_0002(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
+        self.biome_filter = biome_filter;
+        self
+    }
+
     fn place(
         &self,
         settings: &NoiseSettings,
@@ -5291,7 +5329,7 @@ impl PlacedTreeFeature {
             }
             let world_y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
             if world_y <= settings.min_y
-                || !oak_sapling_would_survive_at(
+                || !sapling_would_survive_at(
                     chunk,
                     origin_x,
                     origin_z,
@@ -5316,16 +5354,39 @@ impl PlacedTreeFeature {
 #[derive(Debug, Clone)]
 struct TreeFeatureConfig {
     default_tree: OakTreeConfig,
-    fancy_chance: f32,
-    fallen_chance: f32,
+    variants: Vec<TreeFeatureVariant>,
 }
 
 impl TreeFeatureConfig {
     fn oak_bees_005() -> Self {
+        let default_tree = OakTreeConfig::oak_bees_005();
         Self {
-            default_tree: OakTreeConfig::oak_bees_005(),
-            fancy_chance: 0.333_333_34,
-            fallen_chance: 0.0125,
+            default_tree: default_tree.clone(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.333_333_34, default_tree.clone()),
+                TreeFeatureVariant::fallen(0.0125, default_tree),
+            ],
+        }
+    }
+
+    fn birch_bees_0002() -> Self {
+        let default_tree = OakTreeConfig::birch_bees_0002();
+        Self {
+            default_tree: default_tree.clone(),
+            variants: vec![TreeFeatureVariant::fallen(0.0125, default_tree)],
+        }
+    }
+
+    fn tall_birch_bees_0002() -> Self {
+        let default_tree = OakTreeConfig::birch_bees_0002();
+        let super_birch = OakTreeConfig::super_birch_bees_0002();
+        Self {
+            default_tree: default_tree.clone(),
+            variants: vec![
+                TreeFeatureVariant::fallen(0.00625, super_birch.clone()),
+                TreeFeatureVariant::standing(0.5, super_birch),
+                TreeFeatureVariant::fallen(0.0125, default_tree),
+            ],
         }
     }
 
@@ -5341,29 +5402,19 @@ impl TreeFeatureConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
-        if random.next_float() < self.fancy_chance {
-            return self.default_tree.place(
-                settings,
-                chunk_min_x,
-                chunk_min_z,
-                chunk,
-                random,
-                world_x,
-                world_y,
-                world_z,
-            );
-        }
-        if random.next_float() < self.fallen_chance {
-            return self.default_tree.place_fallen(
-                settings,
-                chunk_min_x,
-                chunk_min_z,
-                chunk,
-                random,
-                world_x,
-                world_y,
-                world_z,
-            );
+        for variant in &self.variants {
+            if random.next_float() < variant.chance {
+                return variant.place(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+            }
         }
         self.default_tree.place(
             settings,
@@ -5379,6 +5430,73 @@ impl TreeFeatureConfig {
 }
 
 #[derive(Debug, Clone)]
+struct TreeFeatureVariant {
+    chance: f32,
+    tree: OakTreeConfig,
+    placement: TreePlacementKind,
+}
+
+impl TreeFeatureVariant {
+    fn standing(chance: f32, tree: OakTreeConfig) -> Self {
+        Self {
+            chance,
+            tree,
+            placement: TreePlacementKind::Standing,
+        }
+    }
+
+    fn fallen(chance: f32, tree: OakTreeConfig) -> Self {
+        Self {
+            chance,
+            tree,
+            placement: TreePlacementKind::Fallen,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        match self.placement {
+            TreePlacementKind::Standing => self.tree.place(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            ),
+            TreePlacementKind::Fallen => self.tree.place_fallen(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TreePlacementKind {
+    Standing,
+    Fallen,
+}
+
+#[derive(Debug, Clone)]
 struct OakTreeConfig {
     trunk: BlockLayer,
     leaves: BlockLayer,
@@ -5386,9 +5504,12 @@ struct OakTreeConfig {
     bee_nest: BlockLayer,
     base_height: i32,
     height_rand_a: i32,
+    height_rand_b: i32,
     foliage_height: i32,
     foliage_radius: i32,
     beehive_probability: f32,
+    fallen_min_length: i32,
+    fallen_max_length: i32,
 }
 
 impl OakTreeConfig {
@@ -5410,9 +5531,47 @@ impl OakTreeConfig {
             ),
             base_height: 4,
             height_rand_a: 2,
+            height_rand_b: 0,
             foliage_height: 3,
             foliage_radius: 2,
             beehive_probability: 0.05,
+            fallen_min_length: 4,
+            fallen_max_length: 7,
+        }
+    }
+
+    fn birch_bees_0002() -> Self {
+        Self {
+            trunk: BlockLayer::with_properties("minecraft:birch_log", &[("axis", "y")]),
+            leaves: BlockLayer::with_properties(
+                "minecraft:birch_leaves",
+                &[
+                    ("distance", "7"),
+                    ("persistent", "false"),
+                    ("waterlogged", "false"),
+                ],
+            ),
+            dirt: BlockLayer::new("minecraft:dirt"),
+            bee_nest: BlockLayer::with_properties(
+                "minecraft:bee_nest",
+                &[("facing", "south"), ("honey_level", "0")],
+            ),
+            base_height: 5,
+            height_rand_a: 2,
+            height_rand_b: 0,
+            foliage_height: 3,
+            foliage_radius: 2,
+            beehive_probability: 0.002,
+            fallen_min_length: 5,
+            fallen_max_length: 8,
+        }
+    }
+
+    fn super_birch_bees_0002() -> Self {
+        Self {
+            height_rand_b: 6,
+            fallen_max_length: 15,
+            ..Self::birch_bees_0002()
         }
     }
 
@@ -5428,7 +5587,10 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
-        let tree_height = self.base_height + random.next_int(self.height_rand_a + 1);
+        let mut tree_height = self.base_height + random.next_int(self.height_rand_a + 1);
+        if self.height_rand_b > 0 {
+            tree_height += random.next_int(self.height_rand_b + 1);
+        }
         if !self.has_space(
             settings,
             chunk_min_x,
@@ -5528,7 +5690,8 @@ impl OakTreeConfig {
         world_z: i32,
     ) -> bool {
         let direction = horizontal_directions()[random.next_int(4) as usize];
-        let length = 2 + random.next_int(4);
+        let length = self.fallen_min_length
+            + random.next_int(self.fallen_max_length - self.fallen_min_length + 1);
         let start_x = world_x + direction.0 * (2 + random.next_int(2));
         let start_z = world_z + direction.1 * (2 + random.next_int(2));
         let axis = if direction.0 != 0 { "x" } else { "z" };
@@ -7478,6 +7641,10 @@ fn is_log_layer(layer: &BlockLayer) -> bool {
             | "minecraft:oak_wood"
             | "minecraft:stripped_oak_log"
             | "minecraft:stripped_oak_wood"
+            | "minecraft:birch_log"
+            | "minecraft:birch_wood"
+            | "minecraft:stripped_birch_log"
+            | "minecraft:stripped_birch_wood"
     )
 }
 
@@ -7552,7 +7719,7 @@ fn cannot_replace_below_tree_trunk(layer: &BlockLayer) -> bool {
     )
 }
 
-fn oak_sapling_would_survive_at(
+fn sapling_would_survive_at(
     chunk: &NoiseChunkBlocks,
     chunk_min_x: i32,
     chunk_min_z: i32,
@@ -10012,20 +10179,37 @@ mod tests {
     #[test]
     fn vanilla_noise_configures_trees_plains() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
-        let feature = &settings.ore_features.trees_plains;
+        let feature = settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == 3)
+            .unwrap();
 
         assert_eq!(feature.step_index, 9);
         assert_eq!(feature.feature_index, 3);
         assert_eq!(feature.surface_water_depth, 0);
         assert_eq!(feature.count.entries, vec![(0, 19), (1, 1)]);
         assert_eq!(feature.count.total_weight, 20);
-        assert_eq!(feature.config.fancy_chance, 0.333_333_34);
-        assert_eq!(feature.config.fallen_chance, 0.0125);
+        assert_eq!(feature.config.variants.len(), 2);
+        assert_eq!(feature.config.variants[0].chance, 0.333_333_34);
+        assert_eq!(
+            feature.config.variants[0].placement,
+            TreePlacementKind::Standing
+        );
+        assert_eq!(feature.config.variants[1].chance, 0.0125);
+        assert_eq!(
+            feature.config.variants[1].placement,
+            TreePlacementKind::Fallen
+        );
         assert_eq!(feature.config.default_tree.base_height, 4);
         assert_eq!(feature.config.default_tree.height_rand_a, 2);
+        assert_eq!(feature.config.default_tree.height_rand_b, 0);
         assert_eq!(feature.config.default_tree.foliage_height, 3);
         assert_eq!(feature.config.default_tree.foliage_radius, 2);
         assert_eq!(feature.config.default_tree.beehive_probability, 0.05);
+        assert_eq!(feature.config.default_tree.fallen_min_length, 4);
+        assert_eq!(feature.config.default_tree.fallen_max_length, 7);
         assert!(feature.config.default_tree.trunk.is("minecraft:oak_log"));
         assert!(
             feature
@@ -10034,6 +10218,81 @@ mod tests {
                 .leaves
                 .is("minecraft:oak_leaves")
         );
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == PLAINS_TREE_BIOMES
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_birch_trees() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let birch = settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == 42)
+            .unwrap();
+        let tall_birch = settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == 43)
+            .unwrap();
+
+        assert_eq!(birch.step_index, 9);
+        assert_eq!(birch.count.entries, vec![(10, 9), (11, 1)]);
+        assert_eq!(birch.count.total_weight, 10);
+        assert_eq!(birch.config.variants.len(), 1);
+        assert_eq!(birch.config.variants[0].chance, 0.0125);
+        assert_eq!(
+            birch.config.variants[0].placement,
+            TreePlacementKind::Fallen
+        );
+        assert_eq!(birch.config.default_tree.base_height, 5);
+        assert_eq!(birch.config.default_tree.height_rand_a, 2);
+        assert_eq!(birch.config.default_tree.height_rand_b, 0);
+        assert_eq!(birch.config.default_tree.beehive_probability, 0.002);
+        assert_eq!(birch.config.default_tree.fallen_min_length, 5);
+        assert_eq!(birch.config.default_tree.fallen_max_length, 8);
+        assert!(birch.config.default_tree.trunk.is("minecraft:birch_log"));
+        assert!(
+            birch
+                .config
+                .default_tree
+                .leaves
+                .is("minecraft:birch_leaves")
+        );
+        assert!(matches!(
+            birch.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == BIRCH_TREE_BIOMES
+        ));
+
+        assert_eq!(tall_birch.step_index, 9);
+        assert_eq!(tall_birch.count.entries, vec![(10, 9), (11, 1)]);
+        assert_eq!(tall_birch.config.variants.len(), 3);
+        assert_eq!(tall_birch.config.variants[0].chance, 0.00625);
+        assert_eq!(
+            tall_birch.config.variants[0].placement,
+            TreePlacementKind::Fallen
+        );
+        assert_eq!(tall_birch.config.variants[0].tree.height_rand_b, 6);
+        assert_eq!(tall_birch.config.variants[0].tree.fallen_max_length, 15);
+        assert_eq!(tall_birch.config.variants[1].chance, 0.5);
+        assert_eq!(
+            tall_birch.config.variants[1].placement,
+            TreePlacementKind::Standing
+        );
+        assert_eq!(tall_birch.config.variants[1].tree.height_rand_b, 6);
+        assert_eq!(tall_birch.config.variants[2].chance, 0.0125);
+        assert_eq!(
+            tall_birch.config.variants[2].placement,
+            TreePlacementKind::Fallen
+        );
+        assert!(matches!(
+            tall_birch.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == TALL_BIRCH_TREE_BIOMES
+        ));
     }
 
     #[test]
@@ -11288,6 +11547,63 @@ mod tests {
                 .blocks
                 .iter()
                 .any(|layer| layer.is("minecraft:oak_leaves"))
+        }));
+        assert_eq!(
+            chunk
+                .layer(8, 64, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:dirt")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_trees_birch_places_logs_and_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(OakTreeConfig::birch_bees_0002().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:birch_log"))
+        }));
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:birch_leaves"))
         }));
         assert_eq!(
             chunk
