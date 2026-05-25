@@ -4239,6 +4239,7 @@ dependencies = [
  "qexed_protocol",
  "qexed_tcp_connect",
  "rand 0.8.6",
+ "rayon",
  "reqwest 0.12.28",
  "rust-i18n",
  "serde",

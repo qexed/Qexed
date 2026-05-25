@@ -137,26 +137,71 @@ impl BlendedNoise {
     }
 
     pub(crate) fn compute(&self, block_x: i32, block_y: i32, block_z: i32) -> f64 {
+        self.column_sampler(block_x, block_z).compute(block_y)
+    }
+
+    pub(crate) fn column_sampler(&self, block_x: i32, block_z: i32) -> BlendedNoiseColumn<'_> {
         let limit_x = block_x as f64 * self.xz_multiplier;
-        let limit_y = block_y as f64 * self.y_multiplier;
         let limit_z = block_z as f64 * self.xz_multiplier;
         let main_x = limit_x / self.xz_factor;
-        let main_y = limit_y / self.y_factor;
         let main_z = limit_z / self.xz_factor;
         let limit_smear = self.y_multiplier * self.smear_scale_multiplier;
         let main_smear = limit_smear / self.y_factor;
+
+        let mut main_xz = [(0.0, 0.0); 8];
+        let mut limit_xz = [(0.0, 0.0); 16];
+        let mut pow = 1.0;
+        for entry in &mut main_xz {
+            *entry = (wrap(main_x * pow), wrap(main_z * pow));
+            pow /= 2.0;
+        }
+
+        pow = 1.0;
+        for entry in &mut limit_xz {
+            *entry = (wrap(limit_x * pow), wrap(limit_z * pow));
+            pow /= 2.0;
+        }
+
+        BlendedNoiseColumn {
+            noise: self,
+            main_xz,
+            limit_xz,
+            y_multiplier: self.y_multiplier,
+            y_factor: self.y_factor,
+            limit_smear,
+            main_smear,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BlendedNoiseColumn<'a> {
+    noise: &'a BlendedNoise,
+    main_xz: [(f64, f64); 8],
+    limit_xz: [(f64, f64); 16],
+    y_multiplier: f64,
+    y_factor: f64,
+    limit_smear: f64,
+    main_smear: f64,
+}
+
+impl BlendedNoiseColumn<'_> {
+    pub(crate) fn compute(&self, block_y: i32) -> f64 {
+        let limit_y = block_y as f64 * self.y_multiplier;
+        let main_y = limit_y / self.y_factor;
         let mut blend_min = 0.0;
         let mut blend_max = 0.0;
         let mut main_noise_value = 0.0;
         let mut pow = 1.0;
 
         for i in 0..8 {
-            if let Some(noise) = self.main_noise.get_octave_noise(i) {
+            if let Some(noise) = self.noise.main_noise.get_octave_noise(i) {
+                let (main_x, main_z) = self.main_xz[i];
                 main_noise_value += noise.noise(
-                    wrap(main_x * pow),
+                    main_x,
                     wrap(main_y * pow),
-                    wrap(main_z * pow),
-                    main_smear * pow,
+                    main_z,
+                    self.main_smear * pow,
                     main_y * pow,
                 ) / pow;
             }
@@ -169,16 +214,15 @@ impl BlendedNoise {
         pow = 1.0;
 
         for i in 0..16 {
-            let wx = wrap(limit_x * pow);
+            let (wx, wz) = self.limit_xz[i];
             let wy = wrap(limit_y * pow);
-            let wz = wrap(limit_z * pow);
-            let y_scale_pow = limit_smear * pow;
+            let y_scale_pow = self.limit_smear * pow;
 
-            if !is_max && let Some(noise) = self.min_limit_noise.get_octave_noise(i) {
+            if !is_max && let Some(noise) = self.noise.min_limit_noise.get_octave_noise(i) {
                 blend_min += noise.noise(wx, wy, wz, y_scale_pow, limit_y * pow) / pow;
             }
 
-            if !is_min && let Some(noise) = self.max_limit_noise.get_octave_noise(i) {
+            if !is_min && let Some(noise) = self.noise.max_limit_noise.get_octave_noise(i) {
                 blend_max += noise.noise(wx, wy, wz, y_scale_pow, limit_y * pow) / pow;
             }
 
@@ -451,6 +495,26 @@ impl OverworldTerrainNoise {
         post_processed.min(self.noodle.sample(block_x, block_y, block_z))
     }
 
+    pub(crate) fn column_sampler<'a>(
+        &'a self,
+        profile: &'a OverworldTerrainProfile,
+        block_x: i32,
+        block_z: i32,
+    ) -> OverworldTerrainColumn<'a> {
+        OverworldTerrainColumn {
+            noise: self,
+            profile,
+            block_x,
+            block_z,
+            jagged: profile.jaggedness
+                * half_negative(self.jagged.get_value(
+                    block_x as f64 * 1500.0,
+                    0.0,
+                    block_z as f64 * 1500.0,
+                )),
+        }
+    }
+
     pub(crate) fn preliminary_surface_height(
         &self,
         profile: &OverworldTerrainProfile,
@@ -503,6 +567,43 @@ impl OverworldTerrainNoise {
                 block_z as f64 * 1500.0,
             ));
         4.0 * quarter_negative((depth + jagged) * profile.factor) + base_3d_noise
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OverworldTerrainColumn<'a> {
+    noise: &'a OverworldTerrainNoise,
+    profile: &'a OverworldTerrainProfile,
+    block_x: i32,
+    block_z: i32,
+    jagged: f64,
+}
+
+impl OverworldTerrainColumn<'_> {
+    pub(crate) fn final_density(&self, block_y: i32, base_3d_noise: f64) -> f64 {
+        let sloped_cheese = self.sloped_cheese_density(block_y, base_3d_noise);
+        let entrances = self
+            .noise
+            .caves
+            .entrances(self.block_x, block_y, self.block_z);
+        let caves = if sloped_cheese < 1.5625 {
+            sloped_cheese.min(5.0 * entrances)
+        } else {
+            self.noise.caves.underground_density(
+                self.block_x,
+                block_y,
+                self.block_z,
+                sloped_cheese,
+                entrances,
+            )
+        };
+        let post_processed = post_process_density(slide_overworld(block_y, caves));
+        post_processed.min(self.noise.noodle.sample(self.block_x, block_y, self.block_z))
+    }
+
+    fn sloped_cheese_density(&self, block_y: i32, base_3d_noise: f64) -> f64 {
+        let depth = y_clamped_gradient(block_y, -64, 320, 1.5, -1.5) + self.profile.offset;
+        4.0 * quarter_negative((depth + self.jagged) * self.profile.factor) + base_3d_noise
     }
 }
 

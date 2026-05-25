@@ -382,7 +382,7 @@ impl GpuLightInner {
     }
 }
 
-fn select_adapter(
+pub(super) fn select_adapter(
     instance: &wgpu::Instance,
     selector: &GpuDeviceSelector,
 ) -> Result<wgpu::Adapter> {
@@ -418,7 +418,7 @@ fn adapter_by_type(
         .cloned()
 }
 
-fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+pub(super) fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
@@ -431,7 +431,7 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn compute_pipeline(
+pub(super) fn compute_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,

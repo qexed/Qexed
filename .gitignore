@@ -25,6 +25,7 @@
 /qexed-config-docs
 /META-INF
 /assets/LuckPerms-master
+/assets/seed-123456
 .idea
 # 未使用的代码
 /crates/service/qexed/unuse

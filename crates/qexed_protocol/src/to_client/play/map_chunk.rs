@@ -66,7 +66,7 @@ pub struct BlockEntities {
     pub xz: u8,
     pub y: u16,
     pub entity_type: VarInt,
-    pub nbt: Vec<qexed_nbt::Tag>,
+    pub nbt: qexed_packet::net_types::OptionalNbt,
 }
 #[qexed_packet_macros::substruct]
 #[derive(Debug, Default, PartialEq, Clone)]

@@ -1,6 +1,7 @@
 pub mod chunk_nbt;
 pub mod generator;
 mod gpu_light;
+mod gpu_worldgen;
 pub mod region;
 mod vanilla_noise;
 

@@ -565,6 +565,22 @@ pub(crate) fn default_block_state(name: &str) -> BlockStateDefinition {
         })
 }
 
+pub(crate) fn block_state(name: &str, properties: &[(String, String)]) -> BlockStateDefinition {
+    let name = normalize_identifier(name);
+    let key = state_key(&name, properties);
+    block_state_registry()
+        .id_by_state
+        .get(&key)
+        .map(|id| BlockStateDefinition {
+            id: *id,
+            properties: properties.to_vec(),
+        })
+        .unwrap_or_else(|| {
+            log::warn!("unknown block state, using default state: {key}");
+            default_block_state(&name)
+        })
+}
+
 #[cfg(test)]
 pub(crate) fn default_block_state_id(name: &str) -> i32 {
     default_block_state(name).id

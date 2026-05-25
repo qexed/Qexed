@@ -2,19 +2,22 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
 use qexed_config::app::qexed::server::{
-    World as WorldConfig, WorldGenerator as WorldGeneratorConfig,
+    World as WorldConfig, WorldGenerator as WorldGeneratorConfig, WorldGpu,
 };
 use qexed_nbt::{ListHeader, Tag, tag_id};
-use qexed_protocol::to_client::play::map_chunk::MapChunk;
+use qexed_packet::net_types::{OptionalNbt, VarInt};
+use qexed_protocol::to_client::play::map_chunk::{BlockEntities, MapChunk};
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use super::{
     CHUNK_DAMPENING_LEN, SECTION_HEIGHT, WORLD_MAX_Y, WORLD_MIN_SECTION_Y, WORLD_MIN_Y,
-    WorldLightAlgorithm, chunk_nbt, empty_chunk_packet, section_count, vanilla_noise,
+    WorldLightAlgorithm, chunk_nbt, empty_chunk_packet, gpu_worldgen, section_count, vanilla_noise,
 };
 
 const DEFAULT_FLAT_PRESET: &str = "minecraft:classic_flat";
@@ -26,6 +29,7 @@ const NOISE_SETTINGS_ROOT: &str =
 const HEIGHTMAP_BITS: usize = 9;
 const HEIGHTMAP_ENTRY_COUNT: usize = 16 * 16;
 const BLOCK_ENTRY_COUNT: usize = 16 * 16 * 16;
+const SLOW_NOISE_CHUNK_LOG_THRESHOLD: Duration = Duration::from_millis(200);
 const CARVER_RANGE: i32 = 4;
 const CARVER_SOURCE_RANGE: i32 = 8;
 const EMERALD_ORE_BIOMES: &[&str] = &[
@@ -46,6 +50,123 @@ const BADLANDS_ORE_BIOMES: &[&str] = &[
     "minecraft:wooded_badlands",
 ];
 const DRIPSTONE_CAVES_ORE_BIOMES: &[&str] = &["minecraft:dripstone_caves"];
+const FLOWER_PLAINS_BIOMES: &[&str] = &[
+    "minecraft:plains",
+    "minecraft:sunflower_plains",
+    "minecraft:deep_dark",
+    "minecraft:dripstone_caves",
+];
+const PATCH_GRASS_PLAIN_BIOMES: &[&str] = &[
+    "minecraft:plains",
+    "minecraft:sunflower_plains",
+    "minecraft:deep_dark",
+    "minecraft:dripstone_caves",
+    "minecraft:cherry_grove",
+];
+const NORMAL_MUSHROOM_BIOMES: &[&str] = &[
+    "minecraft:badlands",
+    "minecraft:bamboo_jungle",
+    "minecraft:beach",
+    "minecraft:birch_forest",
+    "minecraft:cold_ocean",
+    "minecraft:dark_forest",
+    "minecraft:deep_cold_ocean",
+    "minecraft:deep_dark",
+    "minecraft:deep_frozen_ocean",
+    "minecraft:deep_lukewarm_ocean",
+    "minecraft:deep_ocean",
+    "minecraft:desert",
+    "minecraft:dripstone_caves",
+    "minecraft:eroded_badlands",
+    "minecraft:flower_forest",
+    "minecraft:forest",
+    "minecraft:frozen_ocean",
+    "minecraft:frozen_river",
+    "minecraft:ice_spikes",
+    "minecraft:jungle",
+    "minecraft:lukewarm_ocean",
+    "minecraft:ocean",
+    "minecraft:old_growth_birch_forest",
+    "minecraft:old_growth_pine_taiga",
+    "minecraft:old_growth_spruce_taiga",
+    "minecraft:plains",
+    "minecraft:river",
+    "minecraft:savanna",
+    "minecraft:savanna_plateau",
+    "minecraft:snowy_beach",
+    "minecraft:snowy_plains",
+    "minecraft:sparse_jungle",
+    "minecraft:stony_shore",
+    "minecraft:sunflower_plains",
+    "minecraft:swamp",
+    "minecraft:warm_ocean",
+    "minecraft:windswept_forest",
+    "minecraft:windswept_gravelly_hills",
+    "minecraft:windswept_hills",
+    "minecraft:windswept_savanna",
+    "minecraft:wooded_badlands",
+];
+const PUMPKIN_PATCH_BIOMES: &[&str] = &[
+    "minecraft:badlands",
+    "minecraft:bamboo_jungle",
+    "minecraft:beach",
+    "minecraft:birch_forest",
+    "minecraft:cold_ocean",
+    "minecraft:dark_forest",
+    "minecraft:deep_cold_ocean",
+    "minecraft:deep_dark",
+    "minecraft:deep_frozen_ocean",
+    "minecraft:deep_lukewarm_ocean",
+    "minecraft:deep_ocean",
+    "minecraft:desert",
+    "minecraft:dripstone_caves",
+    "minecraft:eroded_badlands",
+    "minecraft:flower_forest",
+    "minecraft:forest",
+    "minecraft:frozen_ocean",
+    "minecraft:frozen_river",
+    "minecraft:grove",
+    "minecraft:ice_spikes",
+    "minecraft:jungle",
+    "minecraft:lukewarm_ocean",
+    "minecraft:ocean",
+    "minecraft:old_growth_birch_forest",
+    "minecraft:old_growth_pine_taiga",
+    "minecraft:old_growth_spruce_taiga",
+    "minecraft:pale_garden",
+    "minecraft:plains",
+    "minecraft:river",
+    "minecraft:savanna",
+    "minecraft:savanna_plateau",
+    "minecraft:snowy_beach",
+    "minecraft:snowy_plains",
+    "minecraft:snowy_slopes",
+    "minecraft:snowy_taiga",
+    "minecraft:sparse_jungle",
+    "minecraft:stony_shore",
+    "minecraft:sunflower_plains",
+    "minecraft:swamp",
+    "minecraft:taiga",
+    "minecraft:warm_ocean",
+    "minecraft:windswept_forest",
+    "minecraft:windswept_gravelly_hills",
+    "minecraft:windswept_hills",
+    "minecraft:windswept_savanna",
+    "minecraft:wooded_badlands",
+];
+const SUNFLOWER_PATCH_BIOMES: &[&str] = &["minecraft:sunflower_plains"];
+const PLAINS_FLOWER_LOW_BLOCKS: &[&str] = &[
+    "minecraft:orange_tulip",
+    "minecraft:red_tulip",
+    "minecraft:pink_tulip",
+    "minecraft:white_tulip",
+];
+const PLAINS_FLOWER_HIGH_BLOCKS: &[&str] = &[
+    "minecraft:poppy",
+    "minecraft:azure_bluet",
+    "minecraft:oxeye_daisy",
+    "minecraft:cornflower",
+];
 const DISK_DIRT_GRASS_TARGETS: &[&str] = &["minecraft:dirt", "minecraft:grass_block"];
 const DISK_DIRT_CLAY_TARGETS: &[&str] = &["minecraft:dirt", "minecraft:clay"];
 const SPRING_WATER_VALID_BLOCKS: &[&str] = &[
@@ -71,6 +192,32 @@ const SPRING_LAVA_VALID_BLOCKS: &[&str] = &[
     "minecraft:calcite",
     "minecraft:dirt",
 ];
+const GLOW_LICHEN_CAN_BE_PLACED_ON: &[&str] = &[
+    "minecraft:stone",
+    "minecraft:andesite",
+    "minecraft:diorite",
+    "minecraft:granite",
+    "minecraft:dripstone_block",
+    "minecraft:calcite",
+    "minecraft:tuff",
+    "minecraft:deepslate",
+];
+const SUPPORTS_VEGETATION_BLOCKS: &[&str] = &[
+    "minecraft:dirt",
+    "minecraft:coarse_dirt",
+    "minecraft:rooted_dirt",
+    "minecraft:mud",
+    "minecraft:muddy_mangrove_roots",
+    "minecraft:moss_block",
+    "minecraft:pale_moss_block",
+    "minecraft:grass_block",
+    "minecraft:podzol",
+    "minecraft:mycelium",
+    "minecraft:farmland",
+];
+const CHEST_BLOCK_ENTITY_TYPE_ID: i32 = 1;
+const MOB_SPAWNER_BLOCK_ENTITY_TYPE_ID: i32 = 9;
+const BEEHIVE_BLOCK_ENTITY_TYPE_ID: i32 = 34;
 
 pub(crate) struct GeneratedChunk {
     pub packet: MapChunk,
@@ -112,6 +259,23 @@ pub(crate) fn from_config(config: &WorldConfig) -> Arc<dyn WorldChunkGenerator> 
             config.generator_preset.trim(),
         )),
         WorldGeneratorConfig::VanillaNoise => Arc::new(VanillaNoiseGenerator::from_config(config)),
+    }
+}
+
+fn worldgen_gpu_from_config(
+    config: &WorldGpu,
+    height: i32,
+) -> Option<Arc<gpu_worldgen::GpuWorldgenEngine>> {
+    if !config.enable {
+        return None;
+    }
+
+    match gpu_worldgen::GpuWorldgenEngine::new(&config.device, height) {
+        Ok(engine) => Some(Arc::new(engine)),
+        Err(err) => {
+            log::warn!("GPU 世界生成后处理初始化失败，已回退 CPU: {err:#}");
+            None
+        }
     }
 }
 
@@ -220,6 +384,7 @@ impl WorldChunkGenerator for VanillaFlatGenerator {
 #[derive(Debug)]
 pub(crate) struct VanillaNoiseGenerator {
     settings: NoiseSettings,
+    gpu_worldgen: Option<Arc<gpu_worldgen::GpuWorldgenEngine>>,
 }
 
 impl VanillaNoiseGenerator {
@@ -232,18 +397,27 @@ impl VanillaNoiseGenerator {
         };
 
         match load_noise_settings(preset, config.seed) {
-            Ok(settings) => Self { settings },
+            Ok(settings) => Self::from_settings(settings, config),
             Err(err) => {
                 log::warn!(
                     "failed to load vanilla noise settings {preset}, using overworld: {err:#}"
                 );
-                Self {
-                    settings: NoiseSettings::overworld(
+                Self::from_settings(
+                    NoiseSettings::overworld(
                         config.seed,
                         vanilla_noise::OverworldNoiseKind::Default,
                     ),
-                }
+                    config,
+                )
             }
+        }
+    }
+
+    fn from_settings(settings: NoiseSettings, config: &WorldConfig) -> Self {
+        let gpu_worldgen = worldgen_gpu_from_config(&config.gpu, settings.height);
+        Self {
+            settings,
+            gpu_worldgen,
         }
     }
 }
@@ -256,14 +430,39 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         chunk_z: i32,
         light_algorithm: WorldLightAlgorithm,
     ) -> Result<GeneratedChunk> {
-        let chunk = self.settings.generate_chunk(chunk_x, chunk_z);
+        let total_start = Instant::now();
+        let (chunk, timings) =
+            self.settings
+                .generate_chunk_profiled(chunk_x, chunk_z, self.gpu_worldgen.as_deref());
+
+        let root_start = Instant::now();
         let root = noise_chunk_root(&chunk, self.settings.biome.as_str());
+        let root_elapsed = root_start.elapsed();
+
+        let packet_start = Instant::now();
         let (packet, light_dampening) = chunk_nbt::network_chunk_and_light_dampening_from_nbt(
             chunk_x,
             chunk_z,
             &root,
             light_algorithm,
         )?;
+        let packet_elapsed = packet_start.elapsed();
+
+        let block_entities_start = Instant::now();
+        let mut packet = packet;
+        packet.data.block_entities = chunk.block_entities_as_packet(chunk_x, chunk_z);
+        let block_entities_elapsed = block_entities_start.elapsed();
+
+        log_noise_chunk_timings(
+            chunk_x,
+            chunk_z,
+            total_start.elapsed(),
+            &timings,
+            root_elapsed,
+            packet_elapsed,
+            block_entities_elapsed,
+        );
+
         Ok(GeneratedChunk {
             packet,
             light_dampening,
@@ -278,6 +477,44 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         self.settings
             .block_state_at(position.x, position.y, position.z)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NoiseChunkTimings {
+    base: Duration,
+    carvers: Duration,
+    features: Duration,
+    heightmap: Duration,
+}
+
+fn log_noise_chunk_timings(
+    chunk_x: i32,
+    chunk_z: i32,
+    total: Duration,
+    timings: &NoiseChunkTimings,
+    root: Duration,
+    packet: Duration,
+    block_entities: Duration,
+) {
+    if total < SLOW_NOISE_CHUNK_LOG_THRESHOLD || !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+
+    log::debug!(
+        "vanilla_noise 区块生成耗时: chunk=({chunk_x}, {chunk_z}), total_ms={:.2}, base_ms={:.2}, carvers_ms={:.2}, features_ms={:.2}, heightmap_ms={:.2}, nbt_root_ms={:.2}, packet_ms={:.2}, block_entities_ms={:.2}",
+        duration_ms(total),
+        duration_ms(timings.base),
+        duration_ms(timings.carvers),
+        duration_ms(timings.features),
+        duration_ms(timings.heightmap),
+        duration_ms(root),
+        duration_ms(packet),
+        duration_ms(block_entities)
+    );
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +556,8 @@ struct NoiseSettings {
     min_y: i32,
     height: i32,
     sea_level: i32,
+    air_block: BlockLayer,
+    bedrock_block: BlockLayer,
     default_block: BlockLayer,
     default_fluid: BlockLayer,
     lava_block: BlockLayer,
@@ -359,6 +598,9 @@ struct NoiseSettings {
     ore_veins: vanilla_noise::OreVeinNoise,
     carvers: VanillaCarvers,
     ore_features: OverworldOreFeatures,
+    lava_lake_fluid_block: BlockLayer,
+    lava_lake_barrier_block: BlockLayer,
+    cave_air_block: BlockLayer,
 }
 
 impl NoiseSettings {
@@ -369,6 +611,8 @@ impl NoiseSettings {
             min_y: WORLD_MIN_Y,
             height: super::WORLD_SECTION_COUNT as i32 * SECTION_HEIGHT,
             sea_level,
+            air_block: BlockLayer::new("minecraft:air"),
+            bedrock_block: BlockLayer::new("minecraft:bedrock"),
             default_block: BlockLayer::new("minecraft:stone"),
             default_fluid: BlockLayer::new("minecraft:water"),
             lava_block: BlockLayer::new("minecraft:lava"),
@@ -409,23 +653,64 @@ impl NoiseSettings {
             ore_veins: vanilla_noise::OreVeinNoise::new(seed),
             carvers: VanillaCarvers::new(seed),
             ore_features: OverworldOreFeatures::new(seed),
+            lava_lake_fluid_block: BlockLayer::new("minecraft:lava"),
+            lava_lake_barrier_block: BlockLayer::new("minecraft:stone"),
+            cave_air_block: BlockLayer::new("minecraft:cave_air"),
         }
     }
 
+    #[cfg(test)]
     fn generate_chunk(&self, chunk_x: i32, chunk_z: i32) -> NoiseChunkBlocks {
+        self.generate_chunk_with_gpu(chunk_x, chunk_z, None)
+    }
+
+    #[cfg(test)]
+    fn generate_chunk_with_gpu(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        gpu: Option<&gpu_worldgen::GpuWorldgenEngine>,
+    ) -> NoiseChunkBlocks {
+        self.generate_chunk_profiled(chunk_x, chunk_z, gpu).0
+    }
+
+    fn generate_chunk_profiled(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        gpu: Option<&gpu_worldgen::GpuWorldgenEngine>,
+    ) -> (NoiseChunkBlocks, NoiseChunkTimings) {
+        let base_start = Instant::now();
         let (mut chunk, preliminary_surfaces) = self.generate_base_chunk(chunk_x, chunk_z);
+        let base = base_start.elapsed();
+
+        let carvers_start = Instant::now();
         self.carvers
             .carve_chunk(self, chunk_x, chunk_z, &preliminary_surfaces, &mut chunk);
+        let carvers = carvers_start.elapsed();
+
+        let features_start = Instant::now();
         self.ore_features
             .place_chunk(self, chunk_x, chunk_z, &mut chunk);
-        chunk.recompute_first_available_heights(self.min_y, self.height);
-        chunk
+        let features = features_start.elapsed();
+
+        let heightmap_start = Instant::now();
+        chunk.recompute_first_available_heights_accelerated(self.min_y, self.height, gpu);
+        let heightmap = heightmap_start.elapsed();
+
+        (
+            chunk,
+            NoiseChunkTimings {
+                base,
+                carvers,
+                features,
+                heightmap,
+            },
+        )
     }
 
     fn generate_base_chunk(&self, chunk_x: i32, chunk_z: i32) -> (NoiseChunkBlocks, Vec<i32>) {
-        let mut columns = Vec::with_capacity(HEIGHTMAP_ENTRY_COUNT);
         let mut profiles = Vec::with_capacity((17 * 17) as usize);
-        let mut surface_heights = Vec::with_capacity((17 * 17) as usize);
         let mut preliminary_surfaces = Vec::with_capacity(HEIGHTMAP_ENTRY_COUNT);
 
         for z in 0..=16 {
@@ -433,9 +718,7 @@ impl NoiseSettings {
                 let world_x = chunk_x * 16 + x;
                 let world_z = chunk_z * 16 + z;
                 let profile = self.density.profile(world_x, world_z);
-                let surface_height = self.surface_height_with_profile(world_x, world_z, &profile);
                 profiles.push(profile);
-                surface_heights.push(surface_height);
                 if x < 16 && z < 16 {
                     preliminary_surfaces.push(self.preliminary_surface_with_profile(
                         world_x,
@@ -446,8 +729,37 @@ impl NoiseSettings {
             }
         }
 
-        for z in 0..16 {
-            for x in 0..16 {
+        let column_density = (0..HEIGHTMAP_ENTRY_COUNT)
+            .into_par_iter()
+            .map(|column| {
+                let x = (column % 16) as i32;
+                let z = (column / 16) as i32;
+                let world_x = chunk_x * 16 + x;
+                let world_z = chunk_z * 16 + z;
+                let index = (z * 17 + x) as usize;
+                self.column_density_cache(world_x, world_z, &profiles[index])
+            })
+            .collect::<Vec<_>>();
+
+        let mut surface_heights = vec![self.min_y; (17 * 17) as usize];
+        for z in 0..=16 {
+            for x in 0..=16 {
+                let index = (z * 17 + x) as usize;
+                surface_heights[index] = if x < 16 && z < 16 {
+                    column_density[(z * 16 + x) as usize].surface_height
+                } else {
+                    let world_x = chunk_x * 16 + x;
+                    let world_z = chunk_z * 16 + z;
+                    self.surface_height_with_profile(world_x, world_z, &profiles[index])
+                };
+            }
+        }
+
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .into_par_iter()
+            .map(|column| {
+                let x = (column % 16) as i32;
+                let z = (column / 16) as i32;
                 let world_x = chunk_x * 16 + x;
                 let world_z = chunk_z * 16 + z;
                 let index = (z * 17 + x) as usize;
@@ -457,63 +769,64 @@ impl NoiseSettings {
                 let slope = (east_height - surface_height)
                     .abs()
                     .max((south_height - surface_height).abs());
-                columns.push(self.generate_column_with_profile(
+                self.generate_column_with_profile(
                     world_x,
                     world_z,
-                    &profiles[index],
+                    &column_density[column],
                     surface_height,
-                    preliminary_surfaces[(z * 16 + x) as usize],
+                    preliminary_surfaces[column],
                     slope,
-                ));
-            }
-        }
+                )
+            })
+            .collect();
         (
             NoiseChunkBlocks {
                 columns,
                 biomes: self.generate_biomes(chunk_x, chunk_z),
+                block_entities: Vec::new(),
             },
             preliminary_surfaces,
         )
     }
 
-    fn generate_biomes(&self, chunk_x: i32, chunk_z: i32) -> Vec<String> {
-        let mut biomes = Vec::with_capacity(section_count() as usize * 64);
-        for section_y in WORLD_MIN_SECTION_Y..WORLD_MIN_SECTION_Y + section_count() {
-            for local_x in 0..4 {
+    fn generate_biomes(&self, chunk_x: i32, chunk_z: i32) -> Vec<&'static str> {
+        (0..section_count() as usize * 64)
+            .into_par_iter()
+            .map(|index| {
+                let section_offset = index / 64;
+                let cell = index % 64;
+                let local_x = (cell / 16) as i32;
+                let local_y = ((cell / 4) % 4) as i32;
+                let local_z = (cell % 4) as i32;
+                let section_y = WORLD_MIN_SECTION_Y + section_offset as i32;
                 let world_x = chunk_x * 16 + local_x * 4;
-                for local_y in 0..4 {
-                    let world_y = section_y * SECTION_HEIGHT + local_y * 4;
-                    for local_z in 0..4 {
-                        let world_z = chunk_z * 16 + local_z * 4;
-                        biomes.push(self.density.biome(world_x, world_y, world_z).to_string());
-                    }
-                }
-            }
-        }
-        biomes
+                let world_y = section_y * SECTION_HEIGHT + local_y * 4;
+                let world_z = chunk_z * 16 + local_z * 4;
+                self.density.biome(world_x, world_y, world_z)
+            })
+            .collect()
     }
 
     fn generate_column_with_profile(
         &self,
         world_x: i32,
         world_z: i32,
-        profile: &vanilla_noise::OverworldTerrainProfile,
+        density_cache: &ColumnDensityCache,
         surface_height: i32,
         preliminary_surface: i32,
         surface_slope: i32,
     ) -> NoiseColumnBlocks {
-        let mut blocks = vec![self.air_layer(); self.height as usize];
+        let mut blocks = Vec::with_capacity(self.height as usize);
         for y in self.min_y..self.min_y + self.height {
-            let index = (y - self.min_y) as usize;
-            blocks[index] = self.layer_at(
+            blocks.push(self.layer_at_with_density(
                 world_x,
                 y,
                 world_z,
+                density_cache.density_at(y, self.min_y),
                 surface_height,
                 preliminary_surface,
                 surface_slope,
-                profile,
-            );
+            ));
         }
         NoiseColumnBlocks {
             blocks,
@@ -563,6 +876,31 @@ impl NoiseSettings {
             .clamp(self.min_y, self.min_y + self.height - 1)
     }
 
+    fn column_density_cache(
+        &self,
+        x: i32,
+        z: i32,
+        profile: &vanilla_noise::OverworldTerrainProfile,
+    ) -> ColumnDensityCache {
+        let mut densities = Vec::with_capacity(self.height as usize + 1);
+        let density_column = self.density.column_sampler(x, z, profile);
+        for y in self.min_y..=self.min_y + self.height {
+            densities.push(density_column.sample(y));
+        }
+
+        let surface_height = densities
+            .iter()
+            .rposition(|density| *density > 0.0)
+            .map(|index| self.min_y + index as i32)
+            .unwrap_or(self.min_y)
+            .clamp(self.min_y + 1, self.min_y + self.height - 1);
+
+        ColumnDensityCache {
+            surface_height,
+            densities,
+        }
+    }
+
     fn layer_at(
         &self,
         x: i32,
@@ -573,14 +911,40 @@ impl NoiseSettings {
         surface_slope: i32,
         profile: &vanilla_noise::OverworldTerrainProfile,
     ) -> BlockLayer {
+        let density = self.density.sample_with_profile(x, y, z, profile);
+        self.layer_at_with_density(
+            x,
+            y,
+            z,
+            density,
+            surface_height,
+            preliminary_surface,
+            surface_slope,
+        )
+    }
+
+    fn layer_at_with_density(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        density: f64,
+        surface_height: i32,
+        preliminary_surface: i32,
+        surface_slope: i32,
+    ) -> BlockLayer {
         if y <= self.min_y {
-            return BlockLayer::new("minecraft:bedrock");
+            return self.bedrock_block.clone();
         }
 
-        let density = self.density.sample(x, y, z, surface_height, profile);
+        let density = if y <= surface_height {
+            density
+        } else {
+            density.min(-1.0)
+        };
         if density > 0.0 {
             if self.surface_rules.is_bedrock_floor(x, y, z, self.min_y) {
-                return BlockLayer::new("minecraft:bedrock");
+                return self.bedrock_block.clone();
             }
 
             if y < surface_height - 8 {
@@ -623,7 +987,7 @@ impl NoiseSettings {
                     .ore_vein_at(x, y, z)
                     .unwrap_or_else(|| self.default_block.clone()),
                 vanilla_noise::AquiferSubstance::Fluid(vanilla_noise::AquiferFluid::Air) => {
-                    self.air_layer()
+                    self.air_block.clone()
                 }
                 vanilla_noise::AquiferSubstance::Fluid(vanilla_noise::AquiferFluid::Water) => {
                     self.default_fluid.clone()
@@ -637,7 +1001,7 @@ impl NoiseSettings {
 
     fn surface_block_layer(&self, block: vanilla_noise::SurfaceBlock) -> BlockLayer {
         match block {
-            vanilla_noise::SurfaceBlock::Bedrock => BlockLayer::new("minecraft:bedrock"),
+            vanilla_noise::SurfaceBlock::Bedrock => self.bedrock_block.clone(),
             vanilla_noise::SurfaceBlock::Stone => self.default_block.clone(),
             vanilla_noise::SurfaceBlock::Deepslate => self.deepslate_block.clone(),
             vanilla_noise::SurfaceBlock::Dirt => self.subsurface_block.clone(),
@@ -693,7 +1057,7 @@ impl NoiseSettings {
     }
 
     fn air_layer(&self) -> BlockLayer {
-        BlockLayer::new("minecraft:air")
+        self.air_block.clone()
     }
 }
 
@@ -734,26 +1098,11 @@ impl TerrainDensity {
         z: i32,
         profile: &vanilla_noise::OverworldTerrainProfile,
     ) -> i32 {
+        let density_column = self.column_sampler(x, z, profile);
         (-64..=320)
             .rev()
-            .find(|y| self.sample_with_profile(x, *y, z, &profile) > 0.0)
+            .find(|y| density_column.sample(*y) > 0.0)
             .unwrap_or(-64)
-    }
-
-    fn sample(
-        &self,
-        x: i32,
-        y: i32,
-        z: i32,
-        surface_height: i32,
-        profile: &vanilla_noise::OverworldTerrainProfile,
-    ) -> f64 {
-        let density = self.sample_with_profile(x, y, z, &profile);
-        if y <= surface_height {
-            density
-        } else {
-            density.min(-1.0)
-        }
     }
 
     fn sample_with_profile(
@@ -766,12 +1115,50 @@ impl TerrainDensity {
         let base_3d = self.blended_noise.compute(x, y, z);
         self.terrain_noise.final_density(profile, x, y, z, base_3d)
     }
+
+    fn column_sampler<'a>(
+        &'a self,
+        x: i32,
+        z: i32,
+        profile: &'a vanilla_noise::OverworldTerrainProfile,
+    ) -> TerrainDensityColumn<'a> {
+        TerrainDensityColumn {
+            blended_noise: self.blended_noise.column_sampler(x, z),
+            terrain_noise: self.terrain_noise.column_sampler(profile, x, z),
+        }
+    }
+}
+
+struct TerrainDensityColumn<'a> {
+    blended_noise: vanilla_noise::BlendedNoiseColumn<'a>,
+    terrain_noise: vanilla_noise::OverworldTerrainColumn<'a>,
+}
+
+impl TerrainDensityColumn<'_> {
+    fn sample(&self, y: i32) -> f64 {
+        let base_3d = self.blended_noise.compute(y);
+        self.terrain_noise.final_density(y, base_3d)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ColumnDensityCache {
+    surface_height: i32,
+    densities: Vec<f64>,
+}
+
+impl ColumnDensityCache {
+    fn density_at(&self, y: i32, min_y: i32) -> f64 {
+        let index = (y - min_y) as usize;
+        self.densities[index]
+    }
 }
 
 #[derive(Debug, Clone)]
 struct NoiseChunkBlocks {
     columns: Vec<NoiseColumnBlocks>,
-    biomes: Vec<String>,
+    biomes: Vec<&'static str>,
+    block_entities: Vec<GeneratedBlockEntity>,
 }
 
 impl NoiseChunkBlocks {
@@ -789,25 +1176,133 @@ impl NoiseChunkBlocks {
     }
 
     fn set_layer(&mut self, x: usize, y: i32, z: usize, min_y: i32, layer: BlockLayer) {
-        if let Ok(index) = usize::try_from(y - min_y)
-            && let Some(block) = self.column_mut(x, z).blocks.get_mut(index)
-        {
-            *block = layer;
+        if let Ok(index) = usize::try_from(y - min_y) {
+            let is_air = layer.is_air;
+            if !layer.is("minecraft:chest") && !layer.is("minecraft:spawner") {
+                self.remove_block_entity_by_local(x, y, z);
+            }
+            let column = self.column_mut(x, z);
+            if let Some(block) = column.blocks.get_mut(index) {
+                *block = layer;
+                update_first_available_height(column, index, is_air);
+            }
         }
     }
 
-    fn biome(&self, section_y: i32, x: usize, y: usize, z: usize) -> &str {
+    fn push_block_entity(
+        &mut self,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        entity_type: i32,
+        nbt: Tag,
+    ) {
+        self.block_entities
+            .retain(|entity| entity.position != (world_x, world_y, world_z));
+        self.block_entities.push(GeneratedBlockEntity {
+            position: (world_x, world_y, world_z),
+            entity_type,
+            nbt,
+        });
+    }
+
+    fn remove_block_entity_by_local(&mut self, local_x: usize, world_y: i32, local_z: usize) {
+        self.block_entities.retain(|entity| {
+            entity.position.1 != world_y
+                || entity.position.0.rem_euclid(16) as usize != local_x
+                || entity.position.2.rem_euclid(16) as usize != local_z
+        });
+    }
+
+    fn block_entities_as_packet(&self, chunk_x: i32, chunk_z: i32) -> Vec<BlockEntities> {
+        let chunk_min_x = chunk_x * 16;
+        let chunk_min_z = chunk_z * 16;
+        let mut entities = self
+            .block_entities
+            .iter()
+            .filter_map(|entity| {
+                let local_x = local_coord(entity.position.0, chunk_min_x)?;
+                let local_z = local_coord(entity.position.2, chunk_min_z)?;
+                Some(BlockEntities {
+                    xz: ((local_x as u8) << 4) | local_z as u8,
+                    y: entity.position.1 as u16,
+                    entity_type: VarInt(entity.entity_type),
+                    nbt: OptionalNbt(Some(entity.nbt.clone())),
+                })
+            })
+            .collect::<Vec<_>>();
+        entities.sort_by_key(|entity| (entity.y, entity.xz));
+        entities
+    }
+
+    fn biome(&self, section_y: i32, x: usize, y: usize, z: usize) -> &'static str {
         let section_index = (section_y - WORLD_MIN_SECTION_Y) as usize;
-        &self.biomes[((section_index * 4 + x) * 4 + y) * 4 + z]
+        self.biomes[((section_index * 4 + x) * 4 + y) * 4 + z]
     }
 
     fn ocean_floor_wg_height(&self, x: usize, z: usize, min_y: i32) -> i32 {
-        self.column(x, z)
+        let column = self.column(x, z);
+        let top = column
+            .first_available_height
+            .clamp(0, column.blocks.len() as i32) as usize;
+        column
             .blocks
+            .get(..top)
+            .unwrap_or(&column.blocks)
             .iter()
             .rposition(is_full_solid_layer)
             .map(|index| min_y + index as i32 + 1)
             .unwrap_or(min_y)
+    }
+
+    fn world_surface_wg_height(&self, x: usize, z: usize, min_y: i32) -> i32 {
+        min_y + self.column(x, z).first_available_height
+    }
+
+    fn recompute_first_available_heights_accelerated(
+        &mut self,
+        min_y: i32,
+        height: i32,
+        gpu: Option<&gpu_worldgen::GpuWorldgenEngine>,
+    ) {
+        if let Some(gpu) = gpu
+            && height as usize * HEIGHTMAP_ENTRY_COUNT == CHUNK_DAMPENING_LEN
+        {
+            match gpu.first_available_heights(&self.occupied_mask(height)) {
+                Ok(heights) if heights.len() == HEIGHTMAP_ENTRY_COUNT => {
+                    for (column, height) in self.columns.iter_mut().zip(heights) {
+                        column.first_available_height = height;
+                    }
+                    return;
+                }
+                Ok(heights) => {
+                    log::warn!(
+                        "GPU 世界生成后处理返回高度图长度异常，已回退 CPU: expected={}, got={}",
+                        HEIGHTMAP_ENTRY_COUNT,
+                        heights.len()
+                    );
+                }
+                Err(err) => {
+                    log::warn!("GPU 世界生成后处理失败，已回退 CPU: {err:#}");
+                }
+            }
+        }
+
+        self.recompute_first_available_heights(min_y, height);
+    }
+
+    fn occupied_mask(&self, height: i32) -> Vec<u32> {
+        let mut mask = vec![0_u32; height as usize * HEIGHTMAP_ENTRY_COUNT];
+        for z in 0..16 {
+            for x in 0..16 {
+                for (y, layer) in self.column(x, z).blocks.iter().enumerate() {
+                    if !layer.is_air {
+                        mask[y * HEIGHTMAP_ENTRY_COUNT + z * 16 + x] = 1;
+                    }
+                }
+            }
+        }
+        mask
     }
 
     fn recompute_first_available_heights(&mut self, min_y: i32, height: i32) {
@@ -821,6 +1316,29 @@ impl NoiseChunkBlocks {
             column.first_available_height = (highest - min_y).clamp(0, height);
         }
     }
+}
+
+fn update_first_available_height(column: &mut NoiseColumnBlocks, index: usize, is_air: bool) {
+    let height = index as i32 + 1;
+    if is_air {
+        if column.first_available_height == height {
+            column.first_available_height = column
+                .blocks
+                .iter()
+                .rposition(|layer| !layer.is_air)
+                .map(|index| index as i32 + 1)
+                .unwrap_or(0);
+        }
+    } else if height > column.first_available_height {
+        column.first_available_height = height;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GeneratedBlockEntity {
+    position: (i32, i32, i32),
+    entity_type: i32,
+    nbt: Tag,
 }
 
 #[derive(Debug, Clone)]
@@ -1573,7 +2091,7 @@ fn carve_layer(
 
 fn is_overworld_carver_replaceable(layer: &BlockLayer) -> bool {
     matches!(
-        layer.block.as_str(),
+        layer.block.as_ref(),
         "minecraft:stone"
             | "minecraft:granite"
             | "minecraft:diorite"
@@ -1817,6 +2335,12 @@ impl JavaRandom {
         (upper << 32).wrapping_add(lower)
     }
 
+    fn next_double(&mut self) -> f64 {
+        let upper = self.next(26) as i64;
+        let lower = self.next(27) as i64;
+        ((upper << 27) + lower) as f64 * (1.110_223e-16_f32 as f64)
+    }
+
     fn next_float(&mut self) -> f32 {
         self.next(24) as f32 * 5.960_464_5e-8_f32
     }
@@ -1839,6 +2363,13 @@ struct OverworldOreFeatures {
     underwater_magma: PlacedUnderwaterMagmaFeature,
     disks: Vec<PlacedDiskFeature>,
     springs: Vec<PlacedSpringFeature>,
+    lakes: Vec<PlacedLakeFeature>,
+    geodes: Vec<PlacedGeodeFeature>,
+    monster_rooms: Vec<PlacedMonsterRoomFeature>,
+    glow_lichen: PlacedMultifaceGrowthFeature,
+    vegetation_patches: Vec<PlacedSimpleVegetationFeature>,
+    trees_plains: PlacedTreeFeature,
+    freeze_top_layer: PlacedFreezeTopLayerFeature,
 }
 
 impl OverworldOreFeatures {
@@ -2149,6 +2680,34 @@ impl OverworldOreFeatures {
                 PlacedSpringFeature::water(0),
                 PlacedSpringFeature::lava_overworld(1),
             ],
+            lakes: vec![
+                PlacedLakeFeature::lava_underground(0),
+                PlacedLakeFeature::lava_surface(1),
+            ],
+            geodes: vec![PlacedGeodeFeature::amethyst(0)],
+            monster_rooms: vec![
+                PlacedMonsterRoomFeature::regular(0),
+                PlacedMonsterRoomFeature::deep(1),
+            ],
+            glow_lichen: PlacedMultifaceGrowthFeature::glow_lichen(0),
+            vegetation_patches: vec![
+                PlacedSimpleVegetationFeature::patch_tall_grass_2(1),
+                PlacedSimpleVegetationFeature::patch_bush(2),
+                PlacedSimpleVegetationFeature::patch_sunflower(3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SUNFLOWER_PATCH_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_plains(4)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_PLAINS_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_grass_plain(5)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PATCH_GRASS_PLAIN_BIOMES)),
+                PlacedSimpleVegetationFeature::brown_mushroom_normal(6)
+                    .with_biome_filter(FeatureBiomeFilter::Include(NORMAL_MUSHROOM_BIOMES)),
+                PlacedSimpleVegetationFeature::red_mushroom_normal(7)
+                    .with_biome_filter(FeatureBiomeFilter::Include(NORMAL_MUSHROOM_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_pumpkin(8)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PUMPKIN_PATCH_BIOMES)),
+            ],
+            trees_plains: PlacedTreeFeature::trees_plains(3),
+            freeze_top_layer: PlacedFreezeTopLayerFeature::new(0),
         }
     }
 
@@ -2163,14 +2722,39 @@ impl OverworldOreFeatures {
         let origin_z = chunk_z * 16;
         let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
 
-        let mut features =
-            Vec::with_capacity(self.features.len() + self.disks.len() + self.springs.len() + 1);
+        let mut features = Vec::with_capacity(
+            self.features.len()
+                + self.disks.len()
+                + self.springs.len()
+                + self.lakes.len()
+                + self.geodes.len()
+                + self.monster_rooms.len()
+                + self.vegetation_patches.len()
+                + 4,
+        );
+        features.extend(self.lakes.iter().map(PlacedUndergroundFeature::Lake));
+        features.extend(self.geodes.iter().map(PlacedUndergroundFeature::Geode));
+        features.extend(
+            self.monster_rooms
+                .iter()
+                .map(PlacedUndergroundFeature::MonsterRoom),
+        );
         features.extend(self.features.iter().map(PlacedUndergroundFeature::Ore));
         features.push(PlacedUndergroundFeature::UnderwaterMagma(
             &self.underwater_magma,
         ));
         features.extend(self.disks.iter().map(PlacedUndergroundFeature::Disk));
         features.extend(self.springs.iter().map(PlacedUndergroundFeature::Spring));
+        features.push(PlacedUndergroundFeature::MultifaceGrowth(&self.glow_lichen));
+        features.extend(
+            self.vegetation_patches
+                .iter()
+                .map(PlacedUndergroundFeature::SimpleVegetation),
+        );
+        features.push(PlacedUndergroundFeature::Tree(&self.trees_plains));
+        features.push(PlacedUndergroundFeature::FreezeTopLayer(
+            &self.freeze_top_layer,
+        ));
         features.sort_by_key(|feature| (feature.step_index(), feature.feature_index()));
 
         for feature in features {
@@ -2186,28 +2770,49 @@ impl OverworldOreFeatures {
 
 #[derive(Clone, Copy)]
 enum PlacedUndergroundFeature<'a> {
+    Lake(&'a PlacedLakeFeature),
+    Geode(&'a PlacedGeodeFeature),
+    MonsterRoom(&'a PlacedMonsterRoomFeature),
     Ore(&'a PlacedOreFeature),
     UnderwaterMagma(&'a PlacedUnderwaterMagmaFeature),
     Disk(&'a PlacedDiskFeature),
     Spring(&'a PlacedSpringFeature),
+    MultifaceGrowth(&'a PlacedMultifaceGrowthFeature),
+    SimpleVegetation(&'a PlacedSimpleVegetationFeature),
+    Tree(&'a PlacedTreeFeature),
+    FreezeTopLayer(&'a PlacedFreezeTopLayerFeature),
 }
 
 impl PlacedUndergroundFeature<'_> {
     fn step_index(self) -> i32 {
         match self {
+            Self::Lake(feature) => feature.step_index,
+            Self::Geode(feature) => feature.step_index,
+            Self::MonsterRoom(feature) => feature.step_index,
             Self::Ore(feature) => feature.step_index,
             Self::UnderwaterMagma(feature) => feature.step_index,
             Self::Disk(feature) => feature.step_index,
             Self::Spring(feature) => feature.step_index,
+            Self::MultifaceGrowth(feature) => feature.step_index,
+            Self::SimpleVegetation(feature) => feature.step_index,
+            Self::Tree(feature) => feature.step_index,
+            Self::FreezeTopLayer(feature) => feature.step_index,
         }
     }
 
     fn feature_index(self) -> i32 {
         match self {
+            Self::Lake(feature) => feature.feature_index,
+            Self::Geode(feature) => feature.feature_index,
+            Self::MonsterRoom(feature) => feature.feature_index,
             Self::Ore(feature) => feature.feature_index,
             Self::UnderwaterMagma(feature) => feature.feature_index,
             Self::Disk(feature) => feature.feature_index,
             Self::Spring(feature) => feature.feature_index,
+            Self::MultifaceGrowth(feature) => feature.feature_index,
+            Self::SimpleVegetation(feature) => feature.feature_index,
+            Self::Tree(feature) => feature.feature_index,
+            Self::FreezeTopLayer(feature) => feature.feature_index,
         }
     }
 
@@ -2220,13 +2825,2562 @@ impl PlacedUndergroundFeature<'_> {
         random: &mut FeatureRandom,
     ) {
         match self {
+            Self::Lake(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
+            Self::Geode(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
+            Self::MonsterRoom(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
             Self::Ore(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
             Self::UnderwaterMagma(feature) => {
                 feature.place(settings, origin_x, origin_z, chunk, random);
             }
             Self::Disk(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
             Self::Spring(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
+            Self::MultifaceGrowth(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::SimpleVegetation(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::Tree(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::FreezeTopLayer(feature) => feature.place(settings, origin_x, origin_z, chunk),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedLakeFeature {
+    step_index: i32,
+    feature_index: i32,
+    placement: LakePlacement,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedLakeFeature {
+    fn lava_underground(feature_index: i32) -> Self {
+        Self {
+            step_index: 1,
+            feature_index,
+            placement: LakePlacement::Underground {
+                rarity: 9,
+                height: OreHeight::Uniform(HeightAnchor::Absolute(0), HeightAnchor::BelowTop(0)),
+                max_scan_steps: 32,
+            },
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn lava_surface(feature_index: i32) -> Self {
+        Self {
+            step_index: 1,
+            feature_index,
+            placement: LakePlacement::Surface { rarity: 200 },
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        let Some((world_x, world_y, world_z)) =
+            self.sample_origin(settings, origin_x, origin_z, chunk, random)
+        else {
+            return;
+        };
+
+        if self
+            .biome_filter
+            .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            LakeFeatureConfig::lava().place(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    fn sample_origin(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) -> Option<(i32, i32, i32)> {
+        match self.placement {
+            LakePlacement::Underground {
+                rarity,
+                height,
+                max_scan_steps,
+            } => {
+                if random.next_float() >= 1.0 / rarity as f32 {
+                    return None;
+                }
+                let world_x = origin_x + random.next_int(16);
+                let world_z = origin_z + random.next_int(16);
+                let sampled_y = height.sample(settings, random);
+                let local_x = (world_x - origin_x) as usize;
+                let local_z = (world_z - origin_z) as usize;
+                let world_y = scan_down_to_solid(
+                    settings,
+                    chunk,
+                    local_x,
+                    sampled_y,
+                    local_z,
+                    max_scan_steps,
+                )?;
+                let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+                (world_y <= ocean_floor - 5).then_some((world_x, world_y, world_z))
+            }
+            LakePlacement::Surface { rarity } => {
+                if random.next_float() >= 1.0 / rarity as f32 {
+                    return None;
+                }
+                let world_x = origin_x + random.next_int(16);
+                let world_z = origin_z + random.next_int(16);
+                let local_x = (world_x - origin_x) as usize;
+                let local_z = (world_z - origin_z) as usize;
+                let world_y = chunk.world_surface_wg_height(local_x, local_z, settings.min_y);
+                (world_y > settings.min_y).then_some((world_x, world_y, world_z))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LakePlacement {
+    Underground {
+        rarity: i32,
+        height: OreHeight,
+        max_scan_steps: i32,
+    },
+    Surface {
+        rarity: i32,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct LakeFeatureConfig;
+
+impl LakeFeatureConfig {
+    fn lava() -> Self {
+        Self
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        if origin_y <= settings.min_y + 4 {
+            return false;
+        }
+
+        let base_x = origin_x - 8;
+        let base_y = origin_y - 4;
+        let base_z = origin_z - 8;
+        let mut grid = vec![false; 16 * 16 * 8];
+        let spots = random.next_int(4) + 4;
+
+        for _ in 0..spots {
+            let xr = random.next_double() * 6.0 + 3.0;
+            let yr = random.next_double() * 4.0 + 2.0;
+            let zr = random.next_double() * 6.0 + 3.0;
+            let xp = random.next_double() * (16.0 - xr - 2.0) + 1.0 + xr / 2.0;
+            let yp = random.next_double() * (8.0 - yr - 4.0) + 2.0 + yr / 2.0;
+            let zp = random.next_double() * (16.0 - zr - 2.0) + 1.0 + zr / 2.0;
+
+            for xx in 1..15 {
+                for zz in 1..15 {
+                    for yy in 1..7 {
+                        let xd = (xx as f64 - xp) / (xr / 2.0);
+                        let yd = (yy as f64 - yp) / (yr / 2.0);
+                        let zd = (zz as f64 - zp) / (zr / 2.0);
+                        if xd * xd + yd * yd + zd * zd < 1.0 {
+                            grid[lake_index(xx, yy, zz)] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !self.can_place(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            base_x,
+            base_y,
+            base_z,
+            &grid,
+        ) {
+            return false;
+        }
+
+        for xx in 0..16 {
+            for zz in 0..16 {
+                for yy in 0..8 {
+                    if !grid[lake_index(xx, yy, zz)] {
+                        continue;
+                    }
+                    let world_x = base_x + xx as i32;
+                    let world_y = base_y + yy as i32;
+                    let world_z = base_z + zz as i32;
+                    let Some(local_x) = local_coord(world_x, chunk_min_x) else {
+                        continue;
+                    };
+                    let Some(local_z) = local_coord(world_z, chunk_min_z) else {
+                        continue;
+                    };
+                    if chunk
+                        .layer(local_x, world_y, local_z, settings.min_y)
+                        .is_some_and(can_lake_replace_block)
+                    {
+                        let layer = if yy >= 4 {
+                            settings.cave_air_block.clone()
+                        } else {
+                            settings.lava_lake_fluid_block.clone()
+                        };
+                        chunk.set_layer(local_x, world_y, local_z, settings.min_y, layer);
+                    }
+                }
+            }
+        }
+
+        for xx in 0..16 {
+            for zz in 0..16 {
+                for yy in 0..8 {
+                    if grid[lake_index(xx, yy, zz)]
+                        || !is_lake_boundary(&grid, xx, yy, zz)
+                        || (yy >= 4 && random.next_int(2) == 0)
+                    {
+                        continue;
+                    }
+                    let world_x = base_x + xx as i32;
+                    let world_y = base_y + yy as i32;
+                    let world_z = base_z + zz as i32;
+                    let Some(local_x) = local_coord(world_x, chunk_min_x) else {
+                        continue;
+                    };
+                    let Some(local_z) = local_coord(world_z, chunk_min_z) else {
+                        continue;
+                    };
+                    if chunk
+                        .layer(local_x, world_y, local_z, settings.min_y)
+                        .is_some_and(is_full_solid_layer)
+                    {
+                        chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            settings.lava_lake_barrier_block.clone(),
+                        );
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn can_place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        base_x: i32,
+        base_y: i32,
+        base_z: i32,
+        grid: &[bool],
+    ) -> bool {
+        for xx in 0..16 {
+            for zz in 0..16 {
+                for yy in 0..8 {
+                    if grid[lake_index(xx, yy, zz)] || !is_lake_boundary(grid, xx, yy, zz) {
+                        continue;
+                    }
+                    let world_x = base_x + xx as i32;
+                    let world_y = base_y + yy as i32;
+                    let world_z = base_z + zz as i32;
+                    let Some(local_x) = local_coord(world_x, chunk_min_x) else {
+                        continue;
+                    };
+                    let Some(local_z) = local_coord(world_z, chunk_min_z) else {
+                        continue;
+                    };
+                    let Some(layer) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+                        return false;
+                    };
+                    if yy >= 4 && is_fluid_layer(layer) {
+                        return false;
+                    }
+                    if yy < 4 && !is_full_solid_layer(layer) && !layer.is("minecraft:lava") {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedGeodeFeature {
+    step_index: i32,
+    feature_index: i32,
+    rarity: i32,
+    height: OreHeight,
+    config: GeodeFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedGeodeFeature {
+    fn amethyst(feature_index: i32) -> Self {
+        Self {
+            step_index: 2,
+            feature_index,
+            rarity: 24,
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(6), HeightAnchor::Absolute(30)),
+            config: GeodeFeatureConfig::amethyst(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return;
+        }
+        let world_x = origin_x + random.next_int(16);
+        let world_z = origin_z + random.next_int(16);
+        let world_y = self.height.sample(settings, random);
+        if self
+            .biome_filter
+            .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            self.config.place(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GeodeFeatureConfig {
+    filling_block: BlockLayer,
+    inner_block: BlockLayer,
+    alternate_inner_block: BlockLayer,
+    middle_block: BlockLayer,
+    outer_block: BlockLayer,
+    inner_placements: Vec<BlockLayer>,
+    outer_wall_distance: UniformInt,
+    distribution_points: UniformInt,
+    point_offset: UniformInt,
+    min_gen_offset: i32,
+    max_gen_offset: i32,
+    noise_multiplier: f64,
+    invalid_blocks_threshold: i32,
+    filling: f64,
+    inner_layer: f64,
+    middle_layer: f64,
+    outer_layer: f64,
+    use_potential_placements_chance: f32,
+    use_alternate_layer0_chance: f32,
+    placements_require_layer0_alternate: bool,
+    generate_crack_chance: f32,
+    base_crack_size: f64,
+    crack_point_offset: i32,
+}
+
+impl GeodeFeatureConfig {
+    fn amethyst() -> Self {
+        Self {
+            filling_block: BlockLayer::new("minecraft:air"),
+            inner_block: BlockLayer::new("minecraft:amethyst_block"),
+            alternate_inner_block: BlockLayer::new("minecraft:budding_amethyst"),
+            middle_block: BlockLayer::new("minecraft:calcite"),
+            outer_block: BlockLayer::new("minecraft:smooth_basalt"),
+            inner_placements: vec![
+                amethyst_cluster_block("minecraft:small_amethyst_bud"),
+                amethyst_cluster_block("minecraft:medium_amethyst_bud"),
+                amethyst_cluster_block("minecraft:large_amethyst_bud"),
+                amethyst_cluster_block("minecraft:amethyst_cluster"),
+            ],
+            outer_wall_distance: UniformInt { min: 4, max: 6 },
+            distribution_points: UniformInt { min: 3, max: 4 },
+            point_offset: UniformInt { min: 1, max: 2 },
+            min_gen_offset: -16,
+            max_gen_offset: 16,
+            noise_multiplier: 0.05,
+            invalid_blocks_threshold: 1,
+            filling: 1.7,
+            inner_layer: 2.2,
+            middle_layer: 3.2,
+            outer_layer: 4.2,
+            use_potential_placements_chance: 0.35,
+            use_alternate_layer0_chance: 0.083,
+            placements_require_layer0_alternate: true,
+            generate_crack_chance: 0.95,
+            base_crack_size: 2.0,
+            crack_point_offset: 2,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let num_points = self.distribution_points.sample(random);
+        let mut points = Vec::with_capacity(num_points as usize);
+        let mut invalid_points = 0;
+        for _ in 0..num_points {
+            let point = (
+                origin_x + self.outer_wall_distance.sample(random),
+                origin_y + self.outer_wall_distance.sample(random),
+                origin_z + self.outer_wall_distance.sample(random),
+            );
+            if let Some((local_x, local_z)) =
+                local_coords(point.0, point.2, chunk_min_x, chunk_min_z)
+                && chunk
+                    .layer(local_x, point.1, local_z, settings.min_y)
+                    .is_some_and(is_geode_invalid_block)
+            {
+                invalid_points += 1;
+                if invalid_points > self.invalid_blocks_threshold {
+                    return false;
+                }
+            }
+            points.push((point, self.point_offset.sample(random)));
+        }
+
+        let crack_size_adjustment = num_points as f64 / self.outer_wall_distance.max as f64;
+        let inner_air = 1.0 / self.filling.sqrt();
+        let innermost_block_layer = 1.0 / (self.inner_layer + crack_size_adjustment).sqrt();
+        let inner_crust = 1.0 / (self.middle_layer + crack_size_adjustment).sqrt();
+        let outer_crust = 1.0 / (self.outer_layer + crack_size_adjustment).sqrt();
+        let crack_size = 1.0
+            / (self.base_crack_size
+                + random.next_double() / 2.0
+                + if num_points > 3 {
+                    crack_size_adjustment
+                } else {
+                    0.0
+                })
+            .sqrt();
+        let should_generate_crack = random.next_float() < self.generate_crack_chance;
+        let crack_points = if should_generate_crack {
+            self.crack_points(random, origin_x, origin_y, origin_z, num_points)
+        } else {
+            Vec::new()
+        };
+        let mut potential_crystal_placements = Vec::new();
+
+        for world_x in origin_x + self.min_gen_offset..=origin_x + self.max_gen_offset {
+            let Some(local_x) = local_coord(world_x, chunk_min_x) else {
+                continue;
+            };
+            for world_z in origin_z + self.min_gen_offset..=origin_z + self.max_gen_offset {
+                let Some(local_z) = local_coord(world_z, chunk_min_z) else {
+                    continue;
+                };
+                for world_y in origin_y + self.min_gen_offset..=origin_y + self.max_gen_offset {
+                    if !(settings.min_y..settings.min_y + settings.height).contains(&world_y) {
+                        continue;
+                    }
+                    let noise_offset =
+                        geode_noise(world_x, world_y, world_z) * self.noise_multiplier;
+                    let mut dist_sum_shell = 0.0;
+                    let mut dist_sum_crack = 0.0;
+                    for (point, offset) in &points {
+                        dist_sum_shell += inv_sqrt_distance(
+                            world_x, world_y, world_z, point.0, point.1, point.2, *offset,
+                        ) + noise_offset;
+                    }
+                    for point in &crack_points {
+                        dist_sum_crack += inv_sqrt_distance(
+                            world_x,
+                            world_y,
+                            world_z,
+                            point.0,
+                            point.1,
+                            point.2,
+                            self.crack_point_offset,
+                        ) + noise_offset;
+                    }
+
+                    if dist_sum_shell < outer_crust {
+                        continue;
+                    }
+                    let replacement = if should_generate_crack
+                        && dist_sum_crack >= crack_size
+                        && dist_sum_shell < inner_air
+                    {
+                        Some(self.filling_block.clone())
+                    } else if dist_sum_shell >= inner_air {
+                        Some(self.filling_block.clone())
+                    } else if dist_sum_shell >= innermost_block_layer {
+                        let use_alternate = random.next_float() < self.use_alternate_layer0_chance;
+                        let block = if use_alternate {
+                            self.alternate_inner_block.clone()
+                        } else {
+                            self.inner_block.clone()
+                        };
+                        if (!self.placements_require_layer0_alternate || use_alternate)
+                            && random.next_float() < self.use_potential_placements_chance
+                        {
+                            potential_crystal_placements.push((world_x, world_y, world_z));
+                        }
+                        Some(block)
+                    } else if dist_sum_shell >= inner_crust {
+                        Some(self.middle_block.clone())
+                    } else if dist_sum_shell >= outer_crust {
+                        Some(self.outer_block.clone())
+                    } else {
+                        None
+                    };
+
+                    if let Some(block) = replacement
+                        && chunk
+                            .layer(local_x, world_y, local_z, settings.min_y)
+                            .is_some_and(can_geode_replace_block)
+                    {
+                        chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+                    }
+                }
+            }
+        }
+
+        for (world_x, world_y, world_z) in potential_crystal_placements {
+            let block = self.inner_placements
+                [random.next_int(self.inner_placements.len() as i32) as usize]
+                .clone();
+            for (dx, dy, dz, facing) in [
+                (0, -1, 0, "down"),
+                (0, 1, 0, "up"),
+                (0, 0, -1, "north"),
+                (0, 0, 1, "south"),
+                (-1, 0, 0, "west"),
+                (1, 0, 0, "east"),
+            ] {
+                let place_x = world_x + dx;
+                let place_y = world_y + dy;
+                let place_z = world_z + dz;
+                let Some((local_x, local_z)) =
+                    local_coords(place_x, place_z, chunk_min_x, chunk_min_z)
+                else {
+                    continue;
+                };
+                let Some(place_state) = chunk.layer(local_x, place_y, local_z, settings.min_y)
+                else {
+                    continue;
+                };
+                if can_amethyst_cluster_grow_at(place_state) {
+                    let waterlogged = if place_state.is("minecraft:water") {
+                        "true"
+                    } else {
+                        "false"
+                    };
+                    chunk.set_layer(
+                        local_x,
+                        place_y,
+                        local_z,
+                        settings.min_y,
+                        block
+                            .with_property("facing", facing)
+                            .with_property("waterlogged", waterlogged),
+                    );
+                    break;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn crack_points(
+        &self,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        num_points: i32,
+    ) -> Vec<(i32, i32, i32)> {
+        let crack_offset = num_points * 2 + 1;
+        match random.next_int(4) {
+            0 => vec![
+                (origin_x + crack_offset, origin_y + 7, origin_z),
+                (origin_x + crack_offset, origin_y + 5, origin_z),
+                (origin_x + crack_offset, origin_y + 1, origin_z),
+            ],
+            1 => vec![
+                (origin_x, origin_y + 7, origin_z + crack_offset),
+                (origin_x, origin_y + 5, origin_z + crack_offset),
+                (origin_x, origin_y + 1, origin_z + crack_offset),
+            ],
+            2 => vec![
+                (
+                    origin_x + crack_offset,
+                    origin_y + 7,
+                    origin_z + crack_offset,
+                ),
+                (
+                    origin_x + crack_offset,
+                    origin_y + 5,
+                    origin_z + crack_offset,
+                ),
+                (
+                    origin_x + crack_offset,
+                    origin_y + 1,
+                    origin_z + crack_offset,
+                ),
+            ],
+            _ => vec![
+                (origin_x, origin_y + 7, origin_z),
+                (origin_x, origin_y + 5, origin_z),
+                (origin_x, origin_y + 1, origin_z),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedFreezeTopLayerFeature {
+    step_index: i32,
+    feature_index: i32,
+    snow_layer: BlockLayer,
+}
+
+impl PlacedFreezeTopLayerFeature {
+    fn new(feature_index: i32) -> Self {
+        Self {
+            step_index: 10,
+            feature_index,
+            snow_layer: BlockLayer::new("minecraft:snow"),
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+    ) {
+        for local_z in 0..16 {
+            for local_x in 0..16 {
+                let world_x = origin_x + local_x as i32;
+                let world_z = origin_z + local_z as i32;
+                let top_y = chunk.world_surface_wg_height(local_x, local_z, settings.min_y);
+                if top_y <= settings.min_y || top_y >= settings.min_y + settings.height {
+                    continue;
+                }
+                let biome = settings.density.biome(world_x, top_y, world_z);
+                if !is_freezing_biome(biome) {
+                    continue;
+                }
+
+                let below_y = top_y - 1;
+                if chunk
+                    .layer(local_x, below_y, local_z, settings.min_y)
+                    .is_some_and(is_water_layer)
+                {
+                    chunk.set_layer(
+                        local_x,
+                        below_y,
+                        local_z,
+                        settings.min_y,
+                        settings.ice_block.clone(),
+                    );
+                }
+
+                if chunk
+                    .layer(local_x, top_y, local_z, settings.min_y)
+                    .is_some_and(|layer| layer.is_air || layer.is("minecraft:snow"))
+                    && chunk
+                        .layer(local_x, below_y, local_z, settings.min_y)
+                        .is_some_and(is_full_solid_layer)
+                {
+                    chunk.set_layer(
+                        local_x,
+                        top_y,
+                        local_z,
+                        settings.min_y,
+                        self.snow_layer.clone(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedMonsterRoomFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    config: MonsterRoomFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedMonsterRoomFeature {
+    fn regular(feature_index: i32) -> Self {
+        Self {
+            step_index: 3,
+            feature_index,
+            count: OrePlacementCount::Constant(10),
+            height: OreHeight::Uniform(HeightAnchor::Absolute(0), HeightAnchor::BelowTop(0)),
+            config: MonsterRoomFeatureConfig::new(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn deep(feature_index: i32) -> Self {
+        Self {
+            step_index: 3,
+            feature_index,
+            count: OrePlacementCount::Constant(4),
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(6), HeightAnchor::Absolute(-1)),
+            config: MonsterRoomFeatureConfig::new(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedMultifaceGrowthFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    max_below_ocean_floor: i32,
+    config: MultifaceGrowthFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedMultifaceGrowthFeature {
+    fn glow_lichen(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: OrePlacementCount::Uniform { min: 104, max: 157 },
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
+            max_below_ocean_floor: -13,
+            config: MultifaceGrowthFeatureConfig::glow_lichen(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            let local_x = (world_x - origin_x) as usize;
+            let local_z = (world_z - origin_z) as usize;
+            let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if world_y > ocean_floor + self.max_below_ocean_floor
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedSimpleVegetationFeature {
+    step_index: i32,
+    feature_index: i32,
+    noise_threshold: Option<NoiseThresholdCount>,
+    rarity: i32,
+    inner_count: i32,
+    xz_offset: TrapezoidInt,
+    y_offset: TrapezoidInt,
+    block: SimpleVegetationBlock,
+    required_support: Option<&'static str>,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedSimpleVegetationFeature {
+    fn patch_tall_grass_2(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            noise_threshold: Some(NoiseThresholdCount {
+                noise_level: -0.8,
+                below_noise: 0,
+                above_noise: 7,
+            }),
+            rarity: 32,
+            inner_count: 96,
+            xz_offset: TrapezoidInt::new(-7, 7, 0),
+            y_offset: TrapezoidInt::new(-3, 3, 0),
+            block: SimpleVegetationBlock::tall_grass(),
+            required_support: None,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn patch_bush(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            noise_threshold: None,
+            rarity: 4,
+            inner_count: 24,
+            xz_offset: TrapezoidInt::new(-5, 5, 0),
+            y_offset: TrapezoidInt::new(-3, 3, 0),
+            block: SimpleVegetationBlock::single("minecraft:bush"),
+            required_support: None,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn patch_sunflower(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            3,
+            96,
+            SimpleVegetationBlock::sunflower(),
+            None,
+        )
+    }
+
+    fn flower_plains(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            noise_threshold: Some(NoiseThresholdCount {
+                noise_level: -0.8,
+                below_noise: 15,
+                above_noise: 4,
+            }),
+            rarity: 32,
+            inner_count: 64,
+            xz_offset: TrapezoidInt::new(-6, 6, 0),
+            y_offset: TrapezoidInt::new(-2, 2, 0),
+            block: SimpleVegetationBlock::plains_flower(),
+            required_support: None,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn patch_grass_plain(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            noise_threshold: Some(NoiseThresholdCount {
+                noise_level: -0.8,
+                below_noise: 5,
+                above_noise: 10,
+            }),
+            rarity: 1,
+            inner_count: 32,
+            xz_offset: TrapezoidInt::new(-7, 7, 0),
+            y_offset: TrapezoidInt::new(-3, 3, 0),
+            block: SimpleVegetationBlock::single("minecraft:short_grass"),
+            required_support: None,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn brown_mushroom_normal(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            256,
+            96,
+            SimpleVegetationBlock::single("minecraft:brown_mushroom"),
+            None,
+        )
+    }
+
+    fn red_mushroom_normal(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            512,
+            96,
+            SimpleVegetationBlock::single("minecraft:red_mushroom"),
+            None,
+        )
+    }
+
+    fn patch_pumpkin(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            300,
+            96,
+            SimpleVegetationBlock::single("minecraft:pumpkin"),
+            Some("minecraft:grass_block"),
+        )
+    }
+
+    fn simple_patch(
+        feature_index: i32,
+        rarity: i32,
+        inner_count: i32,
+        block: SimpleVegetationBlock,
+        required_support: Option<&'static str>,
+    ) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            noise_threshold: None,
+            rarity,
+            inner_count,
+            xz_offset: TrapezoidInt::new(-7, 7, 0),
+            y_offset: TrapezoidInt::new(-3, 3, 0),
+            block,
+            required_support,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
+        self.biome_filter = biome_filter;
+        self
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        let outer_count = self
+            .noise_threshold
+            .as_ref()
+            .map(|threshold| threshold.sample(origin_x, origin_z))
+            .unwrap_or(1);
+        for _ in 0..outer_count {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
+
+            let base_x = origin_x + random.next_int(16);
+            let base_z = origin_z + random.next_int(16);
+            let Some((base_local_x, base_local_z)) =
+                local_coords(base_x, base_z, origin_x, origin_z)
+            else {
+                continue;
+            };
+            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            if base_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, base_x, base_y, base_z)
+            {
+                continue;
+            }
+
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+                if !matches!(
+                    layer_at_world(
+                        chunk,
+                        origin_x,
+                        origin_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    ),
+                    Some(layer) if layer.is_air
+                ) {
+                    continue;
+                }
+                if !self.has_required_support(
+                    chunk,
+                    origin_x,
+                    origin_z,
+                    world_x,
+                    world_y - 1,
+                    world_z,
+                    settings.min_y,
+                ) {
+                    continue;
+                }
+                self.block.place_at(
+                    settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+                );
+            }
+        }
+    }
+
+    fn has_required_support(
+        &self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        let Some(required_support) = self.required_support else {
+            return true;
+        };
+        layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+        .is_some_and(|layer| layer.is(required_support))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NoiseThresholdCount {
+    noise_level: f64,
+    below_noise: i32,
+    above_noise: i32,
+}
+
+impl NoiseThresholdCount {
+    fn sample(&self, origin_x: i32, origin_z: i32) -> i32 {
+        if biome_info_noise(origin_x as f64 / 200.0, origin_z as f64 / 200.0) < self.noise_level {
+            self.below_noise
+        } else {
+            self.above_noise
+        }
+    }
+}
+
+fn biome_info_noise(x: f64, z: f64) -> f64 {
+    SimplexNoise2d::biome_info().value(x, z)
+}
+
+#[derive(Clone, Debug)]
+struct SimplexNoise2d {
+    p: [u8; 512],
+}
+
+impl SimplexNoise2d {
+    fn biome_info() -> Self {
+        Self::new(JavaRandom::new(2345))
+    }
+
+    fn new(mut random: JavaRandom) -> Self {
+        random.next_double();
+        random.next_double();
+        random.next_double();
+
+        let mut p = [0_u8; 512];
+        for (index, value) in p.iter_mut().take(256).enumerate() {
+            *value = index as u8;
+        }
+        for index in 0..256 {
+            let offset = random.next_int(256 - index as i32) as usize;
+            p.swap(index, index + offset);
+        }
+        for index in 0..256 {
+            p[index + 256] = p[index];
+        }
+        Self { p }
+    }
+
+    fn value(&self, x: f64, z: f64) -> f64 {
+        const SQRT_3: f64 = 1.732_050_807_568_877_2;
+        const F2: f64 = 0.5 * (SQRT_3 - 1.0);
+        const G2: f64 = (3.0 - SQRT_3) / 6.0;
+
+        let skew = (x + z) * F2;
+        let cell_x = (x + skew).floor() as i32;
+        let cell_z = (z + skew).floor() as i32;
+        let unskew = (cell_x + cell_z) as f64 * G2;
+        let origin_x = cell_x as f64 - unskew;
+        let origin_z = cell_z as f64 - unskew;
+        let x0 = x - origin_x;
+        let z0 = z - origin_z;
+        let (x_step, z_step) = if x0 > z0 { (1, 0) } else { (0, 1) };
+        let x1 = x0 - x_step as f64 + G2;
+        let z1 = z0 - z_step as f64 + G2;
+        let x2 = x0 - 1.0 + 2.0 * G2;
+        let z2 = z0 - 1.0 + 2.0 * G2;
+        let ii = (cell_x & 255) as usize;
+        let jj = (cell_z & 255) as usize;
+        let gi0 = self.p[ii + self.p[jj] as usize] as usize % 12;
+        let gi1 = self.p[ii + x_step + self.p[jj + z_step] as usize] as usize % 12;
+        let gi2 = self.p[ii + 1 + self.p[jj + 1] as usize] as usize % 12;
+
+        70.0 * (simplex_corner(gi0, x0, z0)
+            + simplex_corner(gi1, x1, z1)
+            + simplex_corner(gi2, x2, z2))
+    }
+}
+
+fn simplex_corner(gradient_index: usize, x: f64, z: f64) -> f64 {
+    const GRADIENTS: [[f64; 2]; 12] = [
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [1.0, -1.0],
+        [-1.0, -1.0],
+        [1.0, 0.0],
+        [-1.0, 0.0],
+        [1.0, 0.0],
+        [-1.0, 0.0],
+        [0.0, 1.0],
+        [0.0, -1.0],
+        [0.0, 1.0],
+        [0.0, -1.0],
+    ];
+    let mut weight = 0.5 - x * x - z * z;
+    if weight < 0.0 {
+        return 0.0;
+    }
+    weight *= weight;
+    weight * weight * (GRADIENTS[gradient_index][0] * x + GRADIENTS[gradient_index][1] * z)
+}
+
+#[derive(Debug, Clone)]
+struct SimpleVegetationBlock {
+    lower: BlockLayer,
+    upper: Option<BlockLayer>,
+    provider: SimpleVegetationProvider,
+}
+
+impl SimpleVegetationBlock {
+    fn single(block: &str) -> Self {
+        Self {
+            lower: BlockLayer::new(block),
+            upper: None,
+            provider: SimpleVegetationProvider::Fixed,
+        }
+    }
+
+    fn tall_grass() -> Self {
+        Self {
+            lower: BlockLayer::with_properties("minecraft:tall_grass", &[("half", "lower")]),
+            upper: Some(BlockLayer::with_properties(
+                "minecraft:tall_grass",
+                &[("half", "upper")],
+            )),
+            provider: SimpleVegetationProvider::Fixed,
+        }
+    }
+
+    fn sunflower() -> Self {
+        Self {
+            lower: BlockLayer::with_properties("minecraft:sunflower", &[("half", "lower")]),
+            upper: Some(BlockLayer::with_properties(
+                "minecraft:sunflower",
+                &[("half", "upper")],
+            )),
+            provider: SimpleVegetationProvider::Fixed,
+        }
+    }
+
+    fn plains_flower() -> Self {
+        Self {
+            lower: BlockLayer::new("minecraft:dandelion"),
+            upper: None,
+            provider: SimpleVegetationProvider::plains_flower(),
+        }
+    }
+
+    fn place_at(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let lower = self
+            .provider
+            .block_at(&self.lower, random, world_x, world_z);
+        self.place_selected(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            lower,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_selected(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        lower: BlockLayer,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        if !chunk
+            .layer(local_x, world_y, local_z, settings.min_y)
+            .is_some_and(|layer| layer.is_air)
+            || !supports_vegetation_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x,
+                world_y - 1,
+                world_z,
+                settings.min_y,
+            )
+        {
+            return false;
+        }
+
+        if let Some(upper) = &self.upper {
+            if !matches!(
+                layer_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    world_x,
+                    world_y + 1,
+                    world_z,
+                    settings.min_y,
+                ),
+                Some(layer) if layer.is_air
+            ) {
+                return false;
+            }
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, lower);
+            chunk.set_layer(local_x, world_y + 1, local_z, settings.min_y, upper.clone());
+        } else {
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, lower);
+        }
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SimpleVegetationProvider {
+    Fixed,
+    PlainsFlower {
+        low_states: Vec<BlockLayer>,
+        high_states: Vec<BlockLayer>,
+        high_chance: f32,
+        threshold: f64,
+        scale: f64,
+    },
+}
+
+impl SimpleVegetationProvider {
+    fn plains_flower() -> Self {
+        Self::PlainsFlower {
+            low_states: PLAINS_FLOWER_LOW_BLOCKS
+                .iter()
+                .map(|block| BlockLayer::new(block))
+                .collect(),
+            high_states: PLAINS_FLOWER_HIGH_BLOCKS
+                .iter()
+                .map(|block| BlockLayer::new(block))
+                .collect(),
+            high_chance: 0.333_333_34,
+            threshold: -0.8,
+            scale: 0.005,
+        }
+    }
+
+    fn block_at(
+        &self,
+        default_state: &BlockLayer,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_z: i32,
+    ) -> BlockLayer {
+        match self {
+            Self::Fixed => default_state.clone(),
+            Self::PlainsFlower {
+                low_states,
+                high_states,
+                high_chance,
+                threshold,
+                scale,
+            } => {
+                let noise = biome_info_noise(world_x as f64 * *scale, world_z as f64 * *scale);
+                if noise < *threshold {
+                    low_states[random.next_int(low_states.len() as i32) as usize].clone()
+                } else if random.next_float() < *high_chance {
+                    high_states[random.next_int(high_states.len() as i32) as usize].clone()
+                } else {
+                    default_state.clone()
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedTreeFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: WeightedInt,
+    surface_water_depth: i32,
+    config: TreeFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedTreeFeature {
+    fn trees_plains(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(0, 19), (1, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::oak_bees_005(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let Some((local_x, local_z)) = local_coords(world_x, world_z, origin_x, origin_z)
+            else {
+                continue;
+            };
+            if chunk.world_surface_wg_height(local_x, local_z, settings.min_y)
+                - chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y)
+                > self.surface_water_depth
+            {
+                continue;
+            }
+            let world_y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if world_y <= settings.min_y
+                || !oak_sapling_would_survive_at(
+                    chunk,
+                    origin_x,
+                    origin_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
+                )
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TreeFeatureConfig {
+    default_tree: OakTreeConfig,
+    fancy_chance: f32,
+    fallen_chance: f32,
+}
+
+impl TreeFeatureConfig {
+    fn oak_bees_005() -> Self {
+        Self {
+            default_tree: OakTreeConfig::oak_bees_005(),
+            fancy_chance: 0.333_333_34,
+            fallen_chance: 0.0125,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if random.next_float() < self.fancy_chance {
+            return self.default_tree.place(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            );
+        }
+        if random.next_float() < self.fallen_chance {
+            return self.default_tree.place_fallen(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            );
+        }
+        self.default_tree.place(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OakTreeConfig {
+    trunk: BlockLayer,
+    leaves: BlockLayer,
+    dirt: BlockLayer,
+    bee_nest: BlockLayer,
+    base_height: i32,
+    height_rand_a: i32,
+    foliage_height: i32,
+    foliage_radius: i32,
+    beehive_probability: f32,
+}
+
+impl OakTreeConfig {
+    fn oak_bees_005() -> Self {
+        Self {
+            trunk: BlockLayer::with_properties("minecraft:oak_log", &[("axis", "y")]),
+            leaves: BlockLayer::with_properties(
+                "minecraft:oak_leaves",
+                &[
+                    ("distance", "7"),
+                    ("persistent", "false"),
+                    ("waterlogged", "false"),
+                ],
+            ),
+            dirt: BlockLayer::new("minecraft:dirt"),
+            bee_nest: BlockLayer::with_properties(
+                "minecraft:bee_nest",
+                &[("facing", "south"), ("honey_level", "0")],
+            ),
+            base_height: 4,
+            height_rand_a: 2,
+            foliage_height: 3,
+            foliage_radius: 2,
+            beehive_probability: 0.05,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let tree_height = self.base_height + random.next_int(self.height_rand_a + 1);
+        if !self.has_space(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            world_x,
+            world_y,
+            world_z,
+            tree_height,
+        ) {
+            return false;
+        }
+
+        if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+            && chunk
+                .layer(local_x, world_y - 1, local_z, settings.min_y)
+                .is_some_and(|layer| !cannot_replace_below_tree_trunk(layer))
+        {
+            chunk.set_layer(
+                local_x,
+                world_y - 1,
+                local_z,
+                settings.min_y,
+                self.dirt.clone(),
+            );
+        }
+
+        let mut logs = Vec::new();
+        for dy in 0..tree_height {
+            if let Some((local_x, local_z)) =
+                local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+            {
+                chunk.set_layer(
+                    local_x,
+                    world_y + dy,
+                    local_z,
+                    settings.min_y,
+                    self.trunk.clone(),
+                );
+                logs.push((world_x, world_y + dy, world_z));
+            }
+        }
+
+        let leaf_origin_y = world_y + tree_height;
+        let mut leaves = Vec::new();
+        for y_offset in (-self.foliage_height..=0).rev() {
+            let radius = (self.foliage_radius - 1 - y_offset / 2).max(0);
+            for dx in -radius..=radius {
+                for dz in -radius..=radius {
+                    if dx.abs() == radius
+                        && dz.abs() == radius
+                        && (random.next_int(2) == 0 || y_offset == 0)
+                    {
+                        continue;
+                    }
+                    let leaf_x = world_x + dx;
+                    let leaf_y = leaf_origin_y + y_offset;
+                    let leaf_z = world_z + dz;
+                    if self.try_place_leaf(
+                        settings,
+                        chunk_min_x,
+                        chunk_min_z,
+                        chunk,
+                        leaf_x,
+                        leaf_y,
+                        leaf_z,
+                    ) {
+                        leaves.push((leaf_x, leaf_y, leaf_z));
+                    }
+                }
+            }
+        }
+
+        self.try_place_beehive(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            &logs,
+            &leaves,
+        );
+
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_fallen(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let direction = horizontal_directions()[random.next_int(4) as usize];
+        let length = 2 + random.next_int(4);
+        let start_x = world_x + direction.0 * (2 + random.next_int(2));
+        let start_z = world_z + direction.1 * (2 + random.next_int(2));
+        let axis = if direction.0 != 0 { "x" } else { "z" };
+        let sideways_trunk = self.trunk.with_property("axis", axis);
+
+        if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) {
+            chunk.set_layer(
+                local_x,
+                world_y,
+                local_z,
+                settings.min_y,
+                self.trunk.clone(),
+            );
+        }
+
+        let mut current_x = start_x;
+        let mut current_z = start_z;
+        for _ in 0..length {
+            let Some((local_x, local_z)) =
+                local_coords(current_x, current_z, chunk_min_x, chunk_min_z)
+            else {
+                current_x += direction.0;
+                current_z += direction.1;
+                continue;
+            };
+            let y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if y > settings.min_y
+                && chunk
+                    .layer(local_x, y, local_z, settings.min_y)
+                    .is_some_and(valid_tree_position_layer)
+                && is_full_solid_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    current_x,
+                    y - 1,
+                    current_z,
+                    settings.min_y,
+                )
+            {
+                chunk.set_layer(local_x, y, local_z, settings.min_y, sideways_trunk.clone());
+            }
+            current_x += direction.0;
+            current_z += direction.1;
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn has_space(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        tree_height: i32,
+    ) -> bool {
+        if world_y < settings.min_y + 1
+            || world_y + tree_height + 1 > settings.min_y + settings.height
+        {
+            return false;
+        }
+
+        for dy in 0..=tree_height + 1 {
+            let radius = if dy < 1 { 0 } else { 1 };
+            for dx in -radius..=radius {
+                for dz in -radius..=radius {
+                    let Some(layer) = layer_at_world(
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        world_x + dx,
+                        world_y + dy,
+                        world_z + dz,
+                        settings.min_y,
+                    ) else {
+                        continue;
+                    };
+                    if !valid_tree_position_layer(layer) && !is_log_layer(layer) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_leaf(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        if !chunk
+            .layer(local_x, world_y, local_z, settings.min_y)
+            .is_some_and(valid_tree_position_layer)
+        {
+            return false;
+        }
+        chunk.set_layer(
+            local_x,
+            world_y,
+            local_z,
+            settings.min_y,
+            self.leaves.clone(),
+        );
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_beehive(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        logs: &[(i32, i32, i32)],
+        leaves: &[(i32, i32, i32)],
+    ) {
+        if logs.is_empty() || random.next_float() >= self.beehive_probability {
+            return;
+        }
+        let lowest_log_y = logs.iter().map(|log| log.1).min().unwrap_or(logs[0].1);
+        let highest_log_y = logs.iter().map(|log| log.1).max().unwrap_or(logs[0].1);
+        let hive_y = leaves
+            .iter()
+            .map(|leaf| leaf.1)
+            .min()
+            .map(|leaf_y| (leaf_y - 1).max(lowest_log_y + 1))
+            .unwrap_or_else(|| (lowest_log_y + 1 + random.next_int(3)).min(highest_log_y));
+        let mut candidates = Vec::new();
+        for &(log_x, log_y, log_z) in logs {
+            if log_y != hive_y {
+                continue;
+            }
+            candidates.push((log_x, log_y, log_z + 1));
+            candidates.push((log_x + 1, log_y, log_z));
+            candidates.push((log_x - 1, log_y, log_z));
+        }
+        shuffle_positions(&mut candidates, random);
+        for (hive_x, hive_y, hive_z) in candidates {
+            if !is_air_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                hive_x,
+                hive_y,
+                hive_z,
+                settings.min_y,
+            ) || !is_air_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                hive_x,
+                hive_y,
+                hive_z + 1,
+                settings.min_y,
+            ) {
+                continue;
+            }
+            let Some((local_x, local_z)) = local_coords(hive_x, hive_z, chunk_min_x, chunk_min_z)
+            else {
+                continue;
+            };
+            chunk.set_layer(
+                local_x,
+                hive_y,
+                local_z,
+                settings.min_y,
+                self.bee_nest.clone(),
+            );
+            chunk.push_block_entity(
+                hive_x,
+                hive_y,
+                hive_z,
+                BEEHIVE_BLOCK_ENTITY_TYPE_ID,
+                beehive_block_entity_nbt(random),
+            );
+            return;
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WeightedInt {
+    entries: Vec<(i32, i32)>,
+    total_weight: i32,
+}
+
+impl WeightedInt {
+    fn new(entries: &[(i32, i32)]) -> Self {
+        Self {
+            entries: entries.to_vec(),
+            total_weight: entries.iter().map(|(_, weight)| *weight).sum(),
+        }
+    }
+
+    fn sample(&self, random: &mut FeatureRandom) -> i32 {
+        let mut selection = random.next_int(self.total_weight);
+        for (value, weight) in &self.entries {
+            selection -= *weight;
+            if selection < 0 {
+                return *value;
+            }
+        }
+        0
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MultifaceGrowthFeatureConfig {
+    block: BlockLayer,
+    search_range: i32,
+    can_place_on_floor: bool,
+    can_place_on_ceiling: bool,
+    can_place_on_wall: bool,
+    chance_of_spreading: f32,
+    can_be_placed_on: &'static [&'static str],
+}
+
+impl MultifaceGrowthFeatureConfig {
+    fn glow_lichen() -> Self {
+        Self {
+            block: BlockLayer::with_properties(
+                "minecraft:glow_lichen",
+                &[
+                    ("down", "false"),
+                    ("east", "false"),
+                    ("north", "false"),
+                    ("south", "false"),
+                    ("up", "false"),
+                    ("waterlogged", "false"),
+                    ("west", "false"),
+                ],
+            ),
+            search_range: 20,
+            can_place_on_floor: false,
+            can_place_on_ceiling: true,
+            can_place_on_wall: true,
+            chance_of_spreading: 0.5,
+            can_be_placed_on: GLOW_LICHEN_CAN_BE_PLACED_ON,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let Some(origin_state) = layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            origin_x,
+            origin_y,
+            origin_z,
+            settings.min_y,
+        ) else {
+            return false;
+        };
+        if !is_air_or_water_layer(origin_state) {
+            return false;
+        }
+
+        let search_directions = self.shuffled_directions(random);
+        if self.place_growth_if_possible(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            &search_directions,
+        ) {
+            return true;
+        }
+
+        for search_direction in &search_directions {
+            let placement_directions =
+                self.shuffled_directions_except(random, direction_opposite(*search_direction));
+            for step in 1..=self.search_range {
+                let world_x = origin_x + search_direction.0 * step;
+                let world_y = origin_y + search_direction.1 * step;
+                let world_z = origin_z + search_direction.2 * step;
+                let Some(state) = layer_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
+                ) else {
+                    break;
+                };
+                if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
+                    break;
+                }
+                if self.place_growth_if_possible(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    &placement_directions,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_growth_if_possible(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        directions: &[(i32, i32, i32, &'static str)],
+    ) -> bool {
+        for direction in directions {
+            let neighbor_x = world_x + direction.0;
+            let neighbor_y = world_y + direction.1;
+            let neighbor_z = world_z + direction.2;
+            let Some(neighbor) = layer_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbor_x,
+                neighbor_y,
+                neighbor_z,
+                settings.min_y,
+            ) else {
+                continue;
+            };
+            if !self.can_be_placed_on.contains(&neighbor.block.as_ref()) {
+                continue;
+            }
+            if !self.try_place_face(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                world_x,
+                world_y,
+                world_z,
+                direction.3,
+            ) {
+                continue;
+            }
+            if random.next_float() < self.chance_of_spreading {
+                self.spread_once(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    *direction,
+                );
+            }
+            return true;
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_face(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        face: &str,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+            return false;
+        };
+        if !is_air_or_water_layer(current) && !current.is(self.block.block.as_ref()) {
+            return false;
+        }
+        if current.is(self.block.block.as_ref())
+            && current
+                .properties
+                .iter()
+                .any(|(name, value)| name == face && value == "true")
+        {
+            return false;
+        }
+
+        let waterlogged = if current.is("minecraft:water") {
+            "true"
+        } else {
+            "false"
+        };
+        let new_state = if current.is(self.block.block.as_ref()) {
+            current.with_property(face, "true")
+        } else {
+            self.block
+                .with_property("waterlogged", waterlogged)
+                .with_property(face, "true")
+        };
+        chunk.set_layer(local_x, world_y, local_z, settings.min_y, new_state);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spread_once(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        from_face: (i32, i32, i32, &'static str),
+    ) -> bool {
+        for spread_direction in shuffled_all_directions(random) {
+            if spread_direction_axis(spread_direction) == spread_direction_axis(from_face) {
+                continue;
+            }
+            for (target_x, target_y, target_z, target_face) in [
+                (world_x, world_y, world_z, spread_direction.3),
+                (
+                    world_x + spread_direction.0,
+                    world_y + spread_direction.1,
+                    world_z + spread_direction.2,
+                    from_face.3,
+                ),
+                (
+                    world_x + spread_direction.0 + from_face.0,
+                    world_y + spread_direction.1 + from_face.1,
+                    world_z + spread_direction.2 + from_face.2,
+                    direction_opposite_name(spread_direction.3),
+                ),
+            ] {
+                let neighbor = direction_by_name(target_face);
+                let Some(neighbor_state) = layer_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    target_x + neighbor.0,
+                    target_y + neighbor.1,
+                    target_z + neighbor.2,
+                    settings.min_y,
+                ) else {
+                    continue;
+                };
+                if self
+                    .can_be_placed_on
+                    .contains(&neighbor_state.block.as_ref())
+                    && self.try_place_face(
+                        settings,
+                        chunk_min_x,
+                        chunk_min_z,
+                        chunk,
+                        target_x,
+                        target_y,
+                        target_z,
+                        target_face,
+                    )
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn shuffled_directions(
+        &self,
+        random: &mut FeatureRandom,
+    ) -> Vec<(i32, i32, i32, &'static str)> {
+        let mut directions = Vec::with_capacity(5);
+        if self.can_place_on_ceiling {
+            directions.push((0, 1, 0, "up"));
+        }
+        if self.can_place_on_floor {
+            directions.push((0, -1, 0, "down"));
+        }
+        if self.can_place_on_wall {
+            directions.extend([
+                (0, 0, -1, "north"),
+                (1, 0, 0, "east"),
+                (0, 0, 1, "south"),
+                (-1, 0, 0, "west"),
+            ]);
+        }
+        shuffle_directions(&mut directions, random);
+        directions
+    }
+
+    fn shuffled_directions_except(
+        &self,
+        random: &mut FeatureRandom,
+        excluded: (i32, i32, i32, &'static str),
+    ) -> Vec<(i32, i32, i32, &'static str)> {
+        let mut directions = self.shuffled_directions(random);
+        directions.retain(|direction| *direction != excluded);
+        directions
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MonsterRoomFeatureConfig {
+    cave_air: BlockLayer,
+    cobblestone: BlockLayer,
+    mossy_cobblestone: BlockLayer,
+    chest: BlockLayer,
+    spawner: BlockLayer,
+}
+
+impl MonsterRoomFeatureConfig {
+    fn new() -> Self {
+        Self {
+            cave_air: BlockLayer::new("minecraft:cave_air"),
+            cobblestone: BlockLayer::new("minecraft:cobblestone"),
+            mossy_cobblestone: BlockLayer::new("minecraft:mossy_cobblestone"),
+            chest: BlockLayer::new("minecraft:chest"),
+            spawner: BlockLayer::new("minecraft:spawner"),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let x_radius = random.next_int(2) + 2;
+        let z_radius = random.next_int(2) + 2;
+        let min_x = -x_radius - 1;
+        let max_x = x_radius + 1;
+        let min_z = -z_radius - 1;
+        let max_z = z_radius + 1;
+
+        if !self.can_place(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            origin_x,
+            origin_y,
+            origin_z,
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+        ) {
+            return false;
+        }
+
+        self.place_shell_and_room(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+        );
+        self.place_chests(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            x_radius,
+            z_radius,
+        );
+        self.place_spawner(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+        );
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn can_place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+    ) -> bool {
+        let mut hole_count = 0;
+        for dx in min_x..=max_x {
+            for dy in -1..=4 {
+                for dz in min_z..=max_z {
+                    let world_x = origin_x + dx;
+                    let world_y = origin_y + dy;
+                    let world_z = origin_z + dz;
+                    let Some(layer) = layer_at_world(
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    ) else {
+                        return false;
+                    };
+                    let solid = is_full_solid_layer(layer);
+                    if (dy == -1 || dy == 4) && !solid {
+                        return false;
+                    }
+                    if (dx == min_x || dx == max_x || dz == min_z || dz == max_z)
+                        && dy == 0
+                        && layer.is_air
+                        && is_air_at_world(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            world_x,
+                            world_y + 1,
+                            world_z,
+                            settings.min_y,
+                        )
+                    {
+                        hole_count += 1;
+                    }
+                }
+            }
+        }
+
+        (1..=5).contains(&hole_count)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_shell_and_room(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+    ) {
+        for dx in min_x..=max_x {
+            for dy in (-1..=4).rev() {
+                for dz in min_z..=max_z {
+                    let world_x = origin_x + dx;
+                    let world_y = origin_y + dy;
+                    let world_z = origin_z + dz;
+                    let Some((local_x, local_z)) =
+                        local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                    else {
+                        continue;
+                    };
+                    let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y)
+                    else {
+                        continue;
+                    };
+                    let boundary = dx == min_x
+                        || dy == -1
+                        || dz == min_z
+                        || dx == max_x
+                        || dy == 4
+                        || dz == max_z;
+                    if boundary {
+                        if world_y >= settings.min_y
+                            && !is_solid_at_world(
+                                chunk,
+                                chunk_min_x,
+                                chunk_min_z,
+                                world_x,
+                                world_y - 1,
+                                world_z,
+                                settings.min_y,
+                            )
+                        {
+                            self.set_room_block(
+                                chunk,
+                                local_x,
+                                world_y,
+                                local_z,
+                                settings.min_y,
+                                self.cave_air.clone(),
+                            );
+                        } else if is_full_solid_layer(current) && !current.is("minecraft:chest") {
+                            let block = if dy == -1 && random.next_int(4) != 0 {
+                                self.mossy_cobblestone.clone()
+                            } else {
+                                self.cobblestone.clone()
+                            };
+                            self.set_room_block(
+                                chunk,
+                                local_x,
+                                world_y,
+                                local_z,
+                                settings.min_y,
+                                block,
+                            );
+                        }
+                    } else if !current.is("minecraft:chest") && !current.is("minecraft:spawner") {
+                        self.set_room_block(
+                            chunk,
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            self.cave_air.clone(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_chests(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        x_radius: i32,
+        z_radius: i32,
+    ) {
+        for _ in 0..2 {
+            for _ in 0..3 {
+                let world_x = origin_x + random.next_int(x_radius * 2 + 1) - x_radius;
+                let world_z = origin_z + random.next_int(z_radius * 2 + 1) - z_radius;
+                let Some((local_x, local_z)) =
+                    local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                else {
+                    continue;
+                };
+                if !chunk
+                    .layer(local_x, origin_y, local_z, settings.min_y)
+                    .is_some_and(|layer| layer.is_air)
+                {
+                    continue;
+                }
+
+                let wall_count = horizontal_directions()
+                    .iter()
+                    .filter(|(dx, dz)| {
+                        is_solid_at_world(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            world_x + dx,
+                            origin_y,
+                            world_z + dz,
+                            settings.min_y,
+                        )
+                    })
+                    .count();
+                if wall_count != 1 {
+                    continue;
+                }
+
+                let chest = self
+                    .chest
+                    .with_property(
+                        "facing",
+                        chest_facing(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            world_x,
+                            origin_y,
+                            world_z,
+                            settings.min_y,
+                        ),
+                    )
+                    .with_property("waterlogged", "false")
+                    .with_property("type", "single");
+                chunk.set_layer(local_x, origin_y, local_z, settings.min_y, chest);
+                chunk.push_block_entity(
+                    world_x,
+                    origin_y,
+                    world_z,
+                    CHEST_BLOCK_ENTITY_TYPE_ID,
+                    chest_block_entity_nbt(random.next_long()),
+                );
+                break;
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spawner(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) {
+        let Some((local_x, local_z)) = local_coords(origin_x, origin_z, chunk_min_x, chunk_min_z)
+        else {
+            return;
+        };
+        chunk.set_layer(
+            local_x,
+            origin_y,
+            local_z,
+            settings.min_y,
+            self.spawner.clone(),
+        );
+        chunk.push_block_entity(
+            origin_x,
+            origin_y,
+            origin_z,
+            MOB_SPAWNER_BLOCK_ENTITY_TYPE_ID,
+            spawner_block_entity_nbt(random_monster_room_entity(random)),
+        );
+    }
+
+    fn set_room_block(
+        &self,
+        chunk: &mut NoiseChunkBlocks,
+        local_x: usize,
+        world_y: i32,
+        local_z: usize,
+        min_y: i32,
+        block: BlockLayer,
+    ) {
+        chunk.set_layer(local_x, world_y, local_z, min_y, block);
     }
 }
 
@@ -2279,7 +5433,7 @@ impl PlacedOreFeature {
             let x = origin_x + random.next_int(16);
             let z = origin_z + random.next_int(16);
             let y = self.height.sample(settings, random);
-            if !self.biome_filter.allows(settings.density.biome(x, y, z)) {
+            if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
             self.ore
@@ -2301,6 +5455,13 @@ impl FeatureBiomeFilter {
             Self::All => true,
             Self::Include(biomes) => biomes.contains(&biome),
             Self::Exclude(biomes) => !biomes.contains(&biome),
+        }
+    }
+
+    fn allows_at(self, density: &TerrainDensity, x: i32, y: i32, z: i32) -> bool {
+        match self {
+            Self::All => true,
+            Self::Include(_) | Self::Exclude(_) => self.allows(density.biome(x, y, z)),
         }
     }
 }
@@ -2348,7 +5509,7 @@ impl PlacedUnderwaterMagmaFeature {
             let local_x = (x - origin_x) as usize;
             let local_z = (z - origin_z) as usize;
             let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
-            if y > ocean_floor - 2 || !self.biome_filter.allows(settings.density.biome(x, y, z)) {
+            if y > ocean_floor - 2 || !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
 
@@ -2550,7 +5711,7 @@ impl PlacedDiskFeature {
             let local_z = (z - origin_z) as usize;
             let y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
             if y <= settings.min_y
-                || !self.biome_filter.allows(settings.density.biome(x, y, z))
+                || !self.biome_filter.allows_at(&settings.density, x, y, z)
                 || !is_water_at(chunk, local_x, y, local_z, settings.min_y)
             {
                 continue;
@@ -2596,7 +5757,7 @@ impl PlacedDiskFeature {
                     else {
                         continue;
                     };
-                    if !self.target_blocks.contains(&current.block.as_str()) {
+                    if !self.target_blocks.contains(&current.block.as_ref()) {
                         continue;
                     }
 
@@ -2711,7 +5872,7 @@ impl PlacedSpringFeature {
             let world_y = self.height.sample(settings, random);
             if !self
                 .biome_filter
-                .allows(settings.density.biome(world_x, world_y, world_z))
+                .allows_at(&settings.density, world_x, world_y, world_z)
             {
                 continue;
             }
@@ -2757,7 +5918,7 @@ impl SpringFeatureConfig {
         let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
             return false;
         };
-        if !current.is_air && !self.valid_blocks.contains(&current.block.as_str()) {
+        if !current.is_air && !self.valid_blocks.contains(&current.block.as_ref()) {
             return false;
         }
 
@@ -2811,7 +5972,7 @@ impl SpringFeatureConfig {
     ) -> bool {
         chunk
             .layer(local_x, world_y, local_z, min_y)
-            .is_some_and(|layer| self.valid_blocks.contains(&layer.block.as_str()))
+            .is_some_and(|layer| self.valid_blocks.contains(&layer.block.as_ref()))
     }
 }
 
@@ -3073,6 +6234,34 @@ impl UniformInt {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct TrapezoidInt {
+    min: i32,
+    max: i32,
+    plateau: i32,
+}
+
+impl TrapezoidInt {
+    fn new(min: i32, max: i32, plateau: i32) -> Self {
+        Self { min, max, plateau }
+    }
+
+    fn sample(self, random: &mut FeatureRandom) -> i32 {
+        if self.plateau == 0 && self.max == -self.min {
+            return random.next_int(self.max + 1) - random.next_int(self.max + 1);
+        }
+
+        let range = self.max - self.min;
+        if self.plateau == range {
+            return self.min + random.next_int(range + 1);
+        }
+
+        let plateau_start = (range - self.plateau) / 2;
+        let plateau_end = range - plateau_start;
+        self.min + random.next_int(plateau_end + 1) + random.next_int(plateau_start + 1)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 enum OreHeight {
     Uniform(HeightAnchor, HeightAnchor),
     Trapezoid(HeightAnchor, HeightAnchor),
@@ -3188,21 +6377,21 @@ impl FeatureRandom {
 
 fn is_stone_ore_replaceable(layer: &BlockLayer) -> bool {
     matches!(
-        layer.block.as_str(),
+        layer.block.as_ref(),
         "minecraft:stone" | "minecraft:granite" | "minecraft:diorite" | "minecraft:andesite"
     )
 }
 
 fn is_deepslate_ore_replaceable(layer: &BlockLayer) -> bool {
     matches!(
-        layer.block.as_str(),
+        layer.block.as_ref(),
         "minecraft:deepslate" | "minecraft:tuff"
     )
 }
 
 fn is_base_stone_overworld(layer: &BlockLayer) -> bool {
     matches!(
-        layer.block.as_str(),
+        layer.block.as_ref(),
         "minecraft:stone"
             | "minecraft:granite"
             | "minecraft:diorite"
@@ -3210,6 +6399,134 @@ fn is_base_stone_overworld(layer: &BlockLayer) -> bool {
             | "minecraft:tuff"
             | "minecraft:deepslate"
     )
+}
+
+fn is_leaf_layer(layer: &BlockLayer) -> bool {
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:jungle_leaves"
+            | "minecraft:oak_leaves"
+            | "minecraft:spruce_leaves"
+            | "minecraft:pale_oak_leaves"
+            | "minecraft:dark_oak_leaves"
+            | "minecraft:acacia_leaves"
+            | "minecraft:birch_leaves"
+            | "minecraft:azalea_leaves"
+            | "minecraft:flowering_azalea_leaves"
+            | "minecraft:mangrove_leaves"
+            | "minecraft:cherry_leaves"
+    )
+}
+
+fn is_log_layer(layer: &BlockLayer) -> bool {
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:oak_log"
+            | "minecraft:oak_wood"
+            | "minecraft:stripped_oak_log"
+            | "minecraft:stripped_oak_wood"
+    )
+}
+
+fn is_small_flower_layer(layer: &BlockLayer) -> bool {
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:dandelion"
+            | "minecraft:open_eyeblossom"
+            | "minecraft:poppy"
+            | "minecraft:blue_orchid"
+            | "minecraft:allium"
+            | "minecraft:azure_bluet"
+            | "minecraft:red_tulip"
+            | "minecraft:orange_tulip"
+            | "minecraft:white_tulip"
+            | "minecraft:pink_tulip"
+            | "minecraft:oxeye_daisy"
+            | "minecraft:cornflower"
+            | "minecraft:lily_of_the_valley"
+            | "minecraft:wither_rose"
+            | "minecraft:torchflower"
+            | "minecraft:closed_eyeblossom"
+            | "minecraft:golden_dandelion"
+    )
+}
+
+fn valid_tree_position_layer(layer: &BlockLayer) -> bool {
+    layer.is_air
+        || is_leaf_layer(layer)
+        || is_small_flower_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:pale_moss_carpet"
+                | "minecraft:short_grass"
+                | "minecraft:fern"
+                | "minecraft:dead_bush"
+                | "minecraft:vine"
+                | "minecraft:glow_lichen"
+                | "minecraft:sunflower"
+                | "minecraft:lilac"
+                | "minecraft:rose_bush"
+                | "minecraft:peony"
+                | "minecraft:tall_grass"
+                | "minecraft:large_fern"
+                | "minecraft:hanging_roots"
+                | "minecraft:pitcher_plant"
+                | "minecraft:water"
+                | "minecraft:seagrass"
+                | "minecraft:tall_seagrass"
+                | "minecraft:bush"
+                | "minecraft:firefly_bush"
+                | "minecraft:warped_roots"
+                | "minecraft:nether_sprouts"
+                | "minecraft:crimson_roots"
+                | "minecraft:leaf_litter"
+                | "minecraft:short_dry_grass"
+                | "minecraft:tall_dry_grass"
+        )
+}
+
+fn cannot_replace_below_tree_trunk(layer: &BlockLayer) -> bool {
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:dirt"
+            | "minecraft:coarse_dirt"
+            | "minecraft:rooted_dirt"
+            | "minecraft:mud"
+            | "minecraft:muddy_mangrove_roots"
+            | "minecraft:moss_block"
+            | "minecraft:pale_moss_block"
+            | "minecraft:podzol"
+    )
+}
+
+fn oak_sapling_would_survive_at(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(valid_tree_position_layer)
+        && supports_vegetation_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y - 1,
+            world_z,
+            min_y,
+        )
 }
 
 fn is_water_at(
@@ -3229,10 +6546,14 @@ fn is_water_layer(layer: &BlockLayer) -> bool {
 }
 
 fn is_fluid_layer(layer: &BlockLayer) -> bool {
-    matches!(layer.block.as_str(), "minecraft:water" | "minecraft:lava")
+    matches!(layer.block.as_ref(), "minecraft:water" | "minecraft:lava")
 }
 
 fn is_water_or_air_layer(layer: &BlockLayer) -> bool {
+    layer.is_air || is_water_layer(layer)
+}
+
+fn is_air_or_water_layer(layer: &BlockLayer) -> bool {
     layer.is_air || is_water_layer(layer)
 }
 
@@ -3240,9 +6561,409 @@ fn is_full_solid_layer(layer: &BlockLayer) -> bool {
     !layer.is_air && !is_fluid_layer(layer)
 }
 
+fn supports_vegetation_layer(layer: &BlockLayer) -> bool {
+    SUPPORTS_VEGETATION_BLOCKS.contains(&layer.block.as_ref())
+}
+
+fn can_lake_replace_block(layer: &BlockLayer) -> bool {
+    can_feature_replace_block(layer)
+}
+
 fn local_coord(world: i32, origin: i32) -> Option<usize> {
     let local = world - origin;
     (0..16).contains(&local).then_some(local as usize)
+}
+
+fn local_coords(
+    world_x: i32,
+    world_z: i32,
+    origin_x: i32,
+    origin_z: i32,
+) -> Option<(usize, usize)> {
+    Some((
+        local_coord(world_x, origin_x)?,
+        local_coord(world_z, origin_z)?,
+    ))
+}
+
+fn can_feature_replace_block(layer: &BlockLayer) -> bool {
+    !matches!(
+        layer.block.as_ref(),
+        "minecraft:bedrock"
+            | "minecraft:spawner"
+            | "minecraft:chest"
+            | "minecraft:end_portal_frame"
+            | "minecraft:reinforced_deepslate"
+            | "minecraft:trial_spawner"
+            | "minecraft:vault"
+    )
+}
+
+fn layer_at_world<'a>(
+    chunk: &'a NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> Option<&'a BlockLayer> {
+    let (local_x, local_z) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)?;
+    chunk.layer(local_x, world_y, local_z, min_y)
+}
+
+fn is_air_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(|layer| layer.is_air)
+}
+
+fn is_solid_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_full_solid_layer)
+}
+
+fn supports_vegetation_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(supports_vegetation_layer)
+}
+
+fn is_full_solid_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_full_solid_layer)
+}
+
+fn horizontal_directions() -> &'static [(i32, i32)] {
+    &[(0, -1), (1, 0), (0, 1), (-1, 0)]
+}
+
+fn all_directions() -> [(i32, i32, i32, &'static str); 6] {
+    [
+        (0, -1, 0, "down"),
+        (0, 1, 0, "up"),
+        (0, 0, -1, "north"),
+        (0, 0, 1, "south"),
+        (-1, 0, 0, "west"),
+        (1, 0, 0, "east"),
+    ]
+}
+
+fn shuffled_all_directions(random: &mut FeatureRandom) -> Vec<(i32, i32, i32, &'static str)> {
+    let mut directions = all_directions().to_vec();
+    shuffle_directions(&mut directions, random);
+    directions
+}
+
+fn shuffle_directions(
+    directions: &mut [(i32, i32, i32, &'static str)],
+    random: &mut FeatureRandom,
+) {
+    for index in (1..directions.len()).rev() {
+        let swap = random.next_int(index as i32 + 1) as usize;
+        directions.swap(index, swap);
+    }
+}
+
+fn shuffle_positions(positions: &mut [(i32, i32, i32)], random: &mut FeatureRandom) {
+    for index in (1..positions.len()).rev() {
+        let swap = random.next_int(index as i32 + 1) as usize;
+        positions.swap(index, swap);
+    }
+}
+
+fn direction_opposite(direction: (i32, i32, i32, &'static str)) -> (i32, i32, i32, &'static str) {
+    let name = direction_opposite_name(direction.3);
+    direction_by_name(name)
+}
+
+fn direction_opposite_name(name: &str) -> &'static str {
+    match name {
+        "down" => "up",
+        "up" => "down",
+        "north" => "south",
+        "south" => "north",
+        "west" => "east",
+        "east" => "west",
+        _ => "north",
+    }
+}
+
+fn direction_by_name(name: &str) -> (i32, i32, i32, &'static str) {
+    match name {
+        "down" => (0, -1, 0, "down"),
+        "up" => (0, 1, 0, "up"),
+        "north" => (0, 0, -1, "north"),
+        "south" => (0, 0, 1, "south"),
+        "west" => (-1, 0, 0, "west"),
+        "east" => (1, 0, 0, "east"),
+        _ => (0, 0, -1, "north"),
+    }
+}
+
+fn spread_direction_axis(direction: (i32, i32, i32, &'static str)) -> u8 {
+    if direction.0 != 0 {
+        0
+    } else if direction.1 != 0 {
+        1
+    } else {
+        2
+    }
+}
+
+fn chest_facing(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> &'static str {
+    for (dx, dz, facing) in [
+        (0, -1, "south"),
+        (1, 0, "west"),
+        (0, 1, "north"),
+        (-1, 0, "east"),
+    ] {
+        if is_solid_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x + dx,
+            world_y,
+            world_z + dz,
+            min_y,
+        ) {
+            return facing;
+        }
+    }
+    "north"
+}
+
+fn random_monster_room_entity(random: &mut FeatureRandom) -> &'static str {
+    match random.next_int(4) {
+        0 => "minecraft:skeleton",
+        1 | 2 => "minecraft:zombie",
+        _ => "minecraft:spider",
+    }
+}
+
+fn chest_block_entity_nbt(loot_table_seed: i64) -> Tag {
+    let mut fields = HashMap::new();
+    fields.insert(
+        "LootTable".to_string(),
+        Tag::String(Arc::from("minecraft:chests/simple_dungeon")),
+    );
+    if loot_table_seed != 0 {
+        fields.insert("LootTableSeed".to_string(), Tag::Long(loot_table_seed));
+    }
+    Tag::Compound(Arc::new(fields))
+}
+
+fn spawner_block_entity_nbt(entity_id: &str) -> Tag {
+    compound_tag([
+        ("Delay", Tag::Short(20)),
+        ("MinSpawnDelay", Tag::Short(200)),
+        ("MaxSpawnDelay", Tag::Short(800)),
+        ("SpawnCount", Tag::Short(4)),
+        ("MaxNearbyEntities", Tag::Short(6)),
+        ("RequiredPlayerRange", Tag::Short(16)),
+        ("SpawnRange", Tag::Short(4)),
+        (
+            "SpawnData",
+            compound_tag([(
+                "entity",
+                compound_tag([("id", Tag::String(Arc::from(entity_id.to_string())))]),
+            )]),
+        ),
+    ])
+}
+
+fn beehive_block_entity_nbt(random: &mut FeatureRandom) -> Tag {
+    let bee_count = 2 + random.next_int(2);
+    let bees = (0..bee_count)
+        .map(|_| {
+            compound_tag([
+                (
+                    "entity_data",
+                    compound_tag([("id", Tag::String(Arc::from("minecraft:bee")))]),
+                ),
+                ("ticks_in_hive", Tag::Int(random.next_int(599))),
+                ("min_ticks_in_hive", Tag::Int(600)),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    let mut fields = HashMap::new();
+    fields.insert(
+        "bees".to_string(),
+        Tag::List(
+            ListHeader {
+                tag_id: tag_id::COMPOUND,
+                length: bees.len() as i32,
+            },
+            Arc::from(bees),
+        ),
+    );
+    Tag::Compound(Arc::new(fields))
+}
+
+fn can_geode_replace_block(layer: &BlockLayer) -> bool {
+    can_feature_replace_block(layer)
+}
+
+fn is_geode_invalid_block(layer: &BlockLayer) -> bool {
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:bedrock"
+            | "minecraft:water"
+            | "minecraft:lava"
+            | "minecraft:ice"
+            | "minecraft:packed_ice"
+            | "minecraft:blue_ice"
+    )
+}
+
+fn can_amethyst_cluster_grow_at(layer: &BlockLayer) -> bool {
+    layer.is_air || layer.is("minecraft:water")
+}
+
+fn is_freezing_biome(biome: &str) -> bool {
+    matches!(
+        biome,
+        "minecraft:frozen_ocean"
+            | "minecraft:deep_frozen_ocean"
+            | "minecraft:frozen_river"
+            | "minecraft:snowy_beach"
+            | "minecraft:snowy_plains"
+            | "minecraft:ice_spikes"
+            | "minecraft:snowy_taiga"
+            | "minecraft:grove"
+            | "minecraft:snowy_slopes"
+            | "minecraft:jagged_peaks"
+            | "minecraft:frozen_peaks"
+    )
+}
+
+fn amethyst_cluster_block(block: &str) -> BlockLayer {
+    BlockLayer::with_properties(block, &[("facing", "up"), ("waterlogged", "false")])
+}
+
+fn inv_sqrt_distance(x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32, offset: i32) -> f64 {
+    let dx = x0 - x1;
+    let dy = y0 - y1;
+    let dz = z0 - z1;
+    1.0 / ((dx * dx + dy * dy + dz * dz + offset) as f64).sqrt()
+}
+
+fn geode_noise(x: i32, y: i32, z: i32) -> f64 {
+    let seed = (x as i64).wrapping_mul(3_129_871)
+        ^ (z as i64).wrapping_mul(116_129_781)
+        ^ (y as i64).wrapping_mul(42_317_861);
+    let mut random = FeatureRandom::new(seed);
+    random.next_double() * 2.0 - 1.0
+}
+
+fn scan_down_to_solid(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    local_x: usize,
+    origin_y: i32,
+    local_z: usize,
+    max_steps: i32,
+) -> Option<i32> {
+    for step in 0..=max_steps {
+        let y = origin_y - step;
+        if !(settings.min_y..settings.min_y + settings.height).contains(&y)
+            || y - 5 < settings.min_y
+        {
+            return None;
+        }
+        if chunk
+            .layer(local_x, y, local_z, settings.min_y)
+            .is_some_and(|layer| !layer.is_air)
+        {
+            return Some(y);
+        }
+    }
+
+    None
+}
+
+fn lake_index(x: usize, y: usize, z: usize) -> usize {
+    (x * 16 + z) * 8 + y
+}
+
+fn is_lake_boundary(grid: &[bool], x: usize, y: usize, z: usize) -> bool {
+    (x < 15 && grid[lake_index(x + 1, y, z)])
+        || (x > 0 && grid[lake_index(x - 1, y, z)])
+        || (z < 15 && grid[lake_index(x, y, z + 1)])
+        || (z > 0 && grid[lake_index(x, y, z - 1)])
+        || (y < 7 && grid[lake_index(x, y + 1, z)])
+        || (y > 0 && grid[lake_index(x, y - 1, z)])
 }
 
 fn is_adjacent_to_air(
@@ -3283,9 +7004,9 @@ fn lerp_f64(delta: f64, start: f64, end: f64) -> f64 {
 
 #[derive(Debug, Clone)]
 struct BlockLayer {
-    block: String,
+    block: Arc<str>,
     block_state_id: i32,
-    properties: Vec<(String, String)>,
+    properties: Arc<[(String, String)]>,
     is_air: bool,
 }
 
@@ -3295,14 +7016,50 @@ impl BlockLayer {
         let state = chunk_nbt::default_block_state(&block);
         Self {
             is_air: is_air_block(&block),
-            block,
+            block: Arc::from(block),
             block_state_id: state.id,
-            properties: state.properties,
+            properties: Arc::from(state.properties),
+        }
+    }
+
+    fn with_properties(block: &str, properties: &[(&str, &str)]) -> Self {
+        let block = normalize_identifier(block);
+        let mut properties = properties
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect::<Vec<_>>();
+        properties.sort_by(|left, right| left.0.cmp(&right.0));
+        let state = chunk_nbt::block_state(&block, &properties);
+        Self {
+            is_air: is_air_block(&block),
+            block: Arc::from(block),
+            block_state_id: state.id,
+            properties: Arc::from(state.properties),
         }
     }
 
     fn is(&self, block: &str) -> bool {
-        self.block == block
+        self.block.as_ref() == block
+    }
+
+    fn with_property(&self, name: &str, value: &str) -> Self {
+        let mut properties = self.properties.iter().cloned().collect::<Vec<_>>();
+        if let Some((_, existing)) = properties
+            .iter_mut()
+            .find(|(property_name, _)| property_name == name)
+        {
+            *existing = value.to_string();
+        } else {
+            properties.push((name.to_string(), value.to_string()));
+        }
+        properties.sort_by(|left, right| left.0.cmp(&right.0));
+        let state = chunk_nbt::block_state(self.block.as_ref(), &properties);
+        Self {
+            is_air: self.is_air,
+            block: self.block.clone(),
+            block_state_id: state.id,
+            properties: Arc::from(state.properties),
+        }
     }
 }
 
@@ -3374,6 +7131,8 @@ fn load_noise_settings(preset: &str, seed: i64) -> Result<NoiseSettings> {
         min_y,
         height,
         sea_level,
+        air_block: BlockLayer::new("minecraft:air"),
+        bedrock_block: BlockLayer::new("minecraft:bedrock"),
         default_block: BlockLayer::new(default_block),
         default_fluid: BlockLayer::new(default_fluid),
         lava_block: BlockLayer::new("minecraft:lava"),
@@ -3414,6 +7173,9 @@ fn load_noise_settings(preset: &str, seed: i64) -> Result<NoiseSettings> {
         ore_veins: vanilla_noise::OreVeinNoise::new(seed),
         carvers: VanillaCarvers::new(seed),
         ore_features: OverworldOreFeatures::new(seed),
+        lava_lake_fluid_block: BlockLayer::new("minecraft:lava"),
+        lava_lake_barrier_block: BlockLayer::new("minecraft:stone"),
+        cave_air_block: BlockLayer::new("minecraft:cave_air"),
     })
 }
 
@@ -3530,14 +7292,14 @@ fn section_tag(section_y: i32, layers: &[FlatLayer], biome: &str) -> Tag {
 fn noise_sections_tag(chunk: &NoiseChunkBlocks) -> Tag {
     let mut sections = Vec::new();
     for section_y in WORLD_MIN_SECTION_Y..WORLD_MIN_SECTION_Y + section_count() {
-        let block_states = noise_block_states_tag(chunk, section_y);
-        if !noise_section_is_air(chunk, section_y) {
-            sections.push(compound_tag([
-                ("Y", Tag::Byte(section_y as i8)),
-                ("block_states", block_states),
-                ("biomes", noise_biomes_tag(chunk, section_y)),
-            ]));
+        if noise_section_is_air(chunk, section_y) {
+            continue;
         }
+        sections.push(compound_tag([
+            ("Y", Tag::Byte(section_y as i8)),
+            ("block_states", noise_block_states_tag(chunk, section_y)),
+            ("biomes", noise_biomes_tag(chunk, section_y)),
+        ]));
     }
 
     Tag::List(
@@ -3646,7 +7408,7 @@ fn biomes_tag(biome: &str) -> Tag {
 
 fn noise_biomes_tag(chunk: &NoiseChunkBlocks, section_y: i32) -> Tag {
     let mut palette = Vec::new();
-    let mut index_by_biome = HashMap::<String, usize>::new();
+    let mut index_by_biome = HashMap::<&'static str, usize>::new();
     let mut values = vec![0_i32; 4 * 4 * 4];
 
     for x in 0..4 {
@@ -3654,8 +7416,8 @@ fn noise_biomes_tag(chunk: &NoiseChunkBlocks, section_y: i32) -> Tag {
             for z in 0..4 {
                 let biome = chunk.biome(section_y, x, y, z);
                 let next_index = palette.len();
-                let palette_index = *index_by_biome.entry(biome.to_string()).or_insert_with(|| {
-                    palette.push(Tag::String(Arc::from(biome.to_string())));
+                let palette_index = *index_by_biome.entry(biome).or_insert_with(|| {
+                    palette.push(Tag::String(Arc::from(biome)));
                     next_index
                 });
                 values[(x * 4 + y) * 4 + z] = palette_index as i32;
@@ -4056,7 +7818,7 @@ mod tests {
                     .iter()
                     .zip(&carved_column.blocks)
                     .any(|(before, after)| {
-                        !before.is_air && before.block != "minecraft:lava" && after.is_air
+                        !before.is_air && before.block.as_ref() != "minecraft:lava" && after.is_air
                     })
             })
         });
@@ -4086,6 +7848,7 @@ mod tests {
         let mut chunk = NoiseChunkBlocks {
             columns,
             biomes: Vec::new(),
+            block_entities: Vec::new(),
         };
         let mut found = HashSet::new();
 
@@ -4094,7 +7857,7 @@ mod tests {
             .place_chunk(&settings, 0, 0, &mut chunk);
         for column in &chunk.columns {
             for layer in &column.blocks {
-                match layer.block.as_str() {
+                match layer.block.as_ref() {
                     "minecraft:dirt"
                     | "minecraft:gravel"
                     | "minecraft:granite"
@@ -4153,7 +7916,7 @@ mod tests {
                     .ore
                     .targets
                     .iter()
-                    .any(|target| target.block.block == "minecraft:gold_ore")
+                    .any(|target| target.block.block.as_ref() == "minecraft:gold_ore")
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:badlands"))
         }));
         assert!(features.iter().any(|feature| {
@@ -4163,7 +7926,7 @@ mod tests {
                     .ore
                     .targets
                     .iter()
-                    .any(|target| target.block.block == "minecraft:emerald_ore")
+                    .any(|target| target.block.block.as_ref() == "minecraft:emerald_ore")
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:meadow"))
         }));
         assert!(features.iter().any(|feature| {
@@ -4173,7 +7936,7 @@ mod tests {
                     .ore
                     .targets
                     .iter()
-                    .any(|target| target.block.block == "minecraft:infested_stone")
+                    .any(|target| target.block.block.as_ref() == "minecraft:infested_stone")
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:meadow"))
         }));
     }
@@ -4221,7 +7984,7 @@ mod tests {
             feature.step_index == 8
                 && feature.feature_index == 0
                 && matches!(feature.count, OrePlacementCount::Constant(25))
-                && feature.config.state.block == "minecraft:water"
+                && feature.config.state.block.as_ref() == "minecraft:water"
         }));
         assert!(springs.iter().any(|feature| {
             feature.step_index == 8
@@ -4235,8 +7998,367 @@ mod tests {
                         inner: 8
                     }
                 )
-                && feature.config.state.block == "minecraft:lava"
+                && feature.config.state.block.as_ref() == "minecraft:lava"
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_lava_lakes() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let lakes = &settings.ore_features.lakes;
+
+        assert!(lakes.iter().any(|feature| {
+            feature.step_index == 1
+                && feature.feature_index == 0
+                && matches!(
+                    feature.placement,
+                    LakePlacement::Underground {
+                        rarity: 9,
+                        max_scan_steps: 32,
+                        ..
+                    }
+                )
+        }));
+        assert!(lakes.iter().any(|feature| {
+            feature.step_index == 1
+                && feature.feature_index == 1
+                && matches!(feature.placement, LakePlacement::Surface { rarity: 200 })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_amethyst_geodes() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let geodes = &settings.ore_features.geodes;
+
+        assert!(geodes.iter().any(|feature| {
+            feature.step_index == 2
+                && feature.feature_index == 0
+                && feature.rarity == 24
+                && matches!(
+                    feature.height,
+                    OreHeight::Uniform(HeightAnchor::AboveBottom(6), HeightAnchor::Absolute(30))
+                )
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_monster_rooms() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let rooms = &settings.ore_features.monster_rooms;
+
+        assert!(rooms.iter().any(|feature| {
+            feature.step_index == 3
+                && feature.feature_index == 0
+                && matches!(feature.count, OrePlacementCount::Constant(10))
+                && matches!(
+                    feature.height,
+                    OreHeight::Uniform(HeightAnchor::Absolute(0), HeightAnchor::BelowTop(0))
+                )
+        }));
+        assert!(rooms.iter().any(|feature| {
+            feature.step_index == 3
+                && feature.feature_index == 1
+                && matches!(feature.count, OrePlacementCount::Constant(4))
+                && matches!(
+                    feature.height,
+                    OreHeight::Uniform(HeightAnchor::AboveBottom(6), HeightAnchor::Absolute(-1))
+                )
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_glow_lichen() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = &settings.ore_features.glow_lichen;
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 0);
+        assert_eq!(feature.max_below_ocean_floor, -13);
+        assert!(matches!(
+            feature.count,
+            OrePlacementCount::Uniform { min: 104, max: 157 }
+        ));
+        assert!(matches!(
+            feature.height,
+            OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256))
+        ));
+        assert_eq!(feature.config.search_range, 20);
+        assert!(feature.config.can_place_on_ceiling);
+        assert!(!feature.config.can_place_on_floor);
+        assert!(feature.config.can_place_on_wall);
+        assert_eq!(feature.config.chance_of_spreading, 0.5);
+        assert_eq!(
+            feature.config.can_be_placed_on,
+            GLOW_LICHEN_CAN_BE_PLACED_ON
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_configures_patch_tall_grass_2() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 1)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 1);
+        let noise_threshold = feature.noise_threshold.as_ref().unwrap();
+        assert_eq!(noise_threshold.noise_level, -0.8);
+        assert_eq!(noise_threshold.below_noise, 0);
+        assert_eq!(noise_threshold.above_noise, 7);
+        assert_eq!(feature.rarity, 32);
+        assert_eq!(feature.inner_count, 96);
+        assert_eq!(feature.xz_offset.min, -7);
+        assert_eq!(feature.xz_offset.max, 7);
+        assert_eq!(feature.xz_offset.plateau, 0);
+        assert_eq!(feature.y_offset.min, -3);
+        assert_eq!(feature.y_offset.max, 3);
+        assert_eq!(feature.y_offset.plateau, 0);
+        assert!(feature.block.lower.is("minecraft:tall_grass"));
+        assert!(
+            feature
+                .block
+                .lower
+                .properties
+                .iter()
+                .any(|(name, value)| { name == "half" && value == "lower" })
+        );
+        assert!(feature.block.upper.as_ref().is_some_and(|upper| {
+            upper.is("minecraft:tall_grass")
+                && upper
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "half" && value == "upper")
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_patch_bush() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 2)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 2);
+        assert!(feature.noise_threshold.is_none());
+        assert_eq!(feature.rarity, 4);
+        assert_eq!(feature.inner_count, 24);
+        assert_eq!(feature.xz_offset.min, -5);
+        assert_eq!(feature.xz_offset.max, 5);
+        assert_eq!(feature.xz_offset.plateau, 0);
+        assert_eq!(feature.y_offset.min, -3);
+        assert_eq!(feature.y_offset.max, 3);
+        assert_eq!(feature.y_offset.plateau, 0);
+        assert!(feature.block.lower.is("minecraft:bush"));
+        assert!(feature.block.upper.is_none());
+    }
+
+    #[test]
+    fn vanilla_noise_configures_patch_sunflower() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 3)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 3);
+        assert!(feature.noise_threshold.is_none());
+        assert_eq!(feature.rarity, 3);
+        assert_eq!(feature.inner_count, 96);
+        assert_eq!(feature.xz_offset.min, -7);
+        assert_eq!(feature.xz_offset.max, 7);
+        assert_eq!(feature.y_offset.min, -3);
+        assert_eq!(feature.y_offset.max, 3);
+        assert!(feature.block.lower.is("minecraft:sunflower"));
+        assert!(feature.block.upper.as_ref().is_some_and(|upper| {
+            upper.is("minecraft:sunflower")
+                && upper
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "half" && value == "upper")
+        }));
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes == SUNFLOWER_PATCH_BIOMES
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_flower_plains() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 4)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 4);
+        let noise_threshold = feature.noise_threshold.as_ref().unwrap();
+        assert_eq!(noise_threshold.noise_level, -0.8);
+        assert_eq!(noise_threshold.below_noise, 15);
+        assert_eq!(noise_threshold.above_noise, 4);
+        assert_eq!(feature.rarity, 32);
+        assert_eq!(feature.inner_count, 64);
+        assert_eq!(feature.xz_offset.min, -6);
+        assert_eq!(feature.xz_offset.max, 6);
+        assert_eq!(feature.y_offset.min, -2);
+        assert_eq!(feature.y_offset.max, 2);
+        assert!(feature.block.lower.is("minecraft:dandelion"));
+        assert!(matches!(
+            &feature.block.provider,
+            SimpleVegetationProvider::PlainsFlower {
+                high_chance: 0.333_333_34,
+                threshold: -0.8,
+                scale: 0.005,
+                ..
+            }
+        ));
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:plains")
+                    && biomes.contains(&"minecraft:sunflower_plains")
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_patch_grass_plain() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 5)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 5);
+        let noise_threshold = feature.noise_threshold.as_ref().unwrap();
+        assert_eq!(noise_threshold.noise_level, -0.8);
+        assert_eq!(noise_threshold.below_noise, 5);
+        assert_eq!(noise_threshold.above_noise, 10);
+        assert_eq!(feature.rarity, 1);
+        assert_eq!(feature.inner_count, 32);
+        assert_eq!(feature.xz_offset.min, -7);
+        assert_eq!(feature.xz_offset.max, 7);
+        assert_eq!(feature.y_offset.min, -3);
+        assert_eq!(feature.y_offset.max, 3);
+        assert!(feature.block.lower.is("minecraft:short_grass"));
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:plains")
+                    && biomes.contains(&"minecraft:cherry_grove")
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_normal_mushrooms_and_pumpkins() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let brown_mushroom = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 6)
+            .unwrap();
+        let red_mushroom = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 7)
+            .unwrap();
+        let pumpkin = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 8)
+            .unwrap();
+
+        assert_eq!(brown_mushroom.step_index, 9);
+        assert_eq!(brown_mushroom.rarity, 256);
+        assert_eq!(brown_mushroom.inner_count, 96);
+        assert!(brown_mushroom.block.lower.is("minecraft:brown_mushroom"));
+        assert!(brown_mushroom.required_support.is_none());
+        assert!(matches!(
+            brown_mushroom.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:forest")
+                    && biomes.contains(&"minecraft:plains")
+        ));
+
+        assert_eq!(red_mushroom.step_index, 9);
+        assert_eq!(red_mushroom.rarity, 512);
+        assert_eq!(red_mushroom.inner_count, 96);
+        assert!(red_mushroom.block.lower.is("minecraft:red_mushroom"));
+        assert!(matches!(
+            red_mushroom.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:forest")
+                    && biomes.contains(&"minecraft:plains")
+        ));
+
+        assert_eq!(pumpkin.step_index, 9);
+        assert_eq!(pumpkin.rarity, 300);
+        assert_eq!(pumpkin.inner_count, 96);
+        assert!(pumpkin.block.lower.is("minecraft:pumpkin"));
+        assert_eq!(pumpkin.required_support, Some("minecraft:grass_block"));
+        assert!(matches!(
+            pumpkin.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:plains")
+                    && biomes.contains(&"minecraft:snowy_taiga")
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_trees_plains() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = &settings.ore_features.trees_plains;
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 3);
+        assert_eq!(feature.surface_water_depth, 0);
+        assert_eq!(feature.count.entries, vec![(0, 19), (1, 1)]);
+        assert_eq!(feature.count.total_weight, 20);
+        assert_eq!(feature.config.fancy_chance, 0.333_333_34);
+        assert_eq!(feature.config.fallen_chance, 0.0125);
+        assert_eq!(feature.config.default_tree.base_height, 4);
+        assert_eq!(feature.config.default_tree.height_rand_a, 2);
+        assert_eq!(feature.config.default_tree.foliage_height, 3);
+        assert_eq!(feature.config.default_tree.foliage_radius, 2);
+        assert_eq!(feature.config.default_tree.beehive_probability, 0.05);
+        assert!(feature.config.default_tree.trunk.is("minecraft:oak_log"));
+        assert!(
+            feature
+                .config
+                .default_tree
+                .leaves
+                .is("minecraft:oak_leaves")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_configures_freeze_top_layer() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = &settings.ore_features.freeze_top_layer;
+
+        assert_eq!(feature.step_index, 10);
+        assert_eq!(feature.feature_index, 0);
+        assert!(feature.snow_layer.is("minecraft:snow"));
     }
 
     #[test]
@@ -4256,6 +8378,7 @@ mod tests {
         let mut chunk = NoiseChunkBlocks {
             columns,
             biomes: Vec::new(),
+            block_entities: Vec::new(),
         };
         let ore = OreFeatureConfig::new(
             32,
@@ -4278,7 +8401,7 @@ mod tests {
             column
                 .blocks
                 .iter()
-                .all(|layer| layer.block != "minecraft:emerald_ore")
+                .all(|layer| layer.block.as_ref() != "minecraft:emerald_ore")
         }));
     }
 
@@ -4305,6 +8428,7 @@ mod tests {
         let mut chunk = NoiseChunkBlocks {
             columns,
             biomes: Vec::new(),
+            block_entities: Vec::new(),
         };
         let mut random = FeatureRandom::new(12345);
 
@@ -4315,7 +8439,7 @@ mod tests {
             column
                 .blocks
                 .iter()
-                .any(|layer| layer.block == "minecraft:sand")
+                .any(|layer| layer.block.as_ref() == "minecraft:sand")
         }));
     }
 
@@ -4335,6 +8459,7 @@ mod tests {
         let mut chunk = NoiseChunkBlocks {
             columns,
             biomes: Vec::new(),
+            block_entities: Vec::new(),
         };
         chunk.set_layer(8, 64, 8, settings.min_y, air.clone());
         chunk.set_layer(9, 64, 8, settings.min_y, air);
@@ -4344,8 +8469,825 @@ mod tests {
         assert_eq!(
             chunk
                 .layer(8, 64, 8, settings.min_y)
-                .map(|layer| layer.block.as_str()),
+                .map(|layer| layer.block.as_ref()),
             Some("minecraft:water")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_lava_lake_carves_cavity_and_fluid() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|_| stone.clone())
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(LakeFeatureConfig::lava().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            80,
+            8,
+        ));
+
+        let mut has_lava = false;
+        let mut has_cave_air = false;
+        for column in &chunk.columns {
+            for layer in &column.blocks {
+                has_lava |= layer.is("minecraft:lava");
+                has_cave_air |= layer.is("minecraft:cave_air");
+            }
+        }
+
+        assert!(has_lava);
+        assert!(has_cave_air);
+    }
+
+    #[test]
+    fn vanilla_noise_monster_room_places_shell_spawner_and_chest_entities() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let cave_air = BlockLayer::new("minecraft:cave_air");
+        let mut placed = None;
+
+        for seed in 0..10_000 {
+            let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| stone.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect();
+            let mut chunk = NoiseChunkBlocks {
+                columns,
+                biomes: Vec::new(),
+                block_entities: Vec::new(),
+            };
+            for (x, z) in [
+                (4, 8),
+                (5, 8),
+                (11, 8),
+                (12, 8),
+                (8, 4),
+                (8, 5),
+                (8, 11),
+                (8, 12),
+            ] {
+                for y in 64..=65 {
+                    chunk.set_layer(x, y, z, settings.min_y, cave_air.clone());
+                }
+            }
+
+            let mut random = FeatureRandom::new(seed);
+            if MonsterRoomFeatureConfig::new().place(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                &mut random,
+                8,
+                64,
+                8,
+            ) && chunk
+                .block_entities
+                .iter()
+                .any(|entity| entity.entity_type == CHEST_BLOCK_ENTITY_TYPE_ID)
+            {
+                placed = Some(chunk);
+                break;
+            }
+        }
+
+        let chunk = placed.expect("test seed range should include a room with a chest");
+
+        assert_eq!(
+            chunk
+                .layer(8, 64, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:spawner")
+        );
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:mossy_cobblestone"))
+        }));
+        assert!(chunk.block_entities.iter().any(|entity| {
+            entity.entity_type == MOB_SPAWNER_BLOCK_ENTITY_TYPE_ID && entity.position == (8, 64, 8)
+        }));
+        assert!(chunk.block_entities.iter().any(|entity| {
+            entity.entity_type == CHEST_BLOCK_ENTITY_TYPE_ID
+                && matches!(&entity.nbt, Tag::Compound(fields) if fields.contains_key("LootTable"))
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_glow_lichen_places_on_air_or_water_next_to_rock() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let water = BlockLayer::new("minecraft:water");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| if y <= 50 { stone.clone() } else { air.clone() })
+                    .collect(),
+                first_available_height: 51 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        chunk.set_layer(8, 48, 8, settings.min_y, water);
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(MultifaceGrowthFeatureConfig::glow_lichen().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            48,
+            8,
+        ));
+
+        let layer = chunk.layer(8, 48, 8, settings.min_y).unwrap();
+        assert!(layer.is("minecraft:glow_lichen"));
+        assert!(
+            layer
+                .properties
+                .iter()
+                .any(|(name, value)| name == "waterlogged" && value == "true")
+        );
+        assert!(layer.properties.iter().any(|(name, value)| {
+            matches!(name.as_str(), "up" | "north" | "south" | "east" | "west") && value == "true"
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_glow_lichen_respects_ocean_floor_threshold() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| if y <= 80 { stone.clone() } else { air.clone() })
+                    .collect(),
+                first_available_height: 81 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let feature = PlacedMultifaceGrowthFeature::glow_lichen(0);
+        let mut random = FeatureRandom::new(12345);
+
+        feature.place(&settings, 0, 0, &mut chunk, &mut random);
+
+        for column in &chunk.columns {
+            for (index, layer) in column.blocks.iter().enumerate() {
+                if layer.is("minecraft:glow_lichen") {
+                    let y = settings.min_y + index as i32;
+                    assert!(y <= 68);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vanilla_noise_patch_tall_grass_places_double_plant_on_vegetation_support() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(SimpleVegetationBlock::tall_grass().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        let lower = chunk.layer(8, 65, 8, settings.min_y).unwrap();
+        let upper = chunk.layer(8, 66, 8, settings.min_y).unwrap();
+        assert!(lower.is("minecraft:tall_grass"));
+        assert!(
+            lower
+                .properties
+                .iter()
+                .any(|(name, value)| { name == "half" && value == "lower" })
+        );
+        assert!(upper.is("minecraft:tall_grass"));
+        assert!(
+            upper
+                .properties
+                .iter()
+                .any(|(name, value)| { name == "half" && value == "upper" })
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_patch_tall_grass_requires_air_and_support() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|_| air.clone())
+                    .collect(),
+                first_available_height: 0,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+        chunk.set_layer(8, 64, 8, settings.min_y, stone.clone());
+        assert!(!SimpleVegetationBlock::tall_grass().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        chunk.set_layer(8, 64, 8, settings.min_y, grass_block);
+        chunk.set_layer(8, 66, 8, settings.min_y, stone);
+        assert!(!SimpleVegetationBlock::tall_grass().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_patch_bush_places_single_vegetation_block() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(SimpleVegetationBlock::single("minecraft:bush").place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert_eq!(
+            chunk
+                .layer(8, 65, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:bush")
+        );
+        assert!(
+            chunk
+                .layer(8, 66, 8, settings.min_y)
+                .is_some_and(|layer| layer.is_air)
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_flower_plains_places_noise_selected_flower() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(SimpleVegetationBlock::plains_flower().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        let flower = chunk.layer(8, 65, 8, settings.min_y).unwrap();
+        assert!(
+            PLAINS_FLOWER_LOW_BLOCKS.contains(&flower.block.as_ref())
+                || PLAINS_FLOWER_HIGH_BLOCKS.contains(&flower.block.as_ref())
+                || flower.is("minecraft:dandelion")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_patch_grass_plain_places_short_grass() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(
+            SimpleVegetationBlock::single("minecraft:short_grass").place_at(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                &mut random,
+                8,
+                65,
+                8,
+            )
+        );
+
+        assert_eq!(
+            chunk
+                .layer(8, 65, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:short_grass")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_pumpkin_patch_requires_grass_support() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let dirt = BlockLayer::new("minecraft:dirt");
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|_| air.clone())
+                    .collect(),
+                first_available_height: 0,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let pumpkin = PlacedSimpleVegetationFeature::patch_pumpkin(0);
+
+        chunk.set_layer(8, 64, 8, settings.min_y, dirt);
+        assert!(!pumpkin.has_required_support(&chunk, 0, 0, 8, 64, 8, settings.min_y));
+
+        chunk.set_layer(8, 64, 8, settings.min_y, grass_block);
+        assert!(pumpkin.has_required_support(&chunk, 0, 0, 8, 64, 8, settings.min_y));
+    }
+
+    #[test]
+    fn vanilla_noise_normal_mushroom_places_single_block() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(
+            SimpleVegetationBlock::single("minecraft:brown_mushroom").place_at(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                &mut random,
+                8,
+                65,
+                8,
+            )
+        );
+
+        assert_eq!(
+            chunk
+                .layer(8, 65, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:brown_mushroom")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_sunflower_places_double_plant() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(SimpleVegetationBlock::sunflower().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        let lower = chunk.layer(8, 65, 8, settings.min_y).unwrap();
+        let upper = chunk.layer(8, 66, 8, settings.min_y).unwrap();
+        assert!(lower.is("minecraft:sunflower"));
+        assert!(
+            lower
+                .properties
+                .iter()
+                .any(|(name, value)| name == "half" && value == "lower")
+        );
+        assert!(upper.is("minecraft:sunflower"));
+        assert!(
+            upper
+                .properties
+                .iter()
+                .any(|(name, value)| name == "half" && value == "upper")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_patch_tall_grass_uses_biome_info_noise_threshold() {
+        let placement = NoiseThresholdCount {
+            noise_level: -0.8,
+            below_noise: 0,
+            above_noise: 7,
+        };
+
+        assert_eq!(placement.sample(0, 0), 7);
+        assert_eq!(placement.sample(-2_000_000, -1_993_000), 0);
+    }
+
+    #[test]
+    fn vanilla_noise_trees_plains_oak_places_logs_and_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(OakTreeConfig::oak_bees_005().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:oak_log"))
+        }));
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:oak_leaves"))
+        }));
+        assert_eq!(
+            chunk
+                .layer(8, 64, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:dirt")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_trees_plains_can_place_beehive_entity() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut tree = OakTreeConfig::oak_bees_005();
+        tree.beehive_probability = 1.0;
+        let mut random = FeatureRandom::new(1);
+
+        assert!(tree.place(&settings, 0, 0, &mut chunk, &mut random, 8, 65, 8));
+
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:bee_nest"))
+        }));
+        assert!(chunk.block_entities.iter().any(|entity| {
+            entity.entity_type == BEEHIVE_BLOCK_ENTITY_TYPE_ID
+                && matches!(&entity.nbt, Tag::Compound(fields) if fields.contains_key("bees"))
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_block_entities_are_written_to_chunk_packet() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = settings.generate_chunk(0, 0);
+        chunk.push_block_entity(
+            1,
+            64,
+            2,
+            CHEST_BLOCK_ENTITY_TYPE_ID,
+            chest_block_entity_nbt(0),
+        );
+
+        let packet_entities = chunk.block_entities_as_packet(0, 0);
+
+        assert_eq!(packet_entities.len(), 1);
+        assert_eq!(packet_entities[0].xz, 0x12);
+        assert_eq!(packet_entities[0].y, 64);
+        assert_eq!(
+            packet_entities[0].entity_type,
+            VarInt(CHEST_BLOCK_ENTITY_TYPE_ID)
+        );
+        assert!(matches!(packet_entities[0].nbt, OptionalNbt(Some(_))));
+    }
+
+    #[test]
+    fn vanilla_noise_amethyst_geode_places_layered_blocks() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|_| stone.clone())
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(GeodeFeatureConfig::amethyst().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            0,
+            8,
+        ));
+
+        let mut found = HashSet::new();
+        for column in &chunk.columns {
+            for layer in &column.blocks {
+                match layer.block.as_ref() {
+                    "minecraft:smooth_basalt"
+                    | "minecraft:calcite"
+                    | "minecraft:amethyst_block"
+                    | "minecraft:budding_amethyst" => {
+                        found.insert(layer.block.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(found.contains("minecraft:smooth_basalt"));
+        assert!(found.contains("minecraft:calcite"));
+        assert!(
+            found.contains("minecraft:amethyst_block")
+                || found.contains("minecraft:budding_amethyst")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_freeze_top_layer_places_ice_and_snow_in_cold_biomes() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let Some((origin_x, origin_z)) = (-64..=64).step_by(16).find_map(|chunk_x| {
+            (-64..=64).step_by(16).find_map(|chunk_z| {
+                is_freezing_biome(settings.density.biome(chunk_x, 64, chunk_z))
+                    .then_some((chunk_x, chunk_z))
+            })
+        }) else {
+            return;
+        };
+        let water = BlockLayer::new("minecraft:water");
+        let air = BlockLayer::new("minecraft:air");
+        let stone = BlockLayer::new("minecraft:stone");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y < 62 {
+                            stone.clone()
+                        } else if y == 62 {
+                            water.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+
+        settings
+            .ore_features
+            .freeze_top_layer
+            .place(&settings, origin_x, origin_z, &mut chunk);
+
+        assert_eq!(
+            chunk
+                .layer(0, 62, 0, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:ice")
+        );
+        assert_eq!(
+            chunk
+                .layer(0, 63, 0, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:snow")
         );
     }
 

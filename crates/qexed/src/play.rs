@@ -53,6 +53,7 @@ const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
 const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_CHUNK_LOAD_PARALLELISM: usize = 4;
 const MAX_CHUNK_LOAD_PARALLELISM: usize = 64;
+const SLOW_CHUNK_PAYLOAD_LOG_THRESHOLD: Duration = Duration::from_millis(250);
 const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 pub async fn initialize<R, W>(
@@ -627,9 +628,32 @@ fn build_chunk_payload_sync(
     chunk_z: i32,
     cache_epoch: u64,
 ) -> Result<bytes::Bytes> {
+    let total_start = Instant::now();
+    let chunk_start = Instant::now();
     let chunk = world.network_chunk_for_session(&dimension, chunk_x, chunk_z, cache_epoch)?;
-    qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
-        .context("encode chunk packet")
+    let chunk_elapsed = chunk_start.elapsed();
+
+    let encode_start = Instant::now();
+    let payload = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
+        .context("encode chunk packet")?;
+    let encode_elapsed = encode_start.elapsed();
+    let total_elapsed = total_start.elapsed();
+
+    if total_elapsed >= SLOW_CHUNK_PAYLOAD_LOG_THRESHOLD && log::log_enabled!(log::Level::Debug) {
+        log::debug!(
+            "区块 payload 构建耗时: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), total_ms={:.2}, world_ms={:.2}, encode_ms={:.2}, bytes={}",
+            duration_ms(total_elapsed),
+            duration_ms(chunk_elapsed),
+            duration_ms(encode_elapsed),
+            payload.len()
+        );
+    }
+
+    Ok(payload)
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 fn chunk_load_parallelism_limit(value: usize) -> usize {
@@ -826,7 +850,7 @@ where
                 if packet_id == ChunkBatchReceived::ID {
                     let batch = crate::connection::decode_payload::<ChunkBatchReceived>(&mut payload)?;
                     log::debug!(
-                        "客户端已确认区块批次，期望区块速率: {} chunks/tick",
+                        "客户端已确认区块批次，建议区块发送速率: {} chunks/tick",
                         batch.desired_chunks_per_tick
                     );
                     continue;
