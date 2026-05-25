@@ -11,6 +11,7 @@ mod play;
 mod player_data;
 mod players;
 mod plugins;
+mod proxy_forwarding;
 mod registry_sync;
 mod resource_pack;
 mod secure_chat;
