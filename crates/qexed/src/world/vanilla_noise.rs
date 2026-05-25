@@ -598,7 +598,11 @@ impl OverworldTerrainColumn<'_> {
             )
         };
         let post_processed = post_process_density(slide_overworld(block_y, caves));
-        post_processed.min(self.noise.noodle.sample(self.block_x, block_y, self.block_z))
+        post_processed.min(
+            self.noise
+                .noodle
+                .sample(self.block_x, block_y, self.block_z),
+        )
     }
 
     fn sloped_cheese_density(&self, block_y: i32, base_3d_noise: f64) -> f64 {
@@ -722,7 +726,7 @@ impl OverworldSurfaceRules {
         let under_floor = (1..=3).contains(&surface_depth);
         let deep_under_floor = (4..=6).contains(&surface_depth);
         let very_deep_under_floor = surface_depth > 6;
-        let above_water = context.y >= context.sea_level;
+        let above_water = context.above_water;
         let steep = context.slope > 2;
 
         if is_badlands(context.biome) {
@@ -946,7 +950,7 @@ impl OverworldSurfaceRules {
         {
             SurfaceBlock::Water
         } else {
-            self.grass_or_dirt(context.y >= context.sea_level)
+            self.grass_or_dirt(context.above_water)
         }
     }
 
@@ -1068,6 +1072,7 @@ pub(crate) struct SurfaceRuleContext<'a> {
     pub(crate) y: i32,
     pub(crate) z: i32,
     pub(crate) surface_height: i32,
+    pub(crate) above_water: bool,
     pub(crate) sea_level: i32,
     pub(crate) min_y: i32,
     pub(crate) biome: &'a str,
@@ -4635,6 +4640,7 @@ mod tests {
             y: 80,
             z: 0,
             surface_height: 80,
+            above_water: true,
             sea_level: 63,
             min_y: -64,
             biome: "minecraft:plains",
@@ -4662,6 +4668,31 @@ mod tests {
                 ..base
             }),
             Some(SurfaceBlock::PackedIce)
+        );
+    }
+
+    #[test]
+    fn overworld_surface_rules_use_actual_water_height_for_grass() {
+        let rules = OverworldSurfaceRules::new(12345);
+        let base = SurfaceRuleContext {
+            x: 0,
+            y: 58,
+            z: 0,
+            surface_height: 58,
+            above_water: true,
+            sea_level: 63,
+            min_y: -64,
+            biome: "minecraft:plains",
+            slope: 0,
+        };
+
+        assert_eq!(rules.block_at(base), Some(SurfaceBlock::GrassBlock));
+        assert_eq!(
+            rules.block_at(SurfaceRuleContext {
+                above_water: false,
+                ..base
+            }),
+            Some(SurfaceBlock::Dirt)
         );
     }
 }

@@ -56,6 +56,47 @@ const FLOWER_PLAINS_BIOMES: &[&str] = &[
     "minecraft:deep_dark",
     "minecraft:dripstone_caves",
 ];
+const FLOWER_DEFAULT_BIOMES: &[&str] = &[
+    "minecraft:beach",
+    "minecraft:birch_forest",
+    "minecraft:cold_ocean",
+    "minecraft:dark_forest",
+    "minecraft:deep_cold_ocean",
+    "minecraft:deep_frozen_ocean",
+    "minecraft:deep_lukewarm_ocean",
+    "minecraft:deep_ocean",
+    "minecraft:desert",
+    "minecraft:forest",
+    "minecraft:frozen_ocean",
+    "minecraft:frozen_river",
+    "minecraft:ice_spikes",
+    "minecraft:lukewarm_ocean",
+    "minecraft:ocean",
+    "minecraft:old_growth_birch_forest",
+    "minecraft:old_growth_pine_taiga",
+    "minecraft:old_growth_spruce_taiga",
+    "minecraft:river",
+    "minecraft:snowy_beach",
+    "minecraft:snowy_plains",
+    "minecraft:snowy_taiga",
+    "minecraft:stony_shore",
+    "minecraft:taiga",
+    "minecraft:warm_ocean",
+    "minecraft:windswept_forest",
+    "minecraft:windswept_gravelly_hills",
+    "minecraft:windswept_hills",
+    "minecraft:windswept_savanna",
+];
+const FLOWER_WARM_BIOMES: &[&str] = &[
+    "minecraft:bamboo_jungle",
+    "minecraft:jungle",
+    "minecraft:savanna",
+    "minecraft:savanna_plateau",
+    "minecraft:sparse_jungle",
+];
+const FLOWER_SWAMP_BIOMES: &[&str] = &["minecraft:swamp"];
+const FLOWER_CHERRY_BIOMES: &[&str] = &["minecraft:cherry_grove"];
+const FLOWER_PALE_GARDEN_BIOMES: &[&str] = &["minecraft:pale_garden"];
 const PATCH_GRASS_PLAIN_BIOMES: &[&str] = &[
     "minecraft:plains",
     "minecraft:sunflower_plains",
@@ -976,6 +1017,12 @@ impl NoiseSettings {
         surface_slope: i32,
     ) -> NoiseColumnBlocks {
         let mut blocks = Vec::with_capacity(self.height as usize);
+        let water_height = self.water_height_from_density_cache(
+            world_x,
+            world_z,
+            preliminary_surface,
+            density_cache,
+        );
         for y in self.min_y..self.min_y + self.height {
             blocks.push(self.layer_at_with_density(
                 world_x,
@@ -985,6 +1032,7 @@ impl NoiseSettings {
                 surface_height,
                 preliminary_surface,
                 surface_slope,
+                water_height,
             ));
         }
         NoiseColumnBlocks {
@@ -1008,6 +1056,7 @@ impl NoiseSettings {
             surface_height,
             preliminary_surface,
             surface_slope,
+            self.water_height(x, z, surface_height, preliminary_surface, &profile),
             &profile,
         );
         (!layer.is_air).then_some(layer.block_state_id)
@@ -1068,6 +1117,7 @@ impl NoiseSettings {
         surface_height: i32,
         preliminary_surface: i32,
         surface_slope: i32,
+        water_height: Option<i32>,
         profile: &vanilla_noise::OverworldTerrainProfile,
     ) -> BlockLayer {
         let density = self.density.sample_with_profile(x, y, z, profile);
@@ -1079,6 +1129,7 @@ impl NoiseSettings {
             surface_height,
             preliminary_surface,
             surface_slope,
+            water_height,
         )
     }
 
@@ -1091,6 +1142,7 @@ impl NoiseSettings {
         surface_height: i32,
         preliminary_surface: i32,
         surface_slope: i32,
+        water_height: Option<i32>,
     ) -> BlockLayer {
         if y <= self.min_y {
             return self.bedrock_block.clone();
@@ -1122,6 +1174,7 @@ impl NoiseSettings {
                 y,
                 z,
                 surface_height,
+                above_water: self.above_water(y, water_height),
                 sea_level: self.sea_level,
                 min_y: self.min_y,
                 biome,
@@ -1156,6 +1209,56 @@ impl NoiseSettings {
                 }
             }
         }
+    }
+
+    fn above_water(&self, y: i32, water_height: Option<i32>) -> bool {
+        water_height.is_none_or(|height| y >= height)
+    }
+
+    fn water_height(
+        &self,
+        x: i32,
+        z: i32,
+        surface_height: i32,
+        preliminary_surface: i32,
+        profile: &vanilla_noise::OverworldTerrainProfile,
+    ) -> Option<i32> {
+        let start = self.first_available_height(surface_height) + self.min_y - 1;
+        (self.min_y..=start).rev().find(|y| {
+            let density = self.density.sample_with_profile(x, *y, z, profile);
+            if density > 0.0 {
+                return false;
+            }
+            matches!(
+                self.aquifer
+                    .substance_at(x, *y, z, density, preliminary_surface),
+                vanilla_noise::AquiferSubstance::Fluid(vanilla_noise::AquiferFluid::Water)
+            )
+        })
+    }
+
+    fn water_height_from_density_cache(
+        &self,
+        x: i32,
+        z: i32,
+        preliminary_surface: i32,
+        density_cache: &ColumnDensityCache,
+    ) -> Option<i32> {
+        let start = density_cache
+            .surface_height
+            .max(self.sea_level)
+            .min(self.min_y + self.height - 1);
+        (self.min_y..=start).rev().find(|y| {
+            let density = density_cache.density_at(*y, self.min_y);
+            if density > 0.0 {
+                return false;
+            }
+            matches!(
+                self.aquifer
+                    .substance_at(x, *y, z, density, preliminary_surface),
+                vanilla_noise::AquiferSubstance::Fluid(vanilla_noise::AquiferFluid::Water)
+            )
+        })
     }
 
     fn surface_block_layer(&self, block: vanilla_noise::SurfaceBlock) -> BlockLayer {
@@ -2911,6 +3014,16 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Include(SWAMP_MUSHROOM_BIOMES)),
                 PlacedSimpleVegetationFeature::red_mushroom_swamp(36)
                     .with_biome_filter(FeatureBiomeFilter::Include(SWAMP_MUSHROOM_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_default(37)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_DEFAULT_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_warm(38)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_WARM_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_swamp(39)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_SWAMP_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_cherry(40)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_CHERRY_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_pale_garden(41)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_PALE_GARDEN_BIOMES)),
             ],
             block_columns: vec![
                 PlacedBlockColumnFeature::sugar_cane(14, 6)
@@ -3970,6 +4083,52 @@ impl PlacedSimpleVegetationFeature {
         }
     }
 
+    fn flower_default(feature_index: i32) -> Self {
+        Self::single_surface_patch(feature_index, 32, SimpleVegetationBlock::default_flower())
+    }
+
+    fn flower_warm(feature_index: i32) -> Self {
+        Self::single_surface_patch(feature_index, 16, SimpleVegetationBlock::default_flower())
+    }
+
+    fn flower_swamp(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            32,
+            64,
+            TrapezoidInt::new(-6, 6, 0),
+            TrapezoidInt::new(-2, 2, 0),
+            SimpleVegetationBlock::single("minecraft:blue_orchid"),
+            None,
+        )
+    }
+
+    fn flower_cherry(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            Some(NoiseThresholdCount {
+                noise_level: -0.8,
+                below_noise: 5,
+                above_noise: 10,
+            }),
+            1,
+            96,
+            TrapezoidInt::new(-6, 6, 0),
+            TrapezoidInt::new(-2, 2, 0),
+            SimpleVegetationBlock::cherry_flower(),
+            None,
+        )
+    }
+
+    fn flower_pale_garden(feature_index: i32) -> Self {
+        Self::single_surface_patch(
+            feature_index,
+            32,
+            SimpleVegetationBlock::single("minecraft:closed_eyeblossom"),
+        )
+    }
+
     fn patch_grass_plain(feature_index: i32) -> Self {
         Self {
             step_index: 9,
@@ -4198,19 +4357,60 @@ impl PlacedSimpleVegetationFeature {
         block: SimpleVegetationBlock,
         required_support: Option<&'static str>,
     ) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            rarity,
+            inner_count,
+            TrapezoidInt::new(-7, 7, 0),
+            TrapezoidInt::new(-3, 3, 0),
+            block,
+            required_support,
+        )
+        .with_outer_count(outer_count)
+    }
+
+    fn single_surface_patch(feature_index: i32, rarity: i32, block: SimpleVegetationBlock) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            rarity,
+            1,
+            TrapezoidInt::new(0, 0, 0),
+            TrapezoidInt::new(0, 0, 0),
+            block,
+            None,
+        )
+    }
+
+    fn patch_with_offsets(
+        feature_index: i32,
+        noise_threshold: Option<NoiseThresholdCount>,
+        rarity: i32,
+        inner_count: i32,
+        xz_offset: TrapezoidInt,
+        y_offset: TrapezoidInt,
+        block: SimpleVegetationBlock,
+        required_support: Option<&'static str>,
+    ) -> Self {
         Self {
             step_index: 9,
             feature_index,
-            outer_count,
-            noise_threshold: None,
+            outer_count: 1,
+            noise_threshold,
             rarity,
             inner_count,
-            xz_offset: TrapezoidInt::new(-7, 7, 0),
-            y_offset: TrapezoidInt::new(-3, 3, 0),
+            xz_offset,
+            y_offset,
             block,
             required_support,
             biome_filter: FeatureBiomeFilter::All,
         }
+    }
+
+    fn with_outer_count(mut self, outer_count: i32) -> Self {
+        self.outer_count = outer_count;
+        self
     }
 
     fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
@@ -4534,6 +4734,33 @@ impl SimpleVegetationBlock {
             provider: SimpleVegetationProvider::plains_flower(),
             support: SimpleVegetationSupport::Vegetation,
         }
+    }
+
+    fn default_flower() -> Self {
+        Self::weighted_single(
+            vec![
+                (BlockLayer::new("minecraft:poppy"), 2),
+                (BlockLayer::new("minecraft:dandelion"), 1),
+            ],
+            SimpleVegetationSupport::Vegetation,
+        )
+    }
+
+    fn cherry_flower() -> Self {
+        let mut entries = Vec::with_capacity(16);
+        for flower_amount in ["1", "2", "3", "4"] {
+            for facing in ["north", "east", "south", "west"] {
+                entries.push((
+                    BlockLayer::with_properties(
+                        "minecraft:pink_petals",
+                        &[("facing", facing), ("flower_amount", flower_amount)],
+                    ),
+                    1,
+                ));
+            }
+        }
+
+        Self::weighted_single(entries, SimpleVegetationSupport::Vegetation)
     }
 
     fn place_at(
@@ -8693,6 +8920,24 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_low_dry_surface_uses_grass_not_sea_level_dirt() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let surface_height = 58;
+        let layer = settings.layer_at_with_density(
+            0,
+            surface_height,
+            0,
+            1.0,
+            surface_height,
+            surface_height,
+            0,
+            None,
+        );
+
+        assert!(layer.is("minecraft:grass_block"));
+    }
+
+    #[test]
     fn vanilla_noise_uses_lava_below_global_fluid_cutoff() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
 
@@ -9647,6 +9892,124 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_configures_flower_variants() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let default = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 37)
+            .unwrap();
+        let warm = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 38)
+            .unwrap();
+        let swamp = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 39)
+            .unwrap();
+        let cherry = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 40)
+            .unwrap();
+        let pale_garden = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 41)
+            .unwrap();
+
+        assert_eq!(default.rarity, 32);
+        assert_eq!(default.inner_count, 1);
+        assert_eq!(default.xz_offset.min, 0);
+        assert_eq!(default.xz_offset.max, 0);
+        assert_eq!(default.y_offset.min, 0);
+        assert_eq!(default.y_offset.max, 0);
+        assert!(matches!(
+            &default.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.len() == 2
+                    && entries[0].0.is("minecraft:poppy")
+                    && entries[0].1 == 2
+                    && entries[1].0.is("minecraft:dandelion")
+                    && entries[1].1 == 1
+        ));
+        assert!(matches!(
+            default.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:forest")
+                    && biomes.contains(&"minecraft:desert")
+                    && biomes.contains(&"minecraft:taiga")
+        ));
+
+        assert_eq!(warm.rarity, 16);
+        assert_eq!(warm.inner_count, 1);
+        assert!(matches!(
+            warm.biome_filter,
+            FeatureBiomeFilter::Include(biomes)
+                if biomes.contains(&"minecraft:jungle")
+                    && biomes.contains(&"minecraft:savanna")
+                    && biomes.contains(&"minecraft:sparse_jungle")
+        ));
+
+        assert_eq!(swamp.rarity, 32);
+        assert_eq!(swamp.inner_count, 64);
+        assert_eq!(swamp.xz_offset.min, -6);
+        assert_eq!(swamp.xz_offset.max, 6);
+        assert_eq!(swamp.y_offset.min, -2);
+        assert_eq!(swamp.y_offset.max, 2);
+        assert!(swamp.block.lower.is("minecraft:blue_orchid"));
+        assert!(matches!(
+            swamp.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == FLOWER_SWAMP_BIOMES
+        ));
+
+        let noise_threshold = cherry.noise_threshold.as_ref().unwrap();
+        assert_eq!(noise_threshold.noise_level, -0.8);
+        assert_eq!(noise_threshold.below_noise, 5);
+        assert_eq!(noise_threshold.above_noise, 10);
+        assert_eq!(cherry.rarity, 1);
+        assert_eq!(cherry.inner_count, 96);
+        assert_eq!(cherry.xz_offset.min, -6);
+        assert_eq!(cherry.xz_offset.max, 6);
+        assert!(matches!(
+            &cherry.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.len() == 16
+                    && entries.iter().all(|(layer, weight)| {
+                        layer.is("minecraft:pink_petals")
+                            && *weight == 1
+                            && layer.properties.iter().any(|(name, value)| {
+                                name == "facing"
+                                    && matches!(value.as_str(), "north" | "east" | "south" | "west")
+                            })
+                            && layer.properties.iter().any(|(name, value)| {
+                                name == "flower_amount"
+                                    && matches!(value.as_str(), "1" | "2" | "3" | "4")
+                            })
+                    })
+        ));
+        assert!(matches!(
+            cherry.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == FLOWER_CHERRY_BIOMES
+        ));
+
+        assert_eq!(pale_garden.rarity, 32);
+        assert_eq!(pale_garden.inner_count, 1);
+        assert!(pale_garden.block.lower.is("minecraft:closed_eyeblossom"));
+        assert!(matches!(
+            pale_garden.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == FLOWER_PALE_GARDEN_BIOMES
+        ));
+    }
+
+    #[test]
     fn vanilla_noise_configures_trees_plains() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let feature = &settings.ore_features.trees_plains;
@@ -10557,6 +10920,94 @@ mod tests {
         assert!(supports_dry_vegetation_layer(
             chunk.layer(8, 64, 8, settings.min_y).unwrap()
         ));
+    }
+
+    #[test]
+    fn vanilla_noise_default_flower_places_weighted_flower() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(SimpleVegetationBlock::default_flower().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        let flower = chunk.layer(8, 65, 8, settings.min_y).unwrap();
+        assert!(flower.is("minecraft:poppy") || flower.is("minecraft:dandelion"));
+    }
+
+    #[test]
+    fn vanilla_noise_cherry_flower_places_pink_petals_state() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let grass_block = BlockLayer::new("minecraft:grass_block");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= 64 {
+                            grass_block.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(1);
+
+        assert!(SimpleVegetationBlock::cherry_flower().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        let flower = chunk.layer(8, 65, 8, settings.min_y).unwrap();
+        assert!(flower.is("minecraft:pink_petals"));
+        assert!(flower.properties.iter().any(|(name, value)| {
+            name == "facing" && matches!(value.as_str(), "north" | "east" | "south" | "west")
+        }));
+        assert!(flower.properties.iter().any(|(name, value)| {
+            name == "flower_amount" && matches!(value.as_str(), "1" | "2" | "3" | "4")
+        }));
     }
 
     #[test]
