@@ -64,6 +64,28 @@ impl PlacedTreeFeature {
         }
     }
 
+    fn trees_savanna(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(1, 9), (2, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::savanna_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_windswept_savanna(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(2, 9), (3, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::savanna_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
     fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
         self.biome_filter = biome_filter;
         self
@@ -172,6 +194,17 @@ impl TreeFeatureConfig {
                 0.0125,
                 OakTreeConfig::fallen_spruce(),
             )],
+        }
+    }
+
+    fn savanna_trees() -> Self {
+        let default_tree = OakTreeConfig::oak();
+        Self {
+            default_tree,
+            variants: vec![
+                TreeFeatureVariant::standing(0.8, OakTreeConfig::acacia()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
+            ],
         }
     }
 
@@ -294,6 +327,24 @@ enum TreeFoliageConfig {
         offset: UniformInt,
         height: UniformInt,
     },
+    Acacia {
+        radius: UniformInt,
+        offset: UniformInt,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TreeTrunkConfig {
+    Straight,
+    Forking,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FoliageOrigin {
+    x: i32,
+    y: i32,
+    z: i32,
+    radius_offset: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -305,6 +356,7 @@ struct OakTreeConfig {
     base_height: i32,
     height_rand_a: i32,
     height_rand_b: i32,
+    trunk_placer: TreeTrunkConfig,
     foliage_height: i32,
     foliage_radius: i32,
     foliage: TreeFoliageConfig,
@@ -333,12 +385,20 @@ impl OakTreeConfig {
             base_height: 4,
             height_rand_a: 2,
             height_rand_b: 0,
+            trunk_placer: TreeTrunkConfig::Straight,
             foliage_height: 3,
             foliage_radius: 2,
             foliage: TreeFoliageConfig::Blob,
             beehive_probability: 0.05,
             fallen_min_length: 4,
             fallen_max_length: 7,
+        }
+    }
+
+    fn oak() -> Self {
+        Self {
+            beehive_probability: 0.0,
+            ..Self::oak_bees_005()
         }
     }
 
@@ -361,6 +421,7 @@ impl OakTreeConfig {
             base_height: 5,
             height_rand_a: 2,
             height_rand_b: 0,
+            trunk_placer: TreeTrunkConfig::Straight,
             foliage_height: 3,
             foliage_radius: 2,
             foliage: TreeFoliageConfig::Blob,
@@ -397,6 +458,7 @@ impl OakTreeConfig {
             base_height: 5,
             height_rand_a: 2,
             height_rand_b: 1,
+            trunk_placer: TreeTrunkConfig::Straight,
             foliage_height: 4,
             foliage_radius: 3,
             foliage: TreeFoliageConfig::Spruce {
@@ -407,6 +469,38 @@ impl OakTreeConfig {
             beehive_probability: 0.0,
             fallen_min_length: 6,
             fallen_max_length: 10,
+        }
+    }
+
+    fn acacia() -> Self {
+        Self {
+            trunk: BlockLayer::with_properties("minecraft:acacia_log", &[("axis", "y")]),
+            leaves: BlockLayer::with_properties(
+                "minecraft:acacia_leaves",
+                &[
+                    ("distance", "7"),
+                    ("persistent", "false"),
+                    ("waterlogged", "false"),
+                ],
+            ),
+            dirt: BlockLayer::new("minecraft:dirt"),
+            bee_nest: BlockLayer::with_properties(
+                "minecraft:bee_nest",
+                &[("facing", "south"), ("honey_level", "0")],
+            ),
+            base_height: 5,
+            height_rand_a: 2,
+            height_rand_b: 2,
+            trunk_placer: TreeTrunkConfig::Forking,
+            foliage_height: 0,
+            foliage_radius: 2,
+            foliage: TreeFoliageConfig::Acacia {
+                radius: UniformInt { min: 2, max: 2 },
+                offset: UniformInt { min: 0, max: 0 },
+            },
+            beehive_probability: 0.0,
+            fallen_min_length: 4,
+            fallen_max_length: 7,
         }
     }
 
@@ -477,23 +571,7 @@ impl OakTreeConfig {
             );
         }
 
-        let mut logs = Vec::new();
-        for dy in 0..tree_height {
-            if let Some((local_x, local_z)) =
-                local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
-            {
-                chunk.set_layer(
-                    local_x,
-                    world_y + dy,
-                    local_z,
-                    settings.min_y,
-                    self.trunk.clone(),
-                );
-                logs.push((world_x, world_y + dy, world_z));
-            }
-        }
-
-        let leaves = self.place_foliage(
+        let (logs, foliage_origins) = self.place_trunk(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -503,6 +581,16 @@ impl OakTreeConfig {
             world_y,
             world_z,
             tree_height,
+        );
+
+        let leaves = self.place_foliage(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            tree_height,
+            &foliage_origins,
         );
 
         self.try_place_beehive(
@@ -519,7 +607,7 @@ impl OakTreeConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn place_foliage(
+    fn place_trunk(
         &self,
         settings: &NoiseSettings,
         chunk_min_x: i32,
@@ -530,9 +618,19 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
-    ) -> Vec<(i32, i32, i32)> {
-        match self.foliage {
-            TreeFoliageConfig::Blob => self.place_blob_foliage(
+    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
+        match self.trunk_placer {
+            TreeTrunkConfig::Straight => self.place_straight_trunk(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                world_x,
+                world_y,
+                world_z,
+                tree_height,
+            ),
+            TreeTrunkConfig::Forking => self.place_forking_trunk(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
@@ -542,6 +640,163 @@ impl OakTreeConfig {
                 world_y,
                 world_z,
                 tree_height,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_straight_trunk(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        tree_height: i32,
+    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
+        let mut logs = Vec::new();
+        for dy in 0..tree_height {
+            if self.try_place_log(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                world_x,
+                world_y + dy,
+                world_z,
+            ) {
+                logs.push((world_x, world_y + dy, world_z));
+            }
+        }
+
+        (
+            logs,
+            vec![FoliageOrigin {
+                x: world_x,
+                y: world_y + tree_height,
+                z: world_z,
+                radius_offset: 0,
+            }],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_forking_trunk(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        tree_height: i32,
+    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
+        let mut logs = Vec::new();
+        let mut foliage_origins = Vec::new();
+        let lean_direction = horizontal_directions()[random.next_int(4) as usize];
+        let lean_height = tree_height - random.next_int(4) - 1;
+        let mut lean_steps = 3 - random.next_int(3);
+        let mut trunk_x = world_x;
+        let mut trunk_z = world_z;
+        let mut end_y = None;
+
+        for y_offset in 0..tree_height {
+            let log_y = world_y + y_offset;
+            if y_offset >= lean_height && lean_steps > 0 {
+                trunk_x += lean_direction.0;
+                trunk_z += lean_direction.1;
+                lean_steps -= 1;
+            }
+            if self.try_place_log(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                trunk_x,
+                log_y,
+                trunk_z,
+            ) {
+                logs.push((trunk_x, log_y, trunk_z));
+                end_y = Some(log_y + 1);
+            }
+        }
+        if let Some(end_y) = end_y {
+            foliage_origins.push(FoliageOrigin {
+                x: trunk_x,
+                y: end_y,
+                z: trunk_z,
+                radius_offset: 1,
+            });
+        }
+
+        trunk_x = world_x;
+        trunk_z = world_z;
+        let branch_direction = horizontal_directions()[random.next_int(4) as usize];
+        if branch_direction != lean_direction {
+            let branch_pos = lean_height - random.next_int(2) - 1;
+            let mut branch_steps = 1 + random.next_int(3);
+            end_y = None;
+
+            let mut y_offset = branch_pos;
+            while y_offset < tree_height && branch_steps > 0 {
+                if y_offset >= 1 {
+                    let log_y = world_y + y_offset;
+                    trunk_x += branch_direction.0;
+                    trunk_z += branch_direction.1;
+                    if self.try_place_log(
+                        settings,
+                        chunk_min_x,
+                        chunk_min_z,
+                        chunk,
+                        trunk_x,
+                        log_y,
+                        trunk_z,
+                    ) {
+                        logs.push((trunk_x, log_y, trunk_z));
+                        end_y = Some(log_y + 1);
+                    }
+                    branch_steps -= 1;
+                }
+                y_offset += 1;
+            }
+
+            if let Some(end_y) = end_y {
+                foliage_origins.push(FoliageOrigin {
+                    x: trunk_x,
+                    y: end_y,
+                    z: trunk_z,
+                    radius_offset: 0,
+                });
+            }
+        }
+
+        (logs, foliage_origins)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_foliage(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        tree_height: i32,
+        foliage_origins: &[FoliageOrigin],
+    ) -> Vec<(i32, i32, i32)> {
+        match self.foliage {
+            TreeFoliageConfig::Blob => self.place_blob_foliage(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                tree_height,
+                foliage_origins,
             ),
             TreeFoliageConfig::Spruce {
                 radius,
@@ -557,13 +812,11 @@ impl OakTreeConfig {
                     chunk_min_z,
                     chunk,
                     random,
-                    world_x,
-                    world_y,
-                    world_z,
                     tree_height,
                     foliage_height,
                     leaf_radius,
                     offset,
+                    foliage_origins,
                 )
             }
             TreeFoliageConfig::Pine {
@@ -581,13 +834,25 @@ impl OakTreeConfig {
                     chunk_min_x,
                     chunk_min_z,
                     chunk,
-                    world_x,
-                    world_y,
-                    world_z,
                     tree_height,
                     foliage_height,
                     leaf_radius,
                     offset,
+                    foliage_origins,
+                )
+            }
+            TreeFoliageConfig::Acacia { radius, offset } => {
+                let leaf_radius = radius.sample(random);
+                let offset = offset.sample(random);
+                self.place_acacia_foliage(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    tree_height,
+                    leaf_radius,
+                    offset,
+                    foliage_origins,
                 )
             }
         }
@@ -601,36 +866,35 @@ impl OakTreeConfig {
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
-        world_x: i32,
-        world_y: i32,
-        world_z: i32,
-        tree_height: i32,
+        _tree_height: i32,
+        foliage_origins: &[FoliageOrigin],
     ) -> Vec<(i32, i32, i32)> {
-        let leaf_origin_y = world_y + tree_height;
         let mut leaves = Vec::new();
-        for y_offset in (-self.foliage_height..=0).rev() {
-            let radius = (self.foliage_radius - 1 - y_offset / 2).max(0);
-            for dx in -radius..=radius {
-                for dz in -radius..=radius {
-                    if dx.abs() == radius
-                        && dz.abs() == radius
-                        && (random.next_int(2) == 0 || y_offset == 0)
-                    {
-                        continue;
-                    }
-                    if self.try_place_leaf_row_block(
-                        settings,
-                        chunk_min_x,
-                        chunk_min_z,
-                        chunk,
-                        world_x,
-                        leaf_origin_y,
-                        world_z,
-                        dx,
-                        y_offset,
-                        dz,
-                    ) {
-                        leaves.push((world_x + dx, leaf_origin_y + y_offset, world_z + dz));
+        for origin in foliage_origins {
+            for y_offset in (-self.foliage_height..=0).rev() {
+                let radius = (self.foliage_radius + origin.radius_offset - 1 - y_offset / 2).max(0);
+                for dx in -radius..=radius {
+                    for dz in -radius..=radius {
+                        if dx.abs() == radius
+                            && dz.abs() == radius
+                            && (random.next_int(2) == 0 || y_offset == 0)
+                        {
+                            continue;
+                        }
+                        if self.try_place_leaf_row_block(
+                            settings,
+                            chunk_min_x,
+                            chunk_min_z,
+                            chunk,
+                            origin.x,
+                            origin.y,
+                            origin.z,
+                            dx,
+                            y_offset,
+                            dz,
+                        ) {
+                            leaves.push((origin.x + dx, origin.y + y_offset, origin.z + dz));
+                        }
                     }
                 }
             }
@@ -646,39 +910,38 @@ impl OakTreeConfig {
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
-        world_x: i32,
-        world_y: i32,
-        world_z: i32,
-        tree_height: i32,
+        _tree_height: i32,
         foliage_height: i32,
         leaf_radius: i32,
         offset: i32,
+        foliage_origins: &[FoliageOrigin],
     ) -> Vec<(i32, i32, i32)> {
-        let leaf_origin_y = world_y + tree_height;
         let mut leaves = Vec::new();
-        let mut current_radius = random.next_int(2);
-        let mut max_radius = 1;
-        let mut min_radius = 0;
+        for origin in foliage_origins {
+            let mut current_radius = random.next_int(2);
+            let mut max_radius = 1;
+            let mut min_radius = 0;
 
-        for y_offset in (-foliage_height..=offset).rev() {
-            self.place_conifer_leaf_row(
-                settings,
-                chunk_min_x,
-                chunk_min_z,
-                chunk,
-                world_x,
-                leaf_origin_y,
-                world_z,
-                y_offset,
-                current_radius,
-                &mut leaves,
-            );
-            if current_radius >= max_radius {
-                current_radius = min_radius;
-                min_radius = 1;
-                max_radius = (max_radius + 1).min(leaf_radius);
-            } else {
-                current_radius += 1;
+            for y_offset in (-foliage_height..=offset).rev() {
+                self.place_conifer_leaf_row(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    origin.x,
+                    origin.y,
+                    origin.z,
+                    y_offset,
+                    current_radius,
+                    &mut leaves,
+                );
+                if current_radius >= max_radius {
+                    current_radius = min_radius;
+                    min_radius = 1;
+                    max_radius = (max_radius + 1).min(leaf_radius + origin.radius_offset);
+                } else {
+                    current_radius += 1;
+                }
             }
         }
         leaves
@@ -691,38 +954,121 @@ impl OakTreeConfig {
         chunk_min_x: i32,
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
-        world_x: i32,
-        world_y: i32,
-        world_z: i32,
-        tree_height: i32,
+        _tree_height: i32,
         foliage_height: i32,
         leaf_radius: i32,
         offset: i32,
+        foliage_origins: &[FoliageOrigin],
     ) -> Vec<(i32, i32, i32)> {
-        let leaf_origin_y = world_y + tree_height;
         let mut leaves = Vec::new();
-        let mut current_radius = 0;
+        for origin in foliage_origins {
+            let mut current_radius = 0;
 
-        for y_offset in (offset - foliage_height..=offset).rev() {
-            self.place_conifer_leaf_row(
+            for y_offset in (offset - foliage_height..=offset).rev() {
+                self.place_conifer_leaf_row(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    origin.x,
+                    origin.y,
+                    origin.z,
+                    y_offset,
+                    current_radius,
+                    &mut leaves,
+                );
+                if current_radius >= 1 && y_offset == offset - foliage_height + 1 {
+                    current_radius -= 1;
+                } else if current_radius < leaf_radius + origin.radius_offset {
+                    current_radius += 1;
+                }
+            }
+        }
+        leaves
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_acacia_foliage(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        _tree_height: i32,
+        leaf_radius: i32,
+        offset: i32,
+        foliage_origins: &[FoliageOrigin],
+    ) -> Vec<(i32, i32, i32)> {
+        let mut leaves = Vec::new();
+        for origin in foliage_origins {
+            let leaf_origin_y = origin.y + offset;
+            self.place_acacia_leaf_row(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
                 chunk,
-                world_x,
+                origin.x,
                 leaf_origin_y,
-                world_z,
-                y_offset,
-                current_radius,
+                origin.z,
+                -1,
+                leaf_radius + origin.radius_offset,
                 &mut leaves,
             );
-            if current_radius >= 1 && y_offset == offset - foliage_height + 1 {
-                current_radius -= 1;
-            } else if current_radius < leaf_radius {
-                current_radius += 1;
-            }
+            self.place_acacia_leaf_row(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                origin.x,
+                leaf_origin_y,
+                origin.z,
+                0,
+                leaf_radius + origin.radius_offset - 1,
+                &mut leaves,
+            );
         }
         leaves
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_acacia_leaf_row(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        y_offset: i32,
+        radius: i32,
+        leaves: &mut Vec<(i32, i32, i32)>,
+    ) {
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                if if y_offset == 0 {
+                    (dx.abs() > 1 || dz.abs() > 1) && dx != 0 && dz != 0
+                } else {
+                    dx.abs() == radius && dz.abs() == radius && radius > 0
+                } {
+                    continue;
+                }
+                if self.try_place_leaf_row_block(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    origin_x,
+                    origin_y,
+                    origin_z,
+                    dx,
+                    y_offset,
+                    dz,
+                ) {
+                    leaves.push((origin_x + dx, origin_y + y_offset, origin_z + dz));
+                }
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -785,6 +1131,37 @@ impl OakTreeConfig {
             origin_y + offset_y,
             origin_z + offset_z,
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_log(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        if !chunk
+            .layer(local_x, world_y, local_z, settings.min_y)
+            .is_some_and(|layer| valid_tree_position_layer(layer) || is_log_layer(layer))
+        {
+            return false;
+        }
+        chunk.set_layer(
+            local_x,
+            world_y,
+            local_z,
+            settings.min_y,
+            self.trunk.clone(),
+        );
+        true
     }
 
     #[allow(clippy::too_many_arguments)]

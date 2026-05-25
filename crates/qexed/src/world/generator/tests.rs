@@ -1486,6 +1486,72 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_configures_savanna_trees() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let savanna = settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == 46)
+            .unwrap();
+        let windswept = settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == 47)
+            .unwrap();
+
+        assert_eq!(savanna.step_index, 9);
+        assert_eq!(savanna.count.entries, vec![(1, 9), (2, 1)]);
+        assert_eq!(savanna.count.total_weight, 10);
+        assert_eq!(savanna.config.variants.len(), 2);
+        assert_eq!(savanna.config.variants[0].chance, 0.8);
+        assert_eq!(
+            savanna.config.variants[0].placement,
+            TreePlacementKind::Standing
+        );
+        assert_eq!(
+            savanna.config.variants[0].tree.trunk_placer,
+            TreeTrunkConfig::Forking
+        );
+        assert_eq!(savanna.config.variants[0].tree.base_height, 5);
+        assert_eq!(savanna.config.variants[0].tree.height_rand_a, 2);
+        assert_eq!(savanna.config.variants[0].tree.height_rand_b, 2);
+        assert!(savanna.config.variants[0].tree.trunk.is("minecraft:acacia_log"));
+        assert!(
+            savanna.config.variants[0]
+                .tree
+                .leaves
+                .is("minecraft:acacia_leaves")
+        );
+        assert!(matches!(
+            savanna.config.variants[0].tree.foliage,
+            TreeFoliageConfig::Acacia {
+                radius: UniformInt { min: 2, max: 2 },
+                offset: UniformInt { min: 0, max: 0 },
+            }
+        ));
+        assert_eq!(savanna.config.variants[1].chance, 0.0125);
+        assert_eq!(
+            savanna.config.variants[1].placement,
+            TreePlacementKind::Fallen
+        );
+        assert!(savanna.config.default_tree.trunk.is("minecraft:oak_log"));
+        assert_eq!(savanna.config.default_tree.beehive_probability, 0.0);
+        assert!(matches!(
+            savanna.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == SAVANNA_TREE_BIOMES
+        ));
+
+        assert_eq!(windswept.count.entries, vec![(2, 9), (3, 1)]);
+        assert_eq!(windswept.count.total_weight, 10);
+        assert!(matches!(
+            windswept.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == WINDSWEPT_SAVANNA_TREE_BIOMES
+        ));
+    }
+
+    #[test]
     fn vanilla_noise_configures_freeze_top_layer() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let feature = &settings.ore_features.freeze_top_layer;
@@ -2811,6 +2877,43 @@ mod tests {
                 .blocks
                 .iter()
                 .any(|layer| layer.is("minecraft:spruce_leaves"))
+        }));
+        assert_eq!(
+            chunk
+                .layer(8, 64, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:dirt")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_trees_acacia_places_logs_and_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(OakTreeConfig::acacia().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:acacia_log"))
+        }));
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:acacia_leaves"))
         }));
         assert_eq!(
             chunk

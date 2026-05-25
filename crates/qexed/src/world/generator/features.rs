@@ -426,6 +426,10 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Include(TAIGA_TREE_BIOMES)),
                 PlacedTreeFeature::trees_snowy(45)
                     .with_biome_filter(FeatureBiomeFilter::Include(SNOWY_TREE_BIOMES)),
+                PlacedTreeFeature::trees_savanna(46)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SAVANNA_TREE_BIOMES)),
+                PlacedTreeFeature::trees_windswept_savanna(47)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WINDSWEPT_SAVANNA_TREE_BIOMES)),
                 PlacedTreeFeature::trees_birch(42)
                     .with_biome_filter(FeatureBiomeFilter::Include(BIRCH_TREE_BIOMES)),
                 PlacedTreeFeature::trees_tall_birch(43)

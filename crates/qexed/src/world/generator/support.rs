@@ -56,6 +56,10 @@ fn is_log_layer(layer: &BlockLayer) -> bool {
             | "minecraft:spruce_wood"
             | "minecraft:stripped_spruce_log"
             | "minecraft:stripped_spruce_wood"
+            | "minecraft:acacia_log"
+            | "minecraft:acacia_wood"
+            | "minecraft:stripped_acacia_log"
+            | "minecraft:stripped_acacia_wood"
     )
 }
 
