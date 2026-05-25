@@ -13,7 +13,8 @@ use qexed_protocol::{
         handshaking::set_protocol::SetProtocol,
         login::{
             encryption_begin::EncryptionBegin as ServerboundKey,
-            login_acknowledged::LoginAcknowledged, login_start::LoginStart,
+            login_acknowledged::LoginAcknowledged, login_plugin_response::LoginPluginResponse,
+            login_start::LoginStart,
         },
         status::{ping::Ping as StatusPing, ping_start::PingStart},
     },
@@ -174,16 +175,12 @@ where
     }
 
     let login_start = read_expected_packet::<LoginStart, _>(packets).await?;
-    let profile = if context.config.server.online_mode {
-        match authenticate_online(packets, sink, context, &login_start).await {
-            Ok(profile) => profile,
-            Err(err) => {
-                disconnect_login(sink, format!("Authentication failed: {err}")).await?;
-                return Ok(());
-            }
+    let login = match resolve_login(handshake, packets, sink, context, &login_start).await {
+        Ok(login) => login,
+        Err(err) => {
+            disconnect_login(sink, format!("Authentication failed: {err}")).await?;
+            return Ok(());
         }
-    } else {
-        offline_profile(&login_start.username)
     };
 
     if context.config.server.network_compression_threshold >= 0 {
@@ -197,12 +194,12 @@ where
     }
 
     sink.send(to_client::login::success::Success {
-        game_profile: profile.clone(),
+        game_profile: login.profile.clone(),
     })
     .await?;
 
     read_expected_packet::<LoginAcknowledged, _>(packets).await?;
-    handle_configuration(packets, sink, context, &handshake.server_host).await?;
+    handle_configuration(packets, sink, context, &login.login_host).await?;
     crate::play::initialize(
         packets,
         sink,
@@ -214,11 +211,110 @@ where
         &context.permissions,
         &context.plugins,
         &context.content_filter,
-        &profile,
+        &login.profile,
     )
     .await?;
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct Login {
+    profile: qexed_packet::net_types::GameProfile,
+    login_host: String,
+}
+
+async fn resolve_login<R, W>(
+    handshake: SetProtocol,
+    packets: &mut qexed_tcp_connect::PacketStream<R>,
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    context: &ServerContext,
+    login_start: &LoginStart,
+) -> anyhow::Result<Login>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if context.config.server.proxy {
+        match context.config.server.proxy_protocol {
+            qexed_config::app::qexed::server::ForwardingMode::BungeeCord => {
+                let forwarded = crate::proxy_forwarding::parse_bungeecord_forwarding(
+                    &handshake.server_host,
+                    &login_start.username,
+                )?;
+                log::debug!(
+                    "accepted BungeeCord forwarded login for {}",
+                    forwarded.profile.username
+                );
+                return Ok(Login {
+                    profile: forwarded.profile,
+                    login_host: forwarded.login_host,
+                });
+            }
+            qexed_config::app::qexed::server::ForwardingMode::Velocity
+            | qexed_config::app::qexed::server::ForwardingMode::Victory => {
+                let profile =
+                    request_velocity_forwarding(packets, sink, &context.config.server.proxy_token)
+                        .await?;
+                log::debug!("accepted Velocity forwarded login for {}", profile.username);
+                return Ok(Login {
+                    profile,
+                    login_host: handshake.server_host,
+                });
+            }
+            qexed_config::app::qexed::server::ForwardingMode::Default
+            | qexed_config::app::qexed::server::ForwardingMode::QTunnel
+            | qexed_config::app::qexed::server::ForwardingMode::None => {}
+        }
+    }
+
+    let profile = if context.config.server.online_mode {
+        authenticate_online(packets, sink, context, login_start).await?
+    } else {
+        offline_profile(&login_start.username)
+    };
+
+    Ok(Login {
+        profile,
+        login_host: handshake.server_host,
+    })
+}
+
+async fn request_velocity_forwarding<R, W>(
+    packets: &mut qexed_tcp_connect::PacketStream<R>,
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    secret: &str,
+) -> anyhow::Result<qexed_packet::net_types::GameProfile>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    sink.send(to_client::login::login_plugin_request::LoginPluginRequest {
+        message_id: qexed_packet::net_types::VarInt(
+            crate::proxy_forwarding::VELOCITY_FORWARDING_MESSAGE_ID,
+        ),
+        payload: qexed_packet::net_types::CustomQueryPayload {
+            channel: crate::proxy_forwarding::VELOCITY_FORWARDING_CHANNEL.to_string(),
+            data: qexed_packet::net_types::RestBuffer(Vec::new()),
+        },
+    })
+    .await?;
+    sink.flush().await?;
+
+    let response = read_expected_packet::<LoginPluginResponse, _>(packets).await?;
+    if response.message_id.0 != crate::proxy_forwarding::VELOCITY_FORWARDING_MESSAGE_ID {
+        anyhow::bail!(
+            "Velocity forwarding response message ID mismatch: expected {}, actual {}",
+            crate::proxy_forwarding::VELOCITY_FORWARDING_MESSAGE_ID,
+            response.message_id.0
+        );
+    }
+
+    let Some(data) = response.data else {
+        anyhow::bail!("Velocity proxy did not provide forwarded player info");
+    };
+
+    crate::proxy_forwarding::parse_velocity_forwarding_response(&data.0, secret)
 }
 
 async fn handle_configuration<R, W>(

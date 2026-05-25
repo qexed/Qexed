@@ -925,11 +925,12 @@ impl Default for Spawn {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
 pub enum ForwardingMode {
     Default,
     QTunnel,
     Victory,
+    Velocity,
     BungeeCord,
     None,
 }
@@ -946,6 +947,7 @@ impl std::fmt::Display for ForwardingMode {
             ForwardingMode::Default => write!(f, "Default"),
             ForwardingMode::QTunnel => write!(f, "QTunnel"),
             ForwardingMode::Victory => write!(f, "Victory"),
+            ForwardingMode::Velocity => write!(f, "Velocity"),
             ForwardingMode::BungeeCord => write!(f, "BungeeCord"),
             ForwardingMode::None => write!(f, "None"),
         }
@@ -960,6 +962,7 @@ impl std::str::FromStr for ForwardingMode {
             "default" => Ok(ForwardingMode::Default),
             "qtunnel" => Ok(ForwardingMode::QTunnel),
             "victory" => Ok(ForwardingMode::Victory),
+            "velocity" => Ok(ForwardingMode::Velocity),
             "bungeecord" => Ok(ForwardingMode::BungeeCord),
             "none" => Ok(ForwardingMode::None),
             _ => Err(format!("未知的转发模式: {}", s)),
@@ -970,10 +973,26 @@ impl std::str::FromStr for ForwardingMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentFilter, ContentFilterEngine, GameMode, GpuDeviceSelector, LightAlgorithm, LightMode,
-        PermissionEngine, Permissions, PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
-        ResourcePackObjectStorageProvider, ResourcePackSource, World, WorldGenerator,
+        ContentFilter, ContentFilterEngine, ForwardingMode, GameMode, GpuDeviceSelector,
+        LightAlgorithm, LightMode, PermissionEngine, Permissions, PlayerData, PlayerDataEngine,
+        PlayerMessages, ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource, World,
+        WorldGenerator,
     };
+
+    #[test]
+    fn parses_velocity_forwarding_mode() {
+        #[derive(serde::Deserialize)]
+        struct ProxyConfig {
+            proxy_protocol: ForwardingMode,
+        }
+
+        let config: ProxyConfig = toml::from_str(r#"proxy_protocol = "Velocity""#).unwrap();
+        assert_eq!(config.proxy_protocol, ForwardingMode::Velocity);
+        assert_eq!(
+            "velocity".parse::<ForwardingMode>().unwrap(),
+            ForwardingMode::Velocity
+        );
+    }
 
     #[test]
     fn parses_world_light_string_modes() {
