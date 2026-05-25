@@ -799,6 +799,15 @@ impl SimpleVegetationBlock {
         world_y: i32,
         world_z: i32,
     ) -> bool {
+        let selected_upper = self
+            .upper
+            .clone()
+            .or_else(|| double_plant_upper_for(&lower));
+        let lower = if selected_upper.is_some() {
+            lower.with_property("half", "lower")
+        } else {
+            lower
+        };
         let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
         else {
             return false;
@@ -819,7 +828,7 @@ impl SimpleVegetationBlock {
             return false;
         }
 
-        if let Some(upper) = &self.upper {
+        if let Some(upper) = selected_upper {
             if !matches!(
                 layer_at_world(
                     chunk,
@@ -835,12 +844,20 @@ impl SimpleVegetationBlock {
                 return false;
             }
             chunk.set_layer(local_x, world_y, local_z, settings.min_y, lower);
-            chunk.set_layer(local_x, world_y + 1, local_z, settings.min_y, upper.clone());
+            chunk.set_layer(local_x, world_y + 1, local_z, settings.min_y, upper);
         } else {
             chunk.set_layer(local_x, world_y, local_z, settings.min_y, lower);
         }
         true
     }
+}
+
+fn double_plant_upper_for(layer: &BlockLayer) -> Option<BlockLayer> {
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:lilac" | "minecraft:rose_bush" | "minecraft:peony"
+    )
+    .then(|| layer.with_property("half", "upper"))
 }
 
 #[derive(Debug, Clone, Copy)]

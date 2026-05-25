@@ -332,6 +332,75 @@ impl PlacedTreeFeature {
             );
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let Some((local_x, local_z)) =
+                local_coords(world_x, world_z, source_origin_x, source_origin_z)
+            else {
+                continue;
+            };
+            if source_chunk.world_surface_wg_height(local_x, local_z, settings.min_y)
+                - source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y)
+                > self.surface_water_depth
+            {
+                continue;
+            }
+            let world_y = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if world_y <= settings.min_y
+                || !sapling_would_survive_at(
+                    source_chunk,
+                    source_origin_x,
+                    source_origin_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
+                )
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            let mut replay_random = random.clone();
+            if self.config.place(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            ) {
+                self.config.place_spillover(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &mut replay_random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -622,6 +691,44 @@ impl TreeFeatureConfig {
             world_z,
         )
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        for variant in &self.variants {
+            if random.next_float() < variant.chance {
+                return variant.place_spillover(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+            }
+        }
+        self.default_tree.place_spillover(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -662,6 +769,42 @@ impl TreeFeatureVariant {
     ) -> bool {
         match self.placement {
             TreePlacementKind::Standing => self.tree.place(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            ),
+            TreePlacementKind::Fallen => self.tree.place_fallen(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        match self.placement {
+            TreePlacementKind::Standing => self.tree.place_spillover(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
@@ -1150,6 +1293,57 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
+        self.place_for_chunk(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.place_for_chunk(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_for_chunk(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        require_local_logs: bool,
+    ) -> bool {
         let mut tree_height = self.base_height + random.next_int(self.height_rand_a + 1);
         if self.height_rand_b > 0 {
             tree_height += random.next_int(self.height_rand_b + 1);
@@ -1191,7 +1385,11 @@ impl OakTreeConfig {
             world_y,
             world_z,
             tree_height,
+            !require_local_logs,
         );
+        if require_local_logs && logs.is_empty() {
+            return false;
+        }
 
         let leaves = self.place_foliage(
             settings,
@@ -1228,6 +1426,7 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
+        record_all_foliage_origins: bool,
     ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
         match self.trunk_placer {
             TreeTrunkConfig::Straight => self.place_straight_trunk(
@@ -1250,6 +1449,7 @@ impl OakTreeConfig {
                 world_y,
                 world_z,
                 tree_height,
+                record_all_foliage_origins,
             ),
             TreeTrunkConfig::Giant => self.place_giant_trunk(
                 settings,
@@ -1314,6 +1514,7 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
+        record_all_foliage_origins: bool,
     ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
         let mut logs = Vec::new();
         let mut foliage_origins = Vec::new();
@@ -1331,7 +1532,7 @@ impl OakTreeConfig {
                 trunk_z += lean_direction.1;
                 lean_steps -= 1;
             }
-            if self.try_place_log(
+            let placed = self.try_place_log(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
@@ -1339,8 +1540,11 @@ impl OakTreeConfig {
                 trunk_x,
                 log_y,
                 trunk_z,
-            ) {
+            );
+            if placed {
                 logs.push((trunk_x, log_y, trunk_z));
+            }
+            if placed || record_all_foliage_origins {
                 end_y = Some(log_y + 1);
             }
         }
@@ -1367,7 +1571,7 @@ impl OakTreeConfig {
                     let log_y = world_y + y_offset;
                     trunk_x += branch_direction.0;
                     trunk_z += branch_direction.1;
-                    if self.try_place_log(
+                    let placed = self.try_place_log(
                         settings,
                         chunk_min_x,
                         chunk_min_z,
@@ -1375,8 +1579,11 @@ impl OakTreeConfig {
                         trunk_x,
                         log_y,
                         trunk_z,
-                    ) {
+                    );
+                    if placed {
                         logs.push((trunk_x, log_y, trunk_z));
+                    }
+                    if placed || record_all_foliage_origins {
                         end_y = Some(log_y + 1);
                     }
                     branch_steps -= 1;
@@ -1843,8 +2050,22 @@ impl OakTreeConfig {
         let start_z = world_z + direction.1 * (2 + random.next_int(2));
         let axis = if direction.0 != 0 { "x" } else { "z" };
         let sideways_trunk = self.trunk.with_property("axis", axis);
+        let mut placed_any = false;
 
-        if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) {
+        if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+            && chunk
+                .layer(local_x, world_y, local_z, settings.min_y)
+                .is_some_and(valid_fallen_log_position_layer)
+            && is_fallen_tree_support_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x,
+                world_y - 1,
+                world_z,
+                settings.min_y,
+            )
+        {
             chunk.set_layer(
                 local_x,
                 world_y,
@@ -1852,6 +2073,7 @@ impl OakTreeConfig {
                 settings.min_y,
                 self.trunk.clone(),
             );
+            placed_any = true;
         }
 
         let mut current_x = start_x;
@@ -1868,8 +2090,8 @@ impl OakTreeConfig {
             if y > settings.min_y
                 && chunk
                     .layer(local_x, y, local_z, settings.min_y)
-                    .is_some_and(valid_tree_position_layer)
-                && is_full_solid_at_world(
+                    .is_some_and(valid_fallen_log_position_layer)
+                && is_fallen_tree_support_at_world(
                     chunk,
                     chunk_min_x,
                     chunk_min_z,
@@ -1880,11 +2102,12 @@ impl OakTreeConfig {
                 )
             {
                 chunk.set_layer(local_x, y, local_z, settings.min_y, sideways_trunk.clone());
+                placed_any = true;
             }
             current_x += direction.0;
             current_z += direction.1;
         }
-        true
+        placed_any
     }
 
     #[allow(clippy::too_many_arguments)]

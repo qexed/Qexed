@@ -36,6 +36,52 @@ mod tests {
             .any(|column| column.blocks.iter().any(|layer| layer.is(block)))
     }
 
+    fn generate_noise_chunk_without_neighbor_tree_spillover(
+        settings: &NoiseSettings,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> NoiseChunkBlocks {
+        let origin_x = chunk_x * 16;
+        let origin_z = chunk_z * 16;
+        let decoration_seed = FeatureRandom::decoration_seed(settings.ore_features.seed, origin_x, origin_z);
+        let (mut chunk, preliminary_surfaces) = settings.generate_base_chunk(chunk_x, chunk_z);
+        settings.carvers.carve_chunk(
+            settings,
+            chunk_x,
+            chunk_z,
+            &preliminary_surfaces,
+            &mut chunk,
+        );
+
+        for feature in settings.ore_features.ordered_features() {
+            let mut random = FeatureRandom::for_feature(
+                decoration_seed,
+                feature.feature_index(),
+                feature.step_index(),
+            );
+            feature.place(settings, origin_x, origin_z, &mut chunk, &mut random);
+        }
+        chunk
+    }
+
+    fn boundary_tree_block_count(chunk: &NoiseChunkBlocks) -> usize {
+        let mut count = 0;
+        for z in 0..16 {
+            for x in 0..16 {
+                if x != 0 && x != 15 && z != 0 && z != 15 {
+                    continue;
+                }
+                count += chunk
+                    .column(x, z)
+                    .blocks
+                    .iter()
+                    .filter(|layer| is_log_layer(layer) || is_leaf_layer(layer))
+                    .count();
+            }
+        }
+        count
+    }
+
     fn tree_feature(settings: &NoiseSettings, feature_index: i32) -> &PlacedTreeFeature {
         settings
             .ore_features
@@ -2947,6 +2993,37 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_weighted_double_flowers_place_upper_half() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let flower = SimpleVegetationBlock::single("minecraft:rose_bush");
+
+        assert!(flower.place_selected(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            BlockLayer::new("minecraft:rose_bush"),
+            8,
+            65,
+            8,
+        ));
+
+        let lower = chunk.layer(8, 65, 8, settings.min_y).unwrap();
+        let upper = chunk.layer(8, 66, 8, settings.min_y).unwrap();
+        assert!(lower.is("minecraft:rose_bush"));
+        assert!(lower
+            .properties
+            .iter()
+            .any(|(name, value)| name == "half" && value == "lower"));
+        assert!(upper.is("minecraft:rose_bush"));
+        assert!(upper
+            .properties
+            .iter()
+            .any(|(name, value)| name == "half" && value == "upper"));
+    }
+
+    #[test]
     fn vanilla_noise_patch_tall_grass_uses_biome_info_noise_threshold() {
         let placement = NoiseThresholdCount {
             noise_level: -0.8,
@@ -3206,6 +3283,96 @@ mod tests {
                         .any(|(name, value)| name == "axis" && value != "y")
             })
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_fallen_tree_does_not_use_leaf_canopy_as_ground() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let leaves = BlockLayer::new("minecraft:oak_leaves");
+        for x in 0..16 {
+            for z in 0..16 {
+                chunk.set_layer(x, 65, z, settings.min_y, leaves.clone());
+            }
+        }
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(!OakTreeConfig::fallen_jungle().place_fallen(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert!(!chunk_contains_block(&chunk, "minecraft:jungle_log"));
+        for column in &chunk.columns {
+            assert!(!column.blocks.iter().enumerate().any(|(index, layer)| {
+                settings.min_y + index as i32 == 66 && layer.is("minecraft:jungle_log")
+            }));
+        }
+    }
+
+    #[test]
+    fn vanilla_noise_tree_without_local_trunk_does_not_place_detached_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(!OakTreeConfig::oak().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            -1,
+            65,
+            8,
+        ));
+        assert!(!chunk_contains_block(&chunk, "minecraft:oak_leaves"));
+    }
+
+    #[test]
+    fn vanilla_noise_tree_spillover_places_neighbor_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = grass_surface_test_chunk(&settings, 64);
+        let mut target = grass_surface_test_chunk(&settings, 64);
+        let tree = OakTreeConfig::oak();
+        let mut random = FeatureRandom::new(12345);
+        let mut replay_random = random.clone();
+
+        assert!(tree.place(&settings, 0, 0, &mut source, &mut random, 15, 65, 8));
+        assert!(tree.place_spillover(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            65,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&target, "minecraft:oak_leaves"));
+        assert!(!chunk_contains_block(&target, "minecraft:oak_log"));
+    }
+
+    #[test]
+    fn vanilla_noise_seed0_chunk_minus5_10_receives_neighbor_tree_spillover() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let without_spillover =
+            generate_noise_chunk_without_neighbor_tree_spillover(&settings, -5, 10);
+        let with_spillover = settings.generate_chunk(-5, 10);
+        let without_count = boundary_tree_block_count(&without_spillover);
+        let with_count = boundary_tree_block_count(&with_spillover);
+
+        assert!(
+            with_count > without_count,
+            "expected neighbor tree spillover at chunk (-5, 10), got boundary tree blocks without={without_count}, with={with_count}"
+        );
     }
 
     #[test]

@@ -140,6 +140,39 @@ fn valid_tree_position_layer(layer: &BlockLayer) -> bool {
         )
 }
 
+fn valid_fallen_log_position_layer(layer: &BlockLayer) -> bool {
+    layer.is_air
+        || is_small_flower_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:pale_moss_carpet"
+                | "minecraft:short_grass"
+                | "minecraft:fern"
+                | "minecraft:dead_bush"
+                | "minecraft:vine"
+                | "minecraft:glow_lichen"
+                | "minecraft:sunflower"
+                | "minecraft:lilac"
+                | "minecraft:rose_bush"
+                | "minecraft:peony"
+                | "minecraft:tall_grass"
+                | "minecraft:large_fern"
+                | "minecraft:bush"
+                | "minecraft:firefly_bush"
+                | "minecraft:leaf_litter"
+                | "minecraft:short_dry_grass"
+                | "minecraft:tall_dry_grass"
+        )
+}
+
+fn supports_fallen_tree_layer(layer: &BlockLayer) -> bool {
+    supports_vegetation_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:snow_block" | "minecraft:sand" | "minecraft:red_sand"
+        )
+}
+
 fn cannot_replace_below_tree_trunk(layer: &BlockLayer) -> bool {
     matches!(
         layer.block.as_ref(),
@@ -412,7 +445,7 @@ fn supports_vegetation_at_world(
     .is_some_and(supports_vegetation_layer)
 }
 
-fn is_full_solid_at_world(
+fn is_fallen_tree_support_at_world(
     chunk: &NoiseChunkBlocks,
     chunk_min_x: i32,
     chunk_min_z: i32,
@@ -430,7 +463,7 @@ fn is_full_solid_at_world(
         world_z,
         min_y,
     )
-    .is_some_and(is_full_solid_layer)
+    .is_some_and(supports_fallen_tree_layer)
 }
 
 fn horizontal_directions() -> &'static [(i32, i32)] {

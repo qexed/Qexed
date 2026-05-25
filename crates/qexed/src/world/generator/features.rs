@@ -478,17 +478,7 @@ impl OverworldOreFeatures {
         }
     }
 
-    fn place_chunk(
-        &self,
-        settings: &NoiseSettings,
-        chunk_x: i32,
-        chunk_z: i32,
-        chunk: &mut NoiseChunkBlocks,
-    ) {
-        let origin_x = chunk_x * 16;
-        let origin_z = chunk_z * 16;
-        let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
-
+    fn ordered_features(&self) -> Vec<PlacedUndergroundFeature<'_>> {
         let mut features = Vec::with_capacity(
             self.features.len()
                 + self.disks.len()
@@ -530,6 +520,20 @@ impl OverworldOreFeatures {
             &self.freeze_top_layer,
         ));
         features.sort_by_key(|feature| (feature.step_index(), feature.feature_index()));
+        features
+    }
+
+    fn place_chunk(
+        &self,
+        settings: &NoiseSettings,
+        chunk_x: i32,
+        chunk_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+    ) {
+        let origin_x = chunk_x * 16;
+        let origin_z = chunk_z * 16;
+        let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
+        let features = self.ordered_features();
 
         for feature in features {
             let mut random = FeatureRandom::for_feature(
@@ -538,6 +542,72 @@ impl OverworldOreFeatures {
                 feature.step_index(),
             );
             feature.place(settings, origin_x, origin_z, chunk, &mut random);
+        }
+
+        self.place_neighbor_tree_spillover(settings, chunk_x, chunk_z, chunk);
+    }
+
+    fn place_neighbor_tree_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_x: i32,
+        chunk_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+    ) {
+        let target_origin_x = chunk_x * 16;
+        let target_origin_z = chunk_z * 16;
+        let features = self.ordered_features();
+
+        for source_dx in -1..=1 {
+            for source_dz in -1..=1 {
+                if source_dx == 0 && source_dz == 0 {
+                    continue;
+                }
+
+                let source_chunk_x = chunk_x + source_dx;
+                let source_chunk_z = chunk_z + source_dz;
+                let source_origin_x = source_chunk_x * 16;
+                let source_origin_z = source_chunk_z * 16;
+                let decoration_seed =
+                    FeatureRandom::decoration_seed(self.seed, source_origin_x, source_origin_z);
+
+                let (mut source_chunk, preliminary_surfaces) =
+                    settings.generate_base_chunk(source_chunk_x, source_chunk_z);
+                settings.carvers.carve_chunk(
+                    settings,
+                    source_chunk_x,
+                    source_chunk_z,
+                    &preliminary_surfaces,
+                    &mut source_chunk,
+                );
+
+                for feature in features.iter().copied() {
+                    let mut random = FeatureRandom::for_feature(
+                        decoration_seed,
+                        feature.feature_index(),
+                        feature.step_index(),
+                    );
+                    match feature {
+                        PlacedUndergroundFeature::Tree(feature) => feature.place_with_spillover(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            target_origin_x,
+                            target_origin_z,
+                            &mut source_chunk,
+                            chunk,
+                            &mut random,
+                        ),
+                        _ => feature.place(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            &mut source_chunk,
+                            &mut random,
+                        ),
+                    }
+                }
+            }
         }
     }
 }
