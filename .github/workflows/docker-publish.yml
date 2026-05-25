@@ -1,0 +1,144 @@
+name: Publish Qexed Docker Images
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Target platforms"
+        required: true
+        default: "linux/amd64"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  PLATFORMS: ${{ inputs.platforms || 'linux/amd64' }}
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.variant }} image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            target: runtime-cpu
+            tag_suffix: ""
+            latest_tag: latest
+          - variant: gpu
+            target: runtime-gpu
+            tag_suffix: "-gpu"
+            latest_tag: latest-gpu
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Prepare image names
+        id: image_names
+        shell: bash
+        run: |
+          echo "ghcr=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect official release
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "official=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "official=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect Docker Hub publishing
+        id: dockerhub
+        shell: bash
+        env:
+          DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ -n "$DOCKERHUB_IMAGE" && -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "image=$DOCKERHUB_IMAGE" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.dockerhub.outputs.enabled == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract GHCR metadata
+        id: ghcr_meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image_names.outputs.ghcr }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ matrix.latest_tag }},enable=${{ steps.release.outputs.official == 'true' }}
+            type=ref,event=branch,suffix=${{ matrix.tag_suffix }}
+            type=ref,event=tag,suffix=${{ matrix.tag_suffix }}
+            type=sha,prefix=sha-,suffix=${{ matrix.tag_suffix }}
+
+      - name: Build and push GHCR image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/qexed/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.ghcr_meta.outputs.tags }}
+          labels: ${{ steps.ghcr_meta.outputs.labels }}
+          cache-from: type=gha,scope=qexed-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=qexed-${{ matrix.variant }}
+
+      - name: Extract Docker Hub metadata
+        if: steps.dockerhub.outputs.enabled == 'true'
+        id: dockerhub_meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.dockerhub.outputs.image }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ matrix.latest_tag }},enable=${{ steps.release.outputs.official == 'true' }}
+            type=ref,event=branch,suffix=${{ matrix.tag_suffix }}
+            type=ref,event=tag,suffix=${{ matrix.tag_suffix }}
+            type=sha,prefix=sha-,suffix=${{ matrix.tag_suffix }}
+
+      - name: Build and push Docker Hub image
+        if: steps.dockerhub.outputs.enabled == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/qexed/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.dockerhub_meta.outputs.tags }}
+          labels: ${{ steps.dockerhub_meta.outputs.labels }}
+          cache-from: type=gha,scope=qexed-${{ matrix.variant }}

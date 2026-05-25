@@ -19,11 +19,12 @@ pub struct AddEntity {
 }
 
 impl AddEntity {
-    pub fn player(
+    pub fn new(
         entity_id: i32,
         uuid: uuid::Uuid,
         entity_type: i32,
         position: EntityPosition,
+        data: i32,
     ) -> Self {
         Self {
             entity_id: VarInt(entity_id),
@@ -38,8 +39,17 @@ impl AddEntity {
             pitch: pack_degrees(position.pitch),
             yaw: pack_degrees(position.yaw),
             head_yaw: pack_degrees(position.yaw),
-            data: VarInt(0),
+            data: VarInt(data),
         }
+    }
+
+    pub fn player(
+        entity_id: i32,
+        uuid: uuid::Uuid,
+        entity_type: i32,
+        position: EntityPosition,
+    ) -> Self {
+        Self::new(entity_id, uuid, entity_type, position, 0)
     }
 }
 

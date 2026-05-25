@@ -1,0 +1,13 @@
+.git
+.github
+.idea
+target
+logs
+world
+config
+plugins
+resourcepacks
+qexed-config-docs
+docker/player-data
+*.log
+*.tmp

@@ -4,6 +4,7 @@ mod code_of_conduct;
 mod commands;
 mod connection;
 mod content_filter;
+mod entities;
 mod inventory;
 mod lan_discovery;
 mod permissions;

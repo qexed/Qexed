@@ -14,7 +14,7 @@
   "bundle": {
     "active": false,
     "icon": [
-      "../qexed/logo.ico"
+      "../qexed_config/qexed_doc_logo.ico"
     ]
   }
 }

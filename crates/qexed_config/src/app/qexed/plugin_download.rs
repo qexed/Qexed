@@ -17,7 +17,9 @@ pub struct PluginDownload {
 
     #[AutoDoc(
         key = "config.qexed.plugin_download.download_token",
-        warning = "config.qexed.plugin_download.warning.download_token"
+        warning = "config.qexed.plugin_download.warning.download_token",
+        sensitive,
+        default_display = "<stored in .secrets>"
     )]
     pub download_token: String,
 }

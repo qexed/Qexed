@@ -4,6 +4,8 @@ use toml_edit::{DocumentMut, Item, RawString, Value, value};
 
 use crate::build;
 
+const SENSITIVE_DISPLAY_VALUE: &str = "<stored in .secrets>";
+
 // ========================
 // AutoDoc 元数据
 // ========================
@@ -31,6 +33,8 @@ impl Default for AutoDocConfig {
 // ========================
 pub trait AutoDocConfigTrait {
     fn doc_fields(lang: &str) -> Vec<(String, String)>;
+    fn default_display_fields(lang: &str) -> Vec<(String, String)>;
+    fn sensitive_fields() -> Vec<String>;
     fn deprecation_fields(lang: &str) -> Vec<(String, String)>;
     fn pending_deprecated_fields(lang: &str) -> Vec<(String, String)>;
     fn warning_fields(lang: &str) -> Vec<(String, String)>;
@@ -71,10 +75,11 @@ pub trait AppConfigTrait:
         let base_dir = config_path.unwrap_or_else(|| std::path::PathBuf::from("./config"));
         let final_path = build_safe_path(&base_dir, Self::PATH)?;
         let path = final_path.join(Self::NAME).with_extension("toml");
+        let secrets_path = secrets_path_for(&path)?;
 
         // ----- 文件不存在：创建全新配置 -----
         if !path.exists() {
-            return Self::create_new_config(&path, lang, enable_auto_doc);
+            return Self::create_new_config(&path, &secrets_path, lang, enable_auto_doc);
         }
 
         // ===== 文件存在：原地更新 =====
@@ -117,7 +122,19 @@ pub trait AppConfigTrait:
             .parse::<DocumentMut>()
             .expect("默认 TOML 必须合法");
 
+        let sensitive_fields = Self::sensitive_fields();
+        let secrets_doc = read_secrets_doc(&secrets_path)?;
+
         merge_missing_default_items(doc.as_item_mut(), default_doc.as_item());
+        let effective_secrets = migrate_sensitive_fields(&mut doc, secrets_doc, &sensitive_fields)?;
+        overlay_missing_sensitive_defaults(
+            &mut doc,
+            &default_doc,
+            &effective_secrets,
+            &sensitive_fields,
+        );
+        apply_sensitive_display_values(&mut doc, &effective_secrets, &sensitive_fields);
+        write_secrets_doc(&secrets_path, &effective_secrets)?;
 
         // 5. ✅ 更新字段注释（原地）
         if effective_enable {
@@ -187,7 +204,9 @@ pub trait AppConfigTrait:
 
         // 8. 反序列化
         let clean_doc = remove_auto_doc_fields(&doc);
-        let config: Self = toml::from_str(&clean_doc.to_string())
+        let mut config_doc = clean_doc.clone();
+        overlay_sensitive_values(&mut config_doc, &effective_secrets, &sensitive_fields);
+        let config: Self = toml::from_str(&config_doc.to_string())
             .with_context(|| "配置类型不匹配，可能字段已更改")?;
 
         Ok(config)
@@ -196,6 +215,7 @@ pub trait AppConfigTrait:
     // 创建全新配置文件
     fn create_new_config(
         path: &std::path::Path,
+        secrets_path: &std::path::Path,
         lang: Option<String>,
         enable_auto_doc: Option<bool>,
     ) -> Result<Self> {
@@ -217,11 +237,16 @@ pub trait AppConfigTrait:
             .parse::<DocumentMut>()
             .expect("序列化后的 TOML 应合法");
 
+        let sensitive_fields = Self::sensitive_fields();
+        let mut secrets_doc = DocumentMut::new();
+
         for (k, v) in user_doc.iter() {
             if !k.starts_with("auto_doc_") {
                 doc.insert(k, v.clone());
             }
         }
+        move_sensitive_fields_to_secrets(&mut doc, &mut secrets_doc, &sensitive_fields);
+        apply_sensitive_display_values(&mut doc, &secrets_doc, &sensitive_fields);
 
         let effective_lang = if !auto_doc.setting_lang.is_empty() {
             auto_doc.setting_lang.clone()
@@ -298,6 +323,7 @@ pub trait AppConfigTrait:
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, doc.to_string())?;
+        write_secrets_doc(secrets_path, &secrets_doc)?;
         Ok(config)
     }
 }
@@ -318,6 +344,167 @@ fn item_exists_in_doc(doc: &DocumentMut, key: &str) -> bool {
 }
 
 // 根据路径获取 Item 引用
+fn secrets_path_for(path: &std::path::Path) -> Result<std::path::PathBuf> {
+    let file_name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "config path has no file name",
+        )
+    })?;
+    Ok(path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".secrets")
+        .join(file_name))
+}
+
+fn read_secrets_doc(path: &std::path::Path) -> Result<DocumentMut> {
+    if !path.exists() {
+        return Ok(DocumentMut::new());
+    }
+
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取敏感配置文件 {}", path.display()))?;
+    content
+        .parse::<DocumentMut>()
+        .with_context(|| format!("敏感配置文件 TOML 格式错误: {}", path.display()))
+}
+
+fn write_secrets_doc(path: &std::path::Path, doc: &DocumentMut) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, doc.to_string())?;
+    Ok(())
+}
+
+fn migrate_sensitive_fields(
+    doc: &mut DocumentMut,
+    mut secrets_doc: DocumentMut,
+    sensitive_fields: &[String],
+) -> Result<DocumentMut> {
+    for path in sensitive_fields {
+        if let Some(item) = take_item_by_dotted_path(doc, path)? {
+            if is_sensitive_display_item(&item)
+                && get_item_by_dotted_path(&secrets_doc, path).is_some()
+            {
+                continue;
+            }
+            set_item_by_dotted_path(&mut secrets_doc, path, item)?;
+        }
+    }
+    Ok(secrets_doc)
+}
+
+fn move_sensitive_fields_to_secrets(
+    doc: &mut DocumentMut,
+    secrets_doc: &mut DocumentMut,
+    sensitive_fields: &[String],
+) {
+    for path in sensitive_fields {
+        if let Ok(Some(item)) = take_item_by_dotted_path(doc, path) {
+            let _ = set_item_by_dotted_path(secrets_doc, path, item);
+        }
+    }
+}
+
+fn overlay_missing_sensitive_defaults(
+    doc: &mut DocumentMut,
+    defaults: &DocumentMut,
+    secrets_doc: &DocumentMut,
+    sensitive_fields: &[String],
+) {
+    for path in sensitive_fields {
+        if get_item_by_dotted_path(secrets_doc, path).is_some()
+            || get_item_by_dotted_path(doc, path).is_some()
+        {
+            continue;
+        }
+        if let Some(default_item) = get_item_by_dotted_path(defaults, path) {
+            let _ = set_item_by_dotted_path(doc, path, default_item.clone());
+        }
+    }
+}
+
+fn apply_sensitive_display_values(
+    doc: &mut DocumentMut,
+    secrets_doc: &DocumentMut,
+    sensitive_fields: &[String],
+) {
+    for path in sensitive_fields {
+        if get_item_by_dotted_path(secrets_doc, path).is_some() {
+            let _ = set_item_by_dotted_path(doc, path, value(SENSITIVE_DISPLAY_VALUE));
+        }
+    }
+}
+
+fn overlay_sensitive_values(
+    doc: &mut DocumentMut,
+    secrets_doc: &DocumentMut,
+    sensitive_fields: &[String],
+) {
+    for path in sensitive_fields {
+        if let Some(secret_item) = get_item_by_dotted_path(secrets_doc, path) {
+            let _ = set_item_by_dotted_path(doc, path, secret_item.clone());
+        }
+    }
+}
+
+fn get_item_by_dotted_path<'a>(doc: &'a DocumentMut, path: &str) -> Option<&'a Item> {
+    let parts = path.split('.').collect::<Vec<_>>();
+    get_item_by_path(doc, &parts)
+}
+
+fn take_item_by_dotted_path(doc: &mut DocumentMut, path: &str) -> Result<Option<Item>> {
+    let parts = path.split('.').collect::<Vec<_>>();
+    if parts.is_empty() {
+        return Ok(None);
+    }
+    if parts.len() == 1 {
+        return Ok(doc.as_table_mut().remove(parts[0]));
+    }
+
+    let (parent_parts, last) = parts.split_at(parts.len() - 1);
+    let Some(parent) = get_item_mut_by_path(doc, parent_parts) else {
+        return Ok(None);
+    };
+    match parent {
+        Item::Table(table) => Ok(table.remove(last[0])),
+        _ => Ok(None),
+    }
+}
+
+fn set_item_by_dotted_path(doc: &mut DocumentMut, path: &str, item: Item) -> Result<()> {
+    let parts = path
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return Ok(());
+    }
+
+    let mut table = doc.as_table_mut();
+    for part in &parts[..parts.len() - 1] {
+        let item = table
+            .entry(part)
+            .or_insert_with(|| Item::Table(toml_edit::Table::new()));
+        if !item.is_table() {
+            *item = Item::Table(toml_edit::Table::new());
+        }
+        table = item.as_table_mut().ok_or_else(|| {
+            anyhow::anyhow!("failed to create table for sensitive config path: {path}")
+        })?;
+    }
+
+    table.insert(parts[parts.len() - 1], item);
+    Ok(())
+}
+
+fn is_sensitive_display_item(item: &Item) -> bool {
+    item.as_str()
+        .is_some_and(|value| value == SENSITIVE_DISPLAY_VALUE)
+}
+
 fn merge_missing_default_items(target: &mut Item, defaults: &Item) {
     match (target, defaults) {
         (Item::Table(target_table), Item::Table(default_table)) => {

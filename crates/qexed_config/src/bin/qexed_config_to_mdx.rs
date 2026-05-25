@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 
 const DEFAULT_LANGS: &[&str] = &["zh-CN", "en"];
-const LOGO_SOURCE: &str = "crates/qexed/logo.ico";
+const LOGO_BYTES: &[u8] = include_bytes!("../../qexed_doc_logo.ico");
 rust_i18n::i18n!("./locales");
 #[derive(Debug, Parser)]
 #[command(name = "qexed_config_to_mdx")]
@@ -352,6 +352,7 @@ where
         deprecated: into_map(T::deprecation_fields(lang)),
         migration_notices: into_map(T::migration_notice_fields(lang)),
     };
+    let default_display = into_map(T::default_display_fields(lang));
 
     let mut fields = Vec::new();
     for (path, description) in T::doc_fields(lang) {
@@ -361,7 +362,10 @@ where
                 .map(value_type_name)
                 .unwrap_or("unknown")
                 .to_string(),
-            default_value: default.and_then(|value| display_default_value(&path, value)),
+            default_value: default_display
+                .get(&path)
+                .cloned()
+                .or_else(|| default.and_then(display_default_value)),
             warning: notices.warnings.get(&path).cloned(),
             danger: notices.dangers.get(&path).cloned(),
             pending_deprecated: notices.pending_deprecated.get(&path).cloned(),
@@ -415,13 +419,12 @@ fn value_type_name(value: &JsonValue) -> &'static str {
     }
 }
 
-fn display_default_value(path: &str, value: &JsonValue) -> Option<String> {
-    let sanitized = sanitize_default_value(path, value);
-    if sanitized.is_null() {
+fn display_default_value(value: &JsonValue) -> Option<String> {
+    if value.is_null() {
         return None;
     }
 
-    let mut rendered = sanitized.to_string();
+    let mut rendered = sanitize_default_value(value).to_string();
     if rendered.len() > 320 {
         rendered.truncate(320);
         rendered.push_str("...");
@@ -430,28 +433,15 @@ fn display_default_value(path: &str, value: &JsonValue) -> Option<String> {
     Some(rendered)
 }
 
-fn sanitize_default_value(path: &str, value: &JsonValue) -> JsonValue {
-    if is_sensitive_path(path) {
-        return JsonValue::String("<random>".to_string());
-    }
-
+fn sanitize_default_value(value: &JsonValue) -> JsonValue {
     match value {
-        JsonValue::Array(values) => JsonValue::Array(
-            values
-                .iter()
-                .enumerate()
-                .map(|(index, value)| sanitize_default_value(&format!("{path}.{index}"), value))
-                .collect(),
-        ),
+        JsonValue::Array(values) => {
+            JsonValue::Array(values.iter().map(sanitize_default_value).collect())
+        }
         JsonValue::Object(values) => JsonValue::Object(
             values
                 .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        sanitize_default_value(&format!("{path}.{key}"), value),
-                    )
-                })
+                .map(|(key, value)| (key.clone(), sanitize_default_value(value)))
                 .collect(),
         ),
         JsonValue::String(value) if value.len() > 160 => {
@@ -461,31 +451,14 @@ fn sanitize_default_value(path: &str, value: &JsonValue) -> JsonValue {
     }
 }
 
-fn is_sensitive_path(path: &str) -> bool {
-    path.split('.').any(|part| {
-        let part = part.to_ascii_lowercase();
-        part.contains("password")
-            || part.contains("token")
-            || part.contains("secret")
-            || part.contains("private_key")
-            || part == "key"
-    })
-}
-
 fn write_assets(output_root: &Path) -> Result<()> {
     let asset_dir = output_root.join("assets");
     fs::create_dir_all(&asset_dir)
         .with_context(|| format!("无法创建资源目录 {}", asset_dir.display()))?;
 
-    let logo_source = Path::new(LOGO_SOURCE);
     let logo_target = asset_dir.join("logo.ico");
-    fs::copy(logo_source, &logo_target).with_context(|| {
-        format!(
-            "无法复制图标 {} 到 {}",
-            logo_source.display(),
-            logo_target.display()
-        )
-    })?;
+    fs::write(&logo_target, LOGO_BYTES)
+        .with_context(|| format!("无法写入内嵌图标 {}", logo_target.display()))?;
     Ok(())
 }
 
@@ -1145,4 +1118,35 @@ fn escape_mdx_text(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('\r', "")
         .replace('\n', "<br />")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LOGO_BYTES, write_assets};
+
+    fn temp_output_dir(name: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "qexed_config_docs_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time must be after UNIX_EPOCH")
+                .as_nanos()
+        ));
+        path
+    }
+
+    #[test]
+    fn writes_embedded_logo_asset() -> anyhow::Result<()> {
+        let dir = temp_output_dir("embedded_logo");
+
+        write_assets(&dir)?;
+
+        let logo = std::fs::read(dir.join("assets").join("logo.ico"))?;
+        assert_eq!(logo, LOGO_BYTES);
+
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
 }

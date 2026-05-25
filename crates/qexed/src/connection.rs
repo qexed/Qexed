@@ -31,6 +31,7 @@ pub struct ServerContext {
     pub authenticator: std::sync::Arc<Authenticator>,
     pub world: std::sync::Arc<crate::world::WorldManager>,
     pub players: std::sync::Arc<crate::players::PlayerManager>,
+    pub entities: std::sync::Arc<crate::entities::EntityManager>,
     pub player_data: std::sync::Arc<crate::player_data::PlayerDataManager>,
     pub permissions: std::sync::Arc<crate::permissions::PermissionManager>,
     pub plugins: std::sync::Arc<crate::plugins::PluginManager>,
@@ -76,6 +77,11 @@ impl ServerContext {
             crate::permissions::PermissionManager::from_config(&config.server.permissions).await?;
         let content_filter =
             crate::content_filter::ContentFilter::from_config(&config.server.content_filter)?;
+        let entity_ids = std::sync::Arc::new(crate::entities::EntityIdAllocator::default());
+        let entities = crate::entities::EntityManager::from_config(
+            &config.server.entities,
+            entity_ids.clone(),
+        )?;
         let mut resource_pack =
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
                 .await?;
@@ -88,7 +94,8 @@ impl ServerContext {
             config: std::sync::Arc::new(config),
             authenticator: std::sync::Arc::new(Authenticator::new()?),
             world: std::sync::Arc::new(world),
-            players: std::sync::Arc::new(crate::players::PlayerManager::new()),
+            players: std::sync::Arc::new(crate::players::PlayerManager::new(entity_ids)),
+            entities: std::sync::Arc::new(entities),
             player_data: std::sync::Arc::new(player_data),
             permissions: std::sync::Arc::new(permissions),
             plugins,
@@ -207,6 +214,7 @@ where
         &context.authenticator,
         &context.world,
         &context.players,
+        &context.entities,
         &context.player_data,
         &context.permissions,
         &context.plugins,

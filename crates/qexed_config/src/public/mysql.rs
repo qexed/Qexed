@@ -15,7 +15,11 @@ pub struct MysqlConfig {
     #[AutoDoc(key = "config.public.mysql.username")]
     pub username: String,
 
-    #[AutoDoc(key = "config.public.mysql.password")]
+    #[AutoDoc(
+        key = "config.public.mysql.password",
+        sensitive,
+        default_display = "<stored in .secrets>"
+    )]
     pub password: String,
 
     #[AutoDoc(key = "config.public.mysql.database")]

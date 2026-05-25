@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::{Path, PathBuf},
-    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -54,7 +52,6 @@ const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_CHUNK_LOAD_PARALLELISM: usize = 4;
 const MAX_CHUNK_LOAD_PARALLELISM: usize = 64;
 const SLOW_CHUNK_PAYLOAD_LOG_THRESHOLD: Duration = Duration::from_millis(250);
-const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 pub async fn initialize<R, W>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
@@ -63,6 +60,7 @@ pub async fn initialize<R, W>(
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
     player_data: &PlayerDataManager,
     permissions: &crate::permissions::PermissionManager,
     plugins: &crate::plugins::PluginManager,
@@ -97,7 +95,7 @@ where
     let world_session = world.begin_session();
     plugins.emit_player_join(&session.player);
     let leave_guard = PlayerLeaveGuard::new(players, plugins, session.player.clone());
-    let player_entity_type = entity_type_id("minecraft:player")?;
+    let player_entity_type = crate::entities::entity_type_id("minecraft:player")?;
 
     log::debug!(
         "初始化 Play 态: dimension={}, spawn=({}, {}, {}), yaw={}, pitch={}",
@@ -146,6 +144,7 @@ where
     )
     .await?;
     send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
+    send_existing_entities(sink, entities, &play_dimension).await?;
 
     sink.send(Position {
         teleport_id: VarInt(TELEPORT_ID),
@@ -333,6 +332,20 @@ where
         for packet in crate::players::spawn_player_packets(&player, player_entity_type)? {
             sink.send_raw(packet).await?;
         }
+    }
+    Ok(())
+}
+
+async fn send_existing_entities<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    entities: &crate::entities::EntityManager,
+    dimension: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    for packet in entities.spawn_packets_for_dimension(dimension)? {
+        sink.send_raw(packet).await?;
     }
     Ok(())
 }
@@ -1203,6 +1216,7 @@ fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool {
             block_state: _,
             light_update: _,
         } => *changed_id == profile_id,
+        PlayerEvent::ClientboundPackets { packets: _ } => false,
     }
 }
 
@@ -1223,6 +1237,7 @@ fn player_event_message(
         PlayerEvent::Left { username, .. } => {
             Some(render_player_message(&messages.leave, username))
         }
+        PlayerEvent::ClientboundPackets { packets: _ } => None,
         _ => None,
     }
 }
@@ -1306,63 +1321,11 @@ fn dimension_type_holder_id(dimension_type: &str) -> i32 {
     }
 }
 
-fn entity_type_id(name: &str) -> Result<i32> {
-    entity_type_registry()
-        .get(name)
-        .copied()
-        .with_context(|| format!("missing entity type registry id: {name}"))
-}
-
-fn entity_type_registry() -> &'static HashMap<String, i32> {
-    static REGISTRY: OnceLock<HashMap<String, i32>> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        load_registry_id_map("minecraft:entity_type").unwrap_or_else(|err| {
-            log::warn!("failed to load entity type registry ids: {err:#}");
-            HashMap::from([("minecraft:player".to_string(), 155)])
-        })
-    })
-}
-
-fn load_registry_id_map(registry_id: &str) -> Result<HashMap<String, i32>> {
-    let path = workspace_root().join(REGISTRIES_REPORT);
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    let entries = value
-        .get(registry_id)
-        .and_then(|registry| registry.get("entries"))
-        .and_then(serde_json::Value::as_object)
-        .with_context(|| format!("registry not found in {}: {registry_id}", path.display()))?;
-
-    let mut ids = HashMap::new();
-    for (name, value) in entries {
-        let Some(id) = value
-            .get("protocol_id")
-            .and_then(serde_json::Value::as_i64)
-            .and_then(|id| i32::try_from(id).ok())
-        else {
-            continue;
-        };
-        ids.insert(name.clone(), id);
-    }
-
-    Ok(ids)
-}
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         ChunkSendState, can_modify_world, chunk_coord, chunk_load_parallelism_limit,
-        dimension_type_holder_id, entity_type_id, keep_alive_id, player_ability_flags,
+        dimension_type_holder_id, keep_alive_id, player_ability_flags,
     };
     use qexed_config::app::qexed::server::GameMode;
     use qexed_protocol::to_client::play::player_abilities::PlayerAbilities;
@@ -1486,10 +1449,5 @@ mod tests {
 
         assert!(!state.pending_unloads.contains_key(&(-1, 0)));
         assert!(state.visible_chunks.contains(&(-1, 0)));
-    }
-
-    #[test]
-    fn player_entity_type_id_is_loaded_from_current_report() {
-        assert_eq!(entity_type_id("minecraft:player").unwrap(), 155);
     }
 }

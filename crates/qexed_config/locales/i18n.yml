@@ -364,6 +364,51 @@ config:
         disconnect_message:
           en: "Disconnect message used when a required resource pack is rejected or fails"
           zh-CN: "强制资源包被拒绝或下载失败时的断开提示"
+      entities:
+        en: "Static entity and NPC settings. AI is not enabled for these entities."
+        zh-CN: "静态实体与 NPC 设置。这些实体暂不启用 AI。"
+        enable:
+          en: "Enable configured static entities and NPCs"
+          zh-CN: "启用配置中的静态实体与 NPC"
+        dimension:
+          en: "Dimension where configured static entities are visible"
+          zh-CN: "配置中的静态实体可见的维度"
+        list:
+          en: "Configured static entity and NPC list"
+          zh-CN: "配置的静态实体与 NPC 列表"
+          id:
+            en: "Stable entity identifier used by Qexed"
+            zh-CN: "Qexed 使用的稳定实体标识"
+          kind:
+            en: "Entity kind: entity or npc. NPCs are spawned as player entities."
+            zh-CN: "实体类型：entity 或 npc。NPC 会以玩家实体生成。"
+          entity_type:
+            en: "Minecraft entity type resource key, for example minecraft:armor_stand or minecraft:villager"
+            zh-CN: "Minecraft 实体类型资源键，例如 minecraft:armor_stand 或 minecraft:villager"
+          name:
+            en: "NPC player name. Empty uses the entity id."
+            zh-CN: "NPC 玩家名。为空时使用实体 id。"
+          x:
+            en: "Entity X coordinate"
+            zh-CN: "实体 X 坐标"
+          y:
+            en: "Entity Y coordinate"
+            zh-CN: "实体 Y 坐标"
+          z:
+            en: "Entity Z coordinate"
+            zh-CN: "实体 Z 坐标"
+          yaw:
+            en: "Entity yaw"
+            zh-CN: "实体水平朝向"
+          pitch:
+            en: "Entity pitch"
+            zh-CN: "实体俯仰角"
+          on_ground:
+            en: "Whether the entity is on the ground"
+            zh-CN: "实体是否在地面上"
+          data:
+            en: "Spawn data value passed to the Add Entity packet"
+            zh-CN: "传递给 Add Entity 数据包的生成数据值"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"
