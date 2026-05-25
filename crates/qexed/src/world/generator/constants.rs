@@ -338,6 +338,8 @@ const BIRCH_TREE_BIOMES: &[&str] = &["minecraft:birch_forest"];
 const TALL_BIRCH_TREE_BIOMES: &[&str] = &["minecraft:old_growth_birch_forest"];
 const TAIGA_TREE_BIOMES: &[&str] = &["minecraft:snowy_taiga", "minecraft:taiga"];
 const SNOWY_TREE_BIOMES: &[&str] = &["minecraft:ice_spikes", "minecraft:snowy_plains"];
+const SAVANNA_TREE_BIOMES: &[&str] = &["minecraft:savanna", "minecraft:savanna_plateau"];
+const WINDSWEPT_SAVANNA_TREE_BIOMES: &[&str] = &["minecraft:windswept_savanna"];
 const PLAINS_FLOWER_LOW_BLOCKS: &[&str] = &[
     "minecraft:orange_tulip",
     "minecraft:red_tulip",
