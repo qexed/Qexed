@@ -86,6 +86,204 @@ impl PlacedTreeFeature {
         }
     }
 
+    fn dark_forest_vegetation(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(16, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::dark_forest_vegetation(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn pale_garden_vegetation(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(16, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::pale_garden_vegetation(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_flower_forest(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(6, 9), (7, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::flower_forest_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_meadow(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(0, 99), (1, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::meadow_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_cherry(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::cherry_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_grove(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::grove_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_badlands(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(5, 9), (6, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::badlands_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_swamp(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(2, 9), (3, 1)]),
+            surface_water_depth: 2,
+            config: TreeFeatureConfig::swamp_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_windswept_hills(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(0, 9), (1, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::windswept_hills_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_windswept_forest(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(3, 9), (4, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::windswept_hills_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_water(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(0, 9), (1, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::water_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_birch_and_oak_leaf_litter(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::birch_and_oak_leaf_litter_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_sparse_jungle(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(2, 9), (3, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::sparse_jungle_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_old_growth_spruce_taiga(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::old_growth_spruce_taiga_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_old_growth_pine_taiga(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(10, 9), (11, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::old_growth_pine_taiga_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_jungle(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(50, 9), (51, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::jungle_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn trees_mangrove(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(25, 1)]),
+            surface_water_depth: 5,
+            config: TreeFeatureConfig::mangrove_trees(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn bamboo_vegetation(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: WeightedInt::new(&[(30, 9), (31, 1)]),
+            surface_water_depth: 0,
+            config: TreeFeatureConfig::bamboo_vegetation(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
     fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
         self.biome_filter = biome_filter;
         self
@@ -204,6 +402,185 @@ impl TreeFeatureConfig {
             variants: vec![
                 TreeFeatureVariant::standing(0.8, OakTreeConfig::acacia()),
                 TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
+            ],
+        }
+    }
+
+    fn dark_forest_vegetation() -> Self {
+        let default_tree = OakTreeConfig::oak();
+        Self {
+            default_tree,
+            variants: vec![
+                TreeFeatureVariant::standing(0.666_666_7, OakTreeConfig::dark_oak()),
+                TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
+                TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_0002()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
+                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak()),
+            ],
+        }
+    }
+
+    fn pale_garden_vegetation() -> Self {
+        let default_tree = OakTreeConfig::pale_oak();
+        Self {
+            default_tree: default_tree.clone(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.1, default_tree.clone()),
+                TreeFeatureVariant::standing(0.9, default_tree),
+            ],
+        }
+    }
+
+    fn flower_forest_trees() -> Self {
+        let default_tree = OakTreeConfig::oak_bees_002();
+        Self {
+            default_tree,
+            variants: vec![
+                TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
+                TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_002()),
+                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak_bees_002()),
+            ],
+        }
+    }
+
+    fn meadow_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::super_birch_bees(),
+            variants: vec![TreeFeatureVariant::standing(
+                0.5,
+                OakTreeConfig::fancy_oak_bees(),
+            )],
+        }
+    }
+
+    fn cherry_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::cherry_bees_005(),
+            variants: Vec::new(),
+        }
+    }
+
+    fn grove_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::spruce(),
+            variants: vec![TreeFeatureVariant::standing(
+                0.333_333_34,
+                OakTreeConfig::pine(),
+            )],
+        }
+    }
+
+    fn badlands_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::oak(),
+            variants: vec![TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak())],
+        }
+    }
+
+    fn swamp_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::swamp_oak(),
+            variants: Vec::new(),
+        }
+    }
+
+    fn windswept_hills_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::oak(),
+            variants: vec![
+                TreeFeatureVariant::fallen(0.008325, OakTreeConfig::fallen_spruce()),
+                TreeFeatureVariant::standing(0.666, OakTreeConfig::spruce()),
+                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
+            ],
+        }
+    }
+
+    fn water_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::oak(),
+            variants: vec![TreeFeatureVariant::standing(
+                0.1,
+                OakTreeConfig::fancy_oak(),
+            )],
+        }
+    }
+
+    fn birch_and_oak_leaf_litter_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::oak_bees_0002(),
+            variants: vec![
+                TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
+                TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_0002()),
+                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak_bees_0002()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
+            ],
+        }
+    }
+
+    fn sparse_jungle_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::jungle_tree(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak()),
+                TreeFeatureVariant::standing(0.5, OakTreeConfig::jungle_bush()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::fallen_jungle()),
+            ],
+        }
+    }
+
+    fn old_growth_spruce_taiga_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::spruce(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::mega_spruce()),
+                TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::pine()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::fallen_spruce()),
+            ],
+        }
+    }
+
+    fn old_growth_pine_taiga_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::spruce(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.025_641_026, OakTreeConfig::mega_spruce()),
+                TreeFeatureVariant::standing(0.307_692_32, OakTreeConfig::mega_pine()),
+                TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::pine()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::fallen_spruce()),
+            ],
+        }
+    }
+
+    fn jungle_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::jungle_tree(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak()),
+                TreeFeatureVariant::standing(0.5, OakTreeConfig::jungle_bush()),
+                TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::mega_jungle_tree()),
+                TreeFeatureVariant::fallen(0.0125, OakTreeConfig::fallen_jungle()),
+            ],
+        }
+    }
+
+    fn mangrove_trees() -> Self {
+        Self {
+            default_tree: OakTreeConfig::mangrove(),
+            variants: vec![TreeFeatureVariant::standing(
+                0.85,
+                OakTreeConfig::tall_mangrove(),
+            )],
+        }
+    }
+
+    fn bamboo_vegetation() -> Self {
+        Self {
+            default_tree: OakTreeConfig::jungle_bush(),
+            variants: vec![
+                TreeFeatureVariant::standing(0.05, OakTreeConfig::fancy_oak()),
+                TreeFeatureVariant::standing(0.15, OakTreeConfig::jungle_bush()),
+                TreeFeatureVariant::standing(0.7, OakTreeConfig::mega_jungle_tree()),
             ],
         }
     }
@@ -337,6 +714,7 @@ enum TreeFoliageConfig {
 enum TreeTrunkConfig {
     Straight,
     Forking,
+    Giant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -366,6 +744,26 @@ struct OakTreeConfig {
 }
 
 impl OakTreeConfig {
+    fn log(block: &str) -> BlockLayer {
+        BlockLayer::with_properties(block, &[("axis", "y")])
+    }
+
+    fn leaves(block: &str) -> BlockLayer {
+        BlockLayer::with_properties(
+            block,
+            &[
+                ("distance", "7"),
+                ("persistent", "false"),
+                ("waterlogged", "false"),
+            ],
+        )
+    }
+
+    fn with_beehive_probability(mut self, beehive_probability: f32) -> Self {
+        self.beehive_probability = beehive_probability;
+        self
+    }
+
     fn oak_bees_005() -> Self {
         Self {
             trunk: BlockLayer::with_properties("minecraft:oak_log", &[("axis", "y")]),
@@ -393,6 +791,14 @@ impl OakTreeConfig {
             fallen_min_length: 4,
             fallen_max_length: 7,
         }
+    }
+
+    fn oak_bees_0002() -> Self {
+        Self::oak_bees_005().with_beehive_probability(0.002)
+    }
+
+    fn oak_bees_002() -> Self {
+        Self::oak_bees_005().with_beehive_probability(0.02)
     }
 
     fn oak() -> Self {
@@ -431,12 +837,20 @@ impl OakTreeConfig {
         }
     }
 
+    fn birch_bees_002() -> Self {
+        Self::birch_bees_0002().with_beehive_probability(0.02)
+    }
+
     fn super_birch_bees_0002() -> Self {
         Self {
             height_rand_b: 6,
             fallen_max_length: 15,
             ..Self::birch_bees_0002()
         }
+    }
+
+    fn super_birch_bees() -> Self {
+        Self::super_birch_bees_0002().with_beehive_probability(1.0)
     }
 
     fn spruce() -> Self {
@@ -525,6 +939,202 @@ impl OakTreeConfig {
             fallen_min_length: 6,
             fallen_max_length: 10,
             ..Self::spruce()
+        }
+    }
+
+    fn fancy_oak() -> Self {
+        Self {
+            base_height: 3,
+            height_rand_a: 11,
+            height_rand_b: 0,
+            foliage_height: 4,
+            foliage_radius: 3,
+            fallen_min_length: 4,
+            fallen_max_length: 7,
+            ..Self::oak()
+        }
+    }
+
+    fn fancy_oak_bees_0002() -> Self {
+        Self::fancy_oak().with_beehive_probability(0.002)
+    }
+
+    fn fancy_oak_bees_002() -> Self {
+        Self::fancy_oak().with_beehive_probability(0.02)
+    }
+
+    fn fancy_oak_bees() -> Self {
+        Self::fancy_oak().with_beehive_probability(1.0)
+    }
+
+    fn dark_oak() -> Self {
+        Self {
+            trunk: Self::log("minecraft:dark_oak_log"),
+            leaves: Self::leaves("minecraft:dark_oak_leaves"),
+            base_height: 6,
+            height_rand_a: 2,
+            height_rand_b: 1,
+            trunk_placer: TreeTrunkConfig::Giant,
+            foliage_height: 4,
+            foliage_radius: 3,
+            fallen_min_length: 4,
+            fallen_max_length: 7,
+            ..Self::oak()
+        }
+    }
+
+    fn pale_oak() -> Self {
+        Self {
+            trunk: Self::log("minecraft:pale_oak_log"),
+            leaves: Self::leaves("minecraft:pale_oak_leaves"),
+            base_height: 6,
+            height_rand_a: 2,
+            height_rand_b: 1,
+            trunk_placer: TreeTrunkConfig::Giant,
+            foliage_height: 4,
+            foliage_radius: 3,
+            fallen_min_length: 4,
+            fallen_max_length: 7,
+            ..Self::oak()
+        }
+    }
+
+    fn cherry_bees_005() -> Self {
+        Self {
+            trunk: Self::log("minecraft:cherry_log"),
+            leaves: Self::leaves("minecraft:cherry_leaves"),
+            base_height: 7,
+            height_rand_a: 1,
+            height_rand_b: 0,
+            foliage_height: 5,
+            foliage_radius: 4,
+            fallen_min_length: 4,
+            fallen_max_length: 8,
+            beehive_probability: 0.05,
+            ..Self::oak()
+        }
+    }
+
+    fn jungle_tree() -> Self {
+        Self {
+            trunk: Self::log("minecraft:jungle_log"),
+            leaves: Self::leaves("minecraft:jungle_leaves"),
+            base_height: 4,
+            height_rand_a: 8,
+            height_rand_b: 0,
+            foliage_height: 3,
+            foliage_radius: 2,
+            fallen_min_length: 4,
+            fallen_max_length: 11,
+            ..Self::oak()
+        }
+    }
+
+    fn jungle_bush() -> Self {
+        Self {
+            trunk: Self::log("minecraft:jungle_log"),
+            leaves: Self::leaves("minecraft:oak_leaves"),
+            base_height: 1,
+            height_rand_a: 0,
+            height_rand_b: 0,
+            foliage_height: 2,
+            foliage_radius: 2,
+            fallen_min_length: 4,
+            fallen_max_length: 11,
+            ..Self::oak()
+        }
+    }
+
+    fn mega_jungle_tree() -> Self {
+        Self {
+            trunk: Self::log("minecraft:jungle_log"),
+            leaves: Self::leaves("minecraft:jungle_leaves"),
+            base_height: 10,
+            height_rand_a: 2,
+            height_rand_b: 19,
+            trunk_placer: TreeTrunkConfig::Giant,
+            foliage_height: 4,
+            foliage_radius: 3,
+            fallen_min_length: 4,
+            fallen_max_length: 11,
+            ..Self::oak()
+        }
+    }
+
+    fn mega_spruce() -> Self {
+        Self {
+            base_height: 13,
+            height_rand_a: 2,
+            height_rand_b: 14,
+            trunk_placer: TreeTrunkConfig::Giant,
+            foliage_height: 8,
+            foliage_radius: 3,
+            foliage: TreeFoliageConfig::Spruce {
+                radius: UniformInt { min: 3, max: 4 },
+                offset: UniformInt { min: 0, max: 1 },
+                trunk_height: UniformInt { min: 8, max: 12 },
+            },
+            fallen_min_length: 6,
+            fallen_max_length: 10,
+            ..Self::spruce()
+        }
+    }
+
+    fn mega_pine() -> Self {
+        Self {
+            foliage: TreeFoliageConfig::Spruce {
+                radius: UniformInt { min: 2, max: 3 },
+                offset: UniformInt { min: 0, max: 1 },
+                trunk_height: UniformInt { min: 10, max: 14 },
+            },
+            ..Self::mega_spruce()
+        }
+    }
+
+    fn swamp_oak() -> Self {
+        Self {
+            base_height: 5,
+            height_rand_a: 3,
+            height_rand_b: 0,
+            foliage_radius: 3,
+            foliage_height: 3,
+            ..Self::oak()
+        }
+    }
+
+    fn mangrove() -> Self {
+        Self {
+            trunk: Self::log("minecraft:mangrove_log"),
+            leaves: Self::leaves("minecraft:mangrove_leaves"),
+            base_height: 4,
+            height_rand_a: 2,
+            height_rand_b: 2,
+            trunk_placer: TreeTrunkConfig::Forking,
+            foliage_height: 3,
+            foliage_radius: 3,
+            beehive_probability: 0.01,
+            fallen_min_length: 4,
+            fallen_max_length: 9,
+            ..Self::oak()
+        }
+    }
+
+    fn tall_mangrove() -> Self {
+        Self {
+            base_height: 8,
+            height_rand_a: 4,
+            height_rand_b: 3,
+            foliage_height: 4,
+            foliage_radius: 3,
+            ..Self::mangrove()
+        }
+    }
+
+    fn fallen_jungle() -> Self {
+        Self {
+            fallen_min_length: 4,
+            fallen_max_length: 11,
+            ..Self::jungle_tree()
         }
     }
 
@@ -636,6 +1246,16 @@ impl OakTreeConfig {
                 chunk_min_z,
                 chunk,
                 random,
+                world_x,
+                world_y,
+                world_z,
+                tree_height,
+            ),
+            TreeTrunkConfig::Giant => self.place_giant_trunk(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
                 world_x,
                 world_y,
                 world_z,
@@ -775,6 +1395,46 @@ impl OakTreeConfig {
         }
 
         (logs, foliage_origins)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_giant_trunk(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        tree_height: i32,
+    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
+        let mut logs = Vec::new();
+        for dy in 0..tree_height {
+            for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                if self.try_place_log(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    world_x + dx,
+                    world_y + dy,
+                    world_z + dz,
+                ) {
+                    logs.push((world_x + dx, world_y + dy, world_z + dz));
+                }
+            }
+        }
+
+        (
+            logs,
+            vec![FoliageOrigin {
+                x: world_x + 1,
+                y: world_y + tree_height,
+                z: world_z + 1,
+                radius_offset: 1,
+            }],
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
