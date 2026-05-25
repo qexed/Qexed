@@ -1,0 +1,990 @@
+#[derive(Debug, Clone)]
+struct PlacedOreFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    ore: OreFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedOreFeature {
+    fn new(
+        feature_index: i32,
+        count: OrePlacementCount,
+        height: OreHeight,
+        ore: OreFeatureConfig,
+    ) -> Self {
+        Self {
+            step_index: 6,
+            feature_index,
+            count,
+            height,
+            ore,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn with_step_index(mut self, step_index: i32) -> Self {
+        self.step_index = step_index;
+        self
+    }
+
+    fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
+        self.biome_filter = biome_filter;
+        self
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let x = origin_x + random.next_int(16);
+            let z = origin_z + random.next_int(16);
+            let y = self.height.sample(settings, random);
+            if !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
+            self.ore
+                .place(settings, origin_x, origin_z, chunk, random, x, y, z);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FeatureBiomeFilter {
+    All,
+    Include(&'static [&'static str]),
+    Exclude(&'static [&'static str]),
+}
+
+impl FeatureBiomeFilter {
+    fn allows(self, biome: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Include(biomes) => biomes.contains(&biome),
+            Self::Exclude(biomes) => !biomes.contains(&biome),
+        }
+    }
+
+    fn allows_at(self, density: &TerrainDensity, x: i32, y: i32, z: i32) -> bool {
+        match self {
+            Self::All => true,
+            Self::Include(_) | Self::Exclude(_) => self.allows(density.biome(x, y, z)),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedUnderwaterMagmaFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    floor_search_range: i32,
+    placement_radius_around_floor: i32,
+    placement_probability_per_valid_position: f32,
+    magma_block: BlockLayer,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedUnderwaterMagmaFeature {
+    fn new(feature_index: i32) -> Self {
+        Self {
+            step_index: 6,
+            feature_index,
+            count: OrePlacementCount::Uniform { min: 44, max: 52 },
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
+            floor_search_range: 5,
+            placement_radius_around_floor: 1,
+            placement_probability_per_valid_position: 0.5,
+            magma_block: BlockLayer::new("minecraft:magma_block"),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let x = origin_x + random.next_int(16);
+            let z = origin_z + random.next_int(16);
+            let y = self.height.sample(settings, random);
+            let local_x = (x - origin_x) as usize;
+            let local_z = (z - origin_z) as usize;
+            let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if y > ocean_floor - 2 || !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
+
+            if let Some(floor_y) = self.find_floor_y(settings, chunk, local_x, y, local_z) {
+                self.place_around_floor(settings, origin_x, origin_z, chunk, random, x, floor_y, z);
+            }
+        }
+    }
+
+    fn find_floor_y(
+        &self,
+        settings: &NoiseSettings,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        origin_y: i32,
+        local_z: usize,
+    ) -> Option<i32> {
+        if !is_water_at(chunk, local_x, origin_y, local_z, settings.min_y) {
+            return None;
+        }
+
+        let mut y = origin_y;
+        for _ in 1..self.floor_search_range {
+            if !is_water_at(chunk, local_x, y, local_z, settings.min_y) {
+                break;
+            }
+            y -= 1;
+        }
+
+        let layer = chunk.layer(local_x, y, local_z, settings.min_y)?;
+        (!is_water_layer(layer)).then_some(y)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_around_floor(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        floor_x: i32,
+        floor_y: i32,
+        floor_z: i32,
+    ) {
+        let radius = self.placement_radius_around_floor;
+        for world_x in floor_x - radius..=floor_x + radius {
+            for world_y in floor_y - radius..=floor_y + radius {
+                for world_z in floor_z - radius..=floor_z + radius {
+                    if random.next_float() >= self.placement_probability_per_valid_position {
+                        continue;
+                    }
+                    let Some(local_x) = local_coord(world_x, origin_x) else {
+                        continue;
+                    };
+                    let Some(local_z) = local_coord(world_z, origin_z) else {
+                        continue;
+                    };
+                    if self.is_valid_placement(settings, chunk, local_x, world_y, local_z) {
+                        chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            self.magma_block.clone(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_valid_placement(
+        &self,
+        settings: &NoiseSettings,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        world_y: i32,
+        local_z: usize,
+    ) -> bool {
+        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+            return false;
+        };
+        if is_water_or_air_layer(current) {
+            return false;
+        }
+        let Some(below) = chunk.layer(local_x, world_y - 1, local_z, settings.min_y) else {
+            return false;
+        };
+        if !is_full_solid_layer(below) {
+            return false;
+        }
+
+        for (dx, dz) in [(-1_i32, 0_i32), (1, 0), (0, -1), (0, 1)] {
+            let local_x = local_x as i32 + dx;
+            let local_z = local_z as i32 + dz;
+            if !(0..16).contains(&local_x) || !(0..16).contains(&local_z) {
+                return false;
+            }
+            let Some(neighbor) =
+                chunk.layer(local_x as usize, world_y, local_z as usize, settings.min_y)
+            else {
+                return false;
+            };
+            if !is_full_solid_layer(neighbor) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedDiskFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    half_height: i32,
+    radius: UniformInt,
+    target_blocks: &'static [&'static str],
+    state_provider: DiskStateProvider,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedDiskFeature {
+    fn sand(feature_index: i32) -> Self {
+        Self {
+            step_index: 6,
+            feature_index,
+            count: OrePlacementCount::Constant(3),
+            half_height: 2,
+            radius: UniformInt { min: 2, max: 6 },
+            target_blocks: DISK_DIRT_GRASS_TARGETS,
+            state_provider: DiskStateProvider::Sand {
+                sand: BlockLayer::new("minecraft:sand"),
+                sandstone: BlockLayer::new("minecraft:sandstone"),
+            },
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn clay(feature_index: i32) -> Self {
+        Self::simple(
+            feature_index,
+            1,
+            UniformInt { min: 2, max: 3 },
+            DISK_DIRT_CLAY_TARGETS,
+            "minecraft:clay",
+        )
+    }
+
+    fn gravel(feature_index: i32) -> Self {
+        Self::simple(
+            feature_index,
+            2,
+            UniformInt { min: 2, max: 5 },
+            DISK_DIRT_GRASS_TARGETS,
+            "minecraft:gravel",
+        )
+    }
+
+    fn simple(
+        feature_index: i32,
+        half_height: i32,
+        radius: UniformInt,
+        target_blocks: &'static [&'static str],
+        block: &str,
+    ) -> Self {
+        Self {
+            step_index: 6,
+            feature_index,
+            count: OrePlacementCount::Constant(1),
+            half_height,
+            radius,
+            target_blocks,
+            state_provider: DiskStateProvider::Simple(BlockLayer::new(block)),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
+        self.biome_filter = biome_filter;
+        self
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let x = origin_x + random.next_int(16);
+            let z = origin_z + random.next_int(16);
+            let local_x = (x - origin_x) as usize;
+            let local_z = (z - origin_z) as usize;
+            let y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if y <= settings.min_y
+                || !self.biome_filter.allows_at(&settings.density, x, y, z)
+                || !is_water_at(chunk, local_x, y, local_z, settings.min_y)
+            {
+                continue;
+            }
+
+            self.place_disk(settings, origin_x, origin_z, chunk, random, x, y, z);
+        }
+    }
+
+    fn place_disk(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        center_x: i32,
+        center_y: i32,
+        center_z: i32,
+    ) {
+        let radius = self.radius.sample(random);
+        let min_y = (center_y - self.half_height).max(settings.min_y);
+        let max_y = (center_y + self.half_height).min(settings.min_y + settings.height - 1);
+        if min_y > max_y {
+            return;
+        }
+
+        for world_x in center_x - radius..=center_x + radius {
+            let dx = world_x - center_x;
+            for world_z in center_z - radius..=center_z + radius {
+                let dz = world_z - center_z;
+                if dx * dx + dz * dz > radius * radius {
+                    continue;
+                }
+                let Some(local_x) = local_coord(world_x, origin_x) else {
+                    continue;
+                };
+                let Some(local_z) = local_coord(world_z, origin_z) else {
+                    continue;
+                };
+                for world_y in (min_y..=max_y).rev() {
+                    let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y)
+                    else {
+                        continue;
+                    };
+                    if !self.target_blocks.contains(&current.block.as_ref()) {
+                        continue;
+                    }
+
+                    let replacement = self.state_provider.block_at(
+                        chunk,
+                        local_x,
+                        world_y,
+                        local_z,
+                        settings.min_y,
+                    );
+                    chunk.set_layer(local_x, world_y, local_z, settings.min_y, replacement);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum DiskStateProvider {
+    Simple(BlockLayer),
+    Sand {
+        sand: BlockLayer,
+        sandstone: BlockLayer,
+    },
+}
+
+impl DiskStateProvider {
+    fn block_at(
+        &self,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        world_y: i32,
+        local_z: usize,
+        min_y: i32,
+    ) -> BlockLayer {
+        match self {
+            Self::Simple(block) => block.clone(),
+            Self::Sand { sand, sandstone } => {
+                if chunk
+                    .layer(local_x, world_y - 1, local_z, min_y)
+                    .is_some_and(|layer| layer.is_air)
+                {
+                    sandstone.clone()
+                } else {
+                    sand.clone()
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedSpringFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    config: SpringFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedSpringFeature {
+    fn water(feature_index: i32) -> Self {
+        Self {
+            step_index: 8,
+            feature_index,
+            count: OrePlacementCount::Constant(25),
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(192)),
+            config: SpringFeatureConfig {
+                state: BlockLayer::new("minecraft:water"),
+                rock_count: 4,
+                hole_count: 1,
+                requires_block_below: true,
+                valid_blocks: SPRING_WATER_VALID_BLOCKS,
+            },
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn lava_overworld(feature_index: i32) -> Self {
+        Self {
+            step_index: 8,
+            feature_index,
+            count: OrePlacementCount::Constant(20),
+            height: OreHeight::VeryBiasedToBottom {
+                min: HeightAnchor::AboveBottom(0),
+                max: HeightAnchor::BelowTop(8),
+                inner: 8,
+            },
+            config: SpringFeatureConfig {
+                state: BlockLayer::new("minecraft:lava"),
+                rock_count: 4,
+                hole_count: 1,
+                requires_block_below: true,
+                valid_blocks: SPRING_LAVA_VALID_BLOCKS,
+            },
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            let Some(local_x) = local_coord(world_x, origin_x) else {
+                continue;
+            };
+            let Some(local_z) = local_coord(world_z, origin_z) else {
+                continue;
+            };
+            self.config
+                .try_place(settings, chunk, local_x, world_y, local_z);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SpringFeatureConfig {
+    state: BlockLayer,
+    rock_count: i32,
+    hole_count: i32,
+    requires_block_below: bool,
+    valid_blocks: &'static [&'static str],
+}
+
+impl SpringFeatureConfig {
+    fn try_place(
+        &self,
+        settings: &NoiseSettings,
+        chunk: &mut NoiseChunkBlocks,
+        local_x: usize,
+        world_y: i32,
+        local_z: usize,
+    ) -> bool {
+        if !self.is_valid_block(chunk, local_x, world_y + 1, local_z, settings.min_y) {
+            return false;
+        }
+        if self.requires_block_below
+            && !self.is_valid_block(chunk, local_x, world_y - 1, local_z, settings.min_y)
+        {
+            return false;
+        }
+
+        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+            return false;
+        };
+        if !current.is_air && !self.valid_blocks.contains(&current.block.as_ref()) {
+            return false;
+        }
+
+        let mut rock_count = 0;
+        let mut hole_count = 0;
+        for (dx, dy, dz) in [
+            (-1_i32, 0_i32, 0_i32),
+            (1, 0, 0),
+            (0, 0, -1),
+            (0, 0, 1),
+            (0, -1, 0),
+        ] {
+            let local_x = local_x as i32 + dx;
+            let local_z = local_z as i32 + dz;
+            if !(0..16).contains(&local_x) || !(0..16).contains(&local_z) {
+                continue;
+            }
+            let y = world_y + dy;
+            if self.is_valid_block(chunk, local_x as usize, y, local_z as usize, settings.min_y) {
+                rock_count += 1;
+            }
+            if chunk
+                .layer(local_x as usize, y, local_z as usize, settings.min_y)
+                .is_some_and(|layer| layer.is_air)
+            {
+                hole_count += 1;
+            }
+        }
+
+        if rock_count == self.rock_count && hole_count == self.hole_count {
+            chunk.set_layer(
+                local_x,
+                world_y,
+                local_z,
+                settings.min_y,
+                self.state.clone(),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_valid_block(
+        &self,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        world_y: i32,
+        local_z: usize,
+        min_y: i32,
+    ) -> bool {
+        chunk
+            .layer(local_x, world_y, local_z, min_y)
+            .is_some_and(|layer| self.valid_blocks.contains(&layer.block.as_ref()))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OreFeatureConfig {
+    size: i32,
+    discard_chance_on_air_exposure: f32,
+    targets: Vec<OreFeatureTarget>,
+}
+
+#[derive(Debug, Clone)]
+struct OreFeatureTarget {
+    predicate: OreTargetPredicate,
+    block: BlockLayer,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OreTargetPredicate {
+    StoneOreReplaceables,
+    DeepslateOreReplaceables,
+    BaseStoneOverworld,
+}
+
+impl OreFeatureConfig {
+    fn new(
+        size: i32,
+        discard_chance_on_air_exposure: f32,
+        stone_ore: &str,
+        deepslate_ore: &str,
+    ) -> Self {
+        Self {
+            size,
+            discard_chance_on_air_exposure,
+            targets: vec![
+                OreFeatureTarget {
+                    predicate: OreTargetPredicate::StoneOreReplaceables,
+                    block: BlockLayer::new(stone_ore),
+                },
+                OreFeatureTarget {
+                    predicate: OreTargetPredicate::DeepslateOreReplaceables,
+                    block: BlockLayer::new(deepslate_ore),
+                },
+            ],
+        }
+    }
+
+    fn base_stone(size: i32, block: &str) -> Self {
+        Self {
+            size,
+            discard_chance_on_air_exposure: 0.0,
+            targets: vec![OreFeatureTarget {
+                predicate: OreTargetPredicate::BaseStoneOverworld,
+                block: BlockLayer::new(block),
+            }],
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let direction = random.next_float() * std::f32::consts::PI;
+        let spread_xy = self.size as f64 / 8.0;
+        let x0 = origin_x as f64 + direction.sin() as f64 * spread_xy;
+        let x1 = origin_x as f64 - direction.sin() as f64 * spread_xy;
+        let z0 = origin_z as f64 + direction.cos() as f64 * spread_xy;
+        let z1 = origin_z as f64 - direction.cos() as f64 * spread_xy;
+        let y0 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
+        let y1 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
+        let mut spheres = vec![[0.0; 4]; self.size as usize];
+
+        for i in 0..self.size {
+            let step = i as f64 / self.size as f64;
+            let radius_noise = random.next_double() * self.size as f64 / 16.0;
+            let radius = (((std::f32::consts::PI * i as f32 / self.size as f32).sin() + 1.0)
+                as f64
+                * radius_noise
+                + 1.0)
+                / 2.0;
+            spheres[i as usize] = [
+                lerp_f64(step, x0, x1),
+                lerp_f64(step, y0, y1),
+                lerp_f64(step, z0, z1),
+                radius,
+            ];
+        }
+
+        for i1 in 0..self.size as usize {
+            if spheres[i1][3] <= 0.0 {
+                continue;
+            }
+            for i2 in i1 + 1..self.size as usize {
+                if spheres[i2][3] <= 0.0 {
+                    continue;
+                }
+                let dx = spheres[i1][0] - spheres[i2][0];
+                let dy = spheres[i1][1] - spheres[i2][1];
+                let dz = spheres[i1][2] - spheres[i2][2];
+                let dr = spheres[i1][3] - spheres[i2][3];
+                if dr * dr > dx * dx + dy * dy + dz * dz {
+                    if dr > 0.0 {
+                        spheres[i2][3] = -1.0;
+                    } else {
+                        spheres[i1][3] = -1.0;
+                    }
+                }
+            }
+        }
+
+        let mut tested = HashSet::<(i32, i32, i32)>::new();
+        let mut placed = false;
+        for sphere in spheres {
+            let [x, y, z, radius] = sphere;
+            if radius < 0.0 {
+                continue;
+            }
+
+            let min_x = (x - radius).floor() as i32;
+            let max_x = ((x + radius).floor() as i32).max(min_x);
+            let min_y = (y - radius).floor() as i32;
+            let max_y = ((y + radius).floor() as i32).max(min_y);
+            let min_z = (z - radius).floor() as i32;
+            let max_z = ((z + radius).floor() as i32).max(min_z);
+
+            for world_x in min_x.max(chunk_min_x)..=max_x.min(chunk_min_x + 15) {
+                let xd = (world_x as f64 + 0.5 - x) / radius;
+                if xd * xd >= 1.0 {
+                    continue;
+                }
+
+                for world_y in
+                    min_y.max(settings.min_y)..=max_y.min(settings.min_y + settings.height - 1)
+                {
+                    let yd = (world_y as f64 + 0.5 - y) / radius;
+                    if xd * xd + yd * yd >= 1.0 {
+                        continue;
+                    }
+
+                    for world_z in min_z.max(chunk_min_z)..=max_z.min(chunk_min_z + 15) {
+                        let zd = (world_z as f64 + 0.5 - z) / radius;
+                        if xd * xd + yd * yd + zd * zd >= 1.0 {
+                            continue;
+                        }
+                        if tested.insert((world_x, world_y, world_z))
+                            && self.try_place_block(
+                                settings,
+                                chunk_min_x,
+                                chunk_min_z,
+                                chunk,
+                                random,
+                                world_x,
+                                world_y,
+                                world_z,
+                            )
+                        {
+                            placed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        placed
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_block(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let local_x = (world_x - chunk_min_x) as usize;
+        let local_z = (world_z - chunk_min_z) as usize;
+        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+            return false;
+        };
+        let Some(ore) = self.target_ore(current).cloned() else {
+            return false;
+        };
+        if !self.should_skip_air_check(random)
+            && is_adjacent_to_air(settings, chunk, local_x, world_y, local_z)
+        {
+            return false;
+        }
+
+        chunk.set_layer(local_x, world_y, local_z, settings.min_y, ore);
+        true
+    }
+
+    fn target_ore(&self, current: &BlockLayer) -> Option<&BlockLayer> {
+        self.targets
+            .iter()
+            .find(|target| target.predicate.matches(current))
+            .map(|target| &target.block)
+    }
+
+    fn should_skip_air_check(&self, random: &mut FeatureRandom) -> bool {
+        if self.discard_chance_on_air_exposure <= 0.0 {
+            true
+        } else if self.discard_chance_on_air_exposure >= 1.0 {
+            false
+        } else {
+            random.next_float() >= self.discard_chance_on_air_exposure
+        }
+    }
+}
+
+impl OreTargetPredicate {
+    fn matches(self, layer: &BlockLayer) -> bool {
+        match self {
+            Self::StoneOreReplaceables => is_stone_ore_replaceable(layer),
+            Self::DeepslateOreReplaceables => is_deepslate_ore_replaceable(layer),
+            Self::BaseStoneOverworld => is_base_stone_overworld(layer),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OrePlacementCount {
+    Constant(i32),
+    Uniform { min: i32, max: i32 },
+    Rarity(i32),
+}
+
+impl OrePlacementCount {
+    fn sample(self, random: &mut FeatureRandom) -> i32 {
+        match self {
+            Self::Constant(value) => value,
+            Self::Uniform { min, max } => min + random.next_int(max - min + 1),
+            Self::Rarity(chance) => (random.next_float() < 1.0 / chance as f32) as i32,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct UniformInt {
+    min: i32,
+    max: i32,
+}
+
+impl UniformInt {
+    fn sample(self, random: &mut FeatureRandom) -> i32 {
+        self.min + random.next_int(self.max - self.min + 1)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TrapezoidInt {
+    min: i32,
+    max: i32,
+    plateau: i32,
+}
+
+impl TrapezoidInt {
+    fn new(min: i32, max: i32, plateau: i32) -> Self {
+        Self { min, max, plateau }
+    }
+
+    fn sample(self, random: &mut FeatureRandom) -> i32 {
+        if self.plateau == 0 && self.max == -self.min {
+            return random.next_int(self.max + 1) - random.next_int(self.max + 1);
+        }
+
+        let range = self.max - self.min;
+        if self.plateau == range {
+            return self.min + random.next_int(range + 1);
+        }
+
+        let plateau_start = (range - self.plateau) / 2;
+        let plateau_end = range - plateau_start;
+        self.min + random.next_int(plateau_end + 1) + random.next_int(plateau_start + 1)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OreHeight {
+    Uniform(HeightAnchor, HeightAnchor),
+    Trapezoid(HeightAnchor, HeightAnchor),
+    VeryBiasedToBottom {
+        min: HeightAnchor,
+        max: HeightAnchor,
+        inner: i32,
+    },
+}
+
+impl OreHeight {
+    fn sample(self, settings: &NoiseSettings, random: &mut FeatureRandom) -> i32 {
+        match self {
+            Self::Uniform(min, max) => {
+                let min = min.resolve(settings);
+                let max = max.resolve(settings);
+                if min > max {
+                    min
+                } else {
+                    min + random.next_int(max - min + 1)
+                }
+            }
+            Self::Trapezoid(min, max) => {
+                let min = min.resolve(settings);
+                let max = max.resolve(settings);
+                if min > max {
+                    return min;
+                }
+                let range = max - min;
+                let plateau_start = range / 2;
+                let plateau_end = range - plateau_start;
+                min + random.next_int(plateau_end + 1) + random.next_int(plateau_start + 1)
+            }
+            Self::VeryBiasedToBottom { min, max, inner } => {
+                let min = min.resolve(settings);
+                let max = max.resolve(settings);
+                if max - min - inner + 1 <= 0 {
+                    return min;
+                }
+                let upper_inclusive = min + inner + random.next_int(max - min - inner + 1);
+                let biased_upper_inclusive = min + random.next_int(upper_inclusive - min);
+                min + random.next_int(biased_upper_inclusive - min + inner)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FeatureRandom {
+    source: vanilla_noise::XoroshiroRandomSource,
+}
+
+impl FeatureRandom {
+    fn new(seed: i64) -> Self {
+        Self {
+            source: vanilla_noise::XoroshiroRandomSource::new(seed),
+        }
+    }
+
+    fn decoration_seed(world_seed: i64, origin_x: i32, origin_z: i32) -> i64 {
+        let mut random = Self::new(world_seed);
+        let x_scale = random.next_long() | 1;
+        let z_scale = random.next_long() | 1;
+        (origin_x as i64)
+            .wrapping_mul(x_scale)
+            .wrapping_add((origin_z as i64).wrapping_mul(z_scale))
+            ^ world_seed
+    }
+
+    fn for_feature(decoration_seed: i64, feature_index: i32, step_index: i32) -> Self {
+        Self::new(
+            decoration_seed
+                .wrapping_add(feature_index as i64)
+                .wrapping_add((10_000 * step_index) as i64),
+        )
+    }
+
+    fn next_bits(&mut self, bits: u32) -> i32 {
+        (self.source.next_long() >> (64 - bits)) as i32
+    }
+
+    fn next_int(&mut self, bound: i32) -> i32 {
+        assert!(bound > 0);
+        if (bound & -bound) == bound {
+            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
+        }
+
+        loop {
+            let sample = self.next_bits(31);
+            let modulo = sample % bound;
+            if sample.wrapping_sub(modulo).wrapping_add(bound - 1) >= 0 {
+                return modulo;
+            }
+        }
+    }
+
+    fn next_long(&mut self) -> i64 {
+        let upper = self.next_bits(32) as i64;
+        let lower = self.next_bits(32) as i64;
+        (upper << 32).wrapping_add(lower)
+    }
+
+    fn next_float(&mut self) -> f32 {
+        self.next_bits(24) as f32 * 5.960_464_5e-8_f32
+    }
+
+    fn next_double(&mut self) -> f64 {
+        let upper = self.next_bits(26) as i64;
+        let lower = self.next_bits(27) as i64;
+        ((upper << 27) + lower) as f64 * (1.110_223e-16_f32 as f64)
+    }
+}
