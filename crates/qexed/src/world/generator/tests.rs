@@ -29,6 +29,37 @@ mod tests {
         }
     }
 
+    fn chunk_contains_block(chunk: &NoiseChunkBlocks, block: &str) -> bool {
+        chunk
+            .columns
+            .iter()
+            .any(|column| column.blocks.iter().any(|layer| layer.is(block)))
+    }
+
+    fn tree_feature(settings: &NoiseSettings, feature_index: i32) -> &PlacedTreeFeature {
+        settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == feature_index)
+            .unwrap()
+    }
+
+    fn assert_tree_feature(
+        feature: &PlacedTreeFeature,
+        count_entries: &[(i32, i32)],
+        surface_water_depth: i32,
+        biome_filter: &'static [&'static str],
+    ) {
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.count.entries, count_entries);
+        assert_eq!(feature.surface_water_depth, surface_water_depth);
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == biome_filter
+        ));
+    }
+
     #[test]
     fn java_random_matches_legacy_lcg_outputs() {
         let mut random = JavaRandom::new(12345);
@@ -1552,6 +1583,178 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_configures_remaining_overworld_tree_features() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+
+        assert_eq!(settings.ore_features.trees.len(), 25);
+
+        let dark_forest = tree_feature(&settings, 48);
+        assert_tree_feature(dark_forest, &[(16, 1)], 0, DARK_FOREST_TREE_BIOMES);
+        assert_eq!(dark_forest.config.variants.len(), 5);
+        assert!(dark_forest.config.variants[0]
+            .tree
+            .trunk
+            .is("minecraft:dark_oak_log"));
+        assert_eq!(dark_forest.config.variants[0].chance, 0.666_666_7);
+
+        let pale_garden = tree_feature(&settings, 49);
+        assert_tree_feature(pale_garden, &[(16, 1)], 0, PALE_GARDEN_TREE_BIOMES);
+        assert!(pale_garden
+            .config
+            .default_tree
+            .trunk
+            .is("minecraft:pale_oak_log"));
+        assert_eq!(pale_garden.config.default_tree.trunk_placer, TreeTrunkConfig::Giant);
+
+        let flower_forest = tree_feature(&settings, 50);
+        assert_tree_feature(
+            flower_forest,
+            &[(6, 9), (7, 1)],
+            0,
+            FLOWER_FOREST_TREE_BIOMES,
+        );
+        assert_eq!(flower_forest.config.variants.len(), 3);
+        assert_eq!(flower_forest.config.default_tree.beehive_probability, 0.02);
+
+        let meadow = tree_feature(&settings, 51);
+        assert_tree_feature(meadow, &[(0, 99), (1, 1)], 0, MEADOW_TREE_BIOMES);
+        assert!(meadow
+            .config
+            .default_tree
+            .trunk
+            .is("minecraft:birch_log"));
+        assert_eq!(meadow.config.default_tree.height_rand_b, 6);
+        assert_eq!(meadow.config.variants[0].tree.beehive_probability, 1.0);
+
+        let cherry = tree_feature(&settings, 52);
+        assert_tree_feature(cherry, &[(10, 9), (11, 1)], 0, CHERRY_TREE_BIOMES);
+        assert!(cherry.config.default_tree.trunk.is("minecraft:cherry_log"));
+        assert!(cherry
+            .config
+            .default_tree
+            .leaves
+            .is("minecraft:cherry_leaves"));
+        assert_eq!(cherry.config.default_tree.beehive_probability, 0.05);
+
+        let grove = tree_feature(&settings, 53);
+        assert_tree_feature(grove, &[(10, 9), (11, 1)], 0, GROVE_TREE_BIOMES);
+        assert!(grove.config.default_tree.trunk.is("minecraft:spruce_log"));
+        assert_eq!(grove.config.variants[0].tree.base_height, 6);
+
+        let badlands = tree_feature(&settings, 54);
+        assert_tree_feature(badlands, &[(5, 9), (6, 1)], 0, BADLANDS_TREE_BIOMES);
+        assert!(badlands.config.default_tree.trunk.is("minecraft:oak_log"));
+
+        let swamp = tree_feature(&settings, 55);
+        assert_tree_feature(swamp, &[(2, 9), (3, 1)], 2, SWAMP_TREE_BIOMES);
+        assert_eq!(swamp.config.default_tree.base_height, 5);
+        assert_eq!(swamp.config.default_tree.foliage_radius, 3);
+
+        let windswept_hills = tree_feature(&settings, 56);
+        assert_tree_feature(
+            windswept_hills,
+            &[(0, 9), (1, 1)],
+            0,
+            WINDSWEPT_HILLS_TREE_BIOMES,
+        );
+        assert_eq!(windswept_hills.config.variants.len(), 4);
+        assert!(windswept_hills.config.variants[1]
+            .tree
+            .trunk
+            .is("minecraft:spruce_log"));
+
+        let windswept_forest = tree_feature(&settings, 57);
+        assert_tree_feature(
+            windswept_forest,
+            &[(3, 9), (4, 1)],
+            0,
+            WINDSWEPT_FOREST_TREE_BIOMES,
+        );
+        assert_eq!(windswept_forest.config.variants.len(), 4);
+
+        let water = tree_feature(&settings, 58);
+        assert_tree_feature(water, &[(0, 9), (1, 1)], 0, WATER_TREE_BIOMES);
+        assert_eq!(water.config.variants.len(), 1);
+
+        let forest = tree_feature(&settings, 59);
+        assert_tree_feature(
+            forest,
+            &[(10, 9), (11, 1)],
+            0,
+            BIRCH_AND_OAK_LEAF_LITTER_TREE_BIOMES,
+        );
+        assert_eq!(forest.config.variants.len(), 4);
+
+        let sparse_jungle = tree_feature(&settings, 60);
+        assert_tree_feature(
+            sparse_jungle,
+            &[(2, 9), (3, 1)],
+            0,
+            SPARSE_JUNGLE_TREE_BIOMES,
+        );
+        assert!(sparse_jungle
+            .config
+            .default_tree
+            .trunk
+            .is("minecraft:jungle_log"));
+        assert!(sparse_jungle.config.variants[1]
+            .tree
+            .leaves
+            .is("minecraft:oak_leaves"));
+
+        let old_growth_spruce = tree_feature(&settings, 61);
+        assert_tree_feature(
+            old_growth_spruce,
+            &[(10, 9), (11, 1)],
+            0,
+            OLD_GROWTH_SPRUCE_TAIGA_TREE_BIOMES,
+        );
+        assert_eq!(
+            old_growth_spruce.config.variants[0].tree.trunk_placer,
+            TreeTrunkConfig::Giant
+        );
+
+        let old_growth_pine = tree_feature(&settings, 62);
+        assert_tree_feature(
+            old_growth_pine,
+            &[(10, 9), (11, 1)],
+            0,
+            OLD_GROWTH_PINE_TAIGA_TREE_BIOMES,
+        );
+        assert_eq!(old_growth_pine.config.variants.len(), 4);
+
+        let jungle = tree_feature(&settings, 63);
+        assert_tree_feature(jungle, &[(50, 9), (51, 1)], 0, JUNGLE_TREE_BIOMES);
+        assert!(jungle.config.default_tree.trunk.is("minecraft:jungle_log"));
+        assert_eq!(
+            jungle.config.variants[2].tree.trunk_placer,
+            TreeTrunkConfig::Giant
+        );
+
+        let bamboo = tree_feature(&settings, 64);
+        assert_tree_feature(
+            bamboo,
+            &[(30, 9), (31, 1)],
+            0,
+            BAMBOO_JUNGLE_TREE_BIOMES,
+        );
+        assert_eq!(bamboo.config.variants.len(), 3);
+        assert_eq!(
+            bamboo.config.variants[2].tree.trunk_placer,
+            TreeTrunkConfig::Giant
+        );
+
+        let mangrove = tree_feature(&settings, 65);
+        assert_tree_feature(mangrove, &[(25, 1)], 5, MANGROVE_TREE_BIOMES);
+        assert!(mangrove
+            .config
+            .default_tree
+            .trunk
+            .is("minecraft:mangrove_log"));
+        assert_eq!(mangrove.config.variants[0].tree.base_height, 8);
+    }
+
+    #[test]
     fn vanilla_noise_configures_freeze_top_layer() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let feature = &settings.ore_features.freeze_top_layer;
@@ -2921,6 +3124,88 @@ mod tests {
                 .map(|layer| layer.block.as_ref()),
             Some("minecraft:dirt")
         );
+    }
+
+    #[test]
+    fn vanilla_noise_new_tree_types_place_logs_and_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+
+        for (tree, log, leaves) in [
+            (
+                OakTreeConfig::dark_oak(),
+                "minecraft:dark_oak_log",
+                "minecraft:dark_oak_leaves",
+            ),
+            (
+                OakTreeConfig::pale_oak(),
+                "minecraft:pale_oak_log",
+                "minecraft:pale_oak_leaves",
+            ),
+            (
+                OakTreeConfig::cherry_bees_005(),
+                "minecraft:cherry_log",
+                "minecraft:cherry_leaves",
+            ),
+            (
+                OakTreeConfig::jungle_tree(),
+                "minecraft:jungle_log",
+                "minecraft:jungle_leaves",
+            ),
+            (
+                OakTreeConfig::mega_jungle_tree(),
+                "minecraft:jungle_log",
+                "minecraft:jungle_leaves",
+            ),
+            (
+                OakTreeConfig::mangrove(),
+                "minecraft:mangrove_log",
+                "minecraft:mangrove_leaves",
+            ),
+        ] {
+            let mut chunk = grass_surface_test_chunk(&settings, 64);
+            let mut random = FeatureRandom::new(12345);
+
+            assert!(tree.place(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                &mut random,
+                8,
+                65,
+                8,
+            ));
+            assert!(chunk_contains_block(&chunk, log), "{log}");
+            assert!(chunk_contains_block(&chunk, leaves), "{leaves}");
+        }
+    }
+
+    #[test]
+    fn vanilla_noise_fallen_jungle_places_horizontal_jungle_log() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(OakTreeConfig::fallen_jungle().place_fallen(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                layer.is("minecraft:jungle_log")
+                    && layer
+                        .properties
+                        .iter()
+                        .any(|(name, value)| name == "axis" && value != "y")
+            })
+        }));
     }
 
     #[test]

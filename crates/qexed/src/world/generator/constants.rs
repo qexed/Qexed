@@ -340,6 +340,39 @@ const TAIGA_TREE_BIOMES: &[&str] = &["minecraft:snowy_taiga", "minecraft:taiga"]
 const SNOWY_TREE_BIOMES: &[&str] = &["minecraft:ice_spikes", "minecraft:snowy_plains"];
 const SAVANNA_TREE_BIOMES: &[&str] = &["minecraft:savanna", "minecraft:savanna_plateau"];
 const WINDSWEPT_SAVANNA_TREE_BIOMES: &[&str] = &["minecraft:windswept_savanna"];
+const DARK_FOREST_TREE_BIOMES: &[&str] = &["minecraft:dark_forest"];
+const PALE_GARDEN_TREE_BIOMES: &[&str] = &["minecraft:pale_garden"];
+const FLOWER_FOREST_TREE_BIOMES: &[&str] = &["minecraft:flower_forest"];
+const MEADOW_TREE_BIOMES: &[&str] = &["minecraft:meadow"];
+const CHERRY_TREE_BIOMES: &[&str] = &["minecraft:cherry_grove"];
+const GROVE_TREE_BIOMES: &[&str] = &["minecraft:grove"];
+const BADLANDS_TREE_BIOMES: &[&str] = &["minecraft:wooded_badlands"];
+const SWAMP_TREE_BIOMES: &[&str] = &["minecraft:swamp"];
+const WINDSWEPT_HILLS_TREE_BIOMES: &[&str] = &[
+    "minecraft:windswept_hills",
+    "minecraft:windswept_gravelly_hills",
+];
+const WINDSWEPT_FOREST_TREE_BIOMES: &[&str] = &["minecraft:windswept_forest"];
+const WATER_TREE_BIOMES: &[&str] = &[
+    "minecraft:cold_ocean",
+    "minecraft:deep_cold_ocean",
+    "minecraft:deep_frozen_ocean",
+    "minecraft:deep_lukewarm_ocean",
+    "minecraft:deep_ocean",
+    "minecraft:frozen_ocean",
+    "minecraft:frozen_river",
+    "minecraft:lukewarm_ocean",
+    "minecraft:ocean",
+    "minecraft:river",
+    "minecraft:warm_ocean",
+];
+const BIRCH_AND_OAK_LEAF_LITTER_TREE_BIOMES: &[&str] = &["minecraft:forest"];
+const SPARSE_JUNGLE_TREE_BIOMES: &[&str] = &["minecraft:sparse_jungle"];
+const OLD_GROWTH_SPRUCE_TAIGA_TREE_BIOMES: &[&str] = &["minecraft:old_growth_spruce_taiga"];
+const OLD_GROWTH_PINE_TAIGA_TREE_BIOMES: &[&str] = &["minecraft:old_growth_pine_taiga"];
+const JUNGLE_TREE_BIOMES: &[&str] = &["minecraft:jungle"];
+const BAMBOO_JUNGLE_TREE_BIOMES: &[&str] = &["minecraft:bamboo_jungle"];
+const MANGROVE_TREE_BIOMES: &[&str] = &["minecraft:mangrove_swamp"];
 const PLAINS_FLOWER_LOW_BLOCKS: &[&str] = &[
     "minecraft:orange_tulip",
     "minecraft:red_tulip",

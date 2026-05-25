@@ -434,6 +434,45 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Include(BIRCH_TREE_BIOMES)),
                 PlacedTreeFeature::trees_tall_birch(43)
                     .with_biome_filter(FeatureBiomeFilter::Include(TALL_BIRCH_TREE_BIOMES)),
+                PlacedTreeFeature::dark_forest_vegetation(48)
+                    .with_biome_filter(FeatureBiomeFilter::Include(DARK_FOREST_TREE_BIOMES)),
+                PlacedTreeFeature::pale_garden_vegetation(49)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PALE_GARDEN_TREE_BIOMES)),
+                PlacedTreeFeature::trees_flower_forest(50)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_FOREST_TREE_BIOMES)),
+                PlacedTreeFeature::trees_meadow(51)
+                    .with_biome_filter(FeatureBiomeFilter::Include(MEADOW_TREE_BIOMES)),
+                PlacedTreeFeature::trees_cherry(52)
+                    .with_biome_filter(FeatureBiomeFilter::Include(CHERRY_TREE_BIOMES)),
+                PlacedTreeFeature::trees_grove(53)
+                    .with_biome_filter(FeatureBiomeFilter::Include(GROVE_TREE_BIOMES)),
+                PlacedTreeFeature::trees_badlands(54)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BADLANDS_TREE_BIOMES)),
+                PlacedTreeFeature::trees_swamp(55)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SWAMP_TREE_BIOMES)),
+                PlacedTreeFeature::trees_windswept_hills(56)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WINDSWEPT_HILLS_TREE_BIOMES)),
+                PlacedTreeFeature::trees_windswept_forest(57)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WINDSWEPT_FOREST_TREE_BIOMES)),
+                PlacedTreeFeature::trees_water(58)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WATER_TREE_BIOMES)),
+                PlacedTreeFeature::trees_birch_and_oak_leaf_litter(59).with_biome_filter(
+                    FeatureBiomeFilter::Include(BIRCH_AND_OAK_LEAF_LITTER_TREE_BIOMES),
+                ),
+                PlacedTreeFeature::trees_sparse_jungle(60)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SPARSE_JUNGLE_TREE_BIOMES)),
+                PlacedTreeFeature::trees_old_growth_spruce_taiga(61).with_biome_filter(
+                    FeatureBiomeFilter::Include(OLD_GROWTH_SPRUCE_TAIGA_TREE_BIOMES),
+                ),
+                PlacedTreeFeature::trees_old_growth_pine_taiga(62).with_biome_filter(
+                    FeatureBiomeFilter::Include(OLD_GROWTH_PINE_TAIGA_TREE_BIOMES),
+                ),
+                PlacedTreeFeature::trees_jungle(63)
+                    .with_biome_filter(FeatureBiomeFilter::Include(JUNGLE_TREE_BIOMES)),
+                PlacedTreeFeature::bamboo_vegetation(64)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BAMBOO_JUNGLE_TREE_BIOMES)),
+                PlacedTreeFeature::trees_mangrove(65)
+                    .with_biome_filter(FeatureBiomeFilter::Include(MANGROVE_TREE_BIOMES)),
             ],
             freeze_top_layer: PlacedFreezeTopLayerFeature::new(0),
         }
