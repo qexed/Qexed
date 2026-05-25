@@ -41,7 +41,9 @@ pub struct Server {
 
     #[AutoDoc(
         key = "config.qexed.server.proxy_token",
-        warning = "config.qexed.server.warning.proxy_token"
+        warning = "config.qexed.server.warning.proxy_token",
+        sensitive,
+        default_display = "<stored in .secrets>"
     )]
     pub proxy_token: String,
 
@@ -333,7 +335,11 @@ pub struct ContentFilter {
     pub api_url: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter.api_token")]
+    #[AutoDoc(
+        key = "config.qexed.server.content_filter.api_token",
+        sensitive,
+        default_display = "<stored in .secrets>"
+    )]
     pub api_token: String,
 
     #[serde(default = "default_content_filter_replacement")]

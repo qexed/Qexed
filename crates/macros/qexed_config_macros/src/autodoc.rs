@@ -10,6 +10,8 @@ struct AutoDocAttrs {
     migration_notice: Option<String>,
     deprecation: Option<String>,
     danger: Option<String>,
+    default_display: Option<String>,
+    sensitive: bool,
     has_sub: bool,
 }
 
@@ -53,6 +55,8 @@ pub fn expand(input: DeriveInput) -> TokenStream {
     }
 
     let mut doc_builders = Vec::new();
+    let mut default_display_builders = Vec::new();
+    let mut sensitive_builders = Vec::new();
     let mut pending_builders = Vec::new();
     let mut warning_builders = Vec::new();
     let mut migration_builders = Vec::new();
@@ -63,6 +67,8 @@ pub fn expand(input: DeriveInput) -> TokenStream {
         append_field_builders(
             field,
             &mut doc_builders,
+            &mut default_display_builders,
+            &mut sensitive_builders,
             &mut pending_builders,
             &mut warning_builders,
             &mut migration_builders,
@@ -77,6 +83,19 @@ pub fn expand(input: DeriveInput) -> TokenStream {
                 let mut all_doc = Vec::new();
                 #(#doc_builders)*
                 all_doc
+            }
+
+            fn default_display_fields(lang: &str) -> Vec<(String, String)> {
+                let mut all_default_display = Vec::new();
+                let _ = lang;
+                #(#default_display_builders)*
+                all_default_display
+            }
+
+            fn sensitive_fields() -> Vec<String> {
+                let mut all_sensitive = Vec::new();
+                #(#sensitive_builders)*
+                all_sensitive
             }
 
             fn pending_deprecated_fields(lang: &str) -> Vec<(String, String)> {
@@ -168,6 +187,10 @@ fn parse_autodoc_attr(attr: &syn::Attribute, auto_doc: &mut AutoDocAttrs) -> syn
             auto_doc.deprecation = Some(meta.value()?.parse::<LitStr>()?.value());
         } else if meta.path.is_ident("danger") {
             auto_doc.danger = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("default_display") {
+            auto_doc.default_display = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("sensitive") {
+            auto_doc.sensitive = true;
         } else if meta.path.is_ident("sub") {
             auto_doc.has_sub = true;
         }
@@ -217,6 +240,8 @@ fn parse_serde_attr(attr: &syn::Attribute, serde: &mut SerdeAttrs) -> syn::Resul
 fn append_field_builders(
     field: &FieldDoc,
     doc_builders: &mut Vec<TokenStream>,
+    default_display_builders: &mut Vec<TokenStream>,
+    sensitive_builders: &mut Vec<TokenStream>,
     pending_builders: &mut Vec<TokenStream>,
     warning_builders: &mut Vec<TokenStream>,
     migration_builders: &mut Vec<TokenStream>,
@@ -233,6 +258,18 @@ fn append_field_builders(
             .expect("non-flatten fields must have an AutoDoc key");
 
         doc_builders.push(push_translated_entry("all_doc", &display_name_lit, key));
+        if let Some(default_display) = &field.auto_doc.default_display {
+            default_display_builders.push(push_literal_entry(
+                "all_default_display",
+                &display_name_lit,
+                default_display,
+            ));
+        }
+        if field.auto_doc.sensitive {
+            sensitive_builders.push(quote! {
+                all_sensitive.push(#display_name_lit.to_string());
+            });
+        }
         push_optional_translated_entry(
             pending_builders,
             "all_pending",
@@ -281,6 +318,17 @@ fn append_field_builders(
         &field.field_ty,
         prefix.as_ref(),
     ));
+    default_display_builders.push(push_recursive_entries(
+        "all_default_display",
+        "default_display_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    sensitive_builders.push(push_recursive_sensitive_entries(
+        "all_sensitive",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
     pending_builders.push(push_recursive_entries(
         "all_pending",
         "pending_deprecated_fields",
@@ -325,6 +373,18 @@ fn push_translated_entry(target: &str, display_name: &LitStr, i18n_key: &str) ->
     }
 }
 
+fn push_literal_entry(target: &str, display_name: &LitStr, value: &str) -> TokenStream {
+    let target = Ident::new(target, Span::call_site());
+    let value = LitStr::new(value, Span::call_site());
+
+    quote! {
+        #target.push((
+            #display_name.to_string(),
+            #value.to_string(),
+        ));
+    }
+}
+
 fn push_optional_translated_entry(
     builders: &mut Vec<TokenStream>,
     target: &str,
@@ -353,6 +413,25 @@ fn push_recursive_entries(
         },
         None => quote! {
             #target.extend(<#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang));
+        },
+    }
+}
+
+fn push_recursive_sensitive_entries(
+    target: &str,
+    field_ty: &Type,
+    prefix: Option<&LitStr>,
+) -> TokenStream {
+    let target = Ident::new(target, Span::call_site());
+
+    match prefix {
+        Some(prefix) => quote! {
+            for sub_key in <#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields() {
+                #target.push(format!("{}.{}", #prefix, sub_key));
+            }
+        },
+        None => quote! {
+            #target.extend(<#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields());
         },
     }
 }

@@ -17,7 +17,11 @@ pub struct PikaConfig {
     pub port: u16,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.public.pika.password")]
+    #[AutoDoc(
+        key = "config.public.pika.password",
+        sensitive,
+        default_display = "<stored in .secrets>"
+    )]
     pub password: Option<String>,
 
     #[serde(default)]

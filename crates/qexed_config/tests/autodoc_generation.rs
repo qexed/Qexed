@@ -84,6 +84,108 @@ fn existing_config_keeps_single_autodoc_header() -> anyhow::Result<()> {
 }
 
 #[test]
+fn sensitive_fields_are_written_to_local_secrets_file() -> anyhow::Result<()> {
+    let dir = temp_config_dir("sensitive_new");
+
+    let config =
+        Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let qexed = std::fs::read_to_string(dir.join("qexed.toml"))?;
+    let secrets = std::fs::read_to_string(dir.join(".secrets").join("qexed.toml"))?;
+
+    assert!(qexed.contains("download_token = \"<stored in .secrets>\""));
+    assert!(qexed.contains("proxy_token = \"<stored in .secrets>\""));
+    assert!(!qexed.contains(&config.plugin_download.download_token));
+    assert!(!qexed.contains(&config.server.proxy_token));
+    assert!(secrets.contains(&config.plugin_download.download_token));
+    assert!(secrets.contains(&config.server.proxy_token));
+
+    let reloaded =
+        Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let secrets_after_reload = std::fs::read_to_string(dir.join(".secrets").join("qexed.toml"))?;
+
+    assert_eq!(
+        reloaded.plugin_download.download_token,
+        config.plugin_download.download_token
+    );
+    assert_eq!(reloaded.server.proxy_token, config.server.proxy_token);
+    assert!(!secrets_after_reload.contains("<stored in .secrets>"));
+
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn existing_sensitive_fields_are_migrated_to_local_secrets_file() -> anyhow::Result<()> {
+    let dir = temp_config_dir("sensitive_migration");
+    let qexed_path = dir.join("qexed.toml");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        &qexed_path,
+        r#"
+version = 0
+update_check = true
+language = "zh-CN"
+
+[plugin_download]
+enable = false
+download = "https://api.example.com/plugins/"
+download_token = "existing-token"
+
+[server]
+ip = "0.0.0.0:25565"
+online = false
+max_player = -1
+display_players = true
+online_mode = false
+network_compression_threshold = 256
+proxy = false
+proxy_protocol = "QTunnel"
+proxy_token = "existing-proxy-token"
+max_port_connections = 65535
+rate_limit_window_secs = 60
+rate_limit_max_attempts = 6
+motd = ["Welcome"]
+code_of_conduct = false
+favicon = ""
+
+[server.world]
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[server.world.spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+    )?;
+
+    let config =
+        Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let qexed = std::fs::read_to_string(&qexed_path)?;
+    let secrets = std::fs::read_to_string(dir.join(".secrets").join("qexed.toml"))?;
+
+    assert_eq!(config.plugin_download.download_token, "existing-token");
+    assert_eq!(config.server.proxy_token, "existing-proxy-token");
+    assert!(qexed.contains("download_token = \"<stored in .secrets>\""));
+    assert!(qexed.contains("proxy_token = \"<stored in .secrets>\""));
+    assert!(!qexed.contains("existing-token"));
+    assert!(!qexed.contains("existing-proxy-token"));
+    assert!(secrets.contains("download_token = \"existing-token\""));
+    assert!(secrets.contains("proxy_token = \"existing-proxy-token\""));
+
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn existing_config_gets_missing_nested_defaults() -> anyhow::Result<()> {
     let dir = temp_config_dir("nested_defaults");
     let qexed_path = dir.join("qexed.toml");
@@ -365,6 +467,7 @@ options = []
 
     Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     let qexed = std::fs::read_to_string(&qexed_path)?;
+    let secrets = std::fs::read_to_string(dir.join(".secrets").join("qexed.toml"))?;
 
     assert!(qexed.contains("[server.player_messages]"));
     assert!(qexed.contains("generator = \"empty\""));
@@ -375,8 +478,11 @@ options = []
     assert!(qexed.contains("[server.permissions]"));
     assert!(qexed.contains("engine = \"fixed\""));
     assert!(qexed.contains("engine = \"local\""));
-    assert!(qexed.contains("password = \"existing-mongo-password\""));
-    assert!(qexed.contains("password = \"existing-mysql-password\""));
+    assert!(!qexed.contains("existing-mongo-password"));
+    assert!(!qexed.contains("existing-mysql-password"));
+    assert!(qexed.contains("password = \"<stored in .secrets>\""));
+    assert!(secrets.contains("password = \"existing-mongo-password\""));
+    assert!(secrets.contains("password = \"existing-mysql-password\""));
 
     let _ = std::fs::remove_dir_all(dir);
     Ok(())

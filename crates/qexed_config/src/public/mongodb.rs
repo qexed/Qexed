@@ -17,7 +17,11 @@ pub struct MongoConfig {
     pub username: Option<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.public.mongodb.password")]
+    #[AutoDoc(
+        key = "config.public.mongodb.password",
+        sensitive,
+        default_display = "<stored in .secrets>"
+    )]
     pub password: Option<String>,
 
     #[serde(default)]

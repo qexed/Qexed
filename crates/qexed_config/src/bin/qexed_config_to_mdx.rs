@@ -352,6 +352,7 @@ where
         deprecated: into_map(T::deprecation_fields(lang)),
         migration_notices: into_map(T::migration_notice_fields(lang)),
     };
+    let default_display = into_map(T::default_display_fields(lang));
 
     let mut fields = Vec::new();
     for (path, description) in T::doc_fields(lang) {
@@ -361,7 +362,10 @@ where
                 .map(value_type_name)
                 .unwrap_or("unknown")
                 .to_string(),
-            default_value: default.and_then(|value| display_default_value(&path, value)),
+            default_value: default_display
+                .get(&path)
+                .cloned()
+                .or_else(|| default.and_then(display_default_value)),
             warning: notices.warnings.get(&path).cloned(),
             danger: notices.dangers.get(&path).cloned(),
             pending_deprecated: notices.pending_deprecated.get(&path).cloned(),
@@ -415,13 +419,12 @@ fn value_type_name(value: &JsonValue) -> &'static str {
     }
 }
 
-fn display_default_value(path: &str, value: &JsonValue) -> Option<String> {
-    let sanitized = sanitize_default_value(path, value);
-    if sanitized.is_null() {
+fn display_default_value(value: &JsonValue) -> Option<String> {
+    if value.is_null() {
         return None;
     }
 
-    let mut rendered = sanitized.to_string();
+    let mut rendered = sanitize_default_value(value).to_string();
     if rendered.len() > 320 {
         rendered.truncate(320);
         rendered.push_str("...");
@@ -430,28 +433,15 @@ fn display_default_value(path: &str, value: &JsonValue) -> Option<String> {
     Some(rendered)
 }
 
-fn sanitize_default_value(path: &str, value: &JsonValue) -> JsonValue {
-    if is_sensitive_path(path) {
-        return JsonValue::String("<random>".to_string());
-    }
-
+fn sanitize_default_value(value: &JsonValue) -> JsonValue {
     match value {
-        JsonValue::Array(values) => JsonValue::Array(
-            values
-                .iter()
-                .enumerate()
-                .map(|(index, value)| sanitize_default_value(&format!("{path}.{index}"), value))
-                .collect(),
-        ),
+        JsonValue::Array(values) => {
+            JsonValue::Array(values.iter().map(sanitize_default_value).collect())
+        }
         JsonValue::Object(values) => JsonValue::Object(
             values
                 .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        sanitize_default_value(&format!("{path}.{key}"), value),
-                    )
-                })
+                .map(|(key, value)| (key.clone(), sanitize_default_value(value)))
                 .collect(),
         ),
         JsonValue::String(value) if value.len() > 160 => {
@@ -459,17 +449,6 @@ fn sanitize_default_value(path: &str, value: &JsonValue) -> JsonValue {
         }
         _ => value.clone(),
     }
-}
-
-fn is_sensitive_path(path: &str) -> bool {
-    path.split('.').any(|part| {
-        let part = part.to_ascii_lowercase();
-        part.contains("password")
-            || part.contains("token")
-            || part.contains("secret")
-            || part.contains("private_key")
-            || part == "key"
-    })
 }
 
 fn write_assets(output_root: &Path) -> Result<()> {
