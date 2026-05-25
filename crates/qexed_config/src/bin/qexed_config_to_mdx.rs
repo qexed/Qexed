@@ -46,10 +46,10 @@ enum OutputFormat {
     All,
     Markdown,
     Mdx,
+    NextApp,
     NextPages,
     Mkdocs,
     Mdbook,
-    Python,
     Json,
 }
 
@@ -59,10 +59,10 @@ impl OutputFormat {
             Self::All => "all",
             Self::Markdown => "markdown",
             Self::Mdx => "mdx",
+            Self::NextApp => "next-app",
             Self::NextPages => "next-pages",
             Self::Mkdocs => "mkdocs",
             Self::Mdbook => "mdbook",
-            Self::Python => "python",
             Self::Json => "json",
         }
         .to_string()
@@ -153,6 +153,7 @@ struct UiText {
     app_count: &'static str,
     field_unit: &'static str,
     summary: &'static str,
+    complex_details: &'static str,
     site_description_prefix: &'static str,
 }
 
@@ -182,6 +183,7 @@ fn ui_text(lang: &str) -> UiText {
             app_count: "应用数量",
             field_unit: "个字段",
             summary: "目录",
+            complex_details: "复杂类型详情",
             site_description_prefix: "AutoDoc 生成自提交",
         }
     } else {
@@ -209,6 +211,7 @@ fn ui_text(lang: &str) -> UiText {
             app_count: "Apps",
             field_unit: "fields",
             summary: "Summary",
+            complex_details: "Complex Type Details",
             site_description_prefix: "AutoDoc generated at",
         }
     }
@@ -244,6 +247,9 @@ fn main() -> Result<()> {
     if formats.contains(&OutputFormat::Mdx) {
         write_markdown_docs(&output_root, &bundle, true)?;
     }
+    if formats.contains(&OutputFormat::NextApp) {
+        write_next_app_docs(&output_root, &bundle)?;
+    }
     if formats.contains(&OutputFormat::NextPages) {
         write_next_pages_docs(&output_root, &bundle)?;
     }
@@ -252,9 +258,6 @@ fn main() -> Result<()> {
     }
     if formats.contains(&OutputFormat::Mdbook) {
         write_mdbook_docs(&output_root, &bundle)?;
-    }
-    if formats.contains(&OutputFormat::Python) {
-        write_python_docs(&output_root, &bundle)?;
     }
     if formats.contains(&OutputFormat::Json) {
         write_json_docs(&output_root, &bundle)?;
@@ -295,10 +298,10 @@ fn normalized_formats(formats: Vec<OutputFormat>) -> Vec<OutputFormat> {
         return vec![
             OutputFormat::Markdown,
             OutputFormat::Mdx,
+            OutputFormat::NextApp,
             OutputFormat::NextPages,
             OutputFormat::Mkdocs,
             OutputFormat::Mdbook,
-            OutputFormat::Python,
             OutputFormat::Json,
         ];
     }
@@ -538,6 +541,45 @@ fn write_next_pages_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
     Ok(())
 }
 
+fn write_next_app_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
+    let docs_dir = output_root
+        .join("next-app")
+        .join("app")
+        .join("docs")
+        .join("config");
+    fs::create_dir_all(&docs_dir)
+        .with_context(|| format!("无法创建 Next.js app 目录 {}", docs_dir.display()))?;
+
+    let index_path = docs_dir.join("page.mdx");
+    fs::write(&index_path, render_next_app_index(bundle))
+        .with_context(|| format!("无法写入 {}", index_path.display()))?;
+
+    for language_docs in &bundle.languages {
+        let lang_dir = docs_dir.join(&language_docs.lang);
+        fs::create_dir_all(&lang_dir)
+            .with_context(|| format!("无法创建目录 {}", lang_dir.display()))?;
+
+        let lang_index_path = lang_dir.join("page.mdx");
+        fs::write(
+            &lang_index_path,
+            render_next_app_language_index(&bundle.commit, language_docs),
+        )
+        .with_context(|| format!("无法写入 {}", lang_index_path.display()))?;
+
+        for app in &language_docs.apps {
+            let app_dir = lang_dir.join(&app.name);
+            fs::create_dir_all(&app_dir)
+                .with_context(|| format!("无法创建目录 {}", app_dir.display()))?;
+
+            let path = app_dir.join("page.mdx");
+            let content = render_markdown_app(&bundle.commit, &language_docs.lang, app, false);
+            fs::write(&path, content).with_context(|| format!("无法写入 {}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
 fn write_mkdocs_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
     let root = output_root.join("mkdocs");
     let docs_dir = root.join("docs");
@@ -630,21 +672,6 @@ fn write_mdbook_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
     Ok(())
 }
 
-fn write_python_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
-    let dir = output_root.join("python");
-    fs::create_dir_all(&dir).with_context(|| format!("无法创建目录 {}", dir.display()))?;
-
-    let json_path = dir.join("qexed_config_docs.json");
-    fs::write(&json_path, serde_json::to_string_pretty(bundle)?)
-        .with_context(|| format!("无法写入 {}", json_path.display()))?;
-
-    let module_path = dir.join("qexed_config_docs.py");
-    fs::write(&module_path, render_python_module(bundle)?)
-        .with_context(|| format!("无法写入 {}", module_path.display()))?;
-
-    Ok(())
-}
-
 fn write_json_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
     let dir = output_root.join("json");
     fs::create_dir_all(&dir).with_context(|| format!("无法创建目录 {}", dir.display()))?;
@@ -724,13 +751,95 @@ fn render_markdown_app(commit: &str, lang: &str, app: &DocApp, mdx: bool) -> Str
         ));
     }
 
+    let complex_details = render_complex_details(app, &ui);
+    if !complex_details.is_empty() {
+        out.push('\n');
+        out.push_str(&complex_details);
+    }
+
+    out
+}
+
+fn render_complex_details(app: &DocApp, ui: &UiText) -> String {
+    let complex_fields = app
+        .fields
+        .iter()
+        .filter(|field| matches!(field.value_type.as_str(), "object" | "array"))
+        .collect::<Vec<_>>();
+    if complex_fields.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("## {}\n\n", ui.complex_details));
+
+    for field in complex_fields {
+        let child_prefix = format!("{}.", field.path);
+        let children = app
+            .fields
+            .iter()
+            .filter(|candidate| is_direct_child_path(&candidate.path, &child_prefix))
+            .collect::<Vec<_>>();
+
+        out.push_str(&format!("### `{}`\n\n", field.path));
+        out.push_str(&format!(
+            "- {}: `{}`\n",
+            ui.value_type,
+            escape_markdown_table(&field.value_type)
+        ));
+        if let Some(default_value) = &field.default_value {
+            out.push_str(&format!(
+                "- {}: `{}`\n",
+                ui.default_value,
+                escape_code_span(default_value)
+            ));
+        }
+        out.push_str(&format!(
+            "- {}: {}\n",
+            ui.description,
+            escape_markdown(&field.description)
+        ));
+        let notice = render_notice_text(field, ui);
+        if !notice.is_empty() {
+            out.push_str(&format!("- {}: {}\n", ui.notice, notice));
+        }
+
+        if children.is_empty() {
+            out.push('\n');
+            continue;
+        }
+
+        out.push('\n');
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            ui.path, ui.value_type, ui.default_value, ui.description, ui.notice
+        ));
+        out.push_str("| --- | --- | --- | --- | --- |\n");
+        for child in children {
+            out.push_str(&format!(
+                "| `{}` | `{}` | {} | {} | {} |\n",
+                escape_markdown_table(&child.path),
+                escape_markdown_table(&child.value_type),
+                render_default_cell(child.default_value.as_deref(), ui.none),
+                escape_markdown_table(&child.description),
+                render_notice_cell(child, ui),
+            ));
+        }
+        out.push('\n');
+    }
+
     out
 }
 
 fn render_default_cell(value: Option<&str>, none_text: &str) -> String {
     value
-        .map(|value| format!("`{}`", escape_markdown_table(value)))
+        .map(|value| format!("`{}`", escape_code_span(value)))
         .unwrap_or_else(|| escape_markdown_table(none_text))
+}
+
+fn is_direct_child_path(path: &str, parent_prefix: &str) -> bool {
+    path.strip_prefix(parent_prefix)
+        .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('.'))
 }
 
 fn render_notice_cell(field: &DocField, ui: &UiText) -> String {
@@ -752,8 +861,35 @@ fn render_notice_cell(field: &DocField, ui: &UiText) -> String {
     if notices.is_empty() {
         escape_markdown_table(ui.none)
     } else {
-        escape_markdown_table(&notices.join("<br />"))
+        notices
+            .into_iter()
+            .map(|notice| escape_markdown_table(&notice))
+            .collect::<Vec<_>>()
+            .join("<br />")
     }
+}
+
+fn render_notice_text(field: &DocField, ui: &UiText) -> String {
+    let mut notices = Vec::new();
+    push_notice(&mut notices, ui.danger, field.danger.as_deref());
+    push_notice(&mut notices, ui.warning, field.warning.as_deref());
+    push_notice(
+        &mut notices,
+        ui.pending_deprecated,
+        field.pending_deprecated.as_deref(),
+    );
+    push_notice(&mut notices, ui.deprecated, field.deprecated.as_deref());
+    push_notice(
+        &mut notices,
+        ui.migration,
+        field.migration_notice.as_deref(),
+    );
+
+    notices
+        .into_iter()
+        .map(|notice| escape_mdx_text(&notice))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn push_notice(notices: &mut Vec<String>, label: &str, value: Option<&str>) {
@@ -919,23 +1055,45 @@ fn render_next_index(bundle: &DocBundle) -> String {
     out
 }
 
-fn render_python_module(bundle: &DocBundle) -> Result<String> {
-    let json = serde_json::to_string_pretty(bundle)?;
-    let json_literal = serde_json::to_string(&json)?;
-    Ok(format!(
-        "# Generated by qexed_config_to_mdx. Do not edit by hand.\n\
-         import json\n\n\
-         DOCS_JSON = {json_literal}\n\
-         DOCS = json.loads(DOCS_JSON)\n\n\
-         def get_app(lang, name):\n\
-         \tfor language in DOCS[\"languages\"]:\n\
-         \t\tif language[\"lang\"] != lang:\n\
-         \t\t\tcontinue\n\
-         \t\tfor app in language[\"apps\"]:\n\
-         \t\t\tif app[\"name\"] == name:\n\
-         \t\t\t\treturn app\n\
-         \treturn None\n"
-    ))
+fn render_next_app_index(bundle: &DocBundle) -> String {
+    let ui = bundle_ui_text(bundle);
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n\n", ui.site_title));
+    out.push_str(&format!("- {}: `{}`\n\n", ui.commit, bundle.commit));
+
+    for language_docs in &bundle.languages {
+        out.push_str(&format!(
+            "- [{}](./{})\n",
+            language_docs.lang,
+            escape_markdown_link(&language_docs.lang)
+        ));
+    }
+
+    out
+}
+
+fn render_next_app_language_index(commit: &str, language_docs: &LanguageDocs) -> String {
+    let ui = ui_text(&language_docs.lang);
+    let mut out = String::new();
+    out.push_str(&format!("# {} - {}\n\n", ui.site_title, language_docs.lang));
+    out.push_str(&format!("- {}: `{commit}`\n", ui.commit));
+    out.push_str(&format!(
+        "- {}: `{}`\n\n",
+        ui.app_count,
+        language_docs.apps.len()
+    ));
+
+    for app in &language_docs.apps {
+        out.push_str(&format!(
+            "- [{}](./{}): `{}` {}\n",
+            app.name,
+            escape_markdown_link(&app.name),
+            app.fields.len(),
+            ui.field_unit
+        ));
+    }
+
+    out
 }
 
 fn escape_yaml(value: &str) -> String {
@@ -961,10 +1119,30 @@ fn escape_markdown_link(value: &str) -> String {
         .replace(')', "%29")
 }
 
+fn escape_markdown(value: &str) -> String {
+    escape_mdx_text(value)
+}
+
 fn escape_markdown_table(value: &str) -> String {
+    escape_mdx_text(value).replace('|', "\\|")
+}
+
+fn escape_code_span(value: &str) -> String {
     value
         .replace('\\', "\\\\")
+        .replace('`', "\\`")
         .replace('|', "\\|")
+        .replace('\r', "")
+        .replace('\n', " ")
+}
+
+fn escape_mdx_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
         .replace('\r', "")
         .replace('\n', "<br />")
 }

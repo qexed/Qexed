@@ -80,7 +80,7 @@ fn main() -> Result<()> {
             ("generator", "qexed_config_to_mdx 可执行文件"),
             ("out_dir", "输出目录"),
             ("doc_langs", "文档语言，逗号分隔"),
-            ("formats", "格式，逗号分隔"),
+            ("formats", "格式，逗号分隔；当前网站使用 next-app"),
             ("commit", "Commit 覆盖，可留空"),
             ("generate", "生成"),
         ],
@@ -90,7 +90,10 @@ fn main() -> Result<()> {
             ("generator", "qexed_config_to_mdx executable"),
             ("out_dir", "Output directory"),
             ("doc_langs", "Documentation languages, comma-separated"),
-            ("formats", "Formats, comma-separated"),
+            (
+                "formats",
+                "Formats, comma-separated; current website uses next-app",
+            ),
             ("commit", "Commit override, optional"),
             ("generate", "Generate"),
         ],
@@ -105,7 +108,7 @@ fn main() -> Result<()> {
 <label data-i18n="generator"></label><input id="generator" value="{generator}">
 <label data-i18n="out_dir"></label><input id="out" value="qexed-config-docs">
 <label data-i18n="doc_langs"></label><input id="langs" value="zh-CN,en">
-<label data-i18n="formats"></label><input id="formats" value="all">
+<label data-i18n="formats"></label><input id="formats" value="next-app,json">
 <label data-i18n="commit"></label><input id="commit">
 <button onclick="run()" data-i18n="generate"></button>
 <pre id="outbox"></pre>
