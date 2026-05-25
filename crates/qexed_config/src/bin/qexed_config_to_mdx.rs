@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 
 const DEFAULT_LANGS: &[&str] = &["zh-CN", "en"];
-const LOGO_SOURCE: &str = "crates/qexed/logo.ico";
+const LOGO_BYTES: &[u8] = include_bytes!("../../qexed_doc_logo.ico");
 rust_i18n::i18n!("./locales");
 #[derive(Debug, Parser)]
 #[command(name = "qexed_config_to_mdx")]
@@ -456,15 +456,9 @@ fn write_assets(output_root: &Path) -> Result<()> {
     fs::create_dir_all(&asset_dir)
         .with_context(|| format!("无法创建资源目录 {}", asset_dir.display()))?;
 
-    let logo_source = Path::new(LOGO_SOURCE);
     let logo_target = asset_dir.join("logo.ico");
-    fs::copy(logo_source, &logo_target).with_context(|| {
-        format!(
-            "无法复制图标 {} 到 {}",
-            logo_source.display(),
-            logo_target.display()
-        )
-    })?;
+    fs::write(&logo_target, LOGO_BYTES)
+        .with_context(|| format!("无法写入内嵌图标 {}", logo_target.display()))?;
     Ok(())
 }
 
@@ -1124,4 +1118,35 @@ fn escape_mdx_text(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('\r', "")
         .replace('\n', "<br />")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LOGO_BYTES, write_assets};
+
+    fn temp_output_dir(name: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "qexed_config_docs_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time must be after UNIX_EPOCH")
+                .as_nanos()
+        ));
+        path
+    }
+
+    #[test]
+    fn writes_embedded_logo_asset() -> anyhow::Result<()> {
+        let dir = temp_output_dir("embedded_logo");
+
+        write_assets(&dir)?;
+
+        let logo = std::fs::read(dir.join("assets").join("logo.ico"))?;
+        assert_eq!(logo, LOGO_BYTES);
+
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
 }
