@@ -5,6 +5,9 @@ on:
     branches:
       - v4
 
+permissions:
+  contents: read
+
 jobs:
   dispatch:
     runs-on: ubuntu-latest
