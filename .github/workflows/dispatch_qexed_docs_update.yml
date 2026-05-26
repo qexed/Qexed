@@ -13,7 +13,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.WEBSITE_REPO_DISPATCH_TOKEN }}
         run: |
-          gh api repos/qexed/qexed-doc/dispatches \
-            --method POST \
-            --field event_type=qexed-updated \
-            --raw-field client_payload="{\"repository\":\"${GITHUB_REPOSITORY}\",\"ref\":\"${GITHUB_REF_NAME}\",\"sha\":\"${GITHUB_SHA}\"}"
+            gh api repos/qexed/qexed-doc/dispatches \
+              --method POST \
+              --field event_type=qexed-updated \
+              --field "client_payload[repository]=${GITHUB_REPOSITORY}" \
+              --field "client_payload[ref]=${GITHUB_REF_NAME}" \
+              --field "client_payload[sha]=${GITHUB_SHA}"
