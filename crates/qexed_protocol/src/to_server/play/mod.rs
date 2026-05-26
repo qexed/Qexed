@@ -4,6 +4,7 @@ pub mod chat_command;
 pub mod chat_message;
 pub mod chat_session_update;
 pub mod chunk_batch_received;
+pub mod client_command;
 pub mod keep_alive;
 pub mod move_player_pos;
 pub mod move_player_pos_rot;

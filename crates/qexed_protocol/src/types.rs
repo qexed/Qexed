@@ -7,6 +7,32 @@ use qexed_packet::{
 use uuid::Uuid;
 pub type TextComponent = qexed_packet::net_types::AnyNbt;
 
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
+pub enum NumberFormat {
+    #[default]
+    Blank,
+}
+
+impl PacketCodec for NumberFormat {
+    fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+        match self {
+            Self::Blank => VarInt(0).serialize(w),
+        }
+    }
+
+    fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+        let mut type_id = VarInt::default();
+        type_id.deserialize(r)?;
+        match type_id.0 {
+            0 => {
+                *self = Self::Blank;
+                Ok(())
+            }
+            other => anyhow::bail!("unsupported number format type id: {other}"),
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct MessageSignature(pub Vec<u8>);
 
@@ -1310,9 +1336,12 @@ pub mod minecraft {
 pub enum SlotDisplay {
     Empty,
     AnyFuel,
+    WithAnyPotion(slot_display_types::minecraft::WithAnyPotion),
+    OnlyWithComponent(slot_display_types::minecraft::OnlyWithComponent),
     Item(slot_display_types::minecraft::Item),
     ItemStack(slot_display_types::minecraft::ItemStack),
     Tag(slot_display_types::minecraft::Tag),
+    Dyed(slot_display_types::minecraft::Dyed),
     SmithingTrim(Box<slot_display_types::minecraft::SmithingTrim>),
     WithRemainder(Box<slot_display_types::minecraft::WithRemainder>),
     Composite(slot_display_types::minecraft::Composite),
@@ -1339,6 +1368,23 @@ pub mod slot_display_types {
         #[derive(Debug, Default, PartialEq, Clone)]
         pub struct Tag {
             pub tag: String,
+        }
+        #[qexed_packet_macros::substruct]
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct WithAnyPotion {
+            pub display: Box<SlotDisplay>,
+        }
+        #[qexed_packet_macros::substruct]
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct OnlyWithComponent {
+            pub source: Box<SlotDisplay>,
+            pub component: VarInt,
+        }
+        #[qexed_packet_macros::substruct]
+        #[derive(Debug, Default, PartialEq, Clone)]
+        pub struct Dyed {
+            pub dye: Box<SlotDisplay>,
+            pub target: Box<SlotDisplay>,
         }
         #[qexed_packet_macros::substruct]
         #[derive(Debug, Default, PartialEq, Clone)]

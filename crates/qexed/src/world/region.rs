@@ -25,7 +25,6 @@ pub struct ChunkData {
 }
 
 impl ChunkData {
-    #[cfg(test)]
     pub fn zlib(data: &[u8]) -> Result<Self> {
         let mut encoder =
             flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());

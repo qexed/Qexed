@@ -2,7 +2,9 @@ use std::{fs, path::Path};
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
-use toml_edit::{DocumentMut, value};
+use toml_edit::value;
+
+use crate::config_edit;
 
 pub fn convert_to_data_uri(input: impl AsRef<Path>) -> Result<String> {
     let input = input.as_ref();
@@ -24,17 +26,12 @@ pub fn write_data_uri(output: impl AsRef<Path>, data_uri: &str) -> Result<()> {
 
 pub fn update_config(config: impl AsRef<Path>, data_uri: &str) -> Result<()> {
     let config = config.as_ref();
-    let content = fs::read_to_string(config)
-        .with_context(|| format!("无法读取配置文件 {}", config.display()))?;
-    let mut doc = content
-        .parse::<DocumentMut>()
-        .with_context(|| format!("配置文件不是合法 TOML: {}", config.display()))?;
+    let (config_path, mut doc) = config_edit::read_server_doc(config)?;
     let server = doc["server"]
         .as_table_mut()
         .context("配置文件缺少 [server] 表")?;
     server.insert("favicon", value(data_uri));
-    fs::write(config, doc.to_string())
-        .with_context(|| format!("无法写入配置文件 {}", config.display()))
+    config_edit::write_doc(&config_path, &doc)
 }
 
 fn is_png(bytes: &[u8]) -> bool {
@@ -63,5 +60,26 @@ mod tests {
         let data_uri = convert_to_data_uri(&path).unwrap();
         assert!(data_uri.starts_with("data:image/png;base64,"));
         assert_eq!(decode_data_uri(&data_uri).unwrap(), b"\x89PNG\r\n\x1a\nabc");
+    }
+
+    #[test]
+    fn updates_split_server_config_when_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("qexed.toml");
+        let split_dir = dir.path().join("qexed.d");
+        fs::create_dir(&split_dir).unwrap();
+        fs::write(&config, "version = 0\n").unwrap();
+        fs::write(
+            split_dir.join("server.toml"),
+            "[server]\nfavicon = \"old\"\n",
+        )
+        .unwrap();
+
+        update_config(&config, "data:image/png;base64,abc").unwrap();
+
+        let main = fs::read_to_string(&config).unwrap();
+        let server = fs::read_to_string(split_dir.join("server.toml")).unwrap();
+        assert!(!main.contains("data:image/png;base64,abc"));
+        assert!(server.contains("favicon = \"data:image/png;base64,abc\""));
     }
 }

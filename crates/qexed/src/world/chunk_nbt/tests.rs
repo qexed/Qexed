@@ -1,0 +1,339 @@
+use std::sync::Arc;
+
+use qexed_nbt::{ListHeader, tag_id};
+use qexed_packet::Packet;
+
+use super::*;
+
+#[test]
+fn converts_single_value_saved_section() {
+    let root = chunk_root(vec![section(
+        0,
+        paletted_container(vec![block_state("minecraft:stone", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+
+    let packet = network_chunk_from_nbt(0, 0, &root).unwrap();
+    let section_offset = ((0 - MIN_SECTION_Y) as usize) * 8;
+
+    assert_eq!(packet.chunk_x, 0);
+    assert_eq!(packet.chunk_z, 0);
+    assert_eq!(
+        &packet.data.data[section_offset..section_offset + 4],
+        &[0x10, 0x00, 0x00, 0x00]
+    );
+}
+
+#[test]
+fn converts_multi_value_saved_section() {
+    let mut values = vec![0_i32; BLOCK_ENTRY_COUNT];
+    values[0] = 1;
+    let data = pack_values(&values, 4)
+        .unwrap()
+        .into_iter()
+        .map(|value| value as i64)
+        .collect();
+    let root = chunk_root(vec![section(
+        0,
+        paletted_container(
+            vec![
+                block_state("minecraft:air", &[]),
+                block_state("minecraft:stone", &[]),
+            ],
+            Some(data),
+        ),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+
+    let packet = network_chunk_from_nbt(0, 0, &root).unwrap();
+    let section_offset = 4 * 8;
+
+    assert!(packet.data.data.len() > super::section_count() as usize * 8);
+    assert_eq!(
+        &packet.data.data[section_offset..section_offset + 4],
+        &[0x00, 0x01, 0x00, 0x00]
+    );
+}
+
+#[test]
+fn converts_region_chunk_payload() {
+    let root = chunk_root(vec![section(
+        0,
+        paletted_container(vec![block_state("minecraft:stone", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+    let raw = qexed_nbt::to_vec("", &root).unwrap();
+    let chunk = ChunkData::zlib(&raw).unwrap();
+    let packet = network_chunk_from_region(0, 0, &chunk).unwrap();
+    let mut payload = bytes::BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut payload);
+
+    packet.serialize(&mut writer).unwrap();
+
+    assert!(!payload.is_empty());
+}
+
+#[test]
+fn reads_single_block_state_from_saved_section() {
+    let stone = default_block_state_id("minecraft:stone");
+    let root = chunk_root(vec![section(
+        0,
+        paletted_container(vec![block_state("minecraft:stone", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+    let position = qexed_packet::net_types::Position { x: 5, y: 7, z: 9 };
+
+    assert_eq!(
+        block_state_at_from_nbt(&root, &position).unwrap(),
+        Some(stone)
+    );
+}
+
+#[test]
+fn writes_single_block_state_to_saved_section() {
+    let stone = default_block_state_id("minecraft:stone");
+    let root = chunk_root(vec![section(
+        0,
+        paletted_container(vec![block_state("minecraft:air", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+    let position = qexed_packet::net_types::Position { x: 5, y: 7, z: 9 };
+
+    let updated = set_block_state_in_nbt(&root, 0, 0, &position, stone, None).unwrap();
+
+    assert_eq!(
+        block_state_at_from_nbt(&updated, &position).unwrap(),
+        Some(stone)
+    );
+    assert!(network_chunk_from_nbt(0, 0, &updated).is_ok());
+}
+
+#[test]
+fn writes_block_state_to_region_payload() {
+    let stone = default_block_state_id("minecraft:stone");
+    let position = qexed_packet::net_types::Position {
+        x: -17,
+        y: -1,
+        z: 32,
+    };
+
+    let chunk = set_block_state_in_region(-2, 2, None, &position, stone, None).unwrap();
+
+    assert_eq!(
+        block_state_at_from_region(&chunk, &position).unwrap(),
+        Some(stone)
+    );
+    assert!(network_chunk_from_region(-2, 2, &chunk).is_ok());
+}
+
+#[test]
+fn water_plant_counts_as_fluid_and_light_dampening() {
+    let root = chunk_root(vec![section(
+        0,
+        paletted_container(vec![block_state("minecraft:seagrass", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+
+    let (packet, dampening) =
+        network_chunk_and_light_dampening_from_nbt(0, 0, &root, WorldLightAlgorithm::Fast).unwrap();
+    let section_offset = ((0 - MIN_SECTION_Y) as usize) * 8;
+    let world_y = 0;
+
+    assert_eq!(
+        &packet.data.data[section_offset..section_offset + 4],
+        &[0x10, 0x00, 0x10, 0x00]
+    );
+    assert_eq!(dampening[block_light_dampening_index(0, world_y, 0)], 1);
+}
+
+#[test]
+fn waterlogged_block_counts_as_fluid_dampening() {
+    assert!(has_fluid(
+        "minecraft:sea_pickle",
+        &[("waterlogged".to_string(), "true".to_string())]
+    ));
+    assert_eq!(
+        light_dampening("minecraft:sea_pickle", Some("minecraft:sea_pickle"), true),
+        1
+    );
+    assert_eq!(
+        light_dampening("minecraft:sea_pickle", Some("minecraft:sea_pickle"), false),
+        0
+    );
+}
+
+#[test]
+fn leaves_dampen_sky_light_like_minecraft() {
+    assert_eq!(
+        light_dampening(
+            "minecraft:oak_leaves",
+            Some("minecraft:tinted_particle_leaves"),
+            false
+        ),
+        1
+    );
+    assert_eq!(
+        light_dampening(
+            "minecraft:mangrove_leaves",
+            Some("minecraft:mangrove_leaves"),
+            false
+        ),
+        1
+    );
+}
+
+#[test]
+fn transparent_block_types_use_report_metadata() {
+    assert_eq!(
+        light_dampening("minecraft:vine", Some("minecraft:vine"), false),
+        0
+    );
+    assert_eq!(
+        light_dampening(
+            "minecraft:glow_lichen",
+            Some("minecraft:glow_lichen"),
+            false
+        ),
+        0
+    );
+    assert_eq!(
+        light_dampening("minecraft:glass_pane", Some("minecraft:iron_bars"), false),
+        0
+    );
+    assert_eq!(
+        light_dampening("minecraft:iron_chain", Some("minecraft:chain"), false),
+        15
+    );
+    assert_eq!(
+        light_dampening("minecraft:iron_chain", Some("minecraft:chain"), true),
+        1
+    );
+}
+
+#[test]
+fn saved_light_layers_are_used_when_present() {
+    let root = chunk_root(vec![section_with_light(
+        0,
+        paletted_container(vec![block_state("minecraft:air", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+        Some(vec![0xff_u8; LIGHT_ARRAY_BYTES]),
+        Some(vec![0x77_u8; LIGHT_ARRAY_BYTES]),
+    )]);
+
+    let (packet, _) =
+        network_chunk_and_light_dampening_from_nbt(0, 0, &root, WorldLightAlgorithm::Fast).unwrap();
+
+    assert_eq!(packet.light.sky_light_arrays.len(), 1);
+    assert_eq!(packet.light.block_light_arrays.len(), 1);
+    assert_eq!(packet.light.sky_light_arrays[0].0[0], 0xff);
+    assert_eq!(packet.light.block_light_arrays[0].0[0], 0x77);
+}
+
+fn chunk_root(sections: Vec<Tag>) -> Tag {
+    compound_tag([
+        (
+            "sections",
+            Tag::List(
+                ListHeader {
+                    tag_id: tag_id::COMPOUND,
+                    length: sections.len() as i32,
+                },
+                Arc::from(sections),
+            ),
+        ),
+        (
+            "Heightmaps",
+            compound_tag([
+                ("WORLD_SURFACE", Tag::LongArray(Arc::from(vec![0_i64; 37]))),
+                (
+                    "MOTION_BLOCKING",
+                    Tag::LongArray(Arc::from(vec![0_i64; 37])),
+                ),
+                (
+                    "MOTION_BLOCKING_NO_LEAVES",
+                    Tag::LongArray(Arc::from(vec![0_i64; 37])),
+                ),
+            ]),
+        ),
+    ])
+}
+
+fn section(y: i8, block_states: Tag, biomes: Tag) -> Tag {
+    section_with_light(y, block_states, biomes, None, None)
+}
+
+fn section_with_light(
+    y: i8,
+    block_states: Tag,
+    biomes: Tag,
+    sky_light: Option<Vec<u8>>,
+    block_light: Option<Vec<u8>>,
+) -> Tag {
+    let mut section = HashMap::new();
+    section.insert("Y".to_string(), Tag::Byte(y));
+    section.insert("block_states".to_string(), block_states);
+    section.insert("biomes".to_string(), biomes);
+    if let Some(sky_light) = sky_light {
+        section.insert(
+            "SkyLight".to_string(),
+            Tag::byte_array_from_u8_slice(&sky_light),
+        );
+    }
+    if let Some(block_light) = block_light {
+        section.insert(
+            "BlockLight".to_string(),
+            Tag::byte_array_from_u8_slice(&block_light),
+        );
+    }
+    Tag::Compound(Arc::new(section))
+}
+
+fn paletted_container(palette: Vec<Tag>, data: Option<Vec<i64>>) -> Tag {
+    let mut fields = HashMap::new();
+    fields.insert(
+        "palette".to_string(),
+        Tag::List(
+            ListHeader {
+                tag_id: palette.first().map(Tag::tag_id).unwrap_or(tag_id::END),
+                length: palette.len() as i32,
+            },
+            Arc::from(palette),
+        ),
+    );
+    if let Some(data) = data {
+        fields.insert("data".to_string(), Tag::LongArray(Arc::from(data)));
+    }
+    Tag::Compound(Arc::new(fields))
+}
+
+fn block_state(name: &str, properties: &[(&str, &str)]) -> Tag {
+    let mut fields = HashMap::new();
+    fields.insert("Name".to_string(), string(name));
+    if !properties.is_empty() {
+        let properties = properties
+            .iter()
+            .map(|(name, value)| (name.to_string(), string(value)))
+            .collect();
+        fields.insert(
+            "Properties".to_string(),
+            Tag::Compound(Arc::new(properties)),
+        );
+    }
+    Tag::Compound(Arc::new(fields))
+}
+
+fn compound_tag<I>(fields: I) -> Tag
+where
+    I: IntoIterator<Item = (&'static str, Tag)>,
+{
+    Tag::Compound(Arc::new(
+        fields
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect(),
+    ))
+}
+
+fn string(value: &str) -> Tag {
+    Tag::String(Arc::from(value))
+}

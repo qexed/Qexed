@@ -29,6 +29,13 @@ pub(crate) trait WorldChunkGenerator: Send + Sync + std::fmt::Debug {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32>;
+
+    fn region_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<super::region::ChunkData>>;
 }
 
 pub(crate) fn from_config(config: &WorldConfig) -> Arc<dyn WorldChunkGenerator> {
@@ -91,6 +98,15 @@ impl WorldChunkGenerator for EmptyWorldGenerator {
         _position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
         None
+    }
+
+    fn region_chunk(
+        &self,
+        _dimension: &str,
+        _chunk_x: i32,
+        _chunk_z: i32,
+    ) -> Result<Option<super::region::ChunkData>> {
+        Ok(None)
     }
 }
 
@@ -157,6 +173,17 @@ impl WorldChunkGenerator for VanillaFlatGenerator {
             .ok()
             .and_then(|index| self.layers.get(index))?;
         (!layer.is_air).then_some(layer.block_state_id)
+    }
+
+    fn region_chunk(
+        &self,
+        _dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<super::region::ChunkData>> {
+        Ok(Some(chunk_nbt::region_chunk_from_nbt(
+            chunk_x, chunk_z, &self.root,
+        )?))
     }
 }
 
@@ -255,6 +282,22 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
     ) -> Option<i32> {
         self.settings
             .block_state_at(position.x, position.y, position.z)
+    }
+
+    fn region_chunk(
+        &self,
+        _dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<super::region::ChunkData>> {
+        let (chunk, _) =
+            self.settings
+                .generate_chunk_profiled(chunk_x, chunk_z, self.gpu_worldgen.as_deref());
+        let mut root = noise_chunk_root(&chunk, self.settings.biome.as_str());
+        append_block_entities_to_chunk_root(&mut root, &chunk);
+        Ok(Some(chunk_nbt::region_chunk_from_nbt(
+            chunk_x, chunk_z, &root,
+        )?))
     }
 }
 

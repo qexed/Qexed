@@ -380,13 +380,13 @@ config:
             en: "Stable entity identifier used by Qexed"
             zh-CN: "Qexed 使用的稳定实体标识"
           kind:
-            en: "Entity kind: entity or npc. NPCs are spawned as player entities."
+            en: "Entity kind: entity, npc, or hologram. NPCs are spawned as player entities; holograms use text display entities."
             zh-CN: "实体类型：entity 或 npc。NPC 会以玩家实体生成。"
           entity_type:
             en: "Minecraft entity type resource key, for example minecraft:armor_stand or minecraft:villager"
             zh-CN: "Minecraft 实体类型资源键，例如 minecraft:armor_stand 或 minecraft:villager"
           name:
-            en: "NPC player name. Empty uses the entity id."
+            en: "NPC player name or hologram text. Empty NPC names use the entity id."
             zh-CN: "NPC 玩家名。为空时使用实体 id。"
           x:
             en: "Entity X coordinate"
@@ -409,6 +409,21 @@ config:
           data:
             en: "Spawn data value passed to the Add Entity packet"
             zh-CN: "传递给 Add Entity 数据包的生成数据值"
+      scoreboard:
+        en: "Sidebar scoreboard settings"
+        zh-CN: "侧边栏计分板设置"
+        enable:
+          en: "Enable the sidebar scoreboard"
+          zh-CN: "启用侧边栏计分板"
+        objective:
+          en: "Scoreboard objective name used internally by the client"
+          zh-CN: "客户端内部使用的计分板目标名称"
+        title:
+          en: "Sidebar scoreboard title"
+          zh-CN: "侧边栏计分板标题"
+        lines:
+          en: "Sidebar scoreboard lines displayed from top to bottom"
+          zh-CN: "侧边栏计分板从上到下显示的行"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

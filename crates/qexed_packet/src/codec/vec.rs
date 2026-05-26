@@ -55,3 +55,19 @@ where
         Ok(())
     }
 }
+
+impl<T> PacketCodec for Box<T>
+where
+    T: PacketCodec + Default,
+{
+    fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
+        self.as_ref().serialize(w)
+    }
+
+    fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
+        let mut value = T::default();
+        value.deserialize(r)?;
+        *self = Box::new(value);
+        Ok(())
+    }
+}

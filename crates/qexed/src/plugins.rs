@@ -1,43 +1,24 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{fs, path::Path, sync::Mutex};
 
-use anyhow::{Context, Result};
-use serde::Serialize;
-use wasmtime::{Caller, Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
+use serde::{Serialize, de::DeserializeOwned};
+use wasmtime::Engine;
+
+mod event;
+mod files;
+mod host;
+mod instance;
+mod payload;
+
+pub use event::PluginEvent;
+use files::{PLUGIN_DIR, plugin_files};
+use instance::PluginInstance;
+pub use payload::{
+    BlockDropPosition, BlockDropQuery, BlockDropResponse, ItemEnchantment, MiningSpeedQuery,
+    MiningSpeedResponse, PluginEnchantment,
+};
+use payload::{ChunkPayload, ConfigReloadPayload, LanguagePayload, player_payload};
 
 use crate::players::OnlinePlayer;
-
-const PLUGIN_DIR: &str = "plugins";
-const MAX_EVENT_PAYLOAD_BYTES: usize = 1024 * 1024;
-const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
-
-#[derive(Debug, Clone, Copy)]
-pub enum PluginEvent {
-    Init,
-    PlayerJoin,
-    PlayerLeave,
-    ChunkLoad,
-    ChunkUnload,
-    ConfigReload,
-    LanguageChange,
-}
-
-impl PluginEvent {
-    fn export_name(self) -> &'static str {
-        match self {
-            Self::Init => "qexed_plugin_init",
-            Self::PlayerJoin => "qexed_plugin_player_join",
-            Self::PlayerLeave => "qexed_plugin_player_leave",
-            Self::ChunkLoad => "qexed_plugin_chunk_load",
-            Self::ChunkUnload => "qexed_plugin_chunk_unload",
-            Self::ConfigReload => "qexed_plugin_config_reload",
-            Self::LanguageChange => "qexed_plugin_language_change",
-        }
-    }
-}
 
 pub struct PluginManager {
     plugins: Mutex<Vec<PluginInstance>>,
@@ -130,6 +111,51 @@ impl PluginManager {
         self.emit_json(PluginEvent::LanguageChange, &LanguagePayload { language });
     }
 
+    pub fn apply_mining_speed(&self, query: MiningSpeedQuery) -> f32 {
+        let mut speed = query.speed;
+        for response in self.query_json::<_, MiningSpeedResponse>(PluginEvent::MiningSpeed, &query)
+        {
+            if let Some(value) = response
+                .speed
+                .filter(|value| value.is_finite() && *value > 0.0)
+            {
+                speed = value;
+            }
+            if let Some(multiplier) = response
+                .multiplier
+                .filter(|value| value.is_finite() && *value > 0.0)
+            {
+                speed *= multiplier;
+            }
+            if let Some(add) = response.add.filter(|value| value.is_finite()) {
+                speed += add;
+            }
+            speed = speed.max(0.01);
+        }
+        speed
+    }
+
+    pub fn apply_block_drops(&self, query: BlockDropQuery) -> Option<BlockDropResponse> {
+        let mut result = None;
+        for response in self.query_json::<_, BlockDropResponse>(PluginEvent::BlockDrops, &query) {
+            let current = result.get_or_insert_with(|| BlockDropResponse {
+                replace: false,
+                items: Vec::new(),
+            });
+            if response.replace {
+                current.replace = true;
+                current.items.clear();
+            }
+            current.items.extend(response.items);
+        }
+        result
+    }
+
+    #[cfg(test)]
+    pub fn empty_for_tests() -> Self {
+        Self::empty()
+    }
+
     fn empty() -> Self {
         Self {
             plugins: Mutex::new(Vec::new()),
@@ -162,226 +188,48 @@ impl PluginManager {
             }
         }
     }
-}
 
-struct PluginInstance {
-    name: String,
-    priority: i32,
-    store: Store<PluginState>,
-    instance: Instance,
-    memory: Memory,
-    alloc: TypedFunc<i32, i32>,
-    dealloc: Option<TypedFunc<(i32, i32), ()>>,
-}
-
-impl PluginInstance {
-    fn load(engine: &Engine, path: PathBuf) -> Result<Self> {
-        let name = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("plugin")
-            .to_string();
-        let module = Module::from_file(engine, &path)
-            .with_context(|| format!("编译插件 {}", path.display()))?;
-        let mut store = Store::new(engine, PluginState { name: name.clone() });
-        let mut linker = Linker::new(engine);
-        linker
-            .func_wrap("qexed", "log", host_log)
-            .context("注册插件宿主日志 API")?;
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .with_context(|| format!("实例化插件 {}", path.display()))?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .with_context(|| format!("插件 {name} 缺少导出 memory"))?;
-        let alloc = instance
-            .get_typed_func::<i32, i32>(&mut store, "qexed_plugin_alloc")
-            .with_context(|| format!("插件 {name} 缺少导出 qexed_plugin_alloc"))?;
-        let dealloc = instance
-            .get_typed_func::<(i32, i32), ()>(&mut store, "qexed_plugin_dealloc")
-            .ok();
-        let priority = instance
-            .get_typed_func::<(), i32>(&mut store, "qexed_plugin_priority")
-            .ok()
-            .map(|priority| priority.call(&mut store, ()))
-            .transpose()
-            .with_context(|| format!("读取插件 {name} 优先级失败"))?
-            .unwrap_or(0);
-
-        Ok(Self {
-            name,
-            priority,
-            store,
-            instance,
-            memory,
-            alloc,
-            dealloc,
-        })
-    }
-
-    fn call_event(&mut self, event: PluginEvent, payload: &[u8]) -> Result<()> {
-        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
-            anyhow::bail!(
-                "插件事件 payload 超过限制: {} > {}",
-                payload.len(),
-                MAX_EVENT_PAYLOAD_BYTES
-            );
-        }
-
-        match event {
-            PluginEvent::Init => {
-                let Some(func) = self
-                    .instance
-                    .get_typed_func::<(), ()>(&mut self.store, event.export_name())
-                    .ok()
-                else {
-                    return Ok(());
-                };
-                func.call(&mut self.store, ())?;
+    fn query_json<T, R>(&self, event: PluginEvent, payload: &T) -> Vec<R>
+    where
+        T: Serialize,
+        R: DeserializeOwned,
+    {
+        let payload = match serde_json::to_vec(payload) {
+            Ok(payload) => payload,
+            Err(err) => {
+                log::warn!("鎻掍欢鏌ヨ搴忓垪鍖栧け璐? event={event:?}, error={err}");
+                return Vec::new();
             }
-            _ => {
-                let Some(func) = self
-                    .instance
-                    .get_typed_func::<(i32, i32), ()>(&mut self.store, event.export_name())
-                    .ok()
-                else {
-                    return Ok(());
-                };
-
-                let len = i32::try_from(payload.len()).context("插件事件 payload 长度溢出")?;
-                let ptr = self.alloc.call(&mut self.store, len)?;
-                let offset = usize::try_from(ptr).context("插件分配器返回负地址")?;
-                self.memory.write(&mut self.store, offset, payload)?;
-                func.call(&mut self.store, (ptr, len))?;
-
-                if let Some(dealloc) = &self.dealloc {
-                    dealloc.call(&mut self.store, (ptr, len))?;
+        };
+        let mut plugins = self.plugins.lock().expect("plugin manager poisoned");
+        let mut responses = Vec::new();
+        for plugin in plugins.iter_mut() {
+            let response = match plugin.call_query(event, &payload) {
+                Ok(Some(response)) => response,
+                Ok(None) => continue,
+                Err(err) => {
+                    log::warn!(
+                        "WASM 鎻掍欢鏌ヨ鎵ц澶辫触: plugin={}, event={event:?}, error={err:#}",
+                        plugin.name
+                    );
+                    continue;
                 }
+            };
+            match serde_json::from_slice(&response) {
+                Ok(response) => responses.push(response),
+                Err(err) => log::warn!(
+                    "WASM 鎻掍欢鏌ヨ response JSON 鏃犳晥: plugin={}, event={event:?}, error={err}",
+                    plugin.name
+                ),
             }
         }
-        Ok(())
+        responses
     }
 }
 
-struct PluginState {
+pub(super) struct PluginState {
     name: String,
-}
-
-#[derive(Serialize)]
-struct PlayerPayload<'a> {
-    uuid: String,
-    username: &'a str,
-    entity_id: i32,
-}
-
-#[derive(Serialize)]
-struct ChunkPayload<'a> {
-    dimension: &'a str,
-    chunk_x: i32,
-    chunk_z: i32,
-}
-
-#[derive(Serialize)]
-struct ConfigReloadPayload<'a> {
-    path: &'a str,
-}
-
-#[derive(Serialize)]
-struct LanguagePayload<'a> {
-    language: &'a str,
-}
-
-fn player_payload(player: &OnlinePlayer) -> PlayerPayload<'_> {
-    PlayerPayload {
-        uuid: player.profile.uuid.to_string(),
-        username: &player.profile.username,
-        entity_id: player.entity_id,
-    }
-}
-
-fn plugin_files(path: &Path) -> Vec<PathBuf> {
-    let mut files = fs::read_dir(path)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.extension()
-                        .is_some_and(|extension| extension == "wasm")
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    files.sort();
-    files
-}
-
-fn host_log(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) {
-    let plugin_name = caller.data().name.clone();
-    let Some(bytes) = host_memory_bytes(&mut caller, ptr, len) else {
-        return;
-    };
-    match std::str::from_utf8(bytes) {
-        Ok(message) => log::info!("[WASM 插件:{plugin_name}] {message}"),
-        Err(err) => log::warn!("[WASM 插件:{plugin_name}] 日志不是 UTF-8: {err}"),
-    }
-}
-
-fn host_memory_bytes<'a>(
-    caller: &'a mut Caller<'_, PluginState>,
-    ptr: i32,
-    len: i32,
-) -> Option<&'a [u8]> {
-    if ptr < 0 || len < 0 {
-        log::warn!("WASM 插件传入了负数内存范围: ptr={ptr}, len={len}");
-        return None;
-    }
-
-    let offset = ptr as usize;
-    let len = len as usize;
-    if len > MAX_HOST_LOG_BYTES {
-        log::warn!("WASM 插件日志过长: len={len}, max={MAX_HOST_LOG_BYTES}");
-        return None;
-    }
-
-    let Some(memory) = caller
-        .get_export("memory")
-        .and_then(|export| export.into_memory())
-    else {
-        log::warn!("WASM 插件调用日志 API 时缺少 memory 导出");
-        return None;
-    };
-    let data = memory.data(&*caller);
-    let end = offset.checked_add(len)?;
-    if end > data.len() {
-        log::warn!("WASM 插件日志内存越界: ptr={ptr}, len={len}");
-        return None;
-    }
-    Some(&data[offset..end])
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{fs, path::Path};
-
-    use super::plugin_files;
-
-    #[test]
-    fn plugin_files_only_keeps_wasm_files_in_stable_order() {
-        let dir = tempfile::tempdir().unwrap();
-        touch(dir.path().join("b.wasm"));
-        touch(dir.path().join("a.txt"));
-        touch(dir.path().join("a.wasm"));
-
-        let names = plugin_files(dir.path())
-            .into_iter()
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert_eq!(names, ["a.wasm", "b.wasm"]);
-    }
-
-    fn touch(path: impl AsRef<Path>) {
-        fs::write(path, []).unwrap();
-    }
-}
+mod tests;

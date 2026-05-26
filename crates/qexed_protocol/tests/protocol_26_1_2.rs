@@ -98,6 +98,23 @@ fn existing_packet_types_use_26_1_2_ids() {
         0x63
     );
     assert_eq!(
+        qexed_protocol::to_client::play::reset_score::ResetScore::ID,
+        0x4F
+    );
+    assert_eq!(qexed_protocol::to_client::play::respawn::Respawn::ID, 0x52);
+    assert_eq!(
+        qexed_protocol::to_client::play::set_display_objective::SetDisplayObjective::ID,
+        0x62
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::set_objective::SetObjective::ID,
+        0x6A
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::set_score::SetScore::ID,
+        0x6E
+    );
+    assert_eq!(
         qexed_protocol::to_client::play::player_chat::PlayerChat::ID,
         0x41
     );
@@ -126,6 +143,10 @@ fn existing_packet_types_use_26_1_2_ids() {
     assert_eq!(
         qexed_protocol::to_client::play::ticking_state::TickingState::ID,
         0x7F
+    );
+    assert_eq!(
+        qexed_protocol::to_client::play::update_recipes::UpdateRecipes::ID,
+        0x85
     );
     assert_eq!(
         qexed_protocol::to_server::play::keep_alive::KeepAlive::ID,
@@ -167,6 +188,10 @@ fn existing_packet_types_use_26_1_2_ids() {
     assert_eq!(
         qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate::ID,
         0x0A
+    );
+    assert_eq!(
+        qexed_protocol::to_server::play::client_command::ClientCommand::ID,
+        0x0C
     );
     assert_eq!(qexed_protocol::to_server::play::pong::Pong::ID, 0x2D);
 }
@@ -222,6 +247,166 @@ fn player_chat_uses_nullable_components() {
     assert_eq!(decoded.network_target_name, None);
     assert_eq!(decoded.plain_message, "hello");
     assert_eq!(decoded.signature.unwrap().0, vec![7; 256]);
+}
+
+#[test]
+fn scoreboard_packets_round_trip_minimal_sidebar_state() {
+    let objective = qexed_protocol::to_client::play::set_objective::SetObjective::create(
+        "qexed",
+        text_component("Qexed"),
+    );
+    let decoded_objective = round_trip(objective);
+    assert_eq!(decoded_objective.objective_name, "qexed");
+    assert_eq!(
+        decoded_objective.method,
+        qexed_protocol::to_client::play::set_objective::METHOD_ADD
+    );
+    assert_eq!(
+        decoded_objective.render_type.0,
+        qexed_protocol::to_client::play::set_objective::RENDER_TYPE_INTEGER
+    );
+    assert_eq!(decoded_objective.number_format, None);
+
+    let display = round_trip(
+        qexed_protocol::to_client::play::set_display_objective::SetDisplayObjective::sidebar(
+            "qexed",
+        ),
+    );
+    assert_eq!(
+        display.slot.0,
+        qexed_protocol::to_client::play::set_display_objective::DISPLAY_SLOT_SIDEBAR
+    );
+    assert_eq!(display.objective_name, "qexed");
+
+    let score = round_trip(qexed_protocol::to_client::play::set_score::SetScore::new(
+        "qexed_line_0",
+        "qexed",
+        15,
+        Some(text_component("line")),
+    ));
+    assert_eq!(score.owner, "qexed_line_0");
+    assert_eq!(score.objective_name, "qexed");
+    assert_eq!(score.score.0, 15);
+    assert_eq!(
+        score.number_format,
+        Some(qexed_protocol::types::NumberFormat::Blank)
+    );
+
+    let reset = round_trip(qexed_protocol::to_client::play::reset_score::ResetScore {
+        owner: "qexed_line_0".to_string(),
+        objective_name: Some("qexed".to_string()),
+    });
+    assert_eq!(reset.owner, "qexed_line_0");
+    assert_eq!(reset.objective_name.as_deref(), Some("qexed"));
+}
+
+#[test]
+fn respawn_and_client_command_packets_round_trip() {
+    let respawn = round_trip(qexed_protocol::to_client::play::respawn::Respawn {
+        dimension_type: qexed_packet::net_types::VarInt(1),
+        dimension_name: "minecraft:overworld".to_string(),
+        game_mode: 0,
+        previous_game_mode: -1,
+        data_to_keep: qexed_protocol::to_client::play::respawn::KEEP_ALL_DATA,
+        ..qexed_protocol::to_client::play::respawn::Respawn::default()
+    });
+    assert_eq!(respawn.dimension_name, "minecraft:overworld");
+    assert_eq!(
+        respawn.data_to_keep,
+        qexed_protocol::to_client::play::respawn::KEEP_ALL_DATA
+    );
+
+    let command = round_trip(
+        qexed_protocol::to_server::play::client_command::ClientCommand::perform_respawn(),
+    );
+    assert_eq!(
+        command.action.0,
+        qexed_protocol::to_server::play::client_command::PERFORM_RESPAWN
+    );
+}
+
+#[test]
+fn recipe_book_packets_round_trip_with_26_1_2_slot_display_ids() {
+    let item_display = qexed_protocol::types::SlotDisplay::Item(
+        qexed_protocol::types::slot_display_types::minecraft::Item {
+            item_type: qexed_packet::net_types::VarInt(36),
+        },
+    );
+    let mut item_display_buf = bytes::BytesMut::new();
+    item_display
+        .serialize(&mut qexed_packet::PacketWriter::new(&mut item_display_buf))
+        .unwrap();
+    assert_eq!(item_display_buf[0], 4);
+
+    let recipe = round_trip(
+        qexed_protocol::to_client::play::recipe_book_add::RecipeBookAdd {
+            entries: vec![qexed_protocol::to_client::play::recipe_book_add::Recipes {
+                recipe: qexed_packet::net_types::VarInt(0),
+                display: qexed_protocol::types::RecipeDisplay::MinecraftCraftingShapeless(
+                    qexed_protocol::types::minecraft::CraftingShapeless {
+                        ingredients: vec![item_display.clone()],
+                        result: qexed_protocol::types::SlotDisplay::ItemStack(
+                            qexed_protocol::types::slot_display_types::minecraft::ItemStack {
+                                item_stack: qexed_protocol::types::Slot {
+                                    item_count: qexed_packet::net_types::VarInt(1),
+                                    item_id: Some(qexed_packet::net_types::VarInt(36)),
+                                    number_of_components_to_add: Some(
+                                        qexed_packet::net_types::VarInt(0),
+                                    ),
+                                    number_of_components_to_remove: Some(
+                                        qexed_packet::net_types::VarInt(0),
+                                    ),
+                                    components_to_add: None,
+                                    components_to_remove: None,
+                                },
+                            },
+                        ),
+                        crafting_station: qexed_protocol::types::SlotDisplay::Empty,
+                    },
+                ),
+                group: qexed_packet::net_types::VarInt(0),
+                category: qexed_packet::net_types::VarInt(0),
+                ingredients: Some(vec![qexed_protocol::types::IDSet {
+                    r#type: qexed_packet::net_types::VarInt(2),
+                    tag_name: None,
+                    ids: Some(vec![qexed_packet::net_types::VarInt(36)]),
+                }]),
+                flags: 0,
+            }],
+            replace: true,
+        },
+    );
+
+    assert!(recipe.replace);
+    assert_eq!(recipe.entries.len(), 1);
+
+    let update_recipes = round_trip(
+        qexed_protocol::to_client::play::update_recipes::UpdateRecipes {
+            item_sets: vec![
+                qexed_protocol::to_client::play::update_recipes::RecipePropertySetEntry {
+                    key: "minecraft:furnace_input".to_string(),
+                    items: Vec::new(),
+                },
+            ],
+            stonecutter_recipes: Vec::new(),
+        },
+    );
+    assert_eq!(update_recipes.item_sets[0].key, "minecraft:furnace_input");
+}
+
+fn round_trip<T>(packet: T) -> T
+where
+    T: qexed_packet::Packet,
+{
+    let mut buf = bytes::BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+    packet.serialize(&mut writer).unwrap();
+
+    let mut bytes = buf.freeze();
+    let mut reader = qexed_packet::PacketReader::new(&mut bytes);
+    let mut decoded = T::default();
+    decoded.deserialize(&mut reader).unwrap();
+    decoded
 }
 
 fn text_component(text: &str) -> qexed_protocol::types::TextComponent {

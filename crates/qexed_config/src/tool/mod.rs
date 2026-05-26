@@ -6,6 +6,12 @@ use crate::build;
 
 const SENSITIVE_DISPLAY_VALUE: &str = "<stored in .secrets>";
 
+#[derive(Debug, Clone, Copy)]
+pub struct SplitConfigFile {
+    pub file_name: &'static str,
+    pub root_path: &'static str,
+}
+
 // ========================
 // AutoDoc 元数据
 // ========================
@@ -51,6 +57,10 @@ pub trait AppConfigTrait:
     const PATH: &'static str;
     const NAME: &'static str;
 
+    fn split_config_files() -> &'static [SplitConfigFile] {
+        &[]
+    }
+
     fn load_or_create_default(
         lang: Option<String>,
         enable_auto_doc: Option<bool>,
@@ -76,10 +86,17 @@ pub trait AppConfigTrait:
         let final_path = build_safe_path(&base_dir, Self::PATH)?;
         let path = final_path.join(Self::NAME).with_extension("toml");
         let secrets_path = secrets_path_for(&path)?;
+        let split_dir = split_dir_for(&path)?;
 
         // ----- 文件不存在：创建全新配置 -----
         if !path.exists() {
-            return Self::create_new_config(&path, &secrets_path, lang, enable_auto_doc);
+            return Self::create_new_config(
+                &path,
+                &secrets_path,
+                &split_dir,
+                lang,
+                enable_auto_doc,
+            );
         }
 
         // ===== 文件存在：原地更新 =====
@@ -90,6 +107,7 @@ pub trait AppConfigTrait:
             .with_context(|| "TOML 格式错误")?;
 
         // 1. 提取当前文件中的 AutoDoc 元数据
+        overlay_split_config_files::<Self>(&mut doc, &split_dir)?;
         let file_auto_doc = extract_auto_doc(&doc);
         let current_auto_doc = AutoDocConfig::default();
 
@@ -196,11 +214,7 @@ pub trait AppConfigTrait:
         ensure_or_update_doc_header(&mut doc, &effective_lang);
 
         // 7. ✅ 写回文件
-        let new_content = doc.to_string();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&path, &new_content)?;
+        write_config_documents::<Self>(&doc, &path, &split_dir)?;
 
         // 8. 反序列化
         let clean_doc = remove_auto_doc_fields(&doc);
@@ -216,6 +230,7 @@ pub trait AppConfigTrait:
     fn create_new_config(
         path: &std::path::Path,
         secrets_path: &std::path::Path,
+        split_dir: &std::path::Path,
         lang: Option<String>,
         enable_auto_doc: Option<bool>,
     ) -> Result<Self> {
@@ -322,7 +337,7 @@ pub trait AppConfigTrait:
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, doc.to_string())?;
+        write_config_documents::<Self>(&doc, path, split_dir)?;
         write_secrets_doc(secrets_path, &secrets_doc)?;
         Ok(config)
     }
@@ -356,6 +371,118 @@ fn secrets_path_for(path: &std::path::Path) -> Result<std::path::PathBuf> {
         .unwrap_or_else(|| std::path::Path::new("."))
         .join(".secrets")
         .join(file_name))
+}
+
+fn split_dir_for(path: &std::path::Path) -> Result<std::path::PathBuf> {
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "config path has no valid file stem",
+            )
+        })?;
+    Ok(path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(format!("{stem}.d")))
+}
+
+fn sync_split_config_files<T: AppConfigTrait>(
+    doc: &DocumentMut,
+    split_dir: &std::path::Path,
+) -> Result<()> {
+    let split_files = T::split_config_files();
+    if split_files.is_empty() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(split_dir)?;
+    for split_file in split_files {
+        let file_path = safe_split_file_path(split_dir, split_file.file_name)?;
+        let Some(item) = get_item_by_dotted_path(doc, split_file.root_path) else {
+            continue;
+        };
+
+        let mut split_doc = DocumentMut::new();
+        set_item_by_dotted_path(&mut split_doc, split_file.root_path, item.clone())?;
+        prune_nested_split_config_items::<T>(&mut split_doc, split_file.root_path);
+        std::fs::write(&file_path, split_doc.to_string())
+            .with_context(|| format!("无法写入拆分配置文件 {}", file_path.display()))?;
+    }
+
+    Ok(())
+}
+
+fn write_config_documents<T: AppConfigTrait>(
+    doc: &DocumentMut,
+    path: &std::path::Path,
+    split_dir: &std::path::Path,
+) -> Result<()> {
+    let mut main_doc = doc.clone();
+    sync_split_config_files::<T>(&main_doc, split_dir)?;
+    prune_split_config_items::<T>(&mut main_doc);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, main_doc.to_string())?;
+    Ok(())
+}
+
+fn overlay_split_config_files<T: AppConfigTrait>(
+    doc: &mut DocumentMut,
+    split_dir: &std::path::Path,
+) -> Result<()> {
+    for split_file in T::split_config_files() {
+        let file_path = safe_split_file_path(split_dir, split_file.file_name)?;
+        if !file_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&file_path)
+            .with_context(|| format!("无法读取拆分配置文件 {}", file_path.display()))?;
+        let split_doc = content
+            .parse::<DocumentMut>()
+            .with_context(|| format!("拆分配置文件 TOML 格式错误: {}", file_path.display()))?;
+        overlay_config_items(doc.as_item_mut(), split_doc.as_item());
+    }
+
+    Ok(())
+}
+
+fn prune_split_config_items<T: AppConfigTrait>(doc: &mut DocumentMut) {
+    for split_file in T::split_config_files() {
+        let _ = take_item_by_dotted_path(doc, split_file.root_path);
+    }
+}
+
+fn prune_nested_split_config_items<T: AppConfigTrait>(doc: &mut DocumentMut, root_path: &str) {
+    let child_prefix = format!("{root_path}.");
+    for split_file in T::split_config_files() {
+        if split_file.root_path.starts_with(&child_prefix) {
+            let _ = take_item_by_dotted_path(doc, split_file.root_path);
+        }
+    }
+}
+
+fn safe_split_file_path(
+    split_dir: &std::path::Path,
+    file_name: &str,
+) -> Result<std::path::PathBuf> {
+    let file_path = std::path::Path::new(file_name);
+    if file_path.components().count() != 1
+        || file_path.extension().and_then(|ext| ext.to_str()) != Some("toml")
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid split config file name: {file_name}"),
+        )
+        .into());
+    }
+
+    Ok(split_dir.join(file_path))
 }
 
 fn read_secrets_doc(path: &std::path::Path) -> Result<DocumentMut> {
@@ -524,6 +651,111 @@ fn merge_missing_default_items(target: &mut Item, defaults: &Item) {
             }
         }
         _ => {}
+    }
+}
+
+fn overlay_config_items(target: &mut Item, source: &Item) {
+    match (target, source) {
+        (Item::Table(target_table), Item::Table(source_table)) => {
+            overlay_config_table_items(target_table, source_table);
+        }
+        (Item::Table(target_table), Item::Value(Value::InlineTable(source_table))) => {
+            overlay_config_table_from_inline_table(target_table, source_table);
+        }
+        (Item::Value(Value::InlineTable(target_table)), Item::Table(source_table)) => {
+            overlay_config_inline_table_from_table(target_table, source_table);
+        }
+        (
+            Item::Value(Value::InlineTable(target_table)),
+            Item::Value(Value::InlineTable(source_table)),
+        ) => {
+            overlay_config_inline_table_items(target_table, source_table);
+        }
+        (target_item, source_item) => {
+            *target_item = source_item.clone();
+        }
+    }
+}
+
+fn overlay_config_table_items(
+    target_table: &mut toml_edit::Table,
+    source_table: &toml_edit::Table,
+) {
+    for (key, source_item) in source_table.iter() {
+        if key.starts_with("auto_doc_") {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_item) => overlay_config_items(target_item, source_item),
+            None => {
+                target_table.insert(key, source_item.clone());
+            }
+        }
+    }
+}
+
+fn overlay_config_table_from_inline_table(
+    target_table: &mut toml_edit::Table,
+    source_table: &toml_edit::InlineTable,
+) {
+    for (key, source_value) in source_table.iter() {
+        match target_table.get_mut(key) {
+            Some(target_item) => {
+                let source_item = Item::Value(source_value.clone());
+                overlay_config_items(target_item, &source_item);
+            }
+            None => {
+                target_table.insert(key, Item::Value(source_value.clone()));
+            }
+        }
+    }
+}
+
+fn overlay_config_inline_table_from_table(
+    target_table: &mut toml_edit::InlineTable,
+    source_table: &toml_edit::Table,
+) {
+    for (key, source_item) in source_table.iter() {
+        if key.starts_with("auto_doc_") {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_value) => {
+                let mut target_item = Item::Value(target_value.clone());
+                overlay_config_items(&mut target_item, source_item);
+                if let Some(value) = default_item_to_value(&target_item) {
+                    *target_value = value;
+                }
+            }
+            None => {
+                if let Some(source_value) = default_item_to_value(source_item) {
+                    target_table.insert(key, source_value);
+                }
+            }
+        }
+    }
+}
+
+fn overlay_config_inline_table_items(
+    target_table: &mut toml_edit::InlineTable,
+    source_table: &toml_edit::InlineTable,
+) {
+    for (key, source_value) in source_table.iter() {
+        match target_table.get_mut(key) {
+            Some(target_value) => {
+                let mut target_item = Item::Value(target_value.clone());
+                let source_item = Item::Value(source_value.clone());
+                overlay_config_items(&mut target_item, &source_item);
+                if let Some(value) = default_item_to_value(&target_item) {
+                    *target_value = value;
+                }
+            }
+            None => {
+                target_table.insert(key, source_value.clone());
+            }
+        }
     }
 }
 

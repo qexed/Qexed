@@ -256,6 +256,53 @@ fn noise_chunk_root(chunk: &NoiseChunkBlocks, _biome: &str) -> Tag {
     ])
 }
 
+fn append_block_entities_to_chunk_root(root: &mut Tag, chunk: &NoiseChunkBlocks) {
+    let Tag::Compound(fields) = root else {
+        return;
+    };
+    let mut fields = (**fields).clone();
+    let block_entities = chunk
+        .block_entities
+        .iter()
+        .map(block_entity_tag)
+        .collect::<Vec<_>>();
+    fields.insert(
+        "block_entities".to_string(),
+        Tag::List(
+            ListHeader {
+                tag_id: tag_id::COMPOUND,
+                length: block_entities.len() as i32,
+            },
+            Arc::from(block_entities),
+        ),
+    );
+    *root = Tag::Compound(Arc::new(fields));
+}
+
+fn block_entity_tag(entity: &GeneratedBlockEntity) -> Tag {
+    let mut fields = match &entity.nbt {
+        Tag::Compound(fields) => (**fields).clone(),
+        _ => HashMap::new(),
+    };
+    fields.insert(
+        "id".to_string(),
+        Tag::String(Arc::from(block_entity_type_name(entity.entity_type))),
+    );
+    fields.insert("x".to_string(), Tag::Int(entity.position.0));
+    fields.insert("y".to_string(), Tag::Int(entity.position.1));
+    fields.insert("z".to_string(), Tag::Int(entity.position.2));
+    Tag::Compound(Arc::new(fields))
+}
+
+fn block_entity_type_name(entity_type: i32) -> &'static str {
+    match entity_type {
+        CHEST_BLOCK_ENTITY_TYPE_ID => "minecraft:chest",
+        MOB_SPAWNER_BLOCK_ENTITY_TYPE_ID => "minecraft:mob_spawner",
+        BEEHIVE_BLOCK_ENTITY_TYPE_ID => "minecraft:beehive",
+        _ => "minecraft:chest",
+    }
+}
+
 fn sections_tag(layers: &[FlatLayer], biome: &str) -> Tag {
     let mut sections = Vec::new();
     for section_y in WORLD_MIN_SECTION_Y..WORLD_MIN_SECTION_Y + section_count() {

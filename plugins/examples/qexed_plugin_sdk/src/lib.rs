@@ -48,6 +48,18 @@ pub fn log(message: &str) {
     }
 }
 
+pub fn response_ptr_len(response: &str) -> i64 {
+    let len = response.len() as i32;
+    let ptr = alloc(len);
+    if ptr <= 0 || len <= 0 {
+        return 0;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(response.as_ptr(), ptr as *mut u8, len as usize);
+    }
+    ((ptr as i64) << 32) | (len as u32 as i64)
+}
+
 pub unsafe fn payload_str<'a>(ptr: i32, len: i32) -> Option<&'a str> {
     if ptr < 0 || len < 0 {
         return None;

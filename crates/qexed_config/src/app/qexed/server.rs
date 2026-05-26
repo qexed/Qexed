@@ -91,6 +91,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.entities", sub)]
     pub entities: Entities,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.scoreboard", sub)]
+    pub scoreboard: Scoreboard,
+
     #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
@@ -122,10 +126,49 @@ impl Default for Server {
             permissions: Permissions::default(),
             resource_pack: ResourcePack::default(),
             entities: Entities::default(),
+            scoreboard: Scoreboard::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct Scoreboard {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.scoreboard.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_scoreboard_objective")]
+    #[AutoDoc(key = "config.qexed.server.scoreboard.objective")]
+    pub objective: String,
+
+    #[serde(default = "default_scoreboard_title")]
+    #[AutoDoc(key = "config.qexed.server.scoreboard.title")]
+    pub title: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.scoreboard.lines")]
+    pub lines: Vec<String>,
+}
+
+impl Default for Scoreboard {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            objective: default_scoreboard_objective(),
+            title: default_scoreboard_title(),
+            lines: Vec::new(),
+        }
+    }
+}
+
+fn default_scoreboard_objective() -> String {
+    "qexed".to_string()
+}
+
+fn default_scoreboard_title() -> String {
+    "Qexed".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
@@ -228,6 +271,7 @@ pub enum EntityKind {
     #[default]
     Entity,
     Npc,
+    Hologram,
 }
 
 fn default_entity_type() -> String {
@@ -1522,15 +1566,77 @@ entity_type = "minecraft:armor_stand"
 x = 3.0
 y = 64.0
 z = 4.0
+
+[[entities.list]]
+id = "welcome-title"
+kind = "hologram"
+name = "Welcome"
+x = 0.0
+y = 67.0
+z = 0.0
 "#,
         )
         .unwrap();
 
         assert!(server.entities.enable);
-        assert_eq!(server.entities.list.len(), 2);
+        assert_eq!(server.entities.list.len(), 3);
         assert_eq!(server.entities.list[0].kind, EntityKind::Npc);
         assert_eq!(server.entities.list[0].name, "Guide");
         assert_eq!(server.entities.list[1].kind, EntityKind::Entity);
         assert_eq!(server.entities.list[1].entity_type, "minecraft:armor_stand");
+        assert_eq!(server.entities.list[2].kind, EntityKind::Hologram);
+        assert_eq!(server.entities.list[2].name, "Welcome");
+    }
+
+    #[test]
+    fn parses_scoreboard_settings() {
+        let server: Server = toml::from_str(
+            r#"
+ip = "0.0.0.0:25565"
+online = false
+max_player = -1
+display_players = true
+online_mode = false
+network_compression_threshold = 256
+proxy = false
+proxy_protocol = "QTunnel"
+proxy_token = "secret"
+max_port_connections = 65535
+rate_limit_window_secs = 60
+rate_limit_max_attempts = 6
+motd = ["Welcome"]
+code_of_conduct = false
+favicon = ""
+
+[world]
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[world.spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+
+[scoreboard]
+enable = true
+objective = "qexed"
+title = "Qexed"
+lines = ["online", "world"]
+"#,
+        )
+        .unwrap();
+
+        assert!(server.scoreboard.enable);
+        assert_eq!(server.scoreboard.objective, "qexed");
+        assert_eq!(server.scoreboard.title, "Qexed");
+        assert_eq!(server.scoreboard.lines, vec!["online", "world"]);
     }
 }

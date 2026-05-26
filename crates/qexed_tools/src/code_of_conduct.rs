@@ -7,6 +7,8 @@ use std::{
 use anyhow::{Context, Result};
 use toml_edit::{DocumentMut, value};
 
+use crate::config_edit;
+
 const DIR_NAME: &str = "enable-code-of-conduct";
 
 pub const MINECRAFT_LANGUAGE_CODES: &[&str] = &[
@@ -98,7 +100,7 @@ pub fn language_files(path: impl AsRef<Path>) -> Result<Vec<String>> {
 }
 
 pub fn is_enabled(path: impl AsRef<Path>) -> Result<bool> {
-    let doc = read_config_doc(path.as_ref())?;
+    let (_, doc) = read_server_config_doc(path.as_ref())?;
     Ok(doc
         .get("server")
         .and_then(|server| server.get("code_of_conduct"))
@@ -111,12 +113,12 @@ pub fn is_enabled(path: impl AsRef<Path>) -> Result<bool> {
 
 pub fn set_enabled(path: impl AsRef<Path>, enabled: bool) -> Result<()> {
     let path = path.as_ref();
-    let mut doc = read_config_doc(path)?;
+    let (config_path, mut doc) = read_server_config_doc(path)?;
     let server = doc["server"]
         .as_table_mut()
         .context("配置文件缺少 [server] 表")?;
     server.insert("code_of_conduct", value(enabled));
-    fs::write(path, doc.to_string()).with_context(|| format!("无法写入配置文件 {}", path.display()))
+    config_edit::write_doc(&config_path, &doc)
 }
 
 pub fn default_language_for_config(path: impl AsRef<Path>) -> String {
@@ -145,16 +147,12 @@ pub fn normalize_language_file_name(language: &str) -> String {
     }
 }
 
-fn read_config_doc(path: &Path) -> Result<DocumentMut> {
-    let content =
-        fs::read_to_string(path).with_context(|| format!("无法读取配置文件 {}", path.display()))?;
-    content
-        .parse::<DocumentMut>()
-        .with_context(|| format!("配置文件不是合法 TOML: {}", path.display()))
+fn read_server_config_doc(path: &Path) -> Result<(PathBuf, DocumentMut)> {
+    config_edit::read_server_doc(path)
 }
 
 fn read_legacy_inline_text(path: &Path) -> Result<String> {
-    let doc = read_config_doc(path)?;
+    let (_, doc) = read_server_config_doc(path)?;
     Ok(doc
         .get("server")
         .and_then(|server| server.get("code_of_conduct"))
@@ -269,6 +267,28 @@ mod tests {
 
         assert!(!is_enabled(&path).unwrap());
         assert_eq!(read_language(&path, "en").unwrap(), "rules");
+    }
+
+    #[test]
+    fn toggles_split_server_config_when_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("qexed.toml");
+        let split_dir = dir.path().join("qexed.d");
+        fs::create_dir(&split_dir).unwrap();
+        fs::write(&path, "language = \"zh-CN\"\n").unwrap();
+        fs::write(
+            split_dir.join("server.toml"),
+            "[server]\ncode_of_conduct = false\n",
+        )
+        .unwrap();
+
+        set_enabled(&path, true).unwrap();
+
+        let main = fs::read_to_string(&path).unwrap();
+        let server = fs::read_to_string(split_dir.join("server.toml")).unwrap();
+        assert!(!main.contains("code_of_conduct"));
+        assert!(server.contains("code_of_conduct = true"));
+        assert!(is_enabled(&path).unwrap());
     }
 
     #[test]

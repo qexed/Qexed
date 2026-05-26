@@ -1,12 +1,8 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::OnceLock,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use bytes::BytesMut;
-use qexed_nbt::Tag;
+use qexed_nbt::{ListHeader, Tag, tag_id};
 use qexed_packet::{PacketCodec, PacketWriter, net_types::VarInt};
 use qexed_protocol::to_client::play::map_chunk::{
     Chunk, Heightmaps, LIGHT_ARRAY_BYTES, Light, LightArray, MapChunk,
@@ -19,13 +15,29 @@ use super::{
 };
 use crate::world::region::ChunkData;
 
+mod nbt;
+mod registry;
+
+use nbt::{
+    byte_array, compound, int_field, list_items, long_array, string_field, string_properties,
+};
+#[cfg(test)]
+pub(crate) use registry::default_block_state_id;
+#[allow(unused_imports)]
+pub(crate) use registry::{
+    BlockStateDefinition, block_state, block_state_entry, default_block_state,
+};
+use registry::{
+    biome_registry, block_state_registry, has_fluid, is_air_block, light_dampening,
+    normalize_identifier, state_key,
+};
+
 const MIN_SECTION_Y: i32 = -4;
 const BLOCK_ENTRY_COUNT: usize = 16 * 16 * 16;
 const BIOME_ENTRY_COUNT: usize = 4 * 4 * 4;
 const AIR_BLOCK_STATE_ID: i32 = 0;
 const PLAINS_BIOME_ID: i32 = 40;
-const BLOCKS_REPORT: &str = "assets/reports/blocks.json";
-const BIOME_REGISTRY_DIR: &str = "assets/decompiled_source/src/data/minecraft/worldgen/biome";
+const DATA_VERSION: i32 = 4790;
 
 #[cfg(test)]
 fn network_chunk_from_region(chunk_x: i32, chunk_z: i32, chunk: &ChunkData) -> Result<MapChunk> {
@@ -53,6 +65,49 @@ pub fn light_dampening_from_region(chunk: &ChunkData) -> Result<Vec<u8>> {
     let raw = chunk.decompress().context("decompress chunk nbt")?;
     let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
     light_dampening_from_nbt(&root)
+}
+
+pub fn block_state_at_from_region(
+    chunk: &ChunkData,
+    position: &qexed_packet::net_types::Position,
+) -> Result<Option<i32>> {
+    let raw = chunk.decompress().context("decompress chunk nbt")?;
+    let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
+    block_state_at_from_nbt(&root, position)
+}
+
+pub fn set_block_state_in_region(
+    chunk_x: i32,
+    chunk_z: i32,
+    existing: Option<&ChunkData>,
+    position: &qexed_packet::net_types::Position,
+    block_state: i32,
+    fallback_block_state: Option<i32>,
+) -> Result<ChunkData> {
+    let root = if let Some(existing) = existing {
+        let raw = existing.decompress().context("decompress chunk nbt")?;
+        let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
+        root
+    } else {
+        minimal_chunk_root(chunk_x, chunk_z)
+    };
+
+    let updated = set_block_state_in_nbt(
+        &root,
+        chunk_x,
+        chunk_z,
+        position,
+        block_state,
+        fallback_block_state,
+    )?;
+    let raw = qexed_nbt::to_vec("", &updated).context("serialize chunk nbt")?;
+    ChunkData::zlib(&raw).context("compress chunk nbt")
+}
+
+pub fn region_chunk_from_nbt(chunk_x: i32, chunk_z: i32, root: &Tag) -> Result<ChunkData> {
+    let root = normalized_chunk_root(root, chunk_x, chunk_z)?;
+    let raw = qexed_nbt::to_vec("", &root).context("serialize chunk nbt")?;
+    ChunkData::zlib(&raw).context("compress chunk nbt")
 }
 
 #[cfg(test)]
@@ -95,6 +150,90 @@ pub fn light_dampening_from_nbt(root: &Tag) -> Result<Vec<u8>> {
     let root = compound(root).context("chunk root is not a compound")?;
     let sections = sections_by_y(root);
     chunk_light_dampening(&sections)
+}
+
+pub fn block_state_at_from_nbt(
+    root: &Tag,
+    position: &qexed_packet::net_types::Position,
+) -> Result<Option<i32>> {
+    let root = compound(root).context("chunk root is not a compound")?;
+    let section_y = position.y.div_euclid(16);
+    let Some(section) = sections_by_y(root).get(&section_y).copied() else {
+        return Ok(None);
+    };
+    let values = block_values(section.get("block_states"))?;
+    let index = block_index(position);
+    let block = values
+        .blocks
+        .get(index)
+        .copied()
+        .context("block index out of section bounds")?;
+    let block_state = values
+        .global_ids
+        .get(index)
+        .copied()
+        .context("block index out of section bounds")?;
+    Ok((!block.is_air).then_some(block_state))
+}
+
+pub fn set_block_state_in_nbt(
+    root: &Tag,
+    chunk_x: i32,
+    chunk_z: i32,
+    position: &qexed_packet::net_types::Position,
+    block_state: i32,
+    fallback_block_state: Option<i32>,
+) -> Result<Tag> {
+    let mut root = compound(root)
+        .context("chunk root is not a compound")?
+        .clone();
+    root.insert("DataVersion".to_string(), Tag::Int(DATA_VERSION));
+    root.insert("xPos".to_string(), Tag::Int(chunk_x));
+    root.insert("yPos".to_string(), Tag::Int(MIN_SECTION_Y));
+    root.insert("zPos".to_string(), Tag::Int(chunk_z));
+
+    let section_y = position.y.div_euclid(16);
+    let mut sections = root
+        .get("sections")
+        .and_then(|tag| list_items(Some(tag)))
+        .map(|items| items.to_vec())
+        .unwrap_or_default();
+    let section_index = sections.iter().position(|section| {
+        compound(section).and_then(|fields| int_field(fields, "Y")) == Some(section_y)
+    });
+
+    let mut section = match section_index {
+        Some(index) => compound(&sections[index])
+            .with_context(|| format!("section y={section_y} is not a compound"))?
+            .clone(),
+        None => empty_section(
+            section_y,
+            fallback_block_state.unwrap_or(AIR_BLOCK_STATE_ID),
+        ),
+    };
+
+    let mut values = block_values(section.get("block_states"))?.global_ids;
+    values[block_index(position)] = block_state;
+    section.insert("block_states".to_string(), block_states_tag(&values)?);
+    section
+        .entry("biomes".to_string())
+        .or_insert_with(|| biome_states_tag("minecraft:plains"));
+
+    let section_tag = Tag::Compound(Arc::new(section));
+    if let Some(index) = section_index {
+        sections[index] = section_tag;
+    } else {
+        sections.push(section_tag);
+        sections.sort_by_key(|section| {
+            compound(section)
+                .and_then(|fields| int_field(fields, "Y"))
+                .unwrap_or(i32::MAX)
+        });
+    }
+    root.insert("sections".to_string(), list_tag(tag_id::COMPOUND, sections));
+    remove_block_entity_at(&mut root, position);
+
+    normalized_chunk_root(&Tag::Compound(Arc::new(root)), chunk_x, chunk_z)
 }
 
 fn chunk_section_bytes(sections: &HashMap<i32, &HashMap<String, Tag>>) -> Result<Vec<u8>> {
@@ -420,6 +559,75 @@ fn write_paletted_container(
     write_fixed_long_array(writer, &packed_values)
 }
 
+fn block_states_tag(global_ids: &[i32]) -> Result<Tag> {
+    if global_ids.len() != BLOCK_ENTRY_COUNT {
+        anyhow::bail!(
+            "invalid block state count: got {}, expected {}",
+            global_ids.len(),
+            BLOCK_ENTRY_COUNT
+        );
+    }
+
+    let (palette, local_values) = local_palette(global_ids);
+    let palette_tags = palette
+        .iter()
+        .map(|id| block_state_tag(*id))
+        .collect::<Vec<_>>();
+    let data = (palette.len() > 1)
+        .then(|| {
+            let bits = storage_bits(PaletteKind::Block, palette.len());
+            let local_values = local_values
+                .into_iter()
+                .map(|value| i32::try_from(value).context("palette index does not fit i32"))
+                .collect::<Result<Vec<_>>>()?;
+            pack_values(&local_values, bits)
+        })
+        .transpose()?
+        .map(|values| values.into_iter().map(|value| value as i64).collect());
+    Ok(paletted_container_tag(palette_tags, data))
+}
+
+fn block_state_tag(block_state: i32) -> Tag {
+    let state = block_state_entry(block_state);
+    let mut fields = HashMap::new();
+    fields.insert("Name".to_string(), Tag::String(Arc::from(state.name)));
+    if !state.properties.is_empty() {
+        fields.insert(
+            "Properties".to_string(),
+            Tag::Compound(Arc::new(
+                state
+                    .properties
+                    .into_iter()
+                    .map(|(name, value)| (name, Tag::String(Arc::from(value))))
+                    .collect(),
+            )),
+        );
+    }
+    Tag::Compound(Arc::new(fields))
+}
+
+fn biome_states_tag(biome: &str) -> Tag {
+    paletted_container_tag(vec![Tag::String(Arc::from(biome.to_string()))], None)
+}
+
+fn paletted_container_tag(palette: Vec<Tag>, data: Option<Vec<i64>>) -> Tag {
+    let mut fields = HashMap::new();
+    fields.insert(
+        "palette".to_string(),
+        Tag::List(
+            ListHeader {
+                tag_id: palette.first().map(Tag::tag_id).unwrap_or(tag_id::END),
+                length: palette.len() as i32,
+            },
+            Arc::from(palette),
+        ),
+    );
+    if let Some(data) = data {
+        fields.insert("data".to_string(), Tag::LongArray(Arc::from(data)));
+    }
+    Tag::Compound(Arc::new(fields))
+}
+
 fn local_palette(values: &[i32]) -> (Vec<i32>, Vec<usize>) {
     let mut palette = Vec::new();
     let mut index_by_value = HashMap::new();
@@ -515,6 +723,142 @@ fn heightmaps(root: &HashMap<String, Tag>) -> Vec<Heightmaps> {
     .collect()
 }
 
+fn minimal_chunk_root(chunk_x: i32, chunk_z: i32) -> Tag {
+    Tag::Compound(Arc::new(HashMap::from([
+        ("DataVersion".to_string(), Tag::Int(DATA_VERSION)),
+        ("xPos".to_string(), Tag::Int(chunk_x)),
+        ("yPos".to_string(), Tag::Int(MIN_SECTION_Y)),
+        ("zPos".to_string(), Tag::Int(chunk_z)),
+        ("LastUpdate".to_string(), Tag::Long(0)),
+        ("InhabitedTime".to_string(), Tag::Long(0)),
+        (
+            "Status".to_string(),
+            Tag::String(Arc::from("minecraft:full")),
+        ),
+        (
+            "sections".to_string(),
+            list_tag(tag_id::COMPOUND, Vec::new()),
+        ),
+        ("block_entities".to_string(), empty_compound_list()),
+        ("block_ticks".to_string(), empty_compound_list()),
+        ("fluid_ticks".to_string(), empty_compound_list()),
+        ("PostProcessing".to_string(), empty_list()),
+        ("Heightmaps".to_string(), empty_heightmaps_tag()),
+        ("structures".to_string(), empty_compound()),
+    ])))
+}
+
+fn normalized_chunk_root(root: &Tag, chunk_x: i32, chunk_z: i32) -> Result<Tag> {
+    let mut root = compound(root)
+        .context("chunk root is not a compound")?
+        .clone();
+    root.insert("DataVersion".to_string(), Tag::Int(DATA_VERSION));
+    root.insert("xPos".to_string(), Tag::Int(chunk_x));
+    root.insert("yPos".to_string(), Tag::Int(MIN_SECTION_Y));
+    root.insert("zPos".to_string(), Tag::Int(chunk_z));
+    root.entry("LastUpdate".to_string()).or_insert(Tag::Long(0));
+    root.entry("InhabitedTime".to_string())
+        .or_insert(Tag::Long(0));
+    root.entry("Status".to_string())
+        .or_insert_with(|| Tag::String(Arc::from("minecraft:full")));
+    root.entry("sections".to_string())
+        .or_insert_with(|| list_tag(tag_id::COMPOUND, Vec::new()));
+    root.entry("Heightmaps".to_string())
+        .or_insert_with(empty_heightmaps_tag);
+    root.entry("block_entities".to_string())
+        .or_insert_with(empty_compound_list);
+    root.entry("block_ticks".to_string())
+        .or_insert_with(empty_compound_list);
+    root.entry("fluid_ticks".to_string())
+        .or_insert_with(empty_compound_list);
+    root.entry("PostProcessing".to_string())
+        .or_insert_with(empty_list);
+    root.entry("structures".to_string())
+        .or_insert_with(empty_compound);
+    Ok(Tag::Compound(Arc::new(root)))
+}
+
+fn empty_section(section_y: i32, fallback_block_state: i32) -> HashMap<String, Tag> {
+    let values = vec![fallback_block_state; BLOCK_ENTRY_COUNT];
+    HashMap::from([
+        ("Y".to_string(), Tag::Byte(section_y as i8)),
+        (
+            "block_states".to_string(),
+            block_states_tag(&values).expect("fallback section block palette is valid"),
+        ),
+        ("biomes".to_string(), biome_states_tag("minecraft:plains")),
+    ])
+}
+
+fn empty_heightmaps_tag() -> Tag {
+    Tag::Compound(Arc::new(HashMap::from([
+        (
+            "WORLD_SURFACE".to_string(),
+            Tag::LongArray(Arc::from(vec![0_i64; 37])),
+        ),
+        (
+            "MOTION_BLOCKING".to_string(),
+            Tag::LongArray(Arc::from(vec![0_i64; 37])),
+        ),
+        (
+            "MOTION_BLOCKING_NO_LEAVES".to_string(),
+            Tag::LongArray(Arc::from(vec![0_i64; 37])),
+        ),
+    ])))
+}
+
+fn empty_compound() -> Tag {
+    Tag::Compound(Arc::new(HashMap::new()))
+}
+
+fn empty_compound_list() -> Tag {
+    list_tag(tag_id::COMPOUND, Vec::new())
+}
+
+fn empty_list() -> Tag {
+    list_tag(tag_id::END, Vec::new())
+}
+
+fn list_tag(tag_id: u8, items: Vec<Tag>) -> Tag {
+    Tag::List(
+        ListHeader {
+            tag_id,
+            length: items.len() as i32,
+        },
+        Arc::from(items),
+    )
+}
+
+fn remove_block_entity_at(
+    root: &mut HashMap<String, Tag>,
+    position: &qexed_packet::net_types::Position,
+) {
+    let Some(items) = root
+        .get("block_entities")
+        .and_then(|tag| list_items(Some(tag)))
+    else {
+        return;
+    };
+    let filtered = items
+        .iter()
+        .filter(|item| !block_entity_is_at(item, position))
+        .cloned()
+        .collect::<Vec<_>>();
+    root.insert(
+        "block_entities".to_string(),
+        list_tag(tag_id::COMPOUND, filtered),
+    );
+}
+
+fn block_entity_is_at(item: &Tag, position: &qexed_packet::net_types::Position) -> bool {
+    let Some(fields) = compound(item) else {
+        return false;
+    };
+    int_field(fields, "x") == Some(position.x)
+        && int_field(fields, "y") == Some(position.y)
+        && int_field(fields, "z") == Some(position.z)
+}
+
 fn sections_by_y(root: &HashMap<String, Tag>) -> HashMap<i32, &HashMap<String, Tag>> {
     let mut sections = HashMap::new();
     let Some(items) = list_items(root.get("sections")) else {
@@ -534,364 +878,11 @@ fn sections_by_y(root: &HashMap<String, Tag>) -> HashMap<i32, &HashMap<String, T
     sections
 }
 
-fn block_state_registry() -> &'static BlockStateRegistry {
-    static REGISTRY: OnceLock<BlockStateRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        load_block_state_registry().unwrap_or_else(|err| {
-            log::warn!("failed to load block state registry report: {err:#}");
-            BlockStateRegistry::fallback()
-        })
-    })
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BlockStateDefinition {
-    pub id: i32,
-    pub properties: Vec<(String, String)>,
-}
-
-pub(crate) fn default_block_state(name: &str) -> BlockStateDefinition {
-    let name = normalize_identifier(name);
-    block_state_registry()
-        .default_state_by_name
-        .get(&name)
-        .cloned()
-        .unwrap_or_else(|| {
-            log::warn!("unknown default block state, using air: {name}");
-            BlockStateDefinition {
-                id: AIR_BLOCK_STATE_ID,
-                properties: Vec::new(),
-            }
-        })
-}
-
-pub(crate) fn block_state(name: &str, properties: &[(String, String)]) -> BlockStateDefinition {
-    let name = normalize_identifier(name);
-    let key = state_key(&name, properties);
-    block_state_registry()
-        .id_by_state
-        .get(&key)
-        .map(|id| BlockStateDefinition {
-            id: *id,
-            properties: properties.to_vec(),
-        })
-        .unwrap_or_else(|| {
-            log::warn!("unknown block state, using default state: {key}");
-            default_block_state(&name)
-        })
-}
-
-#[cfg(test)]
-pub(crate) fn default_block_state_id(name: &str) -> i32 {
-    default_block_state(name).id
-}
-
-fn biome_registry() -> &'static BiomeRegistry {
-    static REGISTRY: OnceLock<BiomeRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        load_biome_registry().unwrap_or_else(|err| {
-            log::warn!("failed to load biome registry from assets: {err:#}");
-            BiomeRegistry::fallback()
-        })
-    })
-}
-
-fn load_block_state_registry() -> Result<BlockStateRegistry> {
-    let path = workspace_root().join(BLOCKS_REPORT);
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("read block report {}", path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    let blocks = value
-        .as_object()
-        .with_context(|| format!("block report root is not object: {}", path.display()))?;
-
-    let mut id_by_state = HashMap::new();
-    let mut default_state_by_name = HashMap::new();
-    let mut metadata_by_name = HashMap::new();
-    let mut max_id = AIR_BLOCK_STATE_ID;
-    for (name, block) in blocks {
-        let block_type = block
-            .get("definition")
-            .and_then(|definition| definition.get("type"))
-            .and_then(serde_json::Value::as_str)
-            .map(normalize_identifier)
-            .unwrap_or_else(|| "minecraft:block".to_string());
-        metadata_by_name.insert(name.clone(), BlockMetadata { block_type });
-
-        let Some(states) = block.get("states").and_then(serde_json::Value::as_array) else {
-            continue;
-        };
-
-        for state in states {
-            let Some(id) = state.get("id").and_then(serde_json::Value::as_i64) else {
-                continue;
-            };
-            let Ok(id) = i32::try_from(id) else {
-                continue;
-            };
-            let properties = json_string_properties(state.get("properties"));
-            id_by_state.insert(state_key(name, &properties), id);
-            if state
-                .get("default")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-            {
-                default_state_by_name.insert(
-                    name.clone(),
-                    BlockStateDefinition {
-                        id,
-                        properties: properties.clone(),
-                    },
-                );
-            }
-            max_id = max_id.max(id);
-        }
-
-        if !default_state_by_name.contains_key(name)
-            && let Some(state) = states.first()
-            && let Some(id) = state.get("id").and_then(serde_json::Value::as_i64)
-            && let Ok(id) = i32::try_from(id)
-        {
-            default_state_by_name.insert(
-                name.clone(),
-                BlockStateDefinition {
-                    id,
-                    properties: json_string_properties(state.get("properties")),
-                },
-            );
-        }
-    }
-
-    if id_by_state.is_empty() {
-        anyhow::bail!("block report contains no block states");
-    }
-
-    Ok(BlockStateRegistry {
-        id_by_state,
-        default_state_by_name,
-        metadata_by_name,
-        global_bits: ceil_log2((max_id as usize) + 1).max(1),
-    })
-}
-
-fn load_biome_registry() -> Result<BiomeRegistry> {
-    let root = workspace_root().join(BIOME_REGISTRY_DIR);
-    let mut files = json_files(&root)?;
-    files.sort();
-
-    let mut id_by_name = HashMap::new();
-    for (index, path) in files.iter().enumerate() {
-        let id = entry_id_from_path(&root, path)?;
-        id_by_name.insert(id, index as i32);
-    }
-
-    if id_by_name.is_empty() {
-        anyhow::bail!("biome registry contains no entries");
-    }
-
-    Ok(BiomeRegistry {
-        global_bits: ceil_log2(id_by_name.len()).max(1),
-        id_by_name,
-    })
-}
-
-fn json_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    collect_json_files(root, &mut files)?;
-    Ok(files)
-}
-
-fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in std::fs::read_dir(dir).with_context(|| format!("read dir {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(&path, files)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn entry_id_from_path(root: &Path, path: &Path) -> Result<String> {
-    let id = path
-        .strip_prefix(root)?
-        .with_extension("")
-        .to_string_lossy()
-        .replace('\\', "/");
-    Ok(format!("minecraft:{id}"))
-}
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn json_string_properties(value: Option<&serde_json::Value>) -> Vec<(String, String)> {
-    let Some(properties) = value.and_then(serde_json::Value::as_object) else {
-        return Vec::new();
-    };
-
-    let mut properties = properties
-        .iter()
-        .filter_map(|(key, value)| {
-            value
-                .as_str()
-                .map(|value| (key.to_string(), value.to_string()))
-        })
-        .collect::<Vec<_>>();
-    properties.sort_by(|left, right| left.0.cmp(&right.0));
-    properties
-}
-
-fn string_properties(value: Option<&Tag>) -> Vec<(String, String)> {
-    let Some(properties) = value.and_then(compound) else {
-        return Vec::new();
-    };
-
-    let mut properties = properties
-        .iter()
-        .filter_map(|(key, value)| match value {
-            Tag::String(value) => Some((key.clone(), value.to_string())),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    properties.sort_by(|left, right| left.0.cmp(&right.0));
-    properties
-}
-
-fn state_key(name: &str, properties: &[(String, String)]) -> String {
-    let mut key = normalize_identifier(name);
-    key.push('|');
-    for (name, value) in properties {
-        key.push_str(name);
-        key.push('=');
-        key.push_str(value);
-        key.push(';');
-    }
-    key
-}
-
-fn normalize_identifier(value: &str) -> String {
-    if value.contains(':') {
-        value.to_string()
-    } else {
-        format!("minecraft:{value}")
-    }
-}
-
-fn is_air_block(name: &str) -> bool {
-    matches!(
-        name,
-        "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
-    )
-}
-
-fn has_fluid(name: &str, properties: &[(String, String)]) -> bool {
-    name == "minecraft:water"
-        || name == "minecraft:lava"
-        || is_always_water_filled_block(name)
-        || properties
-            .iter()
-            .any(|(key, value)| key == "waterlogged" && value == "true")
-}
-
-fn is_always_water_filled_block(name: &str) -> bool {
-    matches!(
-        name,
-        "minecraft:bubble_column"
-            | "minecraft:kelp"
-            | "minecraft:kelp_plant"
-            | "minecraft:seagrass"
-            | "minecraft:tall_seagrass"
-    )
-}
-
-fn light_dampening(name: &str, block_type: Option<&str>, has_fluid: bool) -> u8 {
-    if has_fluid || is_one_light_dampening_block_type(block_type) {
-        1
-    } else if is_air_block(name) || is_zero_light_dampening_block_type(block_type, name) {
-        0
-    } else {
-        15
-    }
-}
-
-fn is_one_light_dampening_block_type(block_type: Option<&str>) -> bool {
-    matches!(
-        block_type,
-        Some(
-            "minecraft:liquid"
-                | "minecraft:mangrove_leaves"
-                | "minecraft:tinted_particle_leaves"
-                | "minecraft:untinted_particle_leaves"
-        )
-    )
-}
-
-fn is_zero_light_dampening_block_type(block_type: Option<&str>, name: &str) -> bool {
-    matches!(
-        block_type,
-        Some(
-            "minecraft:air"
-                | "minecraft:barrier"
-                | "minecraft:bamboo_sapling"
-                | "minecraft:bamboo_stalk"
-                | "minecraft:big_dripleaf"
-                | "minecraft:big_dripleaf_stem"
-                | "minecraft:button"
-                | "minecraft:cave_vines"
-                | "minecraft:cave_vines_plant"
-                | "minecraft:cross_collision"
-                | "minecraft:door"
-                | "minecraft:end_portal"
-                | "minecraft:fence"
-                | "minecraft:fence_gate"
-                | "minecraft:fire"
-                | "minecraft:flower_pot"
-                | "minecraft:glow_lichen"
-                | "minecraft:hanging_moss"
-                | "minecraft:iron_bars"
-                | "minecraft:ladder"
-                | "minecraft:light"
-                | "minecraft:mossy_carpet"
-                | "minecraft:nether_sprouts"
-                | "minecraft:pressure_plate"
-                | "minecraft:seagrass"
-                | "minecraft:sea_pickle"
-                | "minecraft:short_dry_grass"
-                | "minecraft:small_dripleaf"
-                | "minecraft:snow_layer"
-                | "minecraft:tall_dry_grass"
-                | "minecraft:tall_grass"
-                | "minecraft:torch"
-                | "minecraft:transparent"
-                | "minecraft:trapdoor"
-                | "minecraft:twisting_vines"
-                | "minecraft:twisting_vines_plant"
-                | "minecraft:vine"
-                | "minecraft:void"
-                | "minecraft:wall_banner"
-                | "minecraft:wall_hanging_sign"
-                | "minecraft:wall_sign"
-                | "minecraft:wall_skull"
-                | "minecraft:wall_torch"
-                | "minecraft:weeping_vines"
-                | "minecraft:weeping_vines_plant"
-        )
-    ) || matches!(
-        name,
-        "minecraft:structure_void"
-            | "minecraft:glass"
-            | "minecraft:ice"
-            | "minecraft:packed_ice"
-            | "minecraft:blue_ice"
-    )
+fn block_index(position: &qexed_packet::net_types::Position) -> usize {
+    let local_x = position.x.rem_euclid(16) as usize;
+    let local_y = position.y.rem_euclid(16) as usize;
+    let local_z = position.z.rem_euclid(16) as usize;
+    (local_y * 16 + local_z) * 16 + local_x
 }
 
 fn default_id(kind: PaletteKind) -> i32 {
@@ -906,51 +897,6 @@ fn ceil_log2(count: usize) -> usize {
         0
     } else {
         usize::BITS as usize - (count - 1).leading_zeros() as usize
-    }
-}
-
-fn compound(tag: &Tag) -> Option<&HashMap<String, Tag>> {
-    match tag {
-        Tag::Compound(compound) => Some(compound),
-        _ => None,
-    }
-}
-
-fn list_items(tag: Option<&Tag>) -> Option<&[Tag]> {
-    match tag {
-        Some(Tag::List(_, items)) => Some(items),
-        _ => None,
-    }
-}
-
-fn long_array(tag: &Tag) -> Option<&[i64]> {
-    match tag {
-        Tag::LongArray(values) => Some(values),
-        _ => None,
-    }
-}
-
-fn byte_array(tag: &Tag) -> Option<&[i8]> {
-    match tag {
-        Tag::ByteArray(values) => Some(values),
-        _ => None,
-    }
-}
-
-fn string_field<'a>(compound: &'a HashMap<String, Tag>, name: &str) -> Option<&'a str> {
-    match compound.get(name) {
-        Some(Tag::String(value)) => Some(value),
-        _ => None,
-    }
-}
-
-fn int_field(compound: &HashMap<String, Tag>, name: &str) -> Option<i32> {
-    match compound.get(name) {
-        Some(Tag::Byte(value)) => Some(i32::from(*value)),
-        Some(Tag::Short(value)) => Some(i32::from(*value)),
-        Some(Tag::Int(value)) => Some(*value),
-        Some(Tag::Long(value)) => i32::try_from(*value).ok(),
-        _ => None,
     }
 }
 
@@ -997,391 +943,5 @@ impl BlockPaletteEntry {
     }
 }
 
-struct BlockStateRegistry {
-    id_by_state: HashMap<String, i32>,
-    default_state_by_name: HashMap<String, BlockStateDefinition>,
-    metadata_by_name: HashMap<String, BlockMetadata>,
-    global_bits: usize,
-}
-
-struct BlockMetadata {
-    block_type: String,
-}
-
-impl BlockStateRegistry {
-    fn fallback() -> Self {
-        let mut id_by_state = HashMap::new();
-        id_by_state.insert("minecraft:air|".to_string(), AIR_BLOCK_STATE_ID);
-        id_by_state.insert("minecraft:stone|".to_string(), 1);
-        id_by_state.insert("minecraft:water|level=0;".to_string(), 86);
-        id_by_state.insert("minecraft:lava|level=0;".to_string(), 102);
-        let mut default_state_by_name = HashMap::new();
-        default_state_by_name.insert(
-            "minecraft:air".to_string(),
-            BlockStateDefinition {
-                id: AIR_BLOCK_STATE_ID,
-                properties: Vec::new(),
-            },
-        );
-        default_state_by_name.insert(
-            "minecraft:stone".to_string(),
-            BlockStateDefinition {
-                id: 1,
-                properties: Vec::new(),
-            },
-        );
-        default_state_by_name.insert(
-            "minecraft:water".to_string(),
-            BlockStateDefinition {
-                id: 86,
-                properties: vec![("level".to_string(), "0".to_string())],
-            },
-        );
-        default_state_by_name.insert(
-            "minecraft:lava".to_string(),
-            BlockStateDefinition {
-                id: 102,
-                properties: vec![("level".to_string(), "0".to_string())],
-            },
-        );
-        let mut metadata_by_name = HashMap::new();
-        metadata_by_name.insert(
-            "minecraft:air".to_string(),
-            BlockMetadata {
-                block_type: "minecraft:air".to_string(),
-            },
-        );
-        metadata_by_name.insert(
-            "minecraft:stone".to_string(),
-            BlockMetadata {
-                block_type: "minecraft:block".to_string(),
-            },
-        );
-        metadata_by_name.insert(
-            "minecraft:water".to_string(),
-            BlockMetadata {
-                block_type: "minecraft:liquid".to_string(),
-            },
-        );
-        metadata_by_name.insert(
-            "minecraft:lava".to_string(),
-            BlockMetadata {
-                block_type: "minecraft:liquid".to_string(),
-            },
-        );
-        Self {
-            id_by_state,
-            default_state_by_name,
-            metadata_by_name,
-            global_bits: 14,
-        }
-    }
-}
-
-struct BiomeRegistry {
-    id_by_name: HashMap<String, i32>,
-    global_bits: usize,
-}
-
-impl BiomeRegistry {
-    fn fallback() -> Self {
-        let mut id_by_name = HashMap::new();
-        id_by_name.insert("minecraft:plains".to_string(), PLAINS_BIOME_ID);
-        Self {
-            id_by_name,
-            global_bits: 6,
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use qexed_nbt::{ListHeader, tag_id};
-    use qexed_packet::Packet;
-
-    use super::*;
-
-    #[test]
-    fn converts_single_value_saved_section() {
-        let root = chunk_root(vec![section(
-            0,
-            paletted_container(vec![block_state("minecraft:stone", &[])], None),
-            paletted_container(vec![string("minecraft:plains")], None),
-        )]);
-
-        let packet = network_chunk_from_nbt(0, 0, &root).unwrap();
-        let section_offset = ((0 - MIN_SECTION_Y) as usize) * 8;
-
-        assert_eq!(packet.chunk_x, 0);
-        assert_eq!(packet.chunk_z, 0);
-        assert_eq!(
-            &packet.data.data[section_offset..section_offset + 4],
-            &[0x10, 0x00, 0x00, 0x00]
-        );
-    }
-
-    #[test]
-    fn converts_multi_value_saved_section() {
-        let mut values = vec![0_i32; BLOCK_ENTRY_COUNT];
-        values[0] = 1;
-        let data = pack_values(&values, 4)
-            .unwrap()
-            .into_iter()
-            .map(|value| value as i64)
-            .collect();
-        let root = chunk_root(vec![section(
-            0,
-            paletted_container(
-                vec![
-                    block_state("minecraft:air", &[]),
-                    block_state("minecraft:stone", &[]),
-                ],
-                Some(data),
-            ),
-            paletted_container(vec![string("minecraft:plains")], None),
-        )]);
-
-        let packet = network_chunk_from_nbt(0, 0, &root).unwrap();
-        let section_offset = 4 * 8;
-
-        assert!(packet.data.data.len() > super::section_count() as usize * 8);
-        assert_eq!(
-            &packet.data.data[section_offset..section_offset + 4],
-            &[0x00, 0x01, 0x00, 0x00]
-        );
-    }
-
-    #[test]
-    fn converts_region_chunk_payload() {
-        let root = chunk_root(vec![section(
-            0,
-            paletted_container(vec![block_state("minecraft:stone", &[])], None),
-            paletted_container(vec![string("minecraft:plains")], None),
-        )]);
-        let raw = qexed_nbt::to_vec("", &root).unwrap();
-        let chunk = ChunkData::zlib(&raw).unwrap();
-        let packet = network_chunk_from_region(0, 0, &chunk).unwrap();
-        let mut payload = bytes::BytesMut::new();
-        let mut writer = qexed_packet::PacketWriter::new(&mut payload);
-
-        packet.serialize(&mut writer).unwrap();
-
-        assert!(!payload.is_empty());
-    }
-
-    #[test]
-    fn water_plant_counts_as_fluid_and_light_dampening() {
-        let root = chunk_root(vec![section(
-            0,
-            paletted_container(vec![block_state("minecraft:seagrass", &[])], None),
-            paletted_container(vec![string("minecraft:plains")], None),
-        )]);
-
-        let (packet, dampening) =
-            network_chunk_and_light_dampening_from_nbt(0, 0, &root, WorldLightAlgorithm::Fast)
-                .unwrap();
-        let section_offset = ((0 - MIN_SECTION_Y) as usize) * 8;
-        let world_y = 0;
-
-        assert_eq!(
-            &packet.data.data[section_offset..section_offset + 4],
-            &[0x10, 0x00, 0x10, 0x00]
-        );
-        assert_eq!(dampening[block_light_dampening_index(0, world_y, 0)], 1);
-    }
-
-    #[test]
-    fn waterlogged_block_counts_as_fluid_dampening() {
-        assert!(has_fluid(
-            "minecraft:sea_pickle",
-            &[("waterlogged".to_string(), "true".to_string())]
-        ));
-        assert_eq!(
-            light_dampening("minecraft:sea_pickle", Some("minecraft:sea_pickle"), true),
-            1
-        );
-        assert_eq!(
-            light_dampening("minecraft:sea_pickle", Some("minecraft:sea_pickle"), false),
-            0
-        );
-    }
-
-    #[test]
-    fn leaves_dampen_sky_light_like_minecraft() {
-        assert_eq!(
-            light_dampening(
-                "minecraft:oak_leaves",
-                Some("minecraft:tinted_particle_leaves"),
-                false
-            ),
-            1
-        );
-        assert_eq!(
-            light_dampening(
-                "minecraft:mangrove_leaves",
-                Some("minecraft:mangrove_leaves"),
-                false
-            ),
-            1
-        );
-    }
-
-    #[test]
-    fn transparent_block_types_use_report_metadata() {
-        assert_eq!(
-            light_dampening("minecraft:vine", Some("minecraft:vine"), false),
-            0
-        );
-        assert_eq!(
-            light_dampening(
-                "minecraft:glow_lichen",
-                Some("minecraft:glow_lichen"),
-                false
-            ),
-            0
-        );
-        assert_eq!(
-            light_dampening("minecraft:glass_pane", Some("minecraft:iron_bars"), false),
-            0
-        );
-        assert_eq!(
-            light_dampening("minecraft:iron_chain", Some("minecraft:chain"), false),
-            15
-        );
-        assert_eq!(
-            light_dampening("minecraft:iron_chain", Some("minecraft:chain"), true),
-            1
-        );
-    }
-
-    #[test]
-    fn saved_light_layers_are_used_when_present() {
-        let root = chunk_root(vec![section_with_light(
-            0,
-            paletted_container(vec![block_state("minecraft:air", &[])], None),
-            paletted_container(vec![string("minecraft:plains")], None),
-            Some(vec![0xff_u8; LIGHT_ARRAY_BYTES]),
-            Some(vec![0x77_u8; LIGHT_ARRAY_BYTES]),
-        )]);
-
-        let (packet, _) =
-            network_chunk_and_light_dampening_from_nbt(0, 0, &root, WorldLightAlgorithm::Fast)
-                .unwrap();
-
-        assert_eq!(packet.light.sky_light_arrays.len(), 1);
-        assert_eq!(packet.light.block_light_arrays.len(), 1);
-        assert_eq!(packet.light.sky_light_arrays[0].0[0], 0xff);
-        assert_eq!(packet.light.block_light_arrays[0].0[0], 0x77);
-    }
-
-    fn chunk_root(sections: Vec<Tag>) -> Tag {
-        compound_tag([
-            (
-                "sections",
-                Tag::List(
-                    ListHeader {
-                        tag_id: tag_id::COMPOUND,
-                        length: sections.len() as i32,
-                    },
-                    Arc::from(sections),
-                ),
-            ),
-            (
-                "Heightmaps",
-                compound_tag([
-                    ("WORLD_SURFACE", Tag::LongArray(Arc::from(vec![0_i64; 37]))),
-                    (
-                        "MOTION_BLOCKING",
-                        Tag::LongArray(Arc::from(vec![0_i64; 37])),
-                    ),
-                    (
-                        "MOTION_BLOCKING_NO_LEAVES",
-                        Tag::LongArray(Arc::from(vec![0_i64; 37])),
-                    ),
-                ]),
-            ),
-        ])
-    }
-
-    fn section(y: i8, block_states: Tag, biomes: Tag) -> Tag {
-        section_with_light(y, block_states, biomes, None, None)
-    }
-
-    fn section_with_light(
-        y: i8,
-        block_states: Tag,
-        biomes: Tag,
-        sky_light: Option<Vec<u8>>,
-        block_light: Option<Vec<u8>>,
-    ) -> Tag {
-        let mut section = HashMap::new();
-        section.insert("Y".to_string(), Tag::Byte(y));
-        section.insert("block_states".to_string(), block_states);
-        section.insert("biomes".to_string(), biomes);
-        if let Some(sky_light) = sky_light {
-            section.insert(
-                "SkyLight".to_string(),
-                Tag::byte_array_from_u8_slice(&sky_light),
-            );
-        }
-        if let Some(block_light) = block_light {
-            section.insert(
-                "BlockLight".to_string(),
-                Tag::byte_array_from_u8_slice(&block_light),
-            );
-        }
-        Tag::Compound(Arc::new(section))
-    }
-
-    fn paletted_container(palette: Vec<Tag>, data: Option<Vec<i64>>) -> Tag {
-        let mut fields = HashMap::new();
-        fields.insert(
-            "palette".to_string(),
-            Tag::List(
-                ListHeader {
-                    tag_id: palette.first().map(Tag::tag_id).unwrap_or(tag_id::END),
-                    length: palette.len() as i32,
-                },
-                Arc::from(palette),
-            ),
-        );
-        if let Some(data) = data {
-            fields.insert("data".to_string(), Tag::LongArray(Arc::from(data)));
-        }
-        Tag::Compound(Arc::new(fields))
-    }
-
-    fn block_state(name: &str, properties: &[(&str, &str)]) -> Tag {
-        let mut fields = HashMap::new();
-        fields.insert("Name".to_string(), string(name));
-        if !properties.is_empty() {
-            let properties = properties
-                .iter()
-                .map(|(name, value)| (name.to_string(), string(value)))
-                .collect();
-            fields.insert(
-                "Properties".to_string(),
-                Tag::Compound(Arc::new(properties)),
-            );
-        }
-        Tag::Compound(Arc::new(fields))
-    }
-
-    fn compound_tag<I>(fields: I) -> Tag
-    where
-        I: IntoIterator<Item = (&'static str, Tag)>,
-    {
-        Tag::Compound(Arc::new(
-            fields
-                .into_iter()
-                .map(|(name, value)| (name.to_string(), value))
-                .collect(),
-        ))
-    }
-
-    fn string(value: &str) -> Tag {
-        Tag::String(Arc::from(value))
-    }
-}
+mod tests;
