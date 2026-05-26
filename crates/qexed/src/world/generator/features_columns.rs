@@ -3,6 +3,7 @@ struct PlacedBlockColumnFeature {
     step_index: i32,
     feature_index: i32,
     rarity: i32,
+    outer_count: BlockColumnOuterCount,
     inner_count: i32,
     xz_offset: TrapezoidInt,
     y_offset: TrapezoidInt,
@@ -16,6 +17,7 @@ impl PlacedBlockColumnFeature {
             step_index: 9,
             feature_index,
             rarity,
+            outer_count: BlockColumnOuterCount::Fixed(1),
             inner_count: 20,
             xz_offset: TrapezoidInt::new(-4, 4, 0),
             y_offset: TrapezoidInt::new(0, 0, 0),
@@ -29,10 +31,43 @@ impl PlacedBlockColumnFeature {
             step_index: 9,
             feature_index,
             rarity,
+            outer_count: BlockColumnOuterCount::Fixed(1),
             inner_count: 10,
             xz_offset: TrapezoidInt::new(-7, 7, 0),
             y_offset: TrapezoidInt::new(-3, 3, 0),
             column: BlockColumnFeatureConfig::cactus(),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn bamboo_light(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            rarity: 4,
+            outer_count: BlockColumnOuterCount::Fixed(1),
+            inner_count: 1,
+            xz_offset: TrapezoidInt::new(0, 0, 0),
+            y_offset: TrapezoidInt::new(0, 0, 0),
+            column: BlockColumnFeatureConfig::bamboo(0.0),
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn bamboo_some_podzol(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            rarity: 1,
+            outer_count: BlockColumnOuterCount::NoiseBased {
+                noise_to_count_ratio: 160,
+                noise_factor: 80.0,
+                noise_offset: 0.3,
+            },
+            inner_count: 1,
+            xz_offset: TrapezoidInt::new(0, 0, 0),
+            y_offset: TrapezoidInt::new(0, 0, 0),
+            column: BlockColumnFeatureConfig::bamboo(0.2),
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -50,32 +85,62 @@ impl PlacedBlockColumnFeature {
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        if random.next_float() >= 1.0 / self.rarity as f32 {
-            return;
-        }
+        for _ in 0..self.outer_count.sample(origin_x, origin_z) {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
 
-        let base_x = origin_x + random.next_int(16);
-        let base_z = origin_z + random.next_int(16);
-        let Some((base_local_x, base_local_z)) = local_coords(base_x, base_z, origin_x, origin_z)
-        else {
-            return;
-        };
-        let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
-        if base_y <= settings.min_y
-            || !self
-                .biome_filter
-                .allows_at(&settings.density, base_x, base_y, base_z)
-        {
-            return;
-        }
+            let base_x = origin_x + random.next_int(16);
+            let base_z = origin_z + random.next_int(16);
+            let Some((base_local_x, base_local_z)) =
+                local_coords(base_x, base_z, origin_x, origin_z)
+            else {
+                continue;
+            };
+            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            if base_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, base_x, base_y, base_z)
+            {
+                continue;
+            }
 
-        for _ in 0..self.inner_count {
-            let world_x = base_x + self.xz_offset.sample(random);
-            let world_y = base_y + self.y_offset.sample(random);
-            let world_z = base_z + self.xz_offset.sample(random);
-            self.column.place_at(
-                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
-            );
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+                self.column.place_at(
+                    settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+                );
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BlockColumnOuterCount {
+    Fixed(i32),
+    NoiseBased {
+        noise_to_count_ratio: i32,
+        noise_factor: f64,
+        noise_offset: f64,
+    },
+}
+
+impl BlockColumnOuterCount {
+    fn sample(self, origin_x: i32, origin_z: i32) -> i32 {
+        match self {
+            Self::Fixed(count) => count,
+            Self::NoiseBased {
+                noise_to_count_ratio,
+                noise_factor,
+                noise_offset,
+            } => ((biome_info_noise(origin_x as f64 / noise_factor, origin_z as f64 / noise_factor)
+                + noise_offset)
+                * noise_to_count_ratio as f64)
+                .ceil()
+                .max(0.0) as i32,
         }
     }
 }
@@ -86,6 +151,7 @@ struct BlockColumnFeatureConfig {
     height: BiasedToBottomInt,
     tip: Option<BlockColumnTip>,
     support: BlockColumnSupport,
+    kind: BlockColumnKind,
 }
 
 impl BlockColumnFeatureConfig {
@@ -95,6 +161,7 @@ impl BlockColumnFeatureConfig {
             height: BiasedToBottomInt { min: 2, max: 4 },
             tip: None,
             support: BlockColumnSupport::SugarCane,
+            kind: BlockColumnKind::Basic,
         }
     }
 
@@ -107,6 +174,26 @@ impl BlockColumnFeatureConfig {
                 count: WeightedInt::new(&[(0, 3), (1, 1)]),
             }),
             support: BlockColumnSupport::Cactus,
+            kind: BlockColumnKind::Basic,
+        }
+    }
+
+    fn bamboo(podzol_probability: f32) -> Self {
+        Self {
+            block: BlockLayer::with_properties(
+                "minecraft:bamboo",
+                &[("age", "1"), ("leaves", "none"), ("stage", "0")],
+            ),
+            height: BiasedToBottomInt { min: 5, max: 16 },
+            tip: Some(BlockColumnTip {
+                block: BlockLayer::with_properties(
+                    "minecraft:bamboo",
+                    &[("age", "1"), ("leaves", "small"), ("stage", "0")],
+                ),
+                count: WeightedInt::new(&[(0, 1)]),
+            }),
+            support: BlockColumnSupport::Bamboo,
+            kind: BlockColumnKind::Bamboo { podzol_probability },
         }
     }
 
@@ -133,6 +220,44 @@ impl BlockColumnFeatureConfig {
         ) {
             return false;
         }
+        if let BlockColumnKind::Bamboo { podzol_probability } = self.kind {
+            self.place_bamboo(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                podzol_probability,
+            )
+        } else {
+            self.place_basic(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_basic(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
         let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
         else {
             return false;
@@ -178,6 +303,128 @@ impl BlockColumnFeatureConfig {
         }
         true
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_bamboo(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        podzol_probability: f32,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        let height = random.next_int(12) + 5;
+        let mut placed = 0;
+
+        if random.next_float() < podzol_probability {
+            self.place_bamboo_podzol(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_z,
+            );
+        }
+
+        for dy in 0..height {
+            let y = world_y + dy;
+            let Some(layer) = chunk.layer(local_x, y, local_z, settings.min_y) else {
+                break;
+            };
+            if !layer.is_air {
+                break;
+            }
+            chunk.set_layer(
+                local_x,
+                y,
+                local_z,
+                settings.min_y,
+                self.block.clone(),
+            );
+            placed += 1;
+        }
+
+        if placed >= 3 {
+            chunk.set_layer(
+                local_x,
+                world_y + placed,
+                local_z,
+                settings.min_y,
+                BlockLayer::with_properties(
+                    "minecraft:bamboo",
+                    &[("age", "1"), ("leaves", "large"), ("stage", "1")],
+                ),
+            );
+            chunk.set_layer(
+                local_x,
+                world_y + placed - 1,
+                local_z,
+                settings.min_y,
+                BlockLayer::with_properties(
+                    "minecraft:bamboo",
+                    &[("age", "1"), ("leaves", "large"), ("stage", "0")],
+                ),
+            );
+            chunk.set_layer(
+                local_x,
+                world_y + placed - 2,
+                local_z,
+                settings.min_y,
+                BlockLayer::with_properties(
+                    "minecraft:bamboo",
+                    &[("age", "1"), ("leaves", "small"), ("stage", "0")],
+                ),
+            );
+        }
+
+        placed > 0
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_bamboo_podzol(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_z: i32,
+    ) {
+        let radius = random.next_int(4) + 1;
+        let podzol = BlockLayer::new("minecraft:podzol");
+        for world_x in origin_x - radius..=origin_x + radius {
+            for world_z in origin_z - radius..=origin_z + radius {
+                let dx = world_x - origin_x;
+                let dz = world_z - origin_z;
+                if dx * dx + dz * dz > radius * radius {
+                    continue;
+                }
+                let Some((local_x, local_z)) =
+                    local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                else {
+                    continue;
+                };
+                let y = chunk.world_surface_wg_height(local_x, local_z, settings.min_y) - 1;
+                if chunk
+                    .layer(local_x, y, local_z, settings.min_y)
+                    .is_some_and(supports_vegetation_layer)
+                {
+                    chunk.set_layer(local_x, y, local_z, settings.min_y, podzol.clone());
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +451,13 @@ impl BiasedToBottomInt {
 enum BlockColumnSupport {
     SugarCane,
     Cactus,
+    Bamboo,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BlockColumnKind {
+    Basic,
+    Bamboo { podzol_probability: f32 },
 }
 
 impl BlockColumnSupport {
@@ -286,6 +540,16 @@ impl BlockColumnSupport {
                     .is_none_or(|layer| layer.is_air)
                 })
             }
+            Self::Bamboo => layer_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x,
+                world_y - 1,
+                world_z,
+                min_y,
+            )
+            .is_some_and(is_substrate_overworld_layer),
         }
     }
 }

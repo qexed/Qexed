@@ -24,6 +24,30 @@ fn is_base_stone_overworld(layer: &BlockLayer) -> bool {
     )
 }
 
+fn is_substrate_overworld_layer(layer: &BlockLayer) -> bool {
+    supports_vegetation_layer(layer) || matches!(layer.block.as_ref(), "minecraft:mud")
+}
+
+fn is_forest_rock_can_place_on_layer(layer: &BlockLayer) -> bool {
+    is_substrate_overworld_layer(layer) || is_base_stone_overworld(layer)
+}
+
+fn is_ice_spike_replaceable_layer(layer: &BlockLayer) -> bool {
+    is_substrate_overworld_layer(layer)
+        || matches!(layer.block.as_ref(), "minecraft:snow_block" | "minecraft:ice")
+}
+
+fn supports_huge_mushroom_layer(layer: &BlockLayer) -> bool {
+    is_substrate_overworld_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:mycelium"
+                | "minecraft:podzol"
+                | "minecraft:crimson_nylium"
+                | "minecraft:warped_nylium"
+        )
+}
+
 fn is_leaf_layer(layer: &BlockLayer) -> bool {
     matches!(
         layer.block.as_ref(),
@@ -113,6 +137,7 @@ fn valid_tree_position_layer(layer: &BlockLayer) -> bool {
         || matches!(
             layer.block.as_ref(),
             "minecraft:pale_moss_carpet"
+                | "minecraft:moss_carpet"
                 | "minecraft:short_grass"
                 | "minecraft:fern"
                 | "minecraft:dead_bush"
@@ -126,6 +151,9 @@ fn valid_tree_position_layer(layer: &BlockLayer) -> bool {
                 | "minecraft:large_fern"
                 | "minecraft:hanging_roots"
                 | "minecraft:pitcher_plant"
+                | "minecraft:small_dripleaf"
+                | "minecraft:big_dripleaf"
+                | "minecraft:big_dripleaf_stem"
                 | "minecraft:water"
                 | "minecraft:seagrass"
                 | "minecraft:tall_seagrass"
@@ -137,6 +165,17 @@ fn valid_tree_position_layer(layer: &BlockLayer) -> bool {
                 | "minecraft:leaf_litter"
                 | "minecraft:short_dry_grass"
                 | "minecraft:tall_dry_grass"
+        )
+}
+
+fn is_replaceable_by_mushrooms_layer(layer: &BlockLayer) -> bool {
+    valid_tree_position_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:brown_mushroom"
+                | "minecraft:red_mushroom"
+                | "minecraft:brown_mushroom_block"
+                | "minecraft:red_mushroom_block"
         )
 }
 
@@ -314,6 +353,78 @@ fn supports_cactus_layer(layer: &BlockLayer) -> bool {
     )
 }
 
+fn supports_underwater_vegetation_layer(layer: &BlockLayer) -> bool {
+    is_base_stone_overworld(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:dirt"
+                | "minecraft:coarse_dirt"
+                | "minecraft:gravel"
+                | "minecraft:sand"
+                | "minecraft:red_sand"
+                | "minecraft:clay"
+                | "minecraft:mud"
+                | "minecraft:moss_block"
+        )
+}
+
+fn is_moss_replaceable_layer(layer: &BlockLayer) -> bool {
+    is_base_stone_overworld(layer)
+        || supports_vegetation_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:mud"
+                | "minecraft:muddy_mangrove_roots"
+                | "minecraft:cave_vines"
+                | "minecraft:cave_vines_plant"
+        )
+}
+
+fn is_lush_ground_replaceable_layer(layer: &BlockLayer) -> bool {
+    is_moss_replaceable_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:clay" | "minecraft:gravel" | "minecraft:sand"
+        )
+}
+
+fn supports_azalea_layer(layer: &BlockLayer) -> bool {
+    supports_vegetation_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:sand"
+                | "minecraft:red_sand"
+                | "minecraft:terracotta"
+                | "minecraft:white_terracotta"
+                | "minecraft:orange_terracotta"
+                | "minecraft:magenta_terracotta"
+                | "minecraft:light_blue_terracotta"
+                | "minecraft:yellow_terracotta"
+                | "minecraft:lime_terracotta"
+                | "minecraft:pink_terracotta"
+                | "minecraft:gray_terracotta"
+                | "minecraft:light_gray_terracotta"
+                | "minecraft:cyan_terracotta"
+                | "minecraft:purple_terracotta"
+                | "minecraft:blue_terracotta"
+                | "minecraft:brown_terracotta"
+                | "minecraft:green_terracotta"
+                | "minecraft:red_terracotta"
+                | "minecraft:black_terracotta"
+                | "minecraft:snow_block"
+                | "minecraft:powder_snow"
+        )
+}
+
+fn is_azalea_root_replaceable_layer(layer: &BlockLayer) -> bool {
+    is_base_stone_overworld(layer)
+        || supports_azalea_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:clay" | "minecraft:gravel" | "minecraft:sand" | "minecraft:red_sand"
+        )
+}
+
 fn can_lake_replace_block(layer: &BlockLayer) -> bool {
     can_feature_replace_block(layer)
 }
@@ -403,6 +514,51 @@ fn is_water_at_world(
     .is_some_and(is_water_layer)
 }
 
+fn is_air_or_water_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_air_or_water_layer)
+}
+
+fn waterlogged_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> &'static str {
+    if is_water_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    ) {
+        "true"
+    } else {
+        "false"
+    }
+}
+
 fn is_solid_at_world(
     chunk: &NoiseChunkBlocks,
     chunk_min_x: i32,
@@ -445,6 +601,48 @@ fn supports_vegetation_at_world(
     .is_some_and(supports_vegetation_layer)
 }
 
+fn supports_azalea_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(supports_azalea_layer)
+}
+
+fn supports_underwater_vegetation_at_world(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(supports_underwater_vegetation_layer)
+}
+
 fn is_fallen_tree_support_at_world(
     chunk: &NoiseChunkBlocks,
     chunk_min_x: i32,
@@ -485,6 +683,15 @@ fn shuffled_all_directions(random: &mut FeatureRandom) -> Vec<(i32, i32, i32, &'
     let mut directions = all_directions().to_vec();
     shuffle_directions(&mut directions, random);
     directions
+}
+
+fn shuffled_horizontal_vine_faces(random: &mut FeatureRandom) -> Vec<&'static str> {
+    let mut faces = vec!["north", "south", "west", "east"];
+    for index in (1..faces.len()).rev() {
+        let swap = random.next_int(index as i32 + 1) as usize;
+        faces.swap(index, swap);
+    }
+    faces
 }
 
 fn shuffle_directions(
@@ -717,6 +924,44 @@ fn scan_down_to_solid(
             .is_some_and(|layer| !layer.is_air)
         {
             return Some(y);
+        }
+    }
+
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_up_to_solid(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    origin_y: i32,
+    world_z: i32,
+    max_steps: i32,
+) -> Option<i32> {
+    for step in 0..=max_steps {
+        let y = origin_y + step;
+        if !(settings.min_y..settings.min_y + settings.height).contains(&y)
+            || y + 1 >= settings.min_y + settings.height
+        {
+            return None;
+        }
+        let current = layer_at_world(chunk, chunk_min_x, chunk_min_z, world_x, y, world_z, settings.min_y)?;
+        if !current.is_air {
+            return None;
+        }
+        if is_solid_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            y + 1,
+            world_z,
+            settings.min_y,
+        ) {
+            return Some(y + 1);
         }
     }
 

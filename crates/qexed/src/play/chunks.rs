@@ -18,6 +18,11 @@ const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
 const DEFAULT_CHUNK_LOAD_PARALLELISM: usize = 4;
 const MAX_CHUNK_LOAD_PARALLELISM: usize = 64;
 const SLOW_CHUNK_PAYLOAD_LOG_THRESHOLD: Duration = Duration::from_millis(250);
+const MIN_CHUNKS_PER_TICK: f32 = 0.01;
+const MAX_CHUNKS_PER_TICK: f32 = 64.0;
+const START_CHUNKS_PER_TICK: f32 = 9.0;
+const INITIAL_MAX_UNACKNOWLEDGED_BATCHES: usize = 1;
+const MAX_UNACKNOWLEDGED_BATCHES: usize = 10;
 
 pub(super) struct ChunkSendState {
     pub(super) dimension: String,
@@ -27,13 +32,18 @@ pub(super) struct ChunkSendState {
     pub(super) load_parallelism: usize,
     pub(super) visible_chunks: HashSet<(i32, i32)>,
     pub(super) pending_chunks: VecDeque<(i32, i32)>,
+    pub(super) ready_chunks: VecDeque<ChunkLoadResult>,
     pub(super) pending_unloads: HashMap<(i32, i32), Instant>,
     pub(super) loading_chunks: HashSet<(i32, i32)>,
+    pub(super) desired_chunks_per_tick: f32,
+    pub(super) batch_quota: f32,
+    pub(super) unacknowledged_batches: usize,
+    pub(super) max_unacknowledged_batches: usize,
 }
 
 pub(super) struct ChunkLoadResult {
-    chunk_x: i32,
-    chunk_z: i32,
+    pub(super) chunk_x: i32,
+    pub(super) chunk_z: i32,
     payload: Result<bytes::Bytes>,
 }
 
@@ -53,8 +63,13 @@ impl ChunkSendState {
             load_parallelism: chunk_load_parallelism_limit(load_parallelism),
             visible_chunks: HashSet::new(),
             pending_chunks: VecDeque::new(),
+            ready_chunks: VecDeque::new(),
             pending_unloads: HashMap::new(),
             loading_chunks: HashSet::new(),
+            desired_chunks_per_tick: START_CHUNKS_PER_TICK,
+            batch_quota: 0.0,
+            unacknowledged_batches: 0,
+            max_unacknowledged_batches: INITIAL_MAX_UNACKNOWLEDGED_BATCHES,
         }
     }
 
@@ -127,8 +142,10 @@ impl ChunkSendState {
         self.center_z = center_z;
         self.visible_chunks.clear();
         self.pending_chunks.clear();
+        self.ready_chunks.clear();
         self.pending_unloads.clear();
         self.loading_chunks.clear();
+        self.reset_batch_flow_control();
         self.refresh_pending_chunks();
     }
 
@@ -165,6 +182,7 @@ impl ChunkSendState {
         }
         self.visible_chunks.insert(chunk);
         plugins.emit_chunk_load(&self.dimension, chunk.0, chunk.1);
+        self.unacknowledged_batches = self.unacknowledged_batches.saturating_add(1);
         sink.send(ChunkBatchFinished {
             batch_size: VarInt(1),
         })
@@ -349,55 +367,142 @@ impl ChunkSendState {
         }
     }
 
-    pub(super) fn has_chunk_work(&self) -> bool {
-        !self.loading_chunks.is_empty() || !self.pending_chunks.is_empty()
+    pub(super) fn queue_loaded_chunk(&mut self, loaded: ChunkLoadResult) {
+        let chunk = (loaded.chunk_x, loaded.chunk_z);
+        self.loading_chunks.remove(&chunk);
+        if self.visible_chunks.contains(&chunk) || !self.target_chunks().contains(&chunk) {
+            return;
+        }
+        self.ready_chunks.push_back(loaded);
     }
 
-    pub(super) fn has_pending_unloads(&self) -> bool {
-        !self.pending_unloads.is_empty()
-    }
-
-    pub(super) async fn send_loaded_chunk<W>(
+    pub(super) async fn send_ready_chunks<W>(
         &mut self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         world: &WorldManager,
         plugins: &crate::plugins::PluginManager,
-        loaded: ChunkLoadResult,
         sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
-    ) -> Result<()>
+        replenish_quota: bool,
+    ) -> Result<usize>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        let chunk_x = loaded.chunk_x;
-        let chunk_z = loaded.chunk_z;
-        self.loading_chunks.remove(&(chunk_x, chunk_z));
-
-        if self.visible_chunks.contains(&(chunk_x, chunk_z))
-            || !visible_chunks(self.center_x, self.center_z, self.view_distance)
-                .contains(&(chunk_x, chunk_z))
+        if self.ready_chunks.is_empty()
+            || self.unacknowledged_batches >= self.max_unacknowledged_batches
         {
-            self.start_next_chunk_load(world, Some(sender));
-            return Ok(());
+            return Ok(0);
         }
 
-        let chunk_payload = loaded.payload?;
+        if replenish_quota {
+            let max_batch_size = self.desired_chunks_per_tick.max(1.0);
+            self.batch_quota =
+                (self.batch_quota + self.desired_chunks_per_tick).min(max_batch_size);
+        }
+        if self.batch_quota < 1.0 {
+            return Ok(0);
+        }
+
+        let selected = self.take_ready_chunks(self.batch_quota.floor() as usize);
+        if selected.is_empty() {
+            self.start_next_chunk_load(world, Some(sender));
+            return Ok(0);
+        }
+
+        let mut chunks = Vec::with_capacity(selected.len());
+        for loaded in selected {
+            chunks.push((loaded.chunk_x, loaded.chunk_z, loaded.payload?));
+        }
 
         sink.send(ChunkBatchStart {}).await?;
-        sink.send_raw(chunk_payload).await?;
-        for update in world.placed_block_updates(&self.dimension, chunk_x, chunk_z) {
-            sink.send(update).await?;
+        for (chunk_x, chunk_z, chunk_payload) in &chunks {
+            sink.send_raw(chunk_payload.clone()).await?;
+            for update in world.placed_block_updates(&self.dimension, *chunk_x, *chunk_z) {
+                sink.send(update).await?;
+            }
+            self.visible_chunks.insert((*chunk_x, *chunk_z));
+            plugins.emit_chunk_load(&self.dimension, *chunk_x, *chunk_z);
         }
-        self.visible_chunks.insert((chunk_x, chunk_z));
-        plugins.emit_chunk_load(&self.dimension, chunk_x, chunk_z);
+        self.unacknowledged_batches = self.unacknowledged_batches.saturating_add(1);
+        self.batch_quota = (self.batch_quota - chunks.len() as f32).max(0.0);
         sink.send(ChunkBatchFinished {
-            batch_size: VarInt(1),
+            batch_size: VarInt(chunks.len() as i32),
         })
         .await?;
         sink.flush().await?;
 
         self.start_next_chunk_load(world, Some(sender));
-        Ok(())
+        Ok(chunks.len())
     }
+
+    fn take_ready_chunks(&mut self, max_count: usize) -> Vec<ChunkLoadResult> {
+        if max_count == 0 {
+            return Vec::new();
+        }
+
+        let target = self.target_chunks();
+        let visible = self.visible_chunks.clone();
+        let mut ready = self
+            .ready_chunks
+            .drain(..)
+            .filter(|loaded| {
+                let chunk = (loaded.chunk_x, loaded.chunk_z);
+                target.contains(&chunk) && !visible.contains(&chunk)
+            })
+            .collect::<Vec<_>>();
+        let center_x = self.center_x;
+        let center_z = self.center_z;
+        ready.sort_by_key(|loaded| {
+            chunk_send_priority(center_x, center_z, loaded.chunk_x, loaded.chunk_z)
+        });
+
+        let split_at = ready.len().min(max_count);
+        let remaining = ready.split_off(split_at);
+        self.ready_chunks = remaining.into();
+        ready
+    }
+
+    pub(super) fn on_chunk_batch_received(&mut self, desired_chunks_per_tick: f32) {
+        self.unacknowledged_batches = self.unacknowledged_batches.saturating_sub(1);
+        self.desired_chunks_per_tick = if desired_chunks_per_tick.is_nan() {
+            MIN_CHUNKS_PER_TICK
+        } else {
+            desired_chunks_per_tick.clamp(MIN_CHUNKS_PER_TICK, MAX_CHUNKS_PER_TICK)
+        };
+        if self.unacknowledged_batches == 0 {
+            self.batch_quota = 1.0;
+        }
+        self.max_unacknowledged_batches = MAX_UNACKNOWLEDGED_BATCHES;
+    }
+
+    fn reset_batch_flow_control(&mut self) {
+        self.desired_chunks_per_tick = START_CHUNKS_PER_TICK;
+        self.batch_quota = 0.0;
+        self.unacknowledged_batches = 0;
+        self.max_unacknowledged_batches = INITIAL_MAX_UNACKNOWLEDGED_BATCHES;
+    }
+
+    pub(super) fn has_loading_chunks(&self) -> bool {
+        !self.loading_chunks.is_empty()
+    }
+
+    pub(super) fn has_ready_chunks(&self) -> bool {
+        !self.ready_chunks.is_empty()
+    }
+
+    pub(super) fn has_pending_unloads(&self) -> bool {
+        !self.pending_unloads.is_empty()
+    }
+}
+
+fn chunk_send_priority(
+    center_x: i32,
+    center_z: i32,
+    chunk_x: i32,
+    chunk_z: i32,
+) -> (i32, i32, i32, i32) {
+    let dx = chunk_x - center_x;
+    let dz = chunk_z - center_z;
+    (dx * dx + dz * dz, dx.abs().max(dz.abs()), chunk_z, chunk_x)
 }
 
 fn build_chunk_payload_sync(
@@ -484,3 +589,97 @@ pub(super) const DEFAULT_PARALLELISM_FOR_TESTS: usize = DEFAULT_CHUNK_LOAD_PARAL
 
 #[cfg(test)]
 pub(super) const MAX_PARALLELISM_FOR_TESTS: usize = MAX_CHUNK_LOAD_PARALLELISM;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded_chunk(chunk_x: i32, chunk_z: i32) -> ChunkLoadResult {
+        ChunkLoadResult {
+            chunk_x,
+            chunk_z,
+            payload: Ok(bytes::Bytes::new()),
+        }
+    }
+
+    #[test]
+    fn chunk_batch_received_clamps_rate_and_reopens_send_window() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+        state.unacknowledged_batches = 1;
+        state.max_unacknowledged_batches = 1;
+        state.batch_quota = 0.0;
+
+        state.on_chunk_batch_received(f32::NAN);
+
+        assert_eq!(state.unacknowledged_batches, 0);
+        assert_eq!(state.desired_chunks_per_tick, MIN_CHUNKS_PER_TICK);
+        assert_eq!(state.batch_quota, 1.0);
+        assert_eq!(state.max_unacknowledged_batches, MAX_UNACKNOWLEDGED_BATCHES);
+
+        state.on_chunk_batch_received(128.0);
+        assert_eq!(state.desired_chunks_per_tick, MAX_CHUNKS_PER_TICK);
+        assert_eq!(state.unacknowledged_batches, 0);
+    }
+
+    #[test]
+    fn reset_view_clears_ready_chunks_and_resets_flow_control() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+        state.ready_chunks.push_back(loaded_chunk(0, 1));
+        state.unacknowledged_batches = 3;
+        state.max_unacknowledged_batches = MAX_UNACKNOWLEDGED_BATCHES;
+        state.desired_chunks_per_tick = 32.0;
+        state.batch_quota = 8.0;
+
+        state.reset_view(2, -3);
+
+        assert!(state.ready_chunks.is_empty());
+        assert_eq!(state.unacknowledged_batches, 0);
+        assert_eq!(
+            state.max_unacknowledged_batches,
+            INITIAL_MAX_UNACKNOWLEDGED_BATCHES
+        );
+        assert_eq!(state.desired_chunks_per_tick, START_CHUNKS_PER_TICK);
+        assert_eq!(state.batch_quota, 0.0);
+        assert!(state.pending_chunks.contains(&(2, -3)));
+    }
+
+    #[test]
+    fn ready_chunks_are_taken_by_distance_from_center() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 2, 4);
+        state.ready_chunks.push_back(loaded_chunk(2, 0));
+        state.ready_chunks.push_back(loaded_chunk(0, 1));
+        state.ready_chunks.push_back(loaded_chunk(1, 0));
+        state.ready_chunks.push_back(loaded_chunk(-2, 2));
+
+        let selected = state.take_ready_chunks(3);
+        let selected_positions = selected
+            .iter()
+            .map(|chunk| (chunk.chunk_x, chunk.chunk_z))
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_positions, vec![(1, 0), (0, 1), (2, 0)]);
+        assert_eq!(state.ready_chunks.len(), 1);
+        assert_eq!(
+            state
+                .ready_chunks
+                .front()
+                .map(|chunk| (chunk.chunk_x, chunk.chunk_z)),
+            Some((-2, 2))
+        );
+    }
+
+    #[test]
+    fn stale_ready_chunks_are_discarded_before_send_selection() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+        state.visible_chunks.insert((0, 1));
+        state.ready_chunks.push_back(loaded_chunk(0, 1));
+        state.ready_chunks.push_back(loaded_chunk(5, 5));
+        state.ready_chunks.push_back(loaded_chunk(1, 0));
+
+        let selected = state.take_ready_chunks(4);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!((selected[0].chunk_x, selected[0].chunk_z), (1, 0));
+        assert!(state.ready_chunks.is_empty());
+    }
+}

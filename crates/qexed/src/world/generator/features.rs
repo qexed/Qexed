@@ -7,9 +7,20 @@ struct OverworldOreFeatures {
     springs: Vec<PlacedSpringFeature>,
     lakes: Vec<PlacedLakeFeature>,
     geodes: Vec<PlacedGeodeFeature>,
+    dripstone_features: Vec<PlacedDripstoneFeature>,
+    sculk_features: Vec<PlacedSculkFeature>,
+    structure_features: Vec<PlacedStructureFeature>,
+    surface_features: Vec<PlacedSurfaceFeature>,
     monster_rooms: Vec<PlacedMonsterRoomFeature>,
     glow_lichen: PlacedMultifaceGrowthFeature,
+    cave_vines: PlacedCaveVinesFeature,
+    classic_vines: PlacedClassicVinesFeature,
+    spore_blossom: PlacedSporeBlossomFeature,
+    environment_scan_features: Vec<PlacedEnvironmentScanFeature>,
+    aquatic_features: Vec<PlacedAquaticFeature>,
+    huge_mushrooms: Vec<PlacedHugeMushroomFeature>,
     vegetation_patches: Vec<PlacedSimpleVegetationFeature>,
+    surface_vines: PlacedClassicVinesFeature,
     block_columns: Vec<PlacedBlockColumnFeature>,
     trees: Vec<PlacedTreeFeature>,
     freeze_top_layer: PlacedFreezeTopLayerFeature,
@@ -19,6 +30,7 @@ impl OverworldOreFeatures {
     fn new(seed: i64) -> Self {
         let dirt = OreFeatureConfig::base_stone(33, "minecraft:dirt");
         let gravel = OreFeatureConfig::base_stone(33, "minecraft:gravel");
+        let clay_ore = OreFeatureConfig::base_stone(33, "minecraft:clay");
         let granite = OreFeatureConfig::base_stone(64, "minecraft:granite");
         let diorite = OreFeatureConfig::base_stone(64, "minecraft:diorite");
         let andesite = OreFeatureConfig::base_stone(64, "minecraft:andesite");
@@ -123,6 +135,13 @@ impl OverworldOreFeatures {
                     OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::BelowTop(0)),
                     gravel,
                 ),
+                PlacedOreFeature::new(
+                    2,
+                    OrePlacementCount::Constant(46),
+                    OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
+                    clay_ore,
+                )
+                .with_biome_filter(FeatureBiomeFilter::Include(LUSH_CAVES_ORE_BIOMES)),
                 PlacedOreFeature::new(
                     2,
                     OrePlacementCount::Rarity(6),
@@ -318,24 +337,89 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Exclude(BADLANDS_ORE_BIOMES)),
                 PlacedDiskFeature::gravel(29)
                     .with_biome_filter(FeatureBiomeFilter::Include(BADLANDS_ORE_BIOMES)),
+                PlacedDiskFeature::grass(30)
+                    .with_surface_anchor("minecraft:mud", -1)
+                    .with_biome_filter(FeatureBiomeFilter::Include(MANGROVE_TREE_BIOMES)),
             ],
             springs: vec![
                 PlacedSpringFeature::water(0),
                 PlacedSpringFeature::lava_overworld(1),
+                PlacedSpringFeature::lava_frozen(2),
             ],
             lakes: vec![
                 PlacedLakeFeature::lava_underground(0),
                 PlacedLakeFeature::lava_surface(1),
             ],
             geodes: vec![PlacedGeodeFeature::amethyst(0)],
+            dripstone_features: vec![
+                PlacedDripstoneFeature::large(1),
+                PlacedDripstoneFeature::cluster(0),
+                PlacedDripstoneFeature::pointed(1),
+            ],
+            sculk_features: vec![
+                PlacedSculkFeature::vein(0),
+                PlacedSculkFeature::deep_dark_patch(1),
+            ],
+            structure_features: vec![
+                PlacedStructureFeature::fossil_upper(2),
+                PlacedStructureFeature::fossil_lower(3),
+                PlacedStructureFeature::desert_well(0),
+            ],
+            surface_features: vec![
+                PlacedSurfaceFeature::forest_rock(1),
+                PlacedSurfaceFeature::iceberg_packed(2),
+                PlacedSurfaceFeature::iceberg_blue(3),
+                PlacedSurfaceFeature::ice_spike(0),
+                PlacedSurfaceFeature::ice_patch(1),
+                PlacedSurfaceFeature::blue_ice(4),
+                PlacedSurfaceFeature::pale_moss_patch(90),
+            ],
             monster_rooms: vec![
                 PlacedMonsterRoomFeature::regular(0),
                 PlacedMonsterRoomFeature::deep(1),
             ],
             glow_lichen: PlacedMultifaceGrowthFeature::glow_lichen(0),
+            cave_vines: PlacedCaveVinesFeature::new(77),
+            classic_vines: PlacedClassicVinesFeature::cave(83),
+            spore_blossom: PlacedSporeBlossomFeature::new(78),
+            environment_scan_features: vec![
+                PlacedEnvironmentScanFeature::lush_caves_ceiling_vegetation(79),
+                PlacedEnvironmentScanFeature::lush_caves_clay(80),
+                PlacedEnvironmentScanFeature::lush_caves_vegetation(81),
+                PlacedEnvironmentScanFeature::rooted_azalea_tree(82),
+            ],
+            aquatic_features: vec![
+                PlacedAquaticFeature::seagrass(66, 48, 0.3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_NORMAL_BIOMES)),
+                PlacedAquaticFeature::seagrass(67, 32, 0.3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_COLD_BIOMES)),
+                PlacedAquaticFeature::seagrass(68, 48, 0.8)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_DEEP_BIOMES)),
+                PlacedAquaticFeature::seagrass(69, 48, 0.8)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_DEEP_COLD_BIOMES)),
+                PlacedAquaticFeature::seagrass(70, 48, 0.8)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_DEEP_WARM_BIOMES)),
+                PlacedAquaticFeature::seagrass(71, 80, 0.3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_WARM_BIOMES)),
+                PlacedAquaticFeature::seagrass(72, 64, 0.6)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_SWAMP_BIOMES)),
+                PlacedAquaticFeature::seagrass(73, 48, 0.4)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEAGRASS_RIVER_BIOMES)),
+                PlacedAquaticFeature::kelp(74, 120)
+                    .with_biome_filter(FeatureBiomeFilter::Include(KELP_COLD_BIOMES)),
+                PlacedAquaticFeature::kelp(75, 80)
+                    .with_biome_filter(FeatureBiomeFilter::Include(KELP_WARM_BIOMES)),
+                PlacedAquaticFeature::sea_pickle(76)
+                    .with_biome_filter(FeatureBiomeFilter::Include(SEA_PICKLE_BIOMES)),
+                PlacedAquaticFeature::warm_ocean_vegetation(102)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WARM_OCEAN_VEGETATION_BIOMES)),
+            ],
+            huge_mushrooms: vec![PlacedHugeMushroomFeature::mushroom_island_vegetation(101)],
             vegetation_patches: vec![
                 PlacedSimpleVegetationFeature::patch_tall_grass_2(1)
                     .with_biome_filter(FeatureBiomeFilter::Include(PATCH_TALL_GRASS_2_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_tall_grass(0)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PATCH_TALL_GRASS_BIOMES)),
                 PlacedSimpleVegetationFeature::patch_bush(2)
                     .with_biome_filter(FeatureBiomeFilter::Include(PATCH_BUSH_BIOMES)),
                 PlacedSimpleVegetationFeature::patch_sunflower(3)
@@ -404,7 +488,37 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_CHERRY_BIOMES)),
                 PlacedSimpleVegetationFeature::flower_pale_garden(41)
                     .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_PALE_GARDEN_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_meadow(91)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_MEADOW_BIOMES)),
+                PlacedSimpleVegetationFeature::flower_flower_forest(92)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_FLOWER_FOREST_BIOMES)),
+                PlacedSimpleVegetationFeature::forest_flowers(93, -3, 1)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FOREST_FLOWERS_BIOMES)),
+                PlacedSimpleVegetationFeature::forest_flowers(94, -1, 3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FLOWER_FOREST_FLOWERS_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_leaf_litter(95)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PATCH_LEAF_LITTER_BIOMES)),
+                PlacedSimpleVegetationFeature::wildflowers_meadow(96)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WILDFLOWERS_MEADOW_BIOMES)),
+                PlacedSimpleVegetationFeature::wildflowers_birch_forest(97).with_biome_filter(
+                    FeatureBiomeFilter::Include(WILDFLOWERS_BIRCH_FOREST_BIOMES),
+                ),
+                PlacedSimpleVegetationFeature::pale_garden_flowers(98)
+                    .with_biome_filter(FeatureBiomeFilter::Include(PALE_GARDEN_FLOWERS_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_berry_common(85)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BERRY_COMMON_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_berry_rare(86)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BERRY_RARE_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_firefly_bush_swamp(87)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FIREFLY_BUSH_SWAMP_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_firefly_bush_near_water(88, 2)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FIREFLY_BUSH_NEAR_WATER_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_firefly_bush_near_water(89, 3)
+                    .with_biome_filter(FeatureBiomeFilter::Include(FIREFLY_BUSH_SWAMP_BIOMES)),
+                PlacedSimpleVegetationFeature::patch_waterlily(84)
+                    .with_biome_filter(FeatureBiomeFilter::Include(WATERLILY_BIOMES)),
             ],
+            surface_vines: PlacedClassicVinesFeature::surface(85),
             block_columns: vec![
                 PlacedBlockColumnFeature::sugar_cane(14, 6)
                     .with_biome_filter(FeatureBiomeFilter::Include(SUGAR_CANE_NORMAL_BIOMES)),
@@ -418,6 +532,10 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Include(CACTUS_DESERT_BIOMES)),
                 PlacedBlockColumnFeature::cactus(19, 13)
                     .with_biome_filter(FeatureBiomeFilter::Include(CACTUS_DECORATED_BIOMES)),
+                PlacedBlockColumnFeature::bamboo_light(99)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BAMBOO_LIGHT_BIOMES)),
+                PlacedBlockColumnFeature::bamboo_some_podzol(100)
+                    .with_biome_filter(FeatureBiomeFilter::Include(BAMBOO_SOME_PODZOL_BIOMES)),
             ],
             trees: vec![
                 PlacedTreeFeature::trees_plains(3)
@@ -485,14 +603,41 @@ impl OverworldOreFeatures {
                 + self.springs.len()
                 + self.lakes.len()
                 + self.geodes.len()
+                + self.dripstone_features.len()
+                + self.sculk_features.len()
+                + self.structure_features.len()
+                + self.surface_features.len()
                 + self.monster_rooms.len()
+                + self.environment_scan_features.len()
+                + self.aquatic_features.len()
+                + self.huge_mushrooms.len()
                 + self.vegetation_patches.len()
                 + self.block_columns.len()
                 + self.trees.len()
-                + 3,
+                + 6,
         );
         features.extend(self.lakes.iter().map(PlacedUndergroundFeature::Lake));
         features.extend(self.geodes.iter().map(PlacedUndergroundFeature::Geode));
+        features.extend(
+            self.dripstone_features
+                .iter()
+                .map(PlacedUndergroundFeature::Dripstone),
+        );
+        features.extend(
+            self.sculk_features
+                .iter()
+                .map(PlacedUndergroundFeature::Sculk),
+        );
+        features.extend(
+            self.structure_features
+                .iter()
+                .map(PlacedUndergroundFeature::Structure),
+        );
+        features.extend(
+            self.surface_features
+                .iter()
+                .map(PlacedUndergroundFeature::Surface),
+        );
         features.extend(
             self.monster_rooms
                 .iter()
@@ -506,10 +651,35 @@ impl OverworldOreFeatures {
         features.extend(self.springs.iter().map(PlacedUndergroundFeature::Spring));
         features.push(PlacedUndergroundFeature::MultifaceGrowth(&self.glow_lichen));
         features.extend(
+            self.environment_scan_features
+                .iter()
+                .map(PlacedUndergroundFeature::EnvironmentScan),
+        );
+        features.push(PlacedUndergroundFeature::CaveVines(&self.cave_vines));
+        features.push(PlacedUndergroundFeature::SporeBlossom(
+            &self.spore_blossom,
+        ));
+        features.push(PlacedUndergroundFeature::ClassicVines(
+            &self.classic_vines,
+        ));
+        features.extend(
+            self.aquatic_features
+                .iter()
+                .map(PlacedUndergroundFeature::Aquatic),
+        );
+        features.extend(
+            self.huge_mushrooms
+                .iter()
+                .map(PlacedUndergroundFeature::HugeMushroom),
+        );
+        features.extend(
             self.vegetation_patches
                 .iter()
                 .map(PlacedUndergroundFeature::SimpleVegetation),
         );
+        features.push(PlacedUndergroundFeature::ClassicVines(
+            &self.surface_vines,
+        ));
         features.extend(
             self.block_columns
                 .iter()
@@ -588,6 +758,27 @@ impl OverworldOreFeatures {
                         feature.step_index(),
                     );
                     match feature {
+                        PlacedUndergroundFeature::Surface(feature) => feature.place_with_spillover(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            target_origin_x,
+                            target_origin_z,
+                            &mut source_chunk,
+                            chunk,
+                            &mut random,
+                        ),
+                        PlacedUndergroundFeature::HugeMushroom(feature) => feature
+                            .place_with_spillover(
+                                settings,
+                                source_origin_x,
+                                source_origin_z,
+                                target_origin_x,
+                                target_origin_z,
+                                &mut source_chunk,
+                                chunk,
+                                &mut random,
+                            ),
                         PlacedUndergroundFeature::Tree(feature) => feature.place_with_spillover(
                             settings,
                             source_origin_x,
@@ -616,12 +807,22 @@ impl OverworldOreFeatures {
 enum PlacedUndergroundFeature<'a> {
     Lake(&'a PlacedLakeFeature),
     Geode(&'a PlacedGeodeFeature),
+    Dripstone(&'a PlacedDripstoneFeature),
+    Sculk(&'a PlacedSculkFeature),
+    Structure(&'a PlacedStructureFeature),
+    Surface(&'a PlacedSurfaceFeature),
     MonsterRoom(&'a PlacedMonsterRoomFeature),
     Ore(&'a PlacedOreFeature),
     UnderwaterMagma(&'a PlacedUnderwaterMagmaFeature),
     Disk(&'a PlacedDiskFeature),
     Spring(&'a PlacedSpringFeature),
     MultifaceGrowth(&'a PlacedMultifaceGrowthFeature),
+    CaveVines(&'a PlacedCaveVinesFeature),
+    ClassicVines(&'a PlacedClassicVinesFeature),
+    SporeBlossom(&'a PlacedSporeBlossomFeature),
+    EnvironmentScan(&'a PlacedEnvironmentScanFeature),
+    Aquatic(&'a PlacedAquaticFeature),
+    HugeMushroom(&'a PlacedHugeMushroomFeature),
     SimpleVegetation(&'a PlacedSimpleVegetationFeature),
     BlockColumn(&'a PlacedBlockColumnFeature),
     Tree(&'a PlacedTreeFeature),
@@ -633,12 +834,22 @@ impl PlacedUndergroundFeature<'_> {
         match self {
             Self::Lake(feature) => feature.step_index,
             Self::Geode(feature) => feature.step_index,
+            Self::Dripstone(feature) => feature.step_index(),
+            Self::Sculk(feature) => feature.step_index(),
+            Self::Structure(feature) => feature.step_index(),
+            Self::Surface(feature) => feature.step_index,
             Self::MonsterRoom(feature) => feature.step_index,
             Self::Ore(feature) => feature.step_index,
             Self::UnderwaterMagma(feature) => feature.step_index,
             Self::Disk(feature) => feature.step_index,
             Self::Spring(feature) => feature.step_index,
             Self::MultifaceGrowth(feature) => feature.step_index,
+            Self::CaveVines(feature) => feature.step_index,
+            Self::ClassicVines(feature) => feature.step_index,
+            Self::SporeBlossom(feature) => feature.step_index,
+            Self::EnvironmentScan(feature) => feature.step_index,
+            Self::Aquatic(feature) => feature.step_index,
+            Self::HugeMushroom(feature) => feature.step_index,
             Self::SimpleVegetation(feature) => feature.step_index,
             Self::BlockColumn(feature) => feature.step_index,
             Self::Tree(feature) => feature.step_index,
@@ -650,12 +861,22 @@ impl PlacedUndergroundFeature<'_> {
         match self {
             Self::Lake(feature) => feature.feature_index,
             Self::Geode(feature) => feature.feature_index,
+            Self::Dripstone(feature) => feature.feature_index(),
+            Self::Sculk(feature) => feature.feature_index(),
+            Self::Structure(feature) => feature.feature_index(),
+            Self::Surface(feature) => feature.feature_index,
             Self::MonsterRoom(feature) => feature.feature_index,
             Self::Ore(feature) => feature.feature_index,
             Self::UnderwaterMagma(feature) => feature.feature_index,
             Self::Disk(feature) => feature.feature_index,
             Self::Spring(feature) => feature.feature_index,
             Self::MultifaceGrowth(feature) => feature.feature_index,
+            Self::CaveVines(feature) => feature.feature_index,
+            Self::ClassicVines(feature) => feature.feature_index,
+            Self::SporeBlossom(feature) => feature.feature_index,
+            Self::EnvironmentScan(feature) => feature.feature_index,
+            Self::Aquatic(feature) => feature.feature_index,
+            Self::HugeMushroom(feature) => feature.feature_index,
             Self::SimpleVegetation(feature) => feature.feature_index,
             Self::BlockColumn(feature) => feature.feature_index,
             Self::Tree(feature) => feature.feature_index,
@@ -674,6 +895,16 @@ impl PlacedUndergroundFeature<'_> {
         match self {
             Self::Lake(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
             Self::Geode(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
+            Self::Dripstone(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::Sculk(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::Structure(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::Surface(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
             Self::MonsterRoom(feature) => {
                 feature.place(settings, origin_x, origin_z, chunk, random);
             }
@@ -684,6 +915,24 @@ impl PlacedUndergroundFeature<'_> {
             Self::Disk(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
             Self::Spring(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
             Self::MultifaceGrowth(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::CaveVines(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::ClassicVines(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::SporeBlossom(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::EnvironmentScan(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::Aquatic(feature) => {
+                feature.place(settings, origin_x, origin_z, chunk, random);
+            }
+            Self::HugeMushroom(feature) => {
                 feature.place(settings, origin_x, origin_z, chunk, random);
             }
             Self::SimpleVegetation(feature) => {

@@ -68,6 +68,7 @@ use util::{
 };
 
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const CHUNK_SEND_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
@@ -268,6 +269,9 @@ where
     let mut chunk_unload_sweep = tokio::time::interval(CHUNK_UNLOAD_SWEEP_INTERVAL);
     chunk_unload_sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     chunk_unload_sweep.tick().await;
+    let mut chunk_send_tick = tokio::time::interval(CHUNK_SEND_TICK_INTERVAL);
+    chunk_send_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    chunk_send_tick.tick().await;
     let mut survival_tick = tokio::time::interval(SURVIVAL_TICK_INTERVAL);
     survival_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     survival_tick.tick().await;
@@ -289,12 +293,20 @@ where
     let result: Result<()> = async {
         loop {
             tokio::select! {
-            loaded_chunk = chunk_receiver.recv(), if chunk_state.has_chunk_work() => {
+            loaded_chunk = chunk_receiver.recv(), if chunk_state.has_loading_chunks() => {
                 let Some(loaded_chunk) = loaded_chunk else {
                     anyhow::bail!("chunk load task channel closed");
                 };
                 chunk_state
-                    .send_loaded_chunk(sink, world, plugins, loaded_chunk, &chunk_sender)
+                    .queue_loaded_chunk(loaded_chunk);
+                chunk_state.start_next_chunk_load(world, Some(&chunk_sender));
+                chunk_state
+                    .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
+                    .await?;
+            }
+            _ = chunk_send_tick.tick(), if chunk_state.has_ready_chunks() => {
+                chunk_state
+                    .send_ready_chunks(sink, world, plugins, &chunk_sender, true)
                     .await?;
             }
             _ = chunk_unload_sweep.tick(), if chunk_state.has_pending_unloads() => {
@@ -375,6 +387,10 @@ where
 
                 if packet_id == ChunkBatchReceived::ID {
                     let batch = crate::connection::decode_payload::<ChunkBatchReceived>(&mut payload)?;
+                    chunk_state.on_chunk_batch_received(batch.desired_chunks_per_tick);
+                    chunk_state
+                        .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
+                        .await?;
                     log::debug!(
                         "client acknowledged chunk batch, desired rate: {} chunks/tick",
                         batch.desired_chunks_per_tick

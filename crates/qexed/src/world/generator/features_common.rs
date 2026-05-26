@@ -709,3 +709,173 @@ impl MonsterRoomFeatureConfig {
         chunk.set_layer(local_x, world_y, local_z, min_y, block);
     }
 }
+
+#[derive(Debug, Clone)]
+struct CaveVinesFeatureConfig {
+    body_false: BlockLayer,
+    body_true: BlockLayer,
+    tip_false: BlockLayer,
+    tip_true: BlockLayer,
+    body_height: WeightedHeight,
+}
+
+impl CaveVinesFeatureConfig {
+    fn new() -> Self {
+        Self {
+            body_false: BlockLayer::with_properties(
+                "minecraft:cave_vines_plant",
+                &[("berries", "false")],
+            ),
+            body_true: BlockLayer::with_properties(
+                "minecraft:cave_vines_plant",
+                &[("berries", "true")],
+            ),
+            tip_false: BlockLayer::with_properties(
+                "minecraft:cave_vines",
+                &[("age", "23"), ("berries", "false")],
+            ),
+            tip_true: BlockLayer::with_properties(
+                "minecraft:cave_vines",
+                &[("age", "23"), ("berries", "true")],
+            ),
+            body_height: WeightedHeight::cave_vines(),
+        }
+    }
+
+    fn in_moss() -> Self {
+        Self {
+            body_height: WeightedHeight::cave_vines_in_moss(),
+            ..Self::new()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !is_air_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) || !is_solid_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y + 1,
+            world_z,
+            settings.min_y,
+        ) {
+            return false;
+        }
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+
+        let mut body_height = self.body_height.sample(random);
+        while body_height > 0
+            && !is_air_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x,
+                world_y - body_height,
+                world_z,
+                settings.min_y,
+            )
+        {
+            body_height -= 1;
+        }
+
+        for dy in 0..body_height {
+            let block = if random.next_int(5) == 0 {
+                self.body_true.clone()
+            } else {
+                self.body_false.clone()
+            };
+            chunk.set_layer(local_x, world_y - dy, local_z, settings.min_y, block);
+        }
+
+        let tip_y = world_y - body_height;
+        if !is_air_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            tip_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return body_height > 0;
+        }
+        let age = 23 + random.next_int(3);
+        let tip = if random.next_int(5) == 0 {
+            self.tip_true.clone()
+        } else {
+            self.tip_false.clone()
+        }
+        .with_property("age", &age.to_string());
+        chunk.set_layer(local_x, tip_y, local_z, settings.min_y, tip);
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WeightedHeight {
+    entries: Vec<(UniformInt, i32)>,
+    total_weight: i32,
+}
+
+impl WeightedHeight {
+    fn cave_vines() -> Self {
+        Self {
+            entries: vec![
+                (UniformInt { min: 0, max: 19 }, 2),
+                (UniformInt { min: 0, max: 2 }, 3),
+                (UniformInt { min: 0, max: 6 }, 10),
+            ],
+            total_weight: 15,
+        }
+    }
+
+    fn cave_vines_in_moss() -> Self {
+        Self {
+            entries: vec![
+                (UniformInt { min: 0, max: 3 }, 5),
+                (UniformInt { min: 1, max: 7 }, 1),
+            ],
+            total_weight: 6,
+        }
+    }
+
+    fn big_dripleaf_stem() -> Self {
+        Self {
+            entries: vec![(UniformInt { min: 0, max: 4 }, 2), (UniformInt { min: 0, max: 0 }, 1)],
+            total_weight: 3,
+        }
+    }
+
+    fn sample(&self, random: &mut FeatureRandom) -> i32 {
+        let mut selected = random.next_int(self.total_weight);
+        for (height, weight) in &self.entries {
+            selected -= *weight;
+            if selected < 0 {
+                return height.sample(random);
+            }
+        }
+        0
+    }
+}

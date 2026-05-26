@@ -406,6 +406,7 @@ impl PlacedTreeFeature {
 #[derive(Debug, Clone)]
 struct TreeFeatureConfig {
     default_tree: OakTreeConfig,
+    mushroom_variants: Vec<HugeMushroomTreeVariant>,
     variants: Vec<TreeFeatureVariant>,
 }
 
@@ -414,6 +415,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::oak_bees_005();
         Self {
             default_tree: default_tree.clone(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.333_333_34, default_tree.clone()),
                 TreeFeatureVariant::fallen(0.0125, default_tree),
@@ -425,6 +427,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::birch_bees_0002();
         Self {
             default_tree: default_tree.clone(),
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::fallen(0.0125, default_tree)],
         }
     }
@@ -434,6 +437,7 @@ impl TreeFeatureConfig {
         let super_birch = OakTreeConfig::super_birch_bees_0002();
         Self {
             default_tree: default_tree.clone(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::fallen(0.00625, super_birch.clone()),
                 TreeFeatureVariant::standing(0.5, super_birch),
@@ -446,6 +450,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::spruce();
         Self {
             default_tree: default_tree.clone(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::pine()),
                 TreeFeatureVariant::fallen(0.0125, OakTreeConfig::fallen_spruce()),
@@ -457,6 +462,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::spruce();
         Self {
             default_tree,
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::fallen(
                 0.0125,
                 OakTreeConfig::fallen_spruce(),
@@ -468,6 +474,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::oak();
         Self {
             default_tree,
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.8, OakTreeConfig::acacia()),
                 TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
@@ -479,6 +486,10 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::oak();
         Self {
             default_tree,
+            mushroom_variants: vec![
+                HugeMushroomTreeVariant::new(0.025, HugeMushroomFeatureConfig::brown()),
+                HugeMushroomTreeVariant::new(0.05, HugeMushroomFeatureConfig::red()),
+            ],
             variants: vec![
                 TreeFeatureVariant::standing(0.666_666_7, OakTreeConfig::dark_oak()),
                 TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
@@ -493,6 +504,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::pale_oak();
         Self {
             default_tree: default_tree.clone(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.1, default_tree.clone()),
                 TreeFeatureVariant::standing(0.9, default_tree),
@@ -504,6 +516,7 @@ impl TreeFeatureConfig {
         let default_tree = OakTreeConfig::oak_bees_002();
         Self {
             default_tree,
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
                 TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_002()),
@@ -515,6 +528,7 @@ impl TreeFeatureConfig {
     fn meadow_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::super_birch_bees(),
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::standing(
                 0.5,
                 OakTreeConfig::fancy_oak_bees(),
@@ -525,6 +539,7 @@ impl TreeFeatureConfig {
     fn cherry_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::cherry_bees_005(),
+            mushroom_variants: Vec::new(),
             variants: Vec::new(),
         }
     }
@@ -532,6 +547,7 @@ impl TreeFeatureConfig {
     fn grove_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::spruce(),
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::standing(
                 0.333_333_34,
                 OakTreeConfig::pine(),
@@ -542,6 +558,7 @@ impl TreeFeatureConfig {
     fn badlands_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::oak(),
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak())],
         }
     }
@@ -549,6 +566,7 @@ impl TreeFeatureConfig {
     fn swamp_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::swamp_oak(),
+            mushroom_variants: Vec::new(),
             variants: Vec::new(),
         }
     }
@@ -556,6 +574,7 @@ impl TreeFeatureConfig {
     fn windswept_hills_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::oak(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::fallen(0.008325, OakTreeConfig::fallen_spruce()),
                 TreeFeatureVariant::standing(0.666, OakTreeConfig::spruce()),
@@ -568,6 +587,7 @@ impl TreeFeatureConfig {
     fn water_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::oak(),
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::standing(
                 0.1,
                 OakTreeConfig::fancy_oak(),
@@ -578,6 +598,7 @@ impl TreeFeatureConfig {
     fn birch_and_oak_leaf_litter_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::oak_bees_0002(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
                 TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_0002()),
@@ -590,6 +611,7 @@ impl TreeFeatureConfig {
     fn sparse_jungle_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::jungle_tree(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak()),
                 TreeFeatureVariant::standing(0.5, OakTreeConfig::jungle_bush()),
@@ -601,6 +623,7 @@ impl TreeFeatureConfig {
     fn old_growth_spruce_taiga_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::spruce(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::mega_spruce()),
                 TreeFeatureVariant::standing(0.333_333_34, OakTreeConfig::pine()),
@@ -612,6 +635,7 @@ impl TreeFeatureConfig {
     fn old_growth_pine_taiga_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::spruce(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.025_641_026, OakTreeConfig::mega_spruce()),
                 TreeFeatureVariant::standing(0.307_692_32, OakTreeConfig::mega_pine()),
@@ -624,6 +648,7 @@ impl TreeFeatureConfig {
     fn jungle_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::jungle_tree(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak()),
                 TreeFeatureVariant::standing(0.5, OakTreeConfig::jungle_bush()),
@@ -636,6 +661,7 @@ impl TreeFeatureConfig {
     fn mangrove_trees() -> Self {
         Self {
             default_tree: OakTreeConfig::mangrove(),
+            mushroom_variants: Vec::new(),
             variants: vec![TreeFeatureVariant::standing(
                 0.85,
                 OakTreeConfig::tall_mangrove(),
@@ -646,6 +672,7 @@ impl TreeFeatureConfig {
     fn bamboo_vegetation() -> Self {
         Self {
             default_tree: OakTreeConfig::jungle_bush(),
+            mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::standing(0.05, OakTreeConfig::fancy_oak()),
                 TreeFeatureVariant::standing(0.15, OakTreeConfig::jungle_bush()),
@@ -666,6 +693,20 @@ impl TreeFeatureConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
+        for variant in &self.mushroom_variants {
+            if random.next_float() < variant.chance {
+                return variant.place(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+            }
+        }
         for variant in &self.variants {
             if random.next_float() < variant.chance {
                 return variant.place(
@@ -704,6 +745,20 @@ impl TreeFeatureConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
+        for variant in &self.mushroom_variants {
+            if random.next_float() < variant.chance {
+                return variant.place_spillover(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+            }
+        }
         for variant in &self.variants {
             if random.next_float() < variant.chance {
                 return variant.place_spillover(
@@ -719,6 +774,66 @@ impl TreeFeatureConfig {
             }
         }
         self.default_tree.place_spillover(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct HugeMushroomTreeVariant {
+    chance: f32,
+    config: HugeMushroomFeatureConfig,
+}
+
+impl HugeMushroomTreeVariant {
+    fn new(chance: f32, config: HugeMushroomFeatureConfig) -> Self {
+        Self { chance, config }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.config.place(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.config.place_spillover(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -1258,6 +1373,23 @@ impl OakTreeConfig {
             beehive_probability: 0.01,
             fallen_min_length: 4,
             fallen_max_length: 9,
+            ..Self::oak()
+        }
+    }
+
+    fn azalea() -> Self {
+        Self {
+            trunk: Self::log("minecraft:oak_log"),
+            leaves: Self::leaves("minecraft:azalea_leaves"),
+            dirt: BlockLayer::new("minecraft:rooted_dirt"),
+            base_height: 4,
+            height_rand_a: 2,
+            height_rand_b: 0,
+            trunk_placer: TreeTrunkConfig::Forking,
+            foliage_height: 2,
+            foliage_radius: 3,
+            fallen_min_length: 4,
+            fallen_max_length: 7,
             ..Self::oak()
         }
     }

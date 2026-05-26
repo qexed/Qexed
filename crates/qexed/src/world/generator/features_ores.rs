@@ -246,6 +246,7 @@ struct PlacedDiskFeature {
     radius: UniformInt,
     target_blocks: &'static [&'static str],
     state_provider: DiskStateProvider,
+    surface_anchor: Option<SurfaceDiskAnchor>,
     biome_filter: FeatureBiomeFilter,
 }
 
@@ -262,6 +263,7 @@ impl PlacedDiskFeature {
                 sand: BlockLayer::new("minecraft:sand"),
                 sandstone: BlockLayer::new("minecraft:sandstone"),
             },
+            surface_anchor: None,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -286,6 +288,28 @@ impl PlacedDiskFeature {
         )
     }
 
+    fn grass(feature_index: i32) -> Self {
+        Self {
+            step_index: 6,
+            feature_index,
+            count: OrePlacementCount::Constant(1),
+            half_height: 2,
+            radius: UniformInt { min: 2, max: 6 },
+            target_blocks: DISK_DIRT_MUD_TARGETS,
+            state_provider: DiskStateProvider::Grass {
+                dirt: BlockLayer::new("minecraft:dirt"),
+                grass: BlockLayer::with_properties("minecraft:grass_block", &[("snowy", "false")]),
+            },
+            surface_anchor: None,
+            biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn with_surface_anchor(mut self, block: &'static str, offset_y: i32) -> Self {
+        self.surface_anchor = Some(SurfaceDiskAnchor { block, offset_y });
+        self
+    }
+
     fn simple(
         feature_index: i32,
         half_height: i32,
@@ -301,6 +325,7 @@ impl PlacedDiskFeature {
             radius,
             target_blocks,
             state_provider: DiskStateProvider::Simple(BlockLayer::new(block)),
+            surface_anchor: None,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -326,12 +351,29 @@ impl PlacedDiskFeature {
             let y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
             if y <= settings.min_y
                 || !self.biome_filter.allows_at(&settings.density, x, y, z)
-                || !is_water_at(chunk, local_x, y, local_z, settings.min_y)
+                || !self.can_start_at(chunk, local_x, y, local_z, settings.min_y)
             {
                 continue;
             }
 
             self.place_disk(settings, origin_x, origin_z, chunk, random, x, y, z);
+        }
+    }
+
+    fn can_start_at(
+        &self,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        world_y: i32,
+        local_z: usize,
+        min_y: i32,
+    ) -> bool {
+        if let Some(anchor) = self.surface_anchor {
+            chunk
+                .layer(local_x, world_y + anchor.offset_y, local_z, min_y)
+                .is_some_and(|layer| layer.is(anchor.block))
+        } else {
+            is_water_at(chunk, local_x, world_y, local_z, min_y)
         }
     }
 
@@ -396,6 +438,10 @@ enum DiskStateProvider {
         sand: BlockLayer,
         sandstone: BlockLayer,
     },
+    Grass {
+        dirt: BlockLayer,
+        grass: BlockLayer,
+    },
 }
 
 impl DiskStateProvider {
@@ -419,8 +465,24 @@ impl DiskStateProvider {
                     sand.clone()
                 }
             }
+            Self::Grass { dirt, grass } => {
+                if !chunk
+                    .layer(local_x, world_y + 1, local_z, min_y)
+                    .is_some_and(|layer| is_full_solid_layer(layer) || is_water_layer(layer))
+                {
+                    grass.clone()
+                } else {
+                    dirt.clone()
+                }
+            }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SurfaceDiskAnchor {
+    block: &'static str,
+    offset_y: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -469,6 +531,27 @@ impl PlacedSpringFeature {
                 valid_blocks: SPRING_LAVA_VALID_BLOCKS,
             },
             biome_filter: FeatureBiomeFilter::All,
+        }
+    }
+
+    fn lava_frozen(feature_index: i32) -> Self {
+        Self {
+            step_index: 8,
+            feature_index,
+            count: OrePlacementCount::Constant(20),
+            height: OreHeight::VeryBiasedToBottom {
+                min: HeightAnchor::AboveBottom(0),
+                max: HeightAnchor::BelowTop(8),
+                inner: 8,
+            },
+            config: SpringFeatureConfig {
+                state: BlockLayer::new("minecraft:lava"),
+                rock_count: 4,
+                hole_count: 1,
+                requires_block_below: true,
+                valid_blocks: SPRING_FROZEN_LAVA_VALID_BLOCKS,
+            },
+            biome_filter: FeatureBiomeFilter::Include(FROZEN_LAVA_SPRING_BIOMES),
         }
     }
 
@@ -980,6 +1063,10 @@ impl FeatureRandom {
 
     fn next_float(&mut self) -> f32 {
         self.next_bits(24) as f32 * 5.960_464_5e-8_f32
+    }
+
+    fn next_bool(&mut self) -> bool {
+        self.next_bits(1) != 0
     }
 
     fn next_double(&mut self) -> f64 {

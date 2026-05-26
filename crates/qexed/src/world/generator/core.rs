@@ -226,16 +226,27 @@ impl VanillaNoiseGenerator {
             gpu_worldgen,
         }
     }
+
+    fn can_generate_dimension(dimension: &str) -> bool {
+        dimension == "minecraft:overworld"
+    }
 }
 
 impl WorldChunkGenerator for VanillaNoiseGenerator {
     fn generate(
         &self,
-        _dimension: &str,
+        dimension: &str,
         chunk_x: i32,
         chunk_z: i32,
         light_algorithm: WorldLightAlgorithm,
     ) -> Result<GeneratedChunk> {
+        if !Self::can_generate_dimension(dimension) {
+            return Ok(GeneratedChunk {
+                packet: empty_chunk_packet(chunk_x, chunk_z, super::WorldLightMode::Static),
+                light_dampening: vec![0; CHUNK_DAMPENING_LEN],
+            });
+        }
+
         let total_start = Instant::now();
         let (chunk, timings) =
             self.settings
@@ -277,19 +288,27 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
 
     fn block_state_at(
         &self,
-        _dimension: &str,
+        dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
+        if !Self::can_generate_dimension(dimension) {
+            return None;
+        }
+
         self.settings
             .block_state_at(position.x, position.y, position.z)
     }
 
     fn region_chunk(
         &self,
-        _dimension: &str,
+        dimension: &str,
         chunk_x: i32,
         chunk_z: i32,
     ) -> Result<Option<super::region::ChunkData>> {
+        if !Self::can_generate_dimension(dimension) {
+            return Ok(None);
+        }
+
         let (chunk, _) =
             self.settings
                 .generate_chunk_profiled(chunk_x, chunk_z, self.gpu_worldgen.as_deref());

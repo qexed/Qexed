@@ -5,14 +5,22 @@ mod tests {
     use super::*;
 
     fn grass_surface_test_chunk(settings: &NoiseSettings, surface_y: i32) -> NoiseChunkBlocks {
-        let grass_block = BlockLayer::new("minecraft:grass_block");
+        surface_test_chunk(settings, surface_y, "minecraft:grass_block")
+    }
+
+    fn surface_test_chunk(
+        settings: &NoiseSettings,
+        surface_y: i32,
+        surface_block: &str,
+    ) -> NoiseChunkBlocks {
+        let surface_block = BlockLayer::new(surface_block);
         let air = BlockLayer::new("minecraft:air");
         let columns = (0..HEIGHTMAP_ENTRY_COUNT)
             .map(|_| NoiseColumnBlocks {
                 blocks: (settings.min_y..settings.min_y + settings.height)
                     .map(|y| {
                         if y <= surface_y {
-                            grass_block.clone()
+                            surface_block.clone()
                         } else {
                             air.clone()
                         }
@@ -29,11 +37,83 @@ mod tests {
         }
     }
 
+    fn underwater_test_chunk(
+        settings: &NoiseSettings,
+        floor_y: i32,
+        water_top_y: i32,
+        floor_block: &str,
+    ) -> NoiseChunkBlocks {
+        let floor = BlockLayer::new(floor_block);
+        let water = BlockLayer::new("minecraft:water");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= floor_y {
+                            floor.clone()
+                        } else if y <= water_top_y {
+                            water.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: water_top_y + 1 - settings.min_y,
+            })
+            .collect();
+
+        NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        }
+    }
+
+    fn cave_ceiling_test_chunk(settings: &NoiseSettings, ceiling_y: i32) -> NoiseChunkBlocks {
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y >= ceiling_y {
+                            stone.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+
+        NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        }
+    }
+
     fn chunk_contains_block(chunk: &NoiseChunkBlocks, block: &str) -> bool {
         chunk
             .columns
             .iter()
             .any(|column| column.blocks.iter().any(|layer| layer.is(block)))
+    }
+
+    fn chunk_contains_property(chunk: &NoiseChunkBlocks, block: &str, name: &str, value: &str) -> bool {
+        chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                layer.is(block)
+                    && layer
+                        .properties
+                        .iter()
+                        .any(|(property_name, property_value)| {
+                            property_name == name && property_value == value
+                        })
+            })
+        })
     }
 
     fn generate_noise_chunk_without_neighbor_tree_spillover(
@@ -257,6 +337,31 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_does_not_generate_non_overworld_dimensions() {
+        let config = WorldConfig {
+            generator: WorldGeneratorConfig::VanillaNoise,
+            generator_preset: "minecraft:overworld".to_string(),
+            seed: 12345,
+            ..WorldConfig::default()
+        };
+        let generator = VanillaNoiseGenerator::from_config(&config);
+        let generated = generator
+            .generate("minecraft:the_nether", 0, 0, WorldLightAlgorithm::Fast)
+            .unwrap();
+
+        assert_eq!(generated.light_dampening, vec![0; CHUNK_DAMPENING_LEN]);
+        assert_eq!(generated.packet.data.heightmaps.len(), 3);
+        assert_eq!(
+            generator.block_state_at(
+                "minecraft:the_end",
+                &qexed_packet::net_types::Position { x: 0, y: 64, z: 0 }
+            ),
+            None
+        );
+        assert!(generator.region_chunk("minecraft:the_nether", 0, 0).unwrap().is_none());
+    }
+
+    #[test]
     fn vanilla_noise_applies_deepslate_surface_rule() {
         let config = WorldConfig {
             generator: WorldGeneratorConfig::VanillaNoise,
@@ -426,6 +531,19 @@ mod tests {
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:dripstone_caves"))
         }));
         assert!(features.iter().any(|feature| {
+            feature.feature_index == 2
+                && matches!(feature.count, OrePlacementCount::Constant(46))
+                && feature
+                    .ore
+                    .targets
+                    .iter()
+                    .any(|target| {
+                        matches!(target.predicate, OreTargetPredicate::BaseStoneOverworld)
+                            && target.block.block.as_ref() == "minecraft:clay"
+                    })
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == LUSH_CAVES_ORE_BIOMES)
+        }));
+        assert!(features.iter().any(|feature| {
             feature.feature_index == 26
                 && feature
                     .ore
@@ -488,6 +606,107 @@ mod tests {
                 && feature.target_blocks == DISK_DIRT_GRASS_TARGETS
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:badlands"))
         }));
+        assert!(disks.iter().any(|feature| {
+            feature.feature_index == 30
+                && feature.target_blocks == DISK_DIRT_MUD_TARGETS
+                && matches!(
+                    feature.surface_anchor,
+                    Some(SurfaceDiskAnchor {
+                        block: "minecraft:mud",
+                        offset_y: -1
+                    })
+                )
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == MANGROVE_TREE_BIOMES)
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_surface_decorations() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let features = &settings.ore_features.surface_features;
+
+        let forest_rock = features
+            .iter()
+            .find(|feature| feature.feature_index == 1 && feature.step_index == 2)
+            .unwrap();
+        assert!(matches!(forest_rock.count, OrePlacementCount::Constant(2)));
+        assert!(matches!(
+            forest_rock.config,
+            SurfaceFeatureConfig::BlockBlob(_)
+        ));
+        assert!(matches!(
+            forest_rock.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == FOREST_ROCK_BIOMES
+        ));
+
+        let ice_spike = features
+            .iter()
+            .find(|feature| feature.feature_index == 0 && feature.step_index == 4)
+            .unwrap();
+        assert!(matches!(ice_spike.count, OrePlacementCount::Constant(3)));
+        assert!(matches!(ice_spike.config, SurfaceFeatureConfig::IceSpike(_)));
+
+        let iceberg_packed = features
+            .iter()
+            .find(|feature| feature.feature_index == 2 && feature.step_index == 2)
+            .unwrap();
+        assert!(matches!(iceberg_packed.count, OrePlacementCount::Rarity(16)));
+        assert!(matches!(
+            iceberg_packed.heightmap,
+            SurfaceHeightmap::SeaLevel
+        ));
+        assert!(matches!(
+            iceberg_packed.config,
+            SurfaceFeatureConfig::Iceberg(_)
+        ));
+        assert!(matches!(
+            iceberg_packed.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == ICEBERG_BIOMES
+        ));
+
+        let iceberg_blue = features
+            .iter()
+            .find(|feature| feature.feature_index == 3 && feature.step_index == 2)
+            .unwrap();
+        assert!(matches!(iceberg_blue.count, OrePlacementCount::Rarity(200)));
+        assert!(matches!(
+            iceberg_blue.config,
+            SurfaceFeatureConfig::Iceberg(_)
+        ));
+
+        let ice_patch = features
+            .iter()
+            .find(|feature| feature.feature_index == 1 && feature.step_index == 4)
+            .unwrap();
+        assert_eq!(ice_patch.y_offset, -1);
+        assert!(matches!(ice_patch.config, SurfaceFeatureConfig::Disk(_)));
+
+        let blue_ice = features
+            .iter()
+            .find(|feature| feature.feature_index == 4 && feature.step_index == 4)
+            .unwrap();
+        assert!(matches!(
+            blue_ice.count,
+            OrePlacementCount::Uniform { min: 0, max: 19 }
+        ));
+        assert!(matches!(
+            blue_ice.heightmap,
+            SurfaceHeightmap::HeightRange(OreHeight::Uniform(
+                HeightAnchor::Absolute(30),
+                HeightAnchor::Absolute(61)
+            ))
+        ));
+        assert!(matches!(blue_ice.config, SurfaceFeatureConfig::BlueIce(_)));
+
+        let pale_moss = features
+            .iter()
+            .find(|feature| feature.feature_index == 90)
+            .unwrap();
+        assert_eq!(pale_moss.step_index, 9);
+        assert!(matches!(
+            pale_moss.config,
+            SurfaceFeatureConfig::VegetationPatch(_)
+        ));
     }
 
     #[test]
@@ -514,6 +733,25 @@ mod tests {
                     }
                 )
                 && feature.config.state.block.as_ref() == "minecraft:lava"
+        }));
+        assert!(springs.iter().any(|feature| {
+            feature.step_index == 8
+                && feature.feature_index == 2
+                && matches!(feature.count, OrePlacementCount::Constant(20))
+                && matches!(
+                    feature.height,
+                    OreHeight::VeryBiasedToBottom {
+                        min: HeightAnchor::AboveBottom(0),
+                        max: HeightAnchor::BelowTop(8),
+                        inner: 8
+                    }
+                )
+                && feature.config.state.block.as_ref() == "minecraft:lava"
+                && feature.config.valid_blocks == SPRING_FROZEN_LAVA_VALID_BLOCKS
+                && matches!(
+                    feature.biome_filter,
+                    FeatureBiomeFilter::Include(biomes) if biomes == FROZEN_LAVA_SPRING_BIOMES
+                )
         }));
     }
 
@@ -553,6 +791,196 @@ mod tests {
                 && matches!(
                     feature.height,
                     OreHeight::Uniform(HeightAnchor::AboveBottom(6), HeightAnchor::Absolute(30))
+                )
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_dripstone_cave_features() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let features = &settings.ore_features.dripstone_features;
+
+        let large = features
+            .iter()
+            .find_map(|feature| match feature {
+                PlacedDripstoneFeature::Large(feature) => Some(feature),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(large.step_index, 2);
+        assert_eq!(large.feature_index, 1);
+        assert!(matches!(
+            large.count,
+            OrePlacementCount::Uniform { min: 10, max: 48 }
+        ));
+        assert!(matches!(
+            large.height,
+            OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256))
+        ));
+        assert_eq!(large.config.column_radius.min, 3);
+        assert_eq!(large.config.column_radius.max, 19);
+        assert_eq!(large.config.floor_to_ceiling_search_range, 30);
+        assert!(matches!(
+            large.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == DRIPSTONE_CAVES_BIOMES
+        ));
+
+        let cluster = features
+            .iter()
+            .find_map(|feature| match feature {
+                PlacedDripstoneFeature::Cluster(feature) => Some(feature),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(cluster.step_index, 7);
+        assert_eq!(cluster.feature_index, 0);
+        assert!(matches!(
+            cluster.count,
+            OrePlacementCount::Uniform { min: 48, max: 96 }
+        ));
+        assert_eq!(cluster.config.radius.min, 2);
+        assert_eq!(cluster.config.radius.max, 8);
+        assert_eq!(cluster.config.floor_to_ceiling_search_range, 12);
+        assert!(matches!(
+            cluster.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == DRIPSTONE_CAVES_BIOMES
+        ));
+
+        let pointed = features
+            .iter()
+            .find_map(|feature| match feature {
+                PlacedDripstoneFeature::Pointed(feature) => Some(feature),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(pointed.step_index, 7);
+        assert_eq!(pointed.feature_index, 1);
+        assert!(matches!(
+            pointed.outer_count,
+            OrePlacementCount::Uniform { min: 192, max: 256 }
+        ));
+        assert!(matches!(
+            pointed.inner_count,
+            OrePlacementCount::Uniform { min: 1, max: 5 }
+        ));
+        assert_eq!(pointed.xz_offset.min, -10);
+        assert_eq!(pointed.xz_offset.max, 10);
+        assert_eq!(pointed.y_offset.min, -2);
+        assert_eq!(pointed.y_offset.max, 2);
+        assert!(matches!(
+            pointed.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == DRIPSTONE_CAVES_BIOMES
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_deep_dark_sculk_features() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let features = &settings.ore_features.sculk_features;
+
+        let vein = features
+            .iter()
+            .find_map(|feature| match feature {
+                PlacedSculkFeature::Vein(feature) => Some(feature),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(vein.step_index, 7);
+        assert_eq!(vein.feature_index, 0);
+        assert!(matches!(
+            vein.count,
+            OrePlacementCount::Uniform { min: 204, max: 250 }
+        ));
+        assert!(matches!(
+            vein.height,
+            OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256))
+        ));
+        assert_eq!(vein.config.block.block.as_ref(), "minecraft:sculk_vein");
+        assert!(vein.config.can_place_on_floor);
+        assert!(vein.config.can_place_on_ceiling);
+        assert!(vein.config.can_place_on_wall);
+        assert_eq!(vein.config.chance_of_spreading, 1.0);
+        assert!(matches!(
+            vein.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == DEEP_DARK_BIOMES
+        ));
+
+        let patch = features
+            .iter()
+            .find_map(|feature| match feature {
+                PlacedSculkFeature::Patch(feature) => Some(feature),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(patch.step_index, 7);
+        assert_eq!(patch.feature_index, 1);
+        assert!(matches!(patch.count, OrePlacementCount::Constant(256)));
+        assert_eq!(patch.config.charge_count, 10);
+        assert_eq!(patch.config.amount_per_charge, 32);
+        assert_eq!(patch.config.spread_attempts, 64);
+        assert_eq!(patch.config.spread_rounds, 1);
+        assert_eq!(patch.config.growth_rounds, 0);
+        assert_eq!(patch.config.catalyst_chance, 0.5);
+        assert!(matches!(
+            patch.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == DEEP_DARK_BIOMES
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_structure_features() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let features = &settings.ore_features.structure_features;
+
+        let desert_well = features
+            .iter()
+            .find_map(|feature| match feature {
+                PlacedStructureFeature::DesertWell(feature) => Some(feature),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(desert_well.step_index, 4);
+        assert_eq!(desert_well.feature_index, 0);
+        assert_eq!(desert_well.rarity, 1000);
+        assert!(matches!(
+            desert_well.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == DESERT_WELL_BIOMES
+        ));
+
+        let fossils: Vec<_> = features
+            .iter()
+            .filter_map(|feature| match feature {
+                PlacedStructureFeature::Fossil(feature) => Some(feature),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fossils.len(), 2);
+        assert!(fossils.iter().any(|feature| {
+            feature.step_index == 3
+                && feature.feature_index == 2
+                && feature.rarity == 64
+                && feature.config.overlay_block.is("minecraft:coal_ore")
+                && matches!(
+                    feature.height,
+                    OreHeight::Uniform(HeightAnchor::Absolute(0), HeightAnchor::BelowTop(0))
+                )
+                && matches!(
+                    feature.biome_filter,
+                    FeatureBiomeFilter::Include(biomes) if biomes == FOSSIL_BIOMES
+                )
+        }));
+        assert!(fossils.iter().any(|feature| {
+            feature.step_index == 3
+                && feature.feature_index == 3
+                && feature.rarity == 64
+                && feature.config.overlay_block.is("minecraft:diamond_ore")
+                && matches!(
+                    feature.height,
+                    OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(-8))
+                )
+                && matches!(
+                    feature.biome_filter,
+                    FeatureBiomeFilter::Include(biomes) if biomes == FOSSIL_BIOMES
                 )
         }));
     }
@@ -610,6 +1038,157 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_configures_lush_cave_decorations() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let cave_vines = &settings.ore_features.cave_vines;
+        let spore_blossom = &settings.ore_features.spore_blossom;
+        let classic_vines = &settings.ore_features.classic_vines;
+
+        assert_eq!(cave_vines.step_index, 9);
+        assert_eq!(cave_vines.feature_index, 77);
+        assert!(matches!(
+            cave_vines.count,
+            OrePlacementCount::Constant(188)
+        ));
+        assert_eq!(cave_vines.search_range, 12);
+        assert_eq!(cave_vines.random_y_offset, -1);
+        assert!(matches!(
+            cave_vines.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == LUSH_CAVES_BIOMES
+        ));
+
+        assert_eq!(spore_blossom.step_index, 9);
+        assert_eq!(spore_blossom.feature_index, 78);
+        assert!(matches!(
+            spore_blossom.count,
+            OrePlacementCount::Constant(25)
+        ));
+        assert_eq!(spore_blossom.search_range, 12);
+        assert_eq!(spore_blossom.random_y_offset, -1);
+        assert!(matches!(
+            spore_blossom.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == LUSH_CAVES_BIOMES
+        ));
+
+        assert_eq!(classic_vines.step_index, 9);
+        assert_eq!(classic_vines.feature_index, 83);
+        assert!(matches!(
+            classic_vines.count,
+            OrePlacementCount::Constant(256)
+        ));
+        assert!(matches!(
+            classic_vines.height,
+            OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256))
+        ));
+        assert!(matches!(
+            classic_vines.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == LUSH_CAVES_BIOMES
+        ));
+
+        let surface_vines = &settings.ore_features.surface_vines;
+        assert_eq!(surface_vines.step_index, 9);
+        assert_eq!(surface_vines.feature_index, 85);
+        assert!(matches!(
+            surface_vines.count,
+            OrePlacementCount::Constant(127)
+        ));
+        assert!(matches!(
+            surface_vines.height,
+            OreHeight::Uniform(HeightAnchor::Absolute(64), HeightAnchor::Absolute(100))
+        ));
+        assert!(matches!(
+            surface_vines.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == SURFACE_VINES_BIOMES
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_lush_environment_scan_features() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let features = &settings.ore_features.environment_scan_features;
+
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 79
+                && matches!(feature.count, OrePlacementCount::Constant(125))
+                && matches!(feature.search, EnvironmentScan::Up { max_steps: 12 })
+                && feature.random_y_offset == -1
+                && matches!(feature.config, EnvironmentFeatureConfig::VegetationPatch(_))
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 80
+                && matches!(feature.count, OrePlacementCount::Constant(62))
+                && matches!(feature.search, EnvironmentScan::Down { max_steps: 12 })
+                && feature.random_y_offset == 1
+                && matches!(feature.config, EnvironmentFeatureConfig::VegetationPatch(_))
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 81
+                && matches!(feature.count, OrePlacementCount::Constant(125))
+                && matches!(feature.search, EnvironmentScan::Down { max_steps: 12 })
+                && feature.random_y_offset == 1
+                && matches!(feature.config, EnvironmentFeatureConfig::VegetationPatch(_))
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 82
+                && matches!(feature.count, OrePlacementCount::Uniform { min: 1, max: 2 })
+                && matches!(feature.search, EnvironmentScan::Up { max_steps: 12 })
+                && feature.random_y_offset == -1
+                && matches!(feature.config, EnvironmentFeatureConfig::RootedAzaleaTree(_))
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_aquatic_features() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let features = &settings.ore_features.aquatic_features;
+
+        assert!(features.iter().any(|feature| {
+            feature.step_index == 9
+                && feature.feature_index == 66
+                && matches!(feature.placement, AquaticPlacement::Count(48))
+                && matches!(feature.config, AquaticFeatureConfig::Seagrass { tall_probability, .. } if tall_probability == 0.3)
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == SEAGRASS_NORMAL_BIOMES)
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 70
+                && matches!(feature.placement, AquaticPlacement::Count(48))
+                && matches!(feature.config, AquaticFeatureConfig::Seagrass { tall_probability, .. } if tall_probability == 0.8)
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == SEAGRASS_DEEP_WARM_BIOMES)
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 74
+                && matches!(
+                    feature.placement,
+                    AquaticPlacement::NoiseBasedCount {
+                        noise_to_count_ratio: 120,
+                        ..
+                    }
+                )
+                && matches!(feature.config, AquaticFeatureConfig::Kelp { .. })
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == KELP_COLD_BIOMES)
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 76
+                && matches!(feature.placement, AquaticPlacement::Rarity { chance: 16 })
+                && matches!(feature.config, AquaticFeatureConfig::SeaPickle { count: 20, .. })
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == SEA_PICKLE_BIOMES)
+        }));
+        assert!(features.iter().any(|feature| {
+            feature.feature_index == 102
+                && matches!(
+                    feature.placement,
+                    AquaticPlacement::NoiseBasedCount {
+                        noise_to_count_ratio: 20,
+                        noise_factor: 400.0,
+                        noise_offset: 0.0
+                    }
+                )
+                && matches!(feature.config, AquaticFeatureConfig::Coral(_))
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == WARM_OCEAN_VEGETATION_BIOMES)
+        }));
+    }
+
+    #[test]
     fn vanilla_noise_configures_patch_tall_grass_2() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let feature = settings
@@ -649,6 +1228,29 @@ mod tests {
                     .iter()
                     .any(|(name, value)| name == "half" && value == "upper")
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_configures_patch_tall_grass() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 0)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.feature_index, 0);
+        assert!(feature.noise_threshold.is_none());
+        assert_eq!(feature.rarity, 5);
+        assert_eq!(feature.inner_count, 96);
+        assert!(feature.block.lower.is("minecraft:tall_grass"));
+        assert!(feature.block.upper.is_some());
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == PATCH_TALL_GRASS_BIOMES
+        ));
     }
 
     #[test]
@@ -967,6 +1569,18 @@ mod tests {
             .iter()
             .find(|feature| feature.feature_index == 19)
             .unwrap();
+        let bamboo_light = settings
+            .ore_features
+            .block_columns
+            .iter()
+            .find(|feature| feature.feature_index == 99)
+            .unwrap();
+        let bamboo_some_podzol = settings
+            .ore_features
+            .block_columns
+            .iter()
+            .find(|feature| feature.feature_index == 100)
+            .unwrap();
 
         assert_eq!(normal_cane.step_index, 9);
         assert_eq!(normal_cane.rarity, 6);
@@ -1028,6 +1642,39 @@ mod tests {
             FeatureBiomeFilter::Include(biomes)
                 if biomes.contains(&"minecraft:badlands")
                     && biomes.contains(&"minecraft:eroded_badlands")
+        ));
+
+        assert_eq!(bamboo_light.rarity, 4);
+        assert!(bamboo_light.column.block.is("minecraft:bamboo"));
+        assert!(matches!(
+            bamboo_light.column.kind,
+            BlockColumnKind::Bamboo {
+                podzol_probability
+            } if podzol_probability == 0.0
+        ));
+        assert!(matches!(
+            bamboo_light.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == BAMBOO_LIGHT_BIOMES
+        ));
+
+        assert_eq!(bamboo_some_podzol.rarity, 1);
+        assert!(matches!(
+            bamboo_some_podzol.outer_count,
+            BlockColumnOuterCount::NoiseBased {
+                noise_to_count_ratio: 160,
+                noise_factor,
+                noise_offset
+            } if noise_factor == 80.0 && noise_offset == 0.3
+        ));
+        assert!(matches!(
+            bamboo_some_podzol.column.kind,
+            BlockColumnKind::Bamboo {
+                podzol_probability
+            } if podzol_probability == 0.2
+        ));
+        assert!(matches!(
+            bamboo_some_podzol.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == BAMBOO_SOME_PODZOL_BIOMES
         ));
     }
 
@@ -1155,6 +1802,12 @@ mod tests {
     #[test]
     fn vanilla_noise_configures_dry_grass_and_mushroom_variants() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mushroom_island = settings
+            .ore_features
+            .huge_mushrooms
+            .iter()
+            .find(|feature| feature.feature_index == 101)
+            .unwrap();
         let desert_dry_grass = settings
             .ore_features
             .vegetation_patches
@@ -1250,6 +1903,20 @@ mod tests {
         assert!(matches!(
             red_swamp.biome_filter,
             FeatureBiomeFilter::Include(biomes) if biomes == SWAMP_MUSHROOM_BIOMES
+        ));
+
+        assert_eq!(mushroom_island.step_index, 9);
+        assert!(matches!(
+            mushroom_island.count,
+            OrePlacementCount::Constant(1)
+        ));
+        assert!(matches!(
+            mushroom_island.config.selector,
+            HugeMushroomSelector::RandomBoolean
+        ));
+        assert!(matches!(
+            mushroom_island.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == MUSHROOM_ISLAND_VEGETATION_BIOMES
         ));
     }
 
@@ -1369,6 +2036,175 @@ mod tests {
             pale_garden.biome_filter,
             FeatureBiomeFilter::Include(biomes) if biomes == FLOWER_PALE_GARDEN_BIOMES
         ));
+
+        let waterlily = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 84)
+            .unwrap();
+        assert_eq!(waterlily.outer_count, 4);
+        assert_eq!(waterlily.rarity, 1);
+        assert_eq!(waterlily.inner_count, 10);
+        assert!(waterlily.block.lower.is("minecraft:lily_pad"));
+        assert!(matches!(
+            waterlily.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == WATERLILY_BIOMES
+        ));
+
+        let berry = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 85)
+            .unwrap();
+        assert_eq!(berry.rarity, 32);
+        assert_eq!(berry.inner_count, 96);
+        assert!(berry.block.lower.is("minecraft:sweet_berry_bush"));
+        assert!(berry
+            .block
+            .lower
+            .properties
+            .iter()
+            .any(|(name, value)| name == "age" && value == "3"));
+        assert_eq!(berry.required_support, Some("minecraft:grass_block"));
+        assert!(matches!(
+            berry.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == BERRY_COMMON_BIOMES
+        ));
+
+        let rare_berry = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 86)
+            .unwrap();
+        assert_eq!(rare_berry.rarity, 384);
+        assert!(matches!(
+            rare_berry.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == BERRY_RARE_BIOMES
+        ));
+
+        let firefly_swamp = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 87)
+            .unwrap();
+        assert_eq!(firefly_swamp.rarity, 8);
+        assert_eq!(firefly_swamp.inner_count, 20);
+        assert!(firefly_swamp.block.lower.is("minecraft:firefly_bush"));
+
+        let firefly_near_water = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 88)
+            .unwrap();
+        assert_eq!(firefly_near_water.outer_count, 2);
+        assert!(matches!(
+            firefly_near_water.placement_predicate,
+            SimpleVegetationPlacementPredicate::AirSurvivesNearWater
+        ));
+
+        let meadow = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 91)
+            .unwrap();
+        assert_eq!(meadow.inner_count, 96);
+        assert!(matches!(
+            &meadow.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.iter().any(|(layer, _)| layer.is("minecraft:allium"))
+                    && entries.iter().any(|(layer, _)| layer.is("minecraft:short_grass"))
+        ));
+        assert!(matches!(
+            meadow.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == FLOWER_MEADOW_BIOMES
+        ));
+
+        let flower_forest = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 92)
+            .unwrap();
+        assert_eq!(flower_forest.outer_count, 3);
+        assert_eq!(flower_forest.rarity, 2);
+        assert!(matches!(
+            &flower_forest.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.iter().any(|(layer, _)| layer.is("minecraft:lily_of_the_valley"))
+                    && entries.iter().any(|(layer, _)| layer.is("minecraft:red_tulip"))
+        ));
+
+        let forest_flowers = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 93)
+            .unwrap();
+        assert!(matches!(
+            forest_flowers.count_provider,
+            SimpleVegetationCountProvider::ClampedUniform {
+                min: -3,
+                max: 1,
+                clamp_min: 0,
+                clamp_max: 1
+            }
+        ));
+        assert!(matches!(
+            &forest_flowers.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.iter().any(|(layer, _)| layer.is("minecraft:lilac"))
+                    && entries.iter().any(|(layer, _)| layer.is("minecraft:rose_bush"))
+                    && entries.iter().any(|(layer, _)| layer.is("minecraft:peony"))
+        ));
+
+        let leaf_litter = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 95)
+            .unwrap();
+        assert_eq!(leaf_litter.outer_count, 2);
+        assert_eq!(leaf_litter.inner_count, 32);
+        assert_eq!(leaf_litter.required_support, Some("minecraft:grass_block"));
+        assert!(matches!(
+            &leaf_litter.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.len() == 12
+                    && entries.iter().all(|(layer, _)| layer.is("minecraft:leaf_litter"))
+        ));
+
+        let wildflowers = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 96)
+            .unwrap();
+        assert_eq!(wildflowers.inner_count, 8);
+        assert!(wildflowers.noise_threshold.is_some());
+        assert!(matches!(
+            &wildflowers.block.provider,
+            SimpleVegetationProvider::Weighted { entries }
+                if entries.len() == 16
+                    && entries.iter().all(|(layer, _)| layer.is("minecraft:wildflowers"))
+        ));
+
+        let pale_garden_flowers = settings
+            .ore_features
+            .vegetation_patches
+            .iter()
+            .find(|feature| feature.feature_index == 98)
+            .unwrap();
+        assert_eq!(pale_garden_flowers.rarity, 8);
+        assert!(pale_garden_flowers
+            .block
+            .lower
+            .is("minecraft:closed_eyeblossom"));
     }
 
     #[test]
@@ -1636,6 +2472,23 @@ mod tests {
 
         let dark_forest = tree_feature(&settings, 48);
         assert_tree_feature(dark_forest, &[(16, 1)], 0, DARK_FOREST_TREE_BIOMES);
+        assert_eq!(dark_forest.config.mushroom_variants.len(), 2);
+        assert_eq!(
+            dark_forest.config.mushroom_variants[0].chance,
+            0.025
+        );
+        assert!(matches!(
+            dark_forest.config.mushroom_variants[0].config.selector,
+            HugeMushroomSelector::Single(HugeMushroomKind::Brown)
+        ));
+        assert_eq!(
+            dark_forest.config.mushroom_variants[1].chance,
+            0.05
+        );
+        assert!(matches!(
+            dark_forest.config.mushroom_variants[1].config.selector,
+            HugeMushroomSelector::Single(HugeMushroomKind::Red)
+        ));
         assert_eq!(dark_forest.config.variants.len(), 5);
         assert!(dark_forest.config.variants[0]
             .tree
@@ -2122,6 +2975,1037 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn cave_floor_test_chunk(settings: &NoiseSettings, floor_y: i32) -> NoiseChunkBlocks {
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= floor_y {
+                            stone.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: floor_y + 1 - settings.min_y,
+            })
+            .collect();
+
+        NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        }
+    }
+
+    fn cave_room_test_chunk(settings: &NoiseSettings, floor_y: i32, ceiling_y: i32) -> NoiseChunkBlocks {
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= floor_y || y >= ceiling_y {
+                            stone.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+
+        NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        }
+    }
+
+    fn water_surface_test_chunk(
+        settings: &NoiseSettings,
+        floor_y: i32,
+        water_top_y: i32,
+    ) -> NoiseChunkBlocks {
+        let dirt = BlockLayer::new("minecraft:dirt");
+        let water = BlockLayer::new("minecraft:water");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| {
+                        if y <= floor_y {
+                            dirt.clone()
+                        } else if y <= water_top_y {
+                            water.clone()
+                        } else {
+                            air.clone()
+                        }
+                    })
+                    .collect(),
+                first_available_height: water_top_y + 1 - settings.min_y,
+            })
+            .collect();
+
+        NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn vanilla_noise_cave_vines_hang_from_ceiling_with_tip() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_ceiling_test_chunk(&settings, 70);
+        let mut random = FeatureRandom::new(7);
+
+        assert!(CaveVinesFeatureConfig::new().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            69,
+            8,
+        ));
+
+        let placed = (settings.min_y..70)
+            .filter_map(|y| chunk.layer(8, y, 8, settings.min_y).map(|layer| (y, layer)))
+            .filter(|(_, layer)| {
+                layer.is("minecraft:cave_vines") || layer.is("minecraft:cave_vines_plant")
+            })
+            .collect::<Vec<_>>();
+        assert!(!placed.is_empty());
+        assert!(placed.iter().any(|(_, layer)| layer.is("minecraft:cave_vines")));
+        assert!(placed.iter().all(|(_, layer)| {
+            layer
+                .properties
+                .iter()
+                .any(|(name, value)| name == "berries" && matches!(value.as_str(), "true" | "false"))
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_spore_blossom_places_under_solid_ceiling() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_ceiling_test_chunk(&settings, 70);
+        let mut feature = PlacedSporeBlossomFeature::new(0);
+        feature.biome_filter = FeatureBiomeFilter::All;
+        feature.height = OreHeight::Uniform(HeightAnchor::Absolute(58), HeightAnchor::Absolute(69));
+        let mut random = FeatureRandom::new(10);
+
+        feature.place(&settings, 0, 0, &mut chunk, &mut random);
+
+        let has_spore_blossom = chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:spore_blossom"))
+        });
+        assert!(has_spore_blossom);
+    }
+
+    #[test]
+    fn vanilla_noise_pointed_dripstone_grows_from_floor_and_ceiling() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = PointedDripstoneFeatureConfig::new();
+
+        let mut floor_chunk = cave_floor_test_chunk(&settings, 63);
+        assert!(config.place_at(
+            &settings,
+            0,
+            0,
+            &mut floor_chunk,
+            &mut FeatureRandom::new(3),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_property(
+            &floor_chunk,
+            "minecraft:pointed_dripstone",
+            "vertical_direction",
+            "up"
+        ));
+
+        let mut ceiling_chunk = cave_ceiling_test_chunk(&settings, 70);
+        assert!(config.place_at(
+            &settings,
+            0,
+            0,
+            &mut ceiling_chunk,
+            &mut FeatureRandom::new(3),
+            8,
+            69,
+            8,
+        ));
+        assert!(chunk_contains_property(
+            &ceiling_chunk,
+            "minecraft:pointed_dripstone",
+            "vertical_direction",
+            "down"
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_pointed_dripstone_placed_feature_scans_cave_space() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_room_test_chunk(&settings, 63, 72);
+        let mut feature = PlacedPointedDripstoneFeature::new(0);
+        feature.biome_filter = FeatureBiomeFilter::All;
+        feature.outer_count = OrePlacementCount::Constant(1);
+        feature.inner_count = OrePlacementCount::Constant(1);
+        feature.height = OreHeight::Uniform(HeightAnchor::Absolute(67), HeightAnchor::Absolute(67));
+        feature.xz_offset = ClampedNormalInt {
+            mean: 0.0,
+            deviation: 0.0,
+            min: 0,
+            max: 0,
+        };
+        feature.y_offset = ClampedNormalInt {
+            mean: 0.0,
+            deviation: 0.0,
+            min: 0,
+            max: 0,
+        };
+
+        feature.place(&settings, 0, 0, &mut chunk, &mut FeatureRandom::new(5));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:pointed_dripstone"));
+    }
+
+    #[test]
+    fn vanilla_noise_dripstone_cluster_places_blocks_and_points() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = DripstoneClusterFeatureConfig::new();
+        let mut placed = None;
+
+        for seed in 0..64 {
+            let mut chunk = cave_room_test_chunk(&settings, 63, 74);
+            if config.place(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                &mut FeatureRandom::new(seed),
+                8,
+                68,
+                8,
+            ) && chunk_contains_block(&chunk, "minecraft:dripstone_block")
+                && chunk_contains_block(&chunk, "minecraft:pointed_dripstone")
+            {
+                placed = Some(chunk);
+                break;
+            }
+        }
+
+        let chunk = placed.expect("test seeds should place a dripstone cluster");
+        assert!(chunk_contains_property(
+            &chunk,
+            "minecraft:pointed_dripstone",
+            "thickness",
+            "tip"
+        ) || chunk_contains_property(
+            &chunk,
+            "minecraft:pointed_dripstone",
+            "thickness",
+            "tip_merge"
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_large_dripstone_places_cone() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_room_test_chunk(&settings, 48, 88);
+        let config = LargeDripstoneFeatureConfig::new();
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(7),
+            8,
+            68,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:dripstone_block"));
+    }
+
+    #[test]
+    fn vanilla_noise_sculk_vein_attaches_to_cave_surface() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_room_test_chunk(&settings, 63, 72);
+
+        assert!(place_sculk_vein(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:sculk_vein"));
+        assert!(
+            chunk_contains_property(&chunk, "minecraft:sculk_vein", "up", "true")
+                || chunk_contains_property(&chunk, "minecraft:sculk_vein", "down", "true")
+                || chunk_contains_property(&chunk, "minecraft:sculk_vein", "north", "true")
+                || chunk_contains_property(&chunk, "minecraft:sculk_vein", "south", "true")
+                || chunk_contains_property(&chunk, "minecraft:sculk_vein", "west", "true")
+                || chunk_contains_property(&chunk, "minecraft:sculk_vein", "east", "true")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_sculk_patch_spreads_over_cave_surface() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = SculkPatchFeatureConfig::deep_dark();
+        let mut chunk = cave_room_test_chunk(&settings, 63, 72);
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(4),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:sculk"));
+        assert!(
+            chunk_contains_block(&chunk, "minecraft:sculk_vein")
+                || chunk_contains_block(&chunk, "minecraft:sculk_catalyst")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_desert_well_places_water_and_suspicious_sand() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = DesertWellFeatureConfig::new();
+        let mut chunk = surface_test_chunk(&settings, 63, "minecraft:sand");
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(8),
+            8,
+            64,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:sandstone"));
+        assert!(chunk_contains_block(&chunk, "minecraft:water"));
+        assert!(chunk_contains_block(&chunk, "minecraft:suspicious_sand"));
+        assert!(chunk.block_entities.iter().any(|entity| {
+            entity.entity_type == BRUSHABLE_BLOCK_ENTITY_TYPE_ID
+                && matches!(
+                    &entity.nbt,
+                    Tag::Compound(fields)
+                        if matches!(
+                            fields.get("LootTable"),
+                            Some(Tag::String(name)) if name.as_ref() == "minecraft:archaeology/desert_well"
+                        )
+                        && matches!(fields.get("LootTableSeed"), Some(Tag::Long(_)))
+                )
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_fossil_places_bone_and_overlay_ores() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut coal_chunk = surface_test_chunk(&settings, 80, "minecraft:stone");
+        let mut diamond_chunk = surface_test_chunk(&settings, 0, "minecraft:deepslate");
+
+        assert!(FossilFeatureConfig::new("minecraft:coal_ore").place(
+            &settings,
+            0,
+            0,
+            &mut coal_chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            40,
+            8,
+        ));
+        assert!(FossilFeatureConfig::new("minecraft:diamond_ore").place(
+            &settings,
+            0,
+            0,
+            &mut diamond_chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            -32,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&coal_chunk, "minecraft:bone_block"));
+        assert!(chunk_contains_block(&coal_chunk, "minecraft:coal_ore"));
+        assert!(chunk_contains_block(&diamond_chunk, "minecraft:bone_block"));
+        assert!(chunk_contains_block(&diamond_chunk, "minecraft:diamond_ore"));
+    }
+
+    #[test]
+    fn vanilla_noise_classic_vines_attach_to_cave_wall() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|index| {
+                let x = index % 16;
+                NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| if x == 7 { stone.clone() } else { air.clone() })
+                        .collect(),
+                    first_available_height: settings.height,
+                }
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let feature = PlacedClassicVinesFeature::cave(0);
+
+        assert!(feature.place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            64,
+            8,
+        ));
+        let vine = chunk.layer(8, 64, 8, settings.min_y).unwrap();
+        assert!(vine.is("minecraft:vine"));
+        assert!(vine.properties.iter().any(|(name, value)| {
+            matches!(name.as_str(), "north" | "south" | "west" | "east") && value == "true"
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_moss_patch_replaces_floor_and_places_lush_vegetation() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_floor_test_chunk(&settings, 63);
+        let config = VegetationPatchConfig::moss_patch();
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(12),
+            8,
+            63,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:moss_block"));
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                matches!(
+                    layer.block.as_ref(),
+                    "minecraft:azalea"
+                        | "minecraft:flowering_azalea"
+                        | "minecraft:moss_carpet"
+                        | "minecraft:short_grass"
+                        | "minecraft:tall_grass"
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_lush_clay_patch_can_place_dripleaf() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = underwater_test_chunk(&settings, 63, 67, "minecraft:stone");
+        let config = VegetationPatchConfig::lush_caves_clay();
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(7),
+            8,
+            63,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:clay"));
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                matches!(
+                    layer.block.as_ref(),
+                    "minecraft:small_dripleaf"
+                        | "minecraft:big_dripleaf"
+                        | "minecraft:big_dripleaf_stem"
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_rooted_azalea_tree_places_roots_and_azalea_leaves() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+        let config = RootedAzaleaTreeConfig::new();
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(3),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:rooted_dirt"));
+        assert!(chunk_contains_block(&chunk, "minecraft:azalea_leaves"));
+    }
+
+    #[test]
+    fn vanilla_noise_waterlily_places_on_water_surface() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = water_surface_test_chunk(&settings, 61, 63);
+
+        assert!(SimpleVegetationBlock::waterlily().place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk.layer(8, 64, 8, settings.min_y).unwrap().is("minecraft:lily_pad"));
+        assert!(chunk.layer(8, 63, 8, settings.min_y).unwrap().is("minecraft:water"));
+    }
+
+    #[test]
+    fn vanilla_noise_surface_blob_places_forest_rock_on_substrate() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+        let config = BlockBlobSurfaceConfig::forest_rock();
+
+        assert!(config.place_resolved(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(4),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:mossy_cobblestone"));
+    }
+
+    #[test]
+    fn vanilla_noise_ice_spike_requires_snow_and_places_packed_ice() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+        for x in 0..16 {
+            for z in 0..16 {
+                chunk.set_layer(x, 63, z, settings.min_y, BlockLayer::new("minecraft:snow_block"));
+            }
+        }
+        let config = IceSpikeSurfaceConfig::new();
+
+        assert!(config.find_origin_y(&settings, 0, 0, &chunk, 8, 64, 8).is_some());
+        assert!(config.place_resolved(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(7),
+            8,
+            63,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:packed_ice"));
+    }
+
+    #[test]
+    fn vanilla_noise_ice_patch_replaces_snowy_surface() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+        for x in 0..16 {
+            for z in 0..16 {
+                chunk.set_layer(x, 63, z, settings.min_y, BlockLayer::new("minecraft:snow_block"));
+            }
+        }
+        let config = SurfaceDiskConfig::ice_patch();
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            63,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:packed_ice"));
+    }
+
+    #[test]
+    fn vanilla_noise_iceberg_places_large_ice_body() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = underwater_test_chunk(&settings, 45, settings.sea_level, "minecraft:sand");
+
+        assert!(IcebergSurfaceConfig::packed().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            settings.sea_level,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:packed_ice"));
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().enumerate().any(|(index, layer)| {
+                settings.min_y + index as i32 > settings.sea_level
+                    && layer.is("minecraft:packed_ice")
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_blue_ice_spreads_from_packed_ice_neighbor() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = underwater_test_chunk(&settings, 45, settings.sea_level, "minecraft:sand");
+        chunk.set_layer(
+            7,
+            55,
+            8,
+            settings.min_y,
+            BlockLayer::new("minecraft:packed_ice"),
+        );
+
+        assert!(BlueIceSurfaceConfig::new().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            55,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:blue_ice"));
+        assert!(
+            chunk
+                .layer(8, 55, 8, settings.min_y)
+                .is_some_and(|layer| layer.is("minecraft:blue_ice"))
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_pale_moss_patch_places_pale_moss_vegetation() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = cave_floor_test_chunk(&settings, 63);
+        let config = VegetationPatchConfig::pale_moss_patch();
+
+        assert!(config.place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(9),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:pale_moss_block"));
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                matches!(
+                    layer.block.as_ref(),
+                    "minecraft:pale_moss_carpet" | "minecraft:short_grass" | "minecraft:tall_grass"
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_firefly_bush_near_water_requires_adjacent_water() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+        let water = BlockLayer::new("minecraft:water");
+
+        assert!(!SimpleVegetationPlacementPredicate::AirSurvivesNearWater.allows(
+            &chunk,
+            0,
+            0,
+            8,
+            64,
+            8,
+            settings.min_y,
+        ));
+
+        chunk.set_layer(9, 63, 8, settings.min_y, water);
+        assert!(SimpleVegetationPlacementPredicate::AirSurvivesNearWater.allows(
+            &chunk,
+            0,
+            0,
+            8,
+            64,
+            8,
+            settings.min_y,
+        ));
+        assert!(SimpleVegetationBlock::single("minecraft:firefly_bush").place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            64,
+            8,
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_disk_grass_turns_exposed_mud_to_grass() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+        for x in 0..16 {
+            for z in 0..16 {
+                chunk.set_layer(x, 63, z, settings.min_y, BlockLayer::new("minecraft:mud"));
+            }
+        }
+        let disk = PlacedDiskFeature::grass(30).with_surface_anchor("minecraft:mud", 0);
+
+        disk.place_disk(&settings, 0, 0, &mut chunk, &mut FeatureRandom::new(1), 8, 63, 8);
+        assert!(chunk_contains_block(&chunk, "minecraft:grass_block"));
+    }
+
+    #[test]
+    fn vanilla_noise_weighted_ground_cover_places_leaf_litter_and_wildflowers() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut leaf_chunk = grass_surface_test_chunk(&settings, 63);
+        let mut wildflower_chunk = grass_surface_test_chunk(&settings, 63);
+
+        assert!(SimpleVegetationBlock::leaf_litter().place_at(
+            &settings,
+            0,
+            0,
+            &mut leaf_chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            64,
+            8,
+        ));
+        assert!(leaf_chunk
+            .layer(8, 64, 8, settings.min_y)
+            .unwrap()
+            .is("minecraft:leaf_litter"));
+
+        assert!(SimpleVegetationBlock::wildflowers().place_at(
+            &settings,
+            0,
+            0,
+            &mut wildflower_chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            64,
+            8,
+        ));
+        assert!(wildflower_chunk
+            .layer(8, 64, 8, settings.min_y)
+            .unwrap()
+            .is("minecraft:wildflowers"));
+    }
+
+    #[test]
+    fn vanilla_noise_bamboo_places_column_with_leaf_tip() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+
+        assert!(BlockColumnFeatureConfig::bamboo(0.0).place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:bamboo"));
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                layer.is("minecraft:bamboo")
+                    && layer
+                        .properties
+                        .iter()
+                        .any(|(name, value)| name == "leaves" && value == "large")
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_huge_brown_mushroom_places_cap_and_stem() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+
+        assert!(HugeMushroomFeatureConfig::brown().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            64,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:mushroom_stem"));
+        assert!(chunk_contains_block(
+            &chunk,
+            "minecraft:brown_mushroom_block"
+        ));
+        assert!(
+            chunk
+                .layer(8, 64, 8, settings.min_y)
+                .is_some_and(|layer| layer.is("minecraft:mushroom_stem"))
+        );
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                layer.is("minecraft:brown_mushroom_block")
+                    && layer
+                        .properties
+                        .iter()
+                        .any(|(name, value)| name == "up" && value == "true")
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_huge_red_mushroom_places_layered_cap() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 63);
+
+        assert!(HugeMushroomFeatureConfig::red().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            64,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:mushroom_stem"));
+        assert!(chunk_contains_block(&chunk, "minecraft:red_mushroom_block"));
+        assert!(chunk.columns.iter().any(|column| {
+            column.blocks.iter().any(|layer| {
+                layer.is("minecraft:red_mushroom_block")
+                    && layer
+                        .properties
+                        .iter()
+                        .any(|(name, value)| name == "up" && value == "false")
+            })
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_huge_mushroom_spillover_places_neighbor_cap() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = grass_surface_test_chunk(&settings, 63);
+        let mut target = grass_surface_test_chunk(&settings, 63);
+        let mushroom = HugeMushroomFeatureConfig::brown();
+        let mut random = FeatureRandom::new(12345);
+        let mut replay_random = random.clone();
+
+        assert!(mushroom.place(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &mut random,
+            15,
+            64,
+            8,
+        ));
+        assert!(mushroom.place_spillover(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            64,
+            8,
+        ));
+
+        assert!(chunk_contains_block(
+            &target,
+            "minecraft:brown_mushroom_block"
+        ));
+        assert!(!chunk_contains_block(&target, "minecraft:mushroom_stem"));
+    }
+
+    #[test]
+    fn vanilla_noise_seagrass_places_short_and_tall_variants_underwater() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut tall_chunk = underwater_test_chunk(&settings, 62, 70, "minecraft:sand");
+        let mut short_chunk = tall_chunk.clone();
+
+        assert!(AquaticFeatureConfig::seagrass(1.0).place(
+            &settings,
+            0,
+            0,
+            &mut tall_chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            63,
+            8,
+        ));
+        assert_eq!(
+            tall_chunk
+                .layer(8, 63, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:tall_seagrass")
+        );
+        assert!(tall_chunk
+            .layer(8, 63, 8, settings.min_y)
+            .unwrap()
+            .properties
+            .iter()
+            .any(|(name, value)| name == "half" && value == "lower"));
+        assert!(tall_chunk
+            .layer(8, 64, 8, settings.min_y)
+            .unwrap()
+            .properties
+            .iter()
+            .any(|(name, value)| name == "half" && value == "upper"));
+
+        assert!(AquaticFeatureConfig::seagrass(0.0).place(
+            &settings,
+            0,
+            0,
+            &mut short_chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            63,
+            8,
+        ));
+        assert_eq!(
+            short_chunk
+                .layer(8, 63, 8, settings.min_y)
+                .map(|layer| layer.block.as_ref()),
+            Some("minecraft:seagrass")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_kelp_places_column_with_aged_tip() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = underwater_test_chunk(&settings, 62, 70, "minecraft:gravel");
+
+        assert!(AquaticFeatureConfig::kelp().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(4),
+            8,
+            63,
+            8,
+        ));
+
+        let kelp_blocks = (63..=70)
+            .filter_map(|y| chunk.layer(8, y, 8, settings.min_y))
+            .filter(|layer| layer.is("minecraft:kelp") || layer.is("minecraft:kelp_plant"))
+            .collect::<Vec<_>>();
+        assert!(!kelp_blocks.is_empty());
+        assert!(kelp_blocks.last().unwrap().is("minecraft:kelp"));
+        assert!(kelp_blocks.last().unwrap().properties.iter().any(|(name, value)| {
+            name == "age" && matches!(value.as_str(), "20" | "21" | "22" | "23")
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_sea_pickle_places_waterlogged_cluster() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = underwater_test_chunk(&settings, 62, 70, "minecraft:sand");
+
+        assert!(AquaticFeatureConfig::sea_pickle(20).place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(8),
+            8,
+            63,
+            8,
+        ));
+
+        let layer = chunk.layer(8, 63, 8, settings.min_y).unwrap();
+        assert!(layer.is("minecraft:sea_pickle"));
+        assert!(layer
+            .properties
+            .iter()
+            .any(|(name, value)| name == "waterlogged" && value == "true"));
+        assert!(layer.properties.iter().any(|(name, value)| {
+            name == "pickles" && matches!(value.as_str(), "1" | "2" | "3" | "4")
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_warm_ocean_coral_places_reef_blocks() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = CoralFeatureConfig::new();
+        let mut placed = None;
+
+        for seed in 0..16 {
+            let mut chunk = underwater_test_chunk(&settings, 62, 82, "minecraft:stone");
+            if config.place(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                &mut FeatureRandom::new(seed),
+                8,
+                63,
+                8,
+            ) && chunk
+                .columns
+                .iter()
+                .any(|column| column.blocks.iter().any(is_coral_layer))
+            {
+                placed = Some(chunk);
+                break;
+            }
+        }
+
+        let chunk = placed.expect("test seeds should place warm ocean coral");
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| CORAL_BLOCKS.contains(&layer.block.as_ref()))
+        }));
     }
 
     #[test]

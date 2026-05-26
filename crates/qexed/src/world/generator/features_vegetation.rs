@@ -3,6 +3,7 @@ struct PlacedSimpleVegetationFeature {
     step_index: i32,
     feature_index: i32,
     outer_count: i32,
+    count_provider: SimpleVegetationCountProvider,
     noise_threshold: Option<NoiseThresholdCount>,
     rarity: i32,
     inner_count: i32,
@@ -10,6 +11,7 @@ struct PlacedSimpleVegetationFeature {
     y_offset: TrapezoidInt,
     block: SimpleVegetationBlock,
     required_support: Option<&'static str>,
+    placement_predicate: SimpleVegetationPlacementPredicate,
     biome_filter: FeatureBiomeFilter,
 }
 
@@ -19,6 +21,7 @@ impl PlacedSimpleVegetationFeature {
             step_index: 9,
             feature_index,
             outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 0,
@@ -30,8 +33,20 @@ impl PlacedSimpleVegetationFeature {
             y_offset: TrapezoidInt::new(-3, 3, 0),
             block: SimpleVegetationBlock::tall_grass(),
             required_support: None,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
             biome_filter: FeatureBiomeFilter::All,
         }
+    }
+
+    fn patch_tall_grass(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            1,
+            5,
+            96,
+            SimpleVegetationBlock::tall_grass(),
+            None,
+        )
     }
 
     fn patch_bush(feature_index: i32) -> Self {
@@ -39,6 +54,7 @@ impl PlacedSimpleVegetationFeature {
             step_index: 9,
             feature_index,
             outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
             noise_threshold: None,
             rarity: 4,
             inner_count: 24,
@@ -46,6 +62,7 @@ impl PlacedSimpleVegetationFeature {
             y_offset: TrapezoidInt::new(-3, 3, 0),
             block: SimpleVegetationBlock::single("minecraft:bush"),
             required_support: None,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -66,6 +83,7 @@ impl PlacedSimpleVegetationFeature {
             step_index: 9,
             feature_index,
             outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 15,
@@ -77,6 +95,7 @@ impl PlacedSimpleVegetationFeature {
             y_offset: TrapezoidInt::new(-2, 2, 0),
             block: SimpleVegetationBlock::plains_flower(),
             required_support: None,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -127,11 +146,172 @@ impl PlacedSimpleVegetationFeature {
         )
     }
 
+    fn flower_meadow(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            1,
+            96,
+            TrapezoidInt::new(-6, 6, 0),
+            TrapezoidInt::new(-2, 2, 0),
+            SimpleVegetationBlock::meadow_flower(),
+            None,
+        )
+    }
+
+    fn flower_flower_forest(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            2,
+            96,
+            TrapezoidInt::new(-6, 6, 0),
+            TrapezoidInt::new(-2, 2, 0),
+            SimpleVegetationBlock::flower_forest_flower(),
+            None,
+        )
+        .with_outer_count(3)
+    }
+
+    fn forest_flowers(feature_index: i32, min_outer_count: i32, max_outer_count: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            7,
+            96,
+            TrapezoidInt::new(-7, 7, 0),
+            TrapezoidInt::new(-3, 3, 0),
+            SimpleVegetationBlock::forest_flower(),
+            None,
+        )
+        .with_outer_count_provider(SimpleVegetationCountProvider::ClampedUniform {
+            min: min_outer_count,
+            max: max_outer_count,
+            clamp_min: 0,
+            clamp_max: max_outer_count,
+        })
+    }
+
+    fn patch_leaf_litter(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            2,
+            1,
+            32,
+            SimpleVegetationBlock::leaf_litter(),
+            Some("minecraft:grass_block"),
+        )
+    }
+
+    fn wildflowers_meadow(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            Some(NoiseThresholdCount {
+                noise_level: -0.8,
+                below_noise: 5,
+                above_noise: 10,
+            }),
+            1,
+            8,
+            TrapezoidInt::new(-6, 6, 0),
+            TrapezoidInt::new(-2, 2, 0),
+            SimpleVegetationBlock::wildflowers(),
+            None,
+        )
+    }
+
+    fn wildflowers_birch_forest(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            2,
+            64,
+            TrapezoidInt::new(-6, 6, 0),
+            TrapezoidInt::new(-2, 2, 0),
+            SimpleVegetationBlock::wildflowers(),
+            None,
+        )
+        .with_outer_count(3)
+    }
+
+    fn pale_garden_flowers(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            1,
+            8,
+            96,
+            SimpleVegetationBlock::single("minecraft:closed_eyeblossom"),
+            None,
+        )
+    }
+
+    fn patch_waterlily(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            4,
+            1,
+            10,
+            SimpleVegetationBlock::waterlily(),
+            None,
+        )
+    }
+
+    fn patch_berry_common(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            1,
+            32,
+            96,
+            SimpleVegetationBlock::sweet_berry_bush(),
+            Some("minecraft:grass_block"),
+        )
+    }
+
+    fn patch_berry_rare(feature_index: i32) -> Self {
+        Self::simple_patch(
+            feature_index,
+            1,
+            384,
+            96,
+            SimpleVegetationBlock::sweet_berry_bush(),
+            Some("minecraft:grass_block"),
+        )
+    }
+
+    fn patch_firefly_bush_swamp(feature_index: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            8,
+            20,
+            TrapezoidInt::new(-4, 4, 0),
+            TrapezoidInt::new(-3, 3, 0),
+            SimpleVegetationBlock::single("minecraft:firefly_bush"),
+            None,
+        )
+    }
+
+    fn patch_firefly_bush_near_water(feature_index: i32, outer_count: i32) -> Self {
+        Self::patch_with_offsets(
+            feature_index,
+            None,
+            1,
+            20,
+            TrapezoidInt::new(-4, 4, 0),
+            TrapezoidInt::new(-3, 3, 0),
+            SimpleVegetationBlock::single("minecraft:firefly_bush"),
+            None,
+        )
+        .with_outer_count(outer_count)
+        .with_placement_predicate(SimpleVegetationPlacementPredicate::AirSurvivesNearWater)
+    }
+
     fn patch_grass_plain(feature_index: i32) -> Self {
         Self {
             step_index: 9,
             feature_index,
             outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 5,
@@ -143,6 +323,7 @@ impl PlacedSimpleVegetationFeature {
             y_offset: TrapezoidInt::new(-3, 3, 0),
             block: SimpleVegetationBlock::single("minecraft:short_grass"),
             required_support: None,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -180,6 +361,7 @@ impl PlacedSimpleVegetationFeature {
             step_index: 9,
             feature_index,
             outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 5,
@@ -191,6 +373,7 @@ impl PlacedSimpleVegetationFeature {
             y_offset: TrapezoidInt::new(-3, 3, 0),
             block: SimpleVegetationBlock::short_grass(),
             required_support: None,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
@@ -395,6 +578,7 @@ impl PlacedSimpleVegetationFeature {
             step_index: 9,
             feature_index,
             outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
             noise_threshold,
             rarity,
             inner_count,
@@ -402,17 +586,33 @@ impl PlacedSimpleVegetationFeature {
             y_offset,
             block,
             required_support,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
             biome_filter: FeatureBiomeFilter::All,
         }
     }
 
     fn with_outer_count(mut self, outer_count: i32) -> Self {
         self.outer_count = outer_count;
+        self.count_provider = SimpleVegetationCountProvider::Fixed;
+        self
+    }
+
+    fn with_outer_count_provider(mut self, provider: SimpleVegetationCountProvider) -> Self {
+        self.outer_count = provider.display_count(self.outer_count);
+        self.count_provider = provider;
         self
     }
 
     fn with_biome_filter(mut self, biome_filter: FeatureBiomeFilter) -> Self {
         self.biome_filter = biome_filter;
+        self
+    }
+
+    fn with_placement_predicate(
+        mut self,
+        placement_predicate: SimpleVegetationPlacementPredicate,
+    ) -> Self {
+        self.placement_predicate = placement_predicate;
         self
     }
 
@@ -428,7 +628,7 @@ impl PlacedSimpleVegetationFeature {
             .noise_threshold
             .as_ref()
             .map(|threshold| threshold.sample(origin_x, origin_z))
-            .unwrap_or(self.outer_count);
+            .unwrap_or_else(|| self.count_provider.sample(self.outer_count, random));
         for _ in 0..outer_count {
             if random.next_float() >= 1.0 / self.rarity as f32 {
                 continue;
@@ -454,17 +654,14 @@ impl PlacedSimpleVegetationFeature {
                 let world_x = base_x + self.xz_offset.sample(random);
                 let world_y = base_y + self.y_offset.sample(random);
                 let world_z = base_z + self.xz_offset.sample(random);
-                if !matches!(
-                    layer_at_world(
-                        chunk,
-                        origin_x,
-                        origin_z,
-                        world_x,
-                        world_y,
-                        world_z,
-                        settings.min_y,
-                    ),
-                    Some(layer) if layer.is_air
+                if !self.placement_predicate.allows(
+                    chunk,
+                    origin_x,
+                    origin_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
                 ) {
                     continue;
                 }
@@ -761,6 +958,159 @@ impl SimpleVegetationBlock {
         Self::weighted_single(entries, SimpleVegetationSupport::Vegetation)
     }
 
+    fn wildflowers() -> Self {
+        let mut entries = Vec::with_capacity(16);
+        for flower_amount in ["1", "2", "3", "4"] {
+            for facing in ["north", "east", "south", "west"] {
+                entries.push((
+                    BlockLayer::with_properties(
+                        "minecraft:wildflowers",
+                        &[("facing", facing), ("flower_amount", flower_amount)],
+                    ),
+                    1,
+                ));
+            }
+        }
+
+        Self::weighted_single(entries, SimpleVegetationSupport::Vegetation)
+    }
+
+    fn leaf_litter() -> Self {
+        let mut entries = Vec::with_capacity(12);
+        for segment_amount in ["1", "2", "3"] {
+            for facing in ["north", "east", "south", "west"] {
+                entries.push((
+                    BlockLayer::with_properties(
+                        "minecraft:leaf_litter",
+                        &[("facing", facing), ("segment_amount", segment_amount)],
+                    ),
+                    1,
+                ));
+            }
+        }
+
+        Self::weighted_single(entries, SimpleVegetationSupport::Vegetation)
+    }
+
+    fn meadow_flower() -> Self {
+        Self::weighted_single(
+            vec![
+                (
+                    BlockLayer::with_properties("minecraft:tall_grass", &[("half", "lower")]),
+                    1,
+                ),
+                (BlockLayer::new("minecraft:allium"), 1),
+                (BlockLayer::new("minecraft:poppy"), 1),
+                (BlockLayer::new("minecraft:azure_bluet"), 1),
+                (BlockLayer::new("minecraft:dandelion"), 1),
+                (BlockLayer::new("minecraft:cornflower"), 1),
+                (BlockLayer::new("minecraft:oxeye_daisy"), 1),
+                (BlockLayer::new("minecraft:short_grass"), 1),
+            ],
+            SimpleVegetationSupport::Vegetation,
+        )
+    }
+
+    fn flower_forest_flower() -> Self {
+        Self::weighted_single(
+            vec![
+                (BlockLayer::new("minecraft:dandelion"), 1),
+                (BlockLayer::new("minecraft:poppy"), 1),
+                (BlockLayer::new("minecraft:allium"), 1),
+                (BlockLayer::new("minecraft:azure_bluet"), 1),
+                (BlockLayer::new("minecraft:red_tulip"), 1),
+                (BlockLayer::new("minecraft:orange_tulip"), 1),
+                (BlockLayer::new("minecraft:white_tulip"), 1),
+                (BlockLayer::new("minecraft:pink_tulip"), 1),
+                (BlockLayer::new("minecraft:oxeye_daisy"), 1),
+                (BlockLayer::new("minecraft:cornflower"), 1),
+                (BlockLayer::new("minecraft:lily_of_the_valley"), 1),
+            ],
+            SimpleVegetationSupport::Vegetation,
+        )
+    }
+
+    fn forest_flower() -> Self {
+        Self::weighted_single(
+            vec![
+                (
+                    BlockLayer::with_properties("minecraft:lilac", &[("half", "lower")]),
+                    1,
+                ),
+                (
+                    BlockLayer::with_properties("minecraft:rose_bush", &[("half", "lower")]),
+                    1,
+                ),
+                (
+                    BlockLayer::with_properties("minecraft:peony", &[("half", "lower")]),
+                    1,
+                ),
+                (BlockLayer::new("minecraft:lily_of_the_valley"), 1),
+            ],
+            SimpleVegetationSupport::Vegetation,
+        )
+    }
+
+    fn waterlily() -> Self {
+        Self {
+            lower: BlockLayer::new("minecraft:lily_pad"),
+            upper: None,
+            provider: SimpleVegetationProvider::Fixed,
+            support: SimpleVegetationSupport::WaterSurface,
+        }
+    }
+
+    fn sweet_berry_bush() -> Self {
+        Self {
+            lower: BlockLayer::with_properties("minecraft:sweet_berry_bush", &[("age", "3")]),
+            upper: None,
+            provider: SimpleVegetationProvider::Fixed,
+            support: SimpleVegetationSupport::Vegetation,
+        }
+    }
+
+    fn moss_vegetation() -> Self {
+        Self::weighted_single(
+            vec![
+                (BlockLayer::new("minecraft:flowering_azalea"), 4),
+                (BlockLayer::new("minecraft:azalea"), 7),
+                (BlockLayer::new("minecraft:moss_carpet"), 25),
+                (BlockLayer::new("minecraft:short_grass"), 50),
+                (
+                    BlockLayer::with_properties("minecraft:tall_grass", &[("half", "lower")]),
+                    10,
+                ),
+            ],
+            SimpleVegetationSupport::Vegetation,
+        )
+    }
+
+    fn pale_moss_vegetation() -> Self {
+        Self::weighted_single(
+            vec![
+                (
+                    BlockLayer::with_properties(
+                        "minecraft:pale_moss_carpet",
+                        &[
+                            ("bottom", "true"),
+                            ("east", "none"),
+                            ("north", "none"),
+                            ("south", "none"),
+                            ("west", "none"),
+                        ],
+                    ),
+                    25,
+                ),
+                (BlockLayer::new("minecraft:short_grass"), 25),
+                (
+                    BlockLayer::with_properties("minecraft:tall_grass", &[("half", "lower")]),
+                    10,
+                ),
+            ],
+            SimpleVegetationSupport::Vegetation,
+        )
+    }
+
     fn place_at(
         &self,
         settings: &NoiseSettings,
@@ -852,6 +1202,95 @@ impl SimpleVegetationBlock {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SimpleVegetationCountProvider {
+    Fixed,
+    ClampedUniform {
+        min: i32,
+        max: i32,
+        clamp_min: i32,
+        clamp_max: i32,
+    },
+}
+
+impl SimpleVegetationCountProvider {
+    fn sample(self, fixed: i32, random: &mut FeatureRandom) -> i32 {
+        match self {
+            Self::Fixed => fixed,
+            Self::ClampedUniform {
+                min,
+                max,
+                clamp_min,
+                clamp_max,
+            } => (min + random.next_int(max - min + 1)).clamp(clamp_min, clamp_max),
+        }
+    }
+
+    fn display_count(self, fixed: i32) -> i32 {
+        match self {
+            Self::Fixed => fixed,
+            Self::ClampedUniform { clamp_max, .. } => clamp_max,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SimpleVegetationPlacementPredicate {
+    Air,
+    AirSurvivesNearWater,
+}
+
+impl SimpleVegetationPlacementPredicate {
+    #[allow(clippy::too_many_arguments)]
+    fn allows(
+        self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        if !is_air_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        ) {
+            return false;
+        }
+
+        match self {
+            Self::Air => true,
+            Self::AirSurvivesNearWater => {
+                supports_vegetation_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    world_x,
+                    world_y - 1,
+                    world_z,
+                    min_y,
+                ) && horizontal_directions().iter().any(|(dx, dz)| {
+                    is_water_at_world(
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        world_x + dx,
+                        world_y - 1,
+                        world_z + dz,
+                        min_y,
+                    )
+                })
+            }
+        }
+    }
+}
+
 fn double_plant_upper_for(layer: &BlockLayer) -> Option<BlockLayer> {
     matches!(
         layer.block.as_ref(),
@@ -865,6 +1304,7 @@ enum SimpleVegetationSupport {
     Vegetation,
     DeadBush,
     DryVegetation,
+    WaterSurface,
 }
 
 impl SimpleVegetationSupport {
@@ -893,6 +1333,7 @@ impl SimpleVegetationSupport {
             Self::Vegetation => supports_vegetation_layer(layer),
             Self::DeadBush => supports_dead_bush_layer(layer),
             Self::DryVegetation => supports_dry_vegetation_layer(layer),
+            Self::WaterSurface => is_water_layer(layer),
         }
     }
 }

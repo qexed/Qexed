@@ -299,6 +299,7 @@ fn block_entity_type_name(entity_type: i32) -> &'static str {
         CHEST_BLOCK_ENTITY_TYPE_ID => "minecraft:chest",
         MOB_SPAWNER_BLOCK_ENTITY_TYPE_ID => "minecraft:mob_spawner",
         BEEHIVE_BLOCK_ENTITY_TYPE_ID => "minecraft:beehive",
+        BRUSHABLE_BLOCK_ENTITY_TYPE_ID => "minecraft:brushable_block",
         _ => "minecraft:chest",
     }
 }

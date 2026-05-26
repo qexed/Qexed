@@ -28,6 +28,11 @@ const BADLANDS_ORE_BIOMES: &[&str] = &[
     "minecraft:wooded_badlands",
 ];
 const DRIPSTONE_CAVES_ORE_BIOMES: &[&str] = &["minecraft:dripstone_caves"];
+const LUSH_CAVES_ORE_BIOMES: &[&str] = &["minecraft:lush_caves"];
+const DRIPSTONE_CAVES_BIOMES: &[&str] = &["minecraft:dripstone_caves"];
+const DEEP_DARK_BIOMES: &[&str] = &["minecraft:deep_dark"];
+const DESERT_WELL_BIOMES: &[&str] = &["minecraft:desert"];
+const FOSSIL_BIOMES: &[&str] = &["minecraft:desert", "minecraft:mangrove_swamp", "minecraft:swamp"];
 const FLOWER_PLAINS_BIOMES: &[&str] = &[
     "minecraft:plains",
     "minecraft:sunflower_plains",
@@ -75,6 +80,19 @@ const FLOWER_WARM_BIOMES: &[&str] = &[
 const FLOWER_SWAMP_BIOMES: &[&str] = &["minecraft:swamp"];
 const FLOWER_CHERRY_BIOMES: &[&str] = &["minecraft:cherry_grove"];
 const FLOWER_PALE_GARDEN_BIOMES: &[&str] = &["minecraft:pale_garden"];
+const FLOWER_MEADOW_BIOMES: &[&str] = &["minecraft:meadow"];
+const FLOWER_FLOWER_FOREST_BIOMES: &[&str] = &["minecraft:flower_forest"];
+const FOREST_FLOWERS_BIOMES: &[&str] = &[
+    "minecraft:birch_forest",
+    "minecraft:dark_forest",
+    "minecraft:forest",
+    "minecraft:old_growth_birch_forest",
+];
+const FLOWER_FOREST_FLOWERS_BIOMES: &[&str] = &["minecraft:flower_forest"];
+const PATCH_LEAF_LITTER_BIOMES: &[&str] = &["minecraft:dark_forest"];
+const WILDFLOWERS_MEADOW_BIOMES: &[&str] = &["minecraft:meadow"];
+const WILDFLOWERS_BIRCH_FOREST_BIOMES: &[&str] =
+    &["minecraft:birch_forest", "minecraft:old_growth_birch_forest"];
 const PATCH_GRASS_PLAIN_BIOMES: &[&str] = &[
     "minecraft:plains",
     "minecraft:sunflower_plains",
@@ -91,6 +109,8 @@ const PATCH_TALL_GRASS_2_BIOMES: &[&str] = &[
     "minecraft:plains",
     "minecraft:sunflower_plains",
 ];
+const PATCH_TALL_GRASS_BIOMES: &[&str] =
+    &["minecraft:savanna", "minecraft:savanna_plateau"];
 const PATCH_BUSH_BIOMES: &[&str] = &[
     "minecraft:birch_forest",
     "minecraft:forest",
@@ -333,6 +353,38 @@ const OLD_GROWTH_MUSHROOM_BIOMES: &[&str] = &[
     "minecraft:old_growth_spruce_taiga",
 ];
 const SWAMP_MUSHROOM_BIOMES: &[&str] = &["minecraft:swamp"];
+const MUSHROOM_ISLAND_VEGETATION_BIOMES: &[&str] = &["minecraft:mushroom_fields"];
+const SEAGRASS_NORMAL_BIOMES: &[&str] = &["minecraft:ocean"];
+const SEAGRASS_COLD_BIOMES: &[&str] = &["minecraft:cold_ocean"];
+const SEAGRASS_DEEP_BIOMES: &[&str] = &["minecraft:deep_ocean"];
+const SEAGRASS_DEEP_COLD_BIOMES: &[&str] = &["minecraft:deep_cold_ocean"];
+const SEAGRASS_DEEP_WARM_BIOMES: &[&str] = &["minecraft:deep_lukewarm_ocean"];
+const SEAGRASS_WARM_BIOMES: &[&str] = &["minecraft:lukewarm_ocean", "minecraft:warm_ocean"];
+const SEAGRASS_SWAMP_BIOMES: &[&str] = &["minecraft:mangrove_swamp", "minecraft:swamp"];
+const SEAGRASS_RIVER_BIOMES: &[&str] = &["minecraft:river"];
+const WARM_OCEAN_VEGETATION_BIOMES: &[&str] = &["minecraft:warm_ocean"];
+const KELP_COLD_BIOMES: &[&str] = &[
+    "minecraft:cold_ocean",
+    "minecraft:deep_cold_ocean",
+    "minecraft:deep_frozen_ocean",
+    "minecraft:deep_ocean",
+    "minecraft:frozen_ocean",
+    "minecraft:ocean",
+];
+const KELP_WARM_BIOMES: &[&str] = &["minecraft:deep_lukewarm_ocean", "minecraft:lukewarm_ocean"];
+const SEA_PICKLE_BIOMES: &[&str] = &["minecraft:warm_ocean"];
+const WATERLILY_BIOMES: &[&str] = &["minecraft:mangrove_swamp", "minecraft:swamp"];
+const SURFACE_VINES_BIOMES: &[&str] = &[
+    "minecraft:bamboo_jungle",
+    "minecraft:jungle",
+    "minecraft:sparse_jungle",
+];
+const FROZEN_LAVA_SPRING_BIOMES: &[&str] = &[
+    "minecraft:frozen_peaks",
+    "minecraft:grove",
+    "minecraft:jagged_peaks",
+    "minecraft:snowy_slopes",
+];
 const PLAINS_TREE_BIOMES: &[&str] = &["minecraft:plains", "minecraft:sunflower_plains"];
 const BIRCH_TREE_BIOMES: &[&str] = &["minecraft:birch_forest"];
 const TALL_BIRCH_TREE_BIOMES: &[&str] = &["minecraft:old_growth_birch_forest"];
@@ -387,6 +439,77 @@ const PLAINS_FLOWER_HIGH_BLOCKS: &[&str] = &[
 ];
 const DISK_DIRT_GRASS_TARGETS: &[&str] = &["minecraft:dirt", "minecraft:grass_block"];
 const DISK_DIRT_CLAY_TARGETS: &[&str] = &["minecraft:dirt", "minecraft:clay"];
+const DISK_DIRT_MUD_TARGETS: &[&str] = &["minecraft:dirt", "minecraft:mud"];
+const ICE_PATCH_DISK_TARGETS: &[&str] = &[
+    "minecraft:dirt",
+    "minecraft:grass_block",
+    "minecraft:podzol",
+    "minecraft:coarse_dirt",
+    "minecraft:mycelium",
+    "minecraft:snow_block",
+    "minecraft:ice",
+];
+const FOREST_ROCK_BIOMES: &[&str] = &[
+    "minecraft:old_growth_pine_taiga",
+    "minecraft:old_growth_spruce_taiga",
+];
+const ICEBERG_BIOMES: &[&str] = &["minecraft:frozen_ocean", "minecraft:deep_frozen_ocean"];
+const ICE_SPIKE_BIOMES: &[&str] = &["minecraft:ice_spikes"];
+const PALE_MOSS_PATCH_BIOMES: &[&str] = &["minecraft:pale_garden"];
+const PALE_GARDEN_FLOWERS_BIOMES: &[&str] = &["minecraft:pale_garden"];
+const BERRY_COMMON_BIOMES: &[&str] = &[
+    "minecraft:old_growth_pine_taiga",
+    "minecraft:old_growth_spruce_taiga",
+    "minecraft:taiga",
+];
+const BAMBOO_LIGHT_BIOMES: &[&str] = &["minecraft:jungle"];
+const BAMBOO_SOME_PODZOL_BIOMES: &[&str] = &["minecraft:bamboo_jungle"];
+const BERRY_RARE_BIOMES: &[&str] = &["minecraft:snowy_taiga"];
+const FIREFLY_BUSH_SWAMP_BIOMES: &[&str] = &["minecraft:swamp"];
+const FIREFLY_BUSH_NEAR_WATER_BIOMES: &[&str] = &[
+    "minecraft:badlands",
+    "minecraft:bamboo_jungle",
+    "minecraft:beach",
+    "minecraft:birch_forest",
+    "minecraft:cold_ocean",
+    "minecraft:dark_forest",
+    "minecraft:deep_cold_ocean",
+    "minecraft:deep_frozen_ocean",
+    "minecraft:deep_lukewarm_ocean",
+    "minecraft:deep_ocean",
+    "minecraft:eroded_badlands",
+    "minecraft:flower_forest",
+    "minecraft:forest",
+    "minecraft:frozen_ocean",
+    "minecraft:frozen_river",
+    "minecraft:ice_spikes",
+    "minecraft:jungle",
+    "minecraft:lukewarm_ocean",
+    "minecraft:mangrove_swamp",
+    "minecraft:mushroom_fields",
+    "minecraft:ocean",
+    "minecraft:old_growth_birch_forest",
+    "minecraft:old_growth_pine_taiga",
+    "minecraft:old_growth_spruce_taiga",
+    "minecraft:pale_garden",
+    "minecraft:plains",
+    "minecraft:river",
+    "minecraft:savanna",
+    "minecraft:savanna_plateau",
+    "minecraft:snowy_beach",
+    "minecraft:snowy_plains",
+    "minecraft:snowy_taiga",
+    "minecraft:sparse_jungle",
+    "minecraft:stony_shore",
+    "minecraft:sunflower_plains",
+    "minecraft:taiga",
+    "minecraft:warm_ocean",
+    "minecraft:windswept_forest",
+    "minecraft:windswept_gravelly_hills",
+    "minecraft:windswept_hills",
+    "minecraft:windswept_savanna",
+    "minecraft:wooded_badlands",
+];
 const SPRING_WATER_VALID_BLOCKS: &[&str] = &[
     "minecraft:stone",
     "minecraft:granite",
@@ -410,6 +533,11 @@ const SPRING_LAVA_VALID_BLOCKS: &[&str] = &[
     "minecraft:calcite",
     "minecraft:dirt",
 ];
+const SPRING_FROZEN_LAVA_VALID_BLOCKS: &[&str] = &[
+    "minecraft:snow_block",
+    "minecraft:powder_snow",
+    "minecraft:packed_ice",
+];
 const GLOW_LICHEN_CAN_BE_PLACED_ON: &[&str] = &[
     "minecraft:stone",
     "minecraft:andesite",
@@ -420,6 +548,7 @@ const GLOW_LICHEN_CAN_BE_PLACED_ON: &[&str] = &[
     "minecraft:tuff",
     "minecraft:deepslate",
 ];
+const LUSH_CAVES_BIOMES: &[&str] = &["minecraft:lush_caves"];
 const SUPPORTS_VEGETATION_BLOCKS: &[&str] = &[
     "minecraft:dirt",
     "minecraft:coarse_dirt",
@@ -436,3 +565,4 @@ const SUPPORTS_VEGETATION_BLOCKS: &[&str] = &[
 const CHEST_BLOCK_ENTITY_TYPE_ID: i32 = 1;
 const MOB_SPAWNER_BLOCK_ENTITY_TYPE_ID: i32 = 9;
 const BEEHIVE_BLOCK_ENTITY_TYPE_ID: i32 = 34;
+const BRUSHABLE_BLOCK_ENTITY_TYPE_ID: i32 = 37;

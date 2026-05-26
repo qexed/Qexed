@@ -67,6 +67,274 @@ struct PlacedMultifaceGrowthFeature {
     biome_filter: FeatureBiomeFilter,
 }
 
+#[derive(Debug, Clone)]
+struct PlacedCaveVinesFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    search_range: i32,
+    random_y_offset: i32,
+    config: CaveVinesFeatureConfig,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedCaveVinesFeature {
+    fn new(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: OrePlacementCount::Constant(188),
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
+            search_range: 12,
+            random_y_offset: -1,
+            config: CaveVinesFeatureConfig::new(),
+            biome_filter: FeatureBiomeFilter::Include(LUSH_CAVES_BIOMES),
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let start_y = self.height.sample(settings, random);
+            let Some(ceiling_y) = scan_up_to_solid(
+                settings,
+                chunk,
+                origin_x,
+                origin_z,
+                world_x,
+                start_y,
+                world_z,
+                self.search_range,
+            ) else {
+                continue;
+            };
+            let world_y = ceiling_y + self.random_y_offset;
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config
+                .place(settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedSporeBlossomFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    search_range: i32,
+    random_y_offset: i32,
+    block: BlockLayer,
+    biome_filter: FeatureBiomeFilter,
+}
+
+#[derive(Debug, Clone)]
+struct PlacedClassicVinesFeature {
+    step_index: i32,
+    feature_index: i32,
+    count: OrePlacementCount,
+    height: OreHeight,
+    block: BlockLayer,
+    biome_filter: FeatureBiomeFilter,
+}
+
+impl PlacedClassicVinesFeature {
+    fn cave(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: OrePlacementCount::Constant(256),
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
+            block: BlockLayer::with_properties(
+                "minecraft:vine",
+                &[
+                    ("east", "false"),
+                    ("north", "false"),
+                    ("south", "false"),
+                    ("up", "false"),
+                    ("west", "false"),
+                ],
+            ),
+            biome_filter: FeatureBiomeFilter::Include(LUSH_CAVES_BIOMES),
+        }
+    }
+
+    fn surface(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: OrePlacementCount::Constant(127),
+            height: OreHeight::Uniform(HeightAnchor::Absolute(64), HeightAnchor::Absolute(100)),
+            block: BlockLayer::with_properties(
+                "minecraft:vine",
+                &[
+                    ("east", "false"),
+                    ("north", "false"),
+                    ("south", "false"),
+                    ("up", "false"),
+                    ("west", "false"),
+                ],
+            ),
+            biome_filter: FeatureBiomeFilter::Include(SURFACE_VINES_BIOMES),
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.place_at(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_at(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !is_air_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return false;
+        }
+
+        for face in shuffled_horizontal_vine_faces(random) {
+            let neighbor = direction_by_name(direction_opposite_name(face));
+            if !is_solid_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x + neighbor.0,
+                world_y + neighbor.1,
+                world_z + neighbor.2,
+                settings.min_y,
+            ) {
+                continue;
+            }
+            let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+            else {
+                return false;
+            };
+            chunk.set_layer(
+                local_x,
+                world_y,
+                local_z,
+                settings.min_y,
+                self.block.with_property(face, "true"),
+            );
+            return true;
+        }
+
+        false
+    }
+}
+
+impl PlacedSporeBlossomFeature {
+    fn new(feature_index: i32) -> Self {
+        Self {
+            step_index: 9,
+            feature_index,
+            count: OrePlacementCount::Constant(25),
+            height: OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
+            search_range: 12,
+            random_y_offset: -1,
+            block: BlockLayer::new("minecraft:spore_blossom"),
+            biome_filter: FeatureBiomeFilter::Include(LUSH_CAVES_BIOMES),
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let start_y = self.height.sample(settings, random);
+            let Some(ceiling_y) = scan_up_to_solid(
+                settings,
+                chunk,
+                origin_x,
+                origin_z,
+                world_x,
+                start_y,
+                world_z,
+                self.search_range,
+            ) else {
+                continue;
+            };
+            let world_y = ceiling_y + self.random_y_offset;
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+                || !is_air_at_world(
+                    chunk,
+                    origin_x,
+                    origin_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
+                )
+            {
+                continue;
+            }
+            let Some((local_x, local_z)) = local_coords(world_x, world_z, origin_x, origin_z)
+            else {
+                continue;
+            };
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, self.block.clone());
+        }
+    }
+}
+
 impl PlacedMultifaceGrowthFeature {
     fn glow_lichen(feature_index: i32) -> Self {
         Self {
