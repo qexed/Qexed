@@ -142,7 +142,16 @@ impl AnvilRegion {
             anyhow::bail!("区块数据过大，暂不支持外部 .mcc 存储");
         }
 
-        let offset = self.append_aligned(&payload);
+        let existing_location = self.header.location(chunk_x, chunk_z).filter(|location| {
+            location.offset > 0
+                && location.sector_count > 0
+                && sector_count <= usize::from(location.sector_count)
+        });
+        let offset = if let Some(location) = existing_location {
+            self.write_into_existing_location(location, &payload)?
+        } else {
+            self.append_aligned(&payload)
+        };
         self.header.set_location(
             chunk_x,
             chunk_z,
@@ -183,6 +192,29 @@ impl AnvilRegion {
         let padded_len = self.data.len().div_ceil(SECTOR_SIZE) * SECTOR_SIZE;
         self.data.resize(padded_len, 0);
         offset
+    }
+
+    fn write_into_existing_location(
+        &mut self,
+        location: ChunkLocation,
+        payload: &[u8],
+    ) -> Result<u32> {
+        let offset = location.offset as usize * SECTOR_SIZE;
+        let local_offset = offset
+            .checked_sub(HEADER_SIZE)
+            .context("鍖哄潡鍋忕Щ钀藉湪鍖哄煙鏂囦欢澶村唴")?;
+        let byte_len = usize::from(location.sector_count) * SECTOR_SIZE;
+        let end = local_offset + byte_len;
+        if end > self.data.len() {
+            anyhow::bail!("鍖哄潡鍋忕Щ瓒呭嚭鍖哄煙鏂囦欢鏁版嵁鑼冨洿");
+        }
+        if payload.len() > byte_len {
+            anyhow::bail!("鍖哄潡鏁版嵁瓒呭嚭鐜版湁扇区容量");
+        }
+
+        self.data[local_offset..end].fill(0);
+        self.data[local_offset..local_offset + payload.len()].copy_from_slice(payload);
+        Ok(location.offset)
     }
 }
 

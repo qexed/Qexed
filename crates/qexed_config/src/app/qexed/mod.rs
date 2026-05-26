@@ -99,6 +99,10 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
                 file_name: "scoreboard.toml",
                 root_path: "server.scoreboard",
             },
+            qexed_config::tool::SplitConfigFile {
+                file_name: "lobby.toml",
+                root_path: "server.lobby",
+            },
         ]
     }
 }

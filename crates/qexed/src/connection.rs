@@ -5,13 +5,14 @@ mod login;
 mod status;
 
 pub(crate) use codec::{decode_payload, read_packet_id};
+#[cfg(test)]
+use configuration::handle_configuration;
 pub use context::ServerContext;
 
 use qexed_protocol::to_server::handshaking::set_protocol::SetProtocol;
 use tokio::net::TcpStream;
 
 use codec::read_expected_packet;
-use configuration::handle_configuration;
 use login::handle_login;
 use status::handle_status;
 

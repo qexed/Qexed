@@ -258,6 +258,17 @@ impl PlayerInventory {
         self.selected
     }
 
+    pub fn set_hotbar_slot(&mut self, slot: usize, item: Slot) -> Option<InventorySlotChange> {
+        if slot >= self.hotbar.len() {
+            return None;
+        }
+        self.hotbar[slot] = item.clone();
+        if slot == self.selected {
+            self.set_equipment_slot(Equipment::MAINHAND, item.clone());
+        }
+        Some(InventorySlotChange::Hotbar { slot, item })
+    }
+
     pub fn set_player_inventory_packets(&self) -> Vec<SetPlayerInventory> {
         self.hotbar
             .iter()

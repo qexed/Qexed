@@ -9,7 +9,40 @@ use super::util::text_component;
 const MAX_OBJECTIVE_NAME_LEN: usize = 16;
 const MAX_SIDEBAR_LINES: usize = 15;
 
-pub(super) fn sidebar_packets(config: &Scoreboard) -> anyhow::Result<Vec<Bytes>> {
+pub(super) fn lobby_sidebar_packets(
+    config: &Scoreboard,
+    lobby: &super::lobby::LobbyRuntime,
+    status: &super::lobby::LobbyStatusSnapshot,
+) -> anyhow::Result<Vec<Bytes>> {
+    let lines = render_lobby_lines(config, lobby, status);
+    sidebar_packets_with_lines(config, &lines)
+}
+
+pub(super) fn refresh_lobby_sidebar_packets(
+    config: &Scoreboard,
+    lobby: &super::lobby::LobbyRuntime,
+    status: &super::lobby::LobbyStatusSnapshot,
+) -> anyhow::Result<Vec<Bytes>> {
+    if !config.enable {
+        return Ok(Vec::new());
+    }
+
+    let objective_name = objective_name(&config.objective);
+    let mut packets = Vec::new();
+    let lines = render_lobby_lines(config, lobby, status);
+    for (index, line) in lines.iter().take(MAX_SIDEBAR_LINES).enumerate() {
+        packets.push(packet_bytes(SetScore::new(
+            line_owner(index),
+            objective_name.clone(),
+            (MAX_SIDEBAR_LINES - index) as i32,
+            Some(text_component(line)),
+        ))?);
+    }
+
+    Ok(packets)
+}
+
+fn sidebar_packets_with_lines(config: &Scoreboard, lines: &[String]) -> anyhow::Result<Vec<Bytes>> {
     if !config.enable {
         return Ok(Vec::new());
     }
@@ -23,8 +56,7 @@ pub(super) fn sidebar_packets(config: &Scoreboard) -> anyhow::Result<Vec<Bytes>>
         packet_bytes(SetDisplayObjective::sidebar(objective_name.clone()))?,
     ];
 
-    let lines = config.lines.iter().take(MAX_SIDEBAR_LINES);
-    for (index, line) in lines.enumerate() {
+    for (index, line) in lines.iter().take(MAX_SIDEBAR_LINES).enumerate() {
         packets.push(packet_bytes(SetScore::new(
             line_owner(index),
             objective_name.clone(),
@@ -34,6 +66,18 @@ pub(super) fn sidebar_packets(config: &Scoreboard) -> anyhow::Result<Vec<Bytes>>
     }
 
     Ok(packets)
+}
+
+fn render_lobby_lines(
+    config: &Scoreboard,
+    lobby: &super::lobby::LobbyRuntime,
+    status: &super::lobby::LobbyStatusSnapshot,
+) -> Vec<String> {
+    config
+        .lines
+        .iter()
+        .map(|line| lobby.render_status_placeholders(line, status))
+        .collect()
 }
 
 fn objective_name(configured: &str) -> String {
@@ -67,7 +111,8 @@ mod tests {
 
     #[test]
     fn disabled_scoreboard_sends_no_packets() {
-        let packets = super::sidebar_packets(&Scoreboard::default()).unwrap();
+        let config = Scoreboard::default();
+        let packets = super::sidebar_packets_with_lines(&config, &config.lines).unwrap();
         assert!(packets.is_empty());
     }
 
@@ -80,7 +125,7 @@ mod tests {
             lines: vec!["first".to_string(), "second".to_string()],
         };
 
-        let packets = super::sidebar_packets(&config).unwrap();
+        let packets = super::sidebar_packets_with_lines(&config, &config.lines).unwrap();
         assert_eq!(packets.len(), 4);
         assert_packet_id::<SetObjective>(&packets[0]);
         assert_packet_id::<SetDisplayObjective>(&packets[1]);
@@ -105,6 +150,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lobby_sidebar_packets_render_status_placeholders() {
+        let config = Scoreboard {
+            enable: true,
+            objective: "qexed".to_string(),
+            title: "Qexed".to_string(),
+            lines: vec![
+                "Backends: {online_servers}/{total_servers}".to_string(),
+                "{servers}".to_string(),
+            ],
+        };
+        let lobby =
+            super::super::lobby::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
+                enable: true,
+                servers: vec![qexed_config::app::qexed::server::LobbyServer {
+                    id: "survival".to_string(),
+                    name: "Survival".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+        let mut servers = std::collections::HashMap::new();
+        servers.insert(
+            "survival".to_string(),
+            super::super::lobby::LobbyServerStatus::Online,
+        );
+        let status = super::super::lobby::LobbyStatusSnapshot::from_servers_for_tests(servers);
+
+        let packets = super::lobby_sidebar_packets(&config, &lobby, &status).unwrap();
+        assert_eq!(packets.len(), 4);
+
+        let first_score = decode_packet::<SetScore>(&packets[2]);
+        assert_text_component(first_score.display.as_ref().unwrap(), "Backends: 1/1");
+
+        let refreshed = super::refresh_lobby_sidebar_packets(&config, &lobby, &status).unwrap();
+        assert_eq!(refreshed.len(), 2);
+        let refreshed_first = decode_packet::<SetScore>(&refreshed[0]);
+        assert_text_component(refreshed_first.display.as_ref().unwrap(), "Backends: 1/1");
+    }
+
     fn assert_packet_id<T: Packet>(bytes: &[u8]) {
         let mut bytes = bytes::Bytes::copy_from_slice(bytes);
         let mut reader = PacketReader::new(&mut bytes);
@@ -123,5 +208,15 @@ mod tests {
         let mut packet = T::default();
         packet.deserialize(&mut reader).unwrap();
         packet
+    }
+
+    fn assert_text_component(component: &qexed_protocol::types::TextComponent, expected: &str) {
+        let qexed_nbt::Tag::Compound(map) = component else {
+            panic!("expected text component compound");
+        };
+        assert_eq!(
+            map.get("text"),
+            Some(&qexed_nbt::Tag::String(std::sync::Arc::from(expected)))
+        );
     }
 }

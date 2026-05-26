@@ -86,16 +86,19 @@ where
     .await?;
 
     let visible_commands = crate::commands::visible_commands(permissions, &player.profile).await?;
+    let lobby_server_ids = config
+        .server
+        .lobby
+        .servers
+        .iter()
+        .map(|server| server.id.clone())
+        .collect::<Vec<_>>();
     let command_tree = if visible_commands.as_slice() == ["help", "list"] {
         crate::commands::command_tree()
     } else {
-        crate::commands::command_tree_for(&visible_commands)
+        crate::commands::command_tree_for_lobby(&visible_commands, &lobby_server_ids)
     };
     sink.send(command_tree).await?;
-
-    for packet in super::scoreboard::sidebar_packets(&config.server.scoreboard)? {
-        sink.send_raw(packet).await?;
-    }
 
     sink.send(InitializeBorder::default()).await?;
     sink.send(SetTime {

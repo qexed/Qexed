@@ -56,6 +56,15 @@ impl EntityManager {
             .collect()
     }
 
+    pub fn entity_by_runtime_id(&self, entity_id: i32) -> Option<ManagedEntity> {
+        self.entities
+            .lock()
+            .expect("entity manager poisoned")
+            .iter()
+            .find(|entity| entity.entity_id == entity_id)
+            .cloned()
+    }
+
     pub fn spawn_packets_for_dimension(&self, dimension: &str) -> Result<Vec<Bytes>> {
         let mut packets = Vec::new();
         for entity in self.list_for_dimension(dimension) {

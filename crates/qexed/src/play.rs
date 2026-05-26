@@ -3,6 +3,7 @@ mod chat;
 mod chunks;
 mod drops;
 mod events;
+mod lobby;
 mod mining;
 mod recipes;
 mod scoreboard;
@@ -33,6 +34,7 @@ use qexed_protocol::to_server::play::{
     accept_teleportation::AcceptTeleportation, chat_ack::ChatAck, chat_command::ChatCommand,
     chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
     chunk_batch_received::ChunkBatchReceived, client_command::ClientCommand,
+    container_click::ContainerClick, container_close::ContainerClose, interact::Interact,
     keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
     move_player_pos_rot::MovePlayerPosRot, move_player_rot::MovePlayerRot,
     move_player_status_only::MovePlayerStatusOnly, pick_item_from_block::PickItemFromBlock,
@@ -283,6 +285,44 @@ where
     let mut position = session.player.position;
     let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
+    let lobby = lobby::LobbyRuntime::new(&config.server.lobby);
+    let mut lobby_status = if lobby.status_refresh_interval().is_some() {
+        lobby.refresh_status().await
+    } else {
+        lobby::LobbyStatusSnapshot::default()
+    };
+    let mut lobby_status_refresh = lobby.status_refresh_interval().map(tokio::time::interval);
+    if let Some(interval) = lobby_status_refresh.as_mut() {
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+    }
+    let mut lobby_broadcast = lobby.broadcast_interval().map(tokio::time::interval);
+    if let Some(interval) = lobby_broadcast.as_mut() {
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+    }
+    let mut lobby_broadcast_index = 0usize;
+    let mut lobby_menu_open = false;
+    let navigator_changes = lobby::sync_navigator_item(&mut inventory, &lobby);
+    lobby.show_boss_bar(sink).await?;
+    lobby.update_boss_bar_status(sink, &lobby_status).await?;
+    for packet in
+        scoreboard::lobby_sidebar_packets(&config.server.scoreboard, &lobby, &lobby_status)?
+    {
+        sink.send_raw(packet).await?;
+    }
+    if !navigator_changes.is_empty() {
+        sync_inventory_changes(
+            sink,
+            players,
+            profile.uuid,
+            session.player.entity_id,
+            inventory.selected_slot(),
+            navigator_changes,
+        )
+        .await?;
+        sink.flush().await?;
+    }
     let (chunk_sender, mut chunk_receiver) = tokio::sync::mpsc::unbounded_channel();
     chunk_state.refresh_pending_chunks();
     chunk_state
@@ -435,6 +475,33 @@ where
                         );
                         continue;
                     }
+                    if lobby.protect_world() {
+                        let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
+                        pending_dig = None;
+                        resync_inventory_state(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &inventory,
+                        )
+                        .await?;
+                        sink.flush().await?;
+                        continue;
+                    }
+                    if lobby.navigator_slot().is_some_and(|navigator| usize::try_from(slot.slot_num).ok() == Some(navigator)) {
+                        let changes = lobby::sync_navigator_item(&mut inventory, &lobby);
+                        sync_inventory_changes(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            inventory.selected_slot(),
+                            changes,
+                        ).await?;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if let Some(change) = inventory.set_creative_slot(slot.slot_num, slot.item_stack.clone()) {
                         pending_dig = None;
                         sync_inventory_changes(
@@ -453,6 +520,20 @@ where
                 if packet_id == PickItemFromBlock::ID {
                     let pick = crate::connection::decode_payload::<PickItemFromBlock>(&mut payload)?;
                     if survival.is_dead() {
+                        continue;
+                    }
+                    if lobby.protect_world() {
+                        let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
+                        pending_dig = None;
+                        resync_inventory_state(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &inventory,
+                        )
+                        .await?;
+                        sink.flush().await?;
                         continue;
                     }
                     let item_id = world
@@ -484,6 +565,11 @@ where
                         continue;
                     }
                     pending_dig = None;
+                    if lobby.protect_world() {
+                        send_block_rollback(sink, world, &play_dimension, use_item_on.block_hit.position.clone()).await?;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if use_item_on.hand.0 == 0 {
                         if let Some(block_state) = crate::inventory::placed_block_state_for_item(inventory.held_item()) {
                             if place_held_block(
@@ -519,6 +605,24 @@ where
                     sink.send(crate::inventory::acknowledge_block_change(action.sequence).packet()).await?;
                     if survival.is_dead() {
                         pending_dig = None;
+                        sink.flush().await?;
+                        continue;
+                    }
+                    if lobby.protect_world() {
+                        pending_dig = None;
+                        if player_action_changes_block(action.status.0) {
+                            send_block_rollback(sink, world, &play_dimension, action.location)
+                                .await?;
+                        } else {
+                            resync_inventory_state(
+                                sink,
+                                players,
+                                profile.uuid,
+                                session.player.entity_id,
+                                &inventory,
+                            )
+                            .await?;
+                        }
                         sink.flush().await?;
                         continue;
                     }
@@ -612,7 +716,66 @@ where
                 if packet_id == UseItem::ID {
                     let use_item = crate::connection::decode_payload::<UseItem>(&mut payload)?;
                     sink.send(crate::inventory::acknowledge_block_change(use_item.sequence).packet()).await?;
+                    if !survival.is_dead()
+                        && use_item.hand.0 == 0
+                        && lobby
+                            .handle_use_item(sink, inventory.selected_slot(), &lobby_status)
+                            .await?
+                    {
+                        lobby_menu_open = true;
+                        pending_dig = None;
+                    }
                     sink.flush().await?;
+                    continue;
+                }
+
+                if packet_id == Interact::ID {
+                    let interact = crate::connection::decode_payload::<Interact>(&mut payload)?;
+                    if !survival.is_dead() {
+                        let outcome = lobby
+                            .handle_entity_interact(sink, entities, interact, &lobby_status)
+                            .await?;
+                        if outcome.opened_menu {
+                            lobby_menu_open = true;
+                        }
+                        if outcome.handled {
+                            pending_dig = None;
+                            sink.flush().await?;
+                        }
+                    }
+                    if survival.is_dead() {
+                        pending_dig = None;
+                    }
+                    continue;
+                }
+
+                if packet_id == ContainerClick::ID {
+                    let click = crate::connection::decode_payload::<ContainerClick>(&mut payload)?;
+                    if lobby.handle_container_click(sink, click, &lobby_status).await? {
+                        lobby_menu_open = true;
+                        pending_dig = None;
+                        sink.flush().await?;
+                    } else if lobby.protect_world() || lobby.navigator_slot().is_some() {
+                        let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
+                        pending_dig = None;
+                        resync_inventory_state(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &inventory,
+                        )
+                        .await?;
+                        sink.flush().await?;
+                    }
+                    continue;
+                }
+
+                if packet_id == ContainerClose::ID {
+                    let close = crate::connection::decode_payload::<ContainerClose>(&mut payload)?;
+                    if close.window_id == lobby::MENU_WINDOW_ID {
+                        lobby_menu_open = false;
+                    }
                     continue;
                 }
 
@@ -893,7 +1056,31 @@ where
                 if packet_id == ChatCommand::ID {
                     let command = crate::connection::decode_payload::<ChatCommand>(&mut payload)?;
                     log::debug!("received chat command: /{}", command.command);
-                    handle_chat_command(sink, config, players, permissions, profile, &command.command).await?;
+                    let outcome = handle_chat_command(
+                        sink,
+                        config,
+                        world,
+                        players,
+                        entities,
+                        permissions,
+                        plugins,
+                        profile,
+                        &command.command,
+                        &lobby,
+                        &mut lobby_status,
+                        &chunk_sender,
+                        &mut chunk_state,
+                        &mut position,
+                        &mut next_teleport_id,
+                        &play_dimension,
+                    ).await?;
+                    if outcome.opened_lobby_menu {
+                        lobby_menu_open = true;
+                    }
+                    if outcome.teleported {
+                        lobby_menu_open = false;
+                        pending_dig = None;
+                    }
                     sink.flush().await?;
                     continue;
                 }
@@ -911,11 +1098,56 @@ where
                 pending_keep_alive = Some(keep_alive_id);
                 log::debug!("sent Play KeepAlive: id={keep_alive_id}");
             }
+            _ = async {
+                if let Some(interval) = lobby_status_refresh.as_mut() {
+                    interval.tick().await;
+                }
+            }, if lobby_status_refresh.is_some() => {
+                let refreshed = lobby.refresh_status().await;
+                for (server, status) in refreshed.changed_servers_since(&lobby_status) {
+                    log::info!("lobby backend status changed: server={server}, status={status:?}");
+                }
+                lobby_status = refreshed;
+                lobby.update_boss_bar_status(sink, &lobby_status).await?;
+                for packet in scoreboard::refresh_lobby_sidebar_packets(
+                    &config.server.scoreboard,
+                    &lobby,
+                    &lobby_status,
+                )? {
+                    sink.send_raw(packet).await?;
+                }
+                if lobby_menu_open {
+                    lobby.refresh_open_menu(sink, &lobby_status).await?;
+                }
+                sink.flush().await?;
+            }
+            _ = async {
+                if let Some(interval) = lobby_broadcast.as_mut() {
+                    interval.tick().await;
+                }
+            }, if lobby_broadcast.is_some() => {
+                if let Some(message) = lobby.broadcast_message(lobby_broadcast_index, &lobby_status) {
+                    let progress = lobby_broadcast_progress(
+                        lobby_broadcast_index,
+                        config.server.lobby.broadcast.messages.len(),
+                    );
+                    lobby.update_boss_bar(sink, &message, progress).await?;
+                    sink.send(SystemChat {
+                        content: text_component(message),
+                        overlay: false,
+                    }).await?;
+                    sink.flush().await?;
+                    lobby_broadcast_index = lobby_broadcast_index.wrapping_add(1);
+                }
+            }
             }
         }
     }
     .await;
 
+    if let Err(err) = lobby.remove_boss_bar(sink).await {
+        log::debug!("failed to remove lobby boss bar before disconnect: {err:#}");
+    }
     saved_player.update_runtime(&play_dimension, position, &inventory, survival.to_stored());
     if let Err(err) = player_data.save(saved_player).await {
         log::warn!(
@@ -925,6 +1157,13 @@ where
     }
 
     result
+}
+
+fn lobby_broadcast_progress(index: usize, message_count: usize) -> f32 {
+    if message_count == 0 {
+        return 1.0;
+    }
+    ((index % message_count) + 1) as f32 / message_count as f32
 }
 
 async fn apply_survival_movement<W>(
@@ -1304,6 +1543,46 @@ where
     Ok(())
 }
 
+async fn teleport_to_spawn<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    world_config: &qexed_config::app::qexed::server::World,
+    dimension: &str,
+    actor: uuid::Uuid,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    *position = spawn_position(&world_config.spawn);
+    let teleport_id = *next_teleport_id;
+    *next_teleport_id = next_teleport_id.saturating_add(1);
+    sink.send(Position {
+        teleport_id: VarInt(teleport_id),
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        dx: 0.0,
+        dy: 0.0,
+        dz: 0.0,
+        yaw: position.yaw,
+        pitch: position.pitch,
+        flags: 0,
+    })
+    .await?;
+    send_respawn_player_state(sink, world_config, dimension, *position).await?;
+    chunk_state
+        .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
+        .await?;
+    players.update_position(actor, *position);
+    Ok(())
+}
+
 async fn place_held_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -1673,6 +1952,29 @@ where
     Ok(())
 }
 
+async fn resync_inventory_state<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    inventory: &crate::inventory::PlayerInventory,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    for packet in inventory.set_player_inventory_packets() {
+        sink.send(packet).await?;
+    }
+    let equipment = inventory.visible_equipment();
+    sink.send(crate::inventory::equipment_packet(
+        entity_id,
+        equipment.clone(),
+    ))
+    .await?;
+    players.update_equipment(actor, equipment);
+    Ok(())
+}
+
 async fn apply_block_change<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -1774,6 +2076,15 @@ fn should_destroy_block(game_mode: GameMode, action_status: i32) -> bool {
         GameMode::Survival => action_status == PLAYER_ACTION_STOP_DESTROY_BLOCK,
         GameMode::Adventure | GameMode::Spectator => false,
     }
+}
+
+fn player_action_changes_block(action_status: i32) -> bool {
+    matches!(
+        action_status,
+        PLAYER_ACTION_START_DESTROY_BLOCK
+            | PLAYER_ACTION_CANCEL_DESTROY_BLOCK
+            | PLAYER_ACTION_STOP_DESTROY_BLOCK
+    )
 }
 
 fn player_intersects_block(player: &EntityPosition, block: &BlockPosition) -> bool {

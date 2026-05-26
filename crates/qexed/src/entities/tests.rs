@@ -1,5 +1,6 @@
 use super::{
-    EntityIdAllocator, EntityManager, ManagedEntityKind, entity_type_id, packets::npc_profile_name,
+    EntityIdAllocator, EntityManager, EntitySpawnRequest, ManagedEntityKind, entity_type_id,
+    packets::npc_profile_name,
 };
 use qexed_packet::Packet;
 use qexed_protocol::to_client::play::add_entity::EntityPosition;
@@ -117,6 +118,58 @@ fn dropped_items_are_collected_once_when_reachable() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn runtime_entities_can_spawn_move_and_remove() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let position = EntityPosition {
+        x: 1.0,
+        y: 65.0,
+        z: 2.0,
+        yaw: 90.0,
+        pitch: 0.0,
+        on_ground: true,
+    };
+
+    let entity = manager
+        .spawn(
+            &players,
+            EntitySpawnRequest {
+                key: "guide".to_string(),
+                kind: ManagedEntityKind::Npc,
+                entity_type: String::new(),
+                dimension: "minecraft:overworld".to_string(),
+                position,
+                name: "Guide".to_string(),
+                data: 0,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(entity.key, "guide");
+    assert_eq!(
+        manager.list_for_dimension("minecraft:overworld")[0].kind,
+        ManagedEntityKind::Npc
+    );
+
+    let moved = EntityPosition { x: 3.0, ..position };
+    manager.move_entity(&players, "guide", moved).unwrap();
+    assert_eq!(
+        manager.list_for_dimension("minecraft:overworld")[0]
+            .position
+            .x,
+        3.0
+    );
+
+    manager.remove(&players, "guide").unwrap();
+    assert!(manager.list_for_dimension("minecraft:overworld").is_empty());
 }
 
 #[test]

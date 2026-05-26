@@ -95,6 +95,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.scoreboard", sub)]
     pub scoreboard: Scoreboard,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby", sub)]
+    pub lobby: Lobby,
+
     #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
@@ -127,10 +131,442 @@ impl Default for Server {
             resource_pack: ResourcePack::default(),
             entities: Entities::default(),
             scoreboard: Scoreboard::default(),
+            lobby: Lobby::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct Lobby {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_lobby_protect_world")]
+    #[AutoDoc(key = "config.qexed.server.lobby.protect_world")]
+    pub protect_world: bool,
+
+    #[serde(default = "default_lobby_menu_title")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_title")]
+    pub menu_title: String,
+
+    #[serde(default = "default_lobby_menu_rows")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_rows")]
+    pub menu_rows: u8,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.navigator", sub)]
+    pub navigator: LobbyNavigator,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers")]
+    pub servers: Vec<LobbyServer>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items")]
+    pub menu_items: Vec<LobbyMenuItem>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions")]
+    pub npc_actions: Vec<LobbyNpcAction>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.broadcast", sub)]
+    pub broadcast: LobbyBroadcast,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar", sub)]
+    pub boss_bar: LobbyBossBar,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.health_check", sub)]
+    pub health_check: LobbyHealthCheck,
+}
+
+impl Default for Lobby {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            protect_world: default_lobby_protect_world(),
+            menu_title: default_lobby_menu_title(),
+            menu_rows: default_lobby_menu_rows(),
+            navigator: LobbyNavigator::default(),
+            servers: Vec::new(),
+            menu_items: Vec::new(),
+            npc_actions: Vec::new(),
+            broadcast: LobbyBroadcast::default(),
+            boss_bar: LobbyBossBar::default(),
+            health_check: LobbyHealthCheck::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyHealthCheck {
+    #[serde(default = "default_lobby_health_check_interval_secs")]
+    #[AutoDoc(key = "config.qexed.server.lobby.health_check.interval_secs")]
+    pub interval_secs: u64,
+
+    #[serde(default = "default_lobby_health_check_timeout_ms")]
+    #[AutoDoc(key = "config.qexed.server.lobby.health_check.timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for LobbyHealthCheck {
+    fn default() -> Self {
+        Self {
+            interval_secs: default_lobby_health_check_interval_secs(),
+            timeout_ms: default_lobby_health_check_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyBossBar {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_lobby_boss_bar_title")]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.title")]
+    pub title: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.color")]
+    pub color: LobbyBossBarColor,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.overlay")]
+    pub overlay: LobbyBossBarOverlay,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.darken_screen")]
+    pub darken_screen: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.play_music")]
+    pub play_music: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.create_world_fog")]
+    pub create_world_fog: bool,
+}
+
+impl Default for LobbyBossBar {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            title: default_lobby_boss_bar_title(),
+            color: LobbyBossBarColor::default(),
+            overlay: LobbyBossBarOverlay::default(),
+            darken_screen: false,
+            play_music: false,
+            create_world_fog: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LobbyBossBarColor {
+    Pink,
+    Blue,
+    Red,
+    #[default]
+    Green,
+    Yellow,
+    Purple,
+    White,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LobbyBossBarOverlay {
+    #[default]
+    Progress,
+    #[serde(rename = "notched_6")]
+    Notched6,
+    #[serde(rename = "notched_10")]
+    Notched10,
+    #[serde(rename = "notched_12")]
+    Notched12,
+    #[serde(rename = "notched_20")]
+    Notched20,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyBroadcast {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.broadcast.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_lobby_broadcast_interval_secs")]
+    #[AutoDoc(key = "config.qexed.server.lobby.broadcast.interval_secs")]
+    pub interval_secs: u64,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.lobby.broadcast.messages")]
+    pub messages: Vec<String>,
+}
+
+impl Default for LobbyBroadcast {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            interval_secs: default_lobby_broadcast_interval_secs(),
+            messages: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyNavigator {
+    #[serde(default = "default_lobby_navigator_enable")]
+    #[AutoDoc(key = "config.qexed.server.lobby.navigator.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_lobby_navigator_slot")]
+    #[AutoDoc(key = "config.qexed.server.lobby.navigator.slot")]
+    pub slot: u8,
+
+    #[serde(default = "default_lobby_navigator_item")]
+    #[AutoDoc(key = "config.qexed.server.lobby.navigator.item")]
+    pub item: String,
+
+    #[serde(default = "default_lobby_navigator_name")]
+    #[AutoDoc(key = "config.qexed.server.lobby.navigator.name")]
+    pub name: String,
+}
+
+impl Default for LobbyNavigator {
+    fn default() -> Self {
+        Self {
+            enable: default_lobby_navigator_enable(),
+            slot: default_lobby_navigator_slot(),
+            item: default_lobby_navigator_item(),
+            name: default_lobby_navigator_name(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyServer {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.id")]
+    pub id: String,
+
+    #[serde(default = "default_lobby_server_enable")]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.maintenance")]
+    pub maintenance: bool,
+
+    #[serde(default = "default_lobby_server_maintenance_message")]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.maintenance_message")]
+    pub maintenance_message: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.name")]
+    pub name: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.host")]
+    pub host: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers.port")]
+    pub port: u16,
+}
+
+impl Default for LobbyServer {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enable: default_lobby_server_enable(),
+            maintenance: false,
+            maintenance_message: default_lobby_server_maintenance_message(),
+            name: String::new(),
+            host: String::new(),
+            port: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyMenuItem {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.slot")]
+    pub slot: u8,
+
+    #[serde(default = "default_lobby_menu_item_item")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.item")]
+    pub item: String,
+
+    #[serde(default = "default_lobby_menu_item_unknown_item")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.unknown_item")]
+    pub unknown_item: String,
+
+    #[serde(default = "default_lobby_menu_item_offline_item")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.offline_item")]
+    pub offline_item: String,
+
+    #[serde(default = "default_lobby_menu_item_disabled_item")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.disabled_item")]
+    pub disabled_item: String,
+
+    #[serde(default = "default_lobby_menu_item_maintenance_item")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.maintenance_item")]
+    pub maintenance_item: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.name")]
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.lore")]
+    pub lore: Vec<String>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.action")]
+    pub action: LobbyAction,
+}
+
+impl Default for LobbyMenuItem {
+    fn default() -> Self {
+        Self {
+            slot: 0,
+            item: default_lobby_menu_item_item(),
+            unknown_item: default_lobby_menu_item_unknown_item(),
+            offline_item: default_lobby_menu_item_offline_item(),
+            disabled_item: default_lobby_menu_item_disabled_item(),
+            maintenance_item: default_lobby_menu_item_maintenance_item(),
+            name: String::new(),
+            lore: Vec::new(),
+            action: LobbyAction::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyNpcAction {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions.entity")]
+    pub entity: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions.action")]
+    pub action: LobbyAction,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct LobbyAction {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.action.kind")]
+    pub kind: LobbyActionKind,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.action.target")]
+    pub target: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.lobby.action.message")]
+    pub message: String,
+}
+
+impl Default for LobbyAction {
+    fn default() -> Self {
+        Self {
+            kind: LobbyActionKind::None,
+            target: String::new(),
+            message: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LobbyActionKind {
+    #[default]
+    None,
+    OpenMenu,
+    Transfer,
+    Message,
+}
+
+fn default_lobby_protect_world() -> bool {
+    true
+}
+
+fn default_lobby_menu_title() -> String {
+    "Server Selector".to_string()
+}
+
+fn default_lobby_menu_rows() -> u8 {
+    3
+}
+
+fn default_lobby_navigator_enable() -> bool {
+    true
+}
+
+fn default_lobby_navigator_slot() -> u8 {
+    4
+}
+
+fn default_lobby_navigator_item() -> String {
+    "minecraft:compass".to_string()
+}
+
+fn default_lobby_navigator_name() -> String {
+    "Server Selector".to_string()
+}
+
+fn default_lobby_menu_item_item() -> String {
+    "minecraft:paper".to_string()
+}
+
+fn default_lobby_menu_item_unknown_item() -> String {
+    "minecraft:gray_dye".to_string()
+}
+
+fn default_lobby_menu_item_offline_item() -> String {
+    "minecraft:barrier".to_string()
+}
+
+fn default_lobby_menu_item_disabled_item() -> String {
+    "minecraft:barrier".to_string()
+}
+
+fn default_lobby_menu_item_maintenance_item() -> String {
+    "minecraft:barrier".to_string()
+}
+
+fn default_lobby_server_enable() -> bool {
+    true
+}
+
+fn default_lobby_server_maintenance_message() -> String {
+    "Server is under maintenance.".to_string()
+}
+
+fn default_lobby_broadcast_interval_secs() -> u64 {
+    60
+}
+
+fn default_lobby_boss_bar_title() -> String {
+    "Welcome to Qexed".to_string()
+}
+
+fn default_lobby_health_check_interval_secs() -> u64 {
+    15
+}
+
+fn default_lobby_health_check_timeout_ms() -> u64 {
+    600
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -1135,9 +1571,10 @@ impl std::str::FromStr for ForwardingMode {
 mod tests {
     use super::{
         ContentFilter, ContentFilterEngine, EntityKind, ForwardingMode, GameMode,
-        GpuDeviceSelector, LightAlgorithm, LightMode, PermissionEngine, Permissions, PlayerData,
-        PlayerDataEngine, PlayerMessages, ResourcePack, ResourcePackObjectStorageProvider,
-        ResourcePackSource, Server, World, WorldGenerator,
+        GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
+        LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerData, PlayerDataEngine,
+        PlayerMessages, ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource,
+        Server, World, WorldGenerator,
     };
 
     #[test]
@@ -1638,5 +2075,159 @@ lines = ["online", "world"]
         assert_eq!(server.scoreboard.objective, "qexed");
         assert_eq!(server.scoreboard.title, "Qexed");
         assert_eq!(server.scoreboard.lines, vec!["online", "world"]);
+    }
+
+    #[test]
+    fn parses_lobby_settings() {
+        let server: Server = toml::from_str(
+            r#"
+ip = "0.0.0.0:25565"
+online = false
+max_player = -1
+display_players = true
+online_mode = false
+network_compression_threshold = 256
+proxy = false
+proxy_protocol = "QTunnel"
+proxy_token = "secret"
+max_port_connections = 65535
+rate_limit_window_secs = 60
+rate_limit_max_attempts = 6
+motd = ["Welcome"]
+code_of_conduct = false
+favicon = ""
+
+[world]
+path = "world"
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[world.spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+
+[lobby]
+enable = true
+protect_world = true
+menu_title = "Games"
+menu_rows = 3
+
+[lobby.navigator]
+enable = true
+slot = 4
+item = "minecraft:compass"
+name = "Games"
+
+[[lobby.servers]]
+id = "survival"
+enable = true
+maintenance = false
+maintenance_message = "Survival is restarting."
+name = "Survival"
+host = "127.0.0.1"
+port = 25566
+
+[[lobby.menu_items]]
+slot = 13
+item = "minecraft:diamond"
+unknown_item = "minecraft:clock"
+offline_item = "minecraft:red_wool"
+disabled_item = "minecraft:gray_wool"
+maintenance_item = "minecraft:orange_wool"
+name = "Survival"
+lore = ["Status: {status_label}", "{status_description}"]
+
+[lobby.menu_items.action]
+kind = "transfer"
+target = "survival"
+message = "Connecting"
+
+[[lobby.npc_actions]]
+entity = "spawn-guide"
+
+[lobby.npc_actions.action]
+kind = "open_menu"
+
+[lobby.broadcast]
+enable = true
+interval_secs = 30
+messages = ["Welcome", "Choose a server"]
+
+[lobby.boss_bar]
+enable = true
+title = "Lobby"
+color = "blue"
+overlay = "notched_10"
+darken_screen = true
+play_music = false
+create_world_fog = true
+
+[lobby.health_check]
+interval_secs = 5
+timeout_ms = 250
+"#,
+        )
+        .unwrap();
+
+        assert!(server.lobby.enable);
+        assert_eq!(server.lobby.menu_title, "Games");
+        assert_eq!(server.lobby.navigator.slot, 4);
+        assert_eq!(server.lobby.servers[0].id, "survival");
+        assert!(server.lobby.servers[0].enable);
+        assert!(!server.lobby.servers[0].maintenance);
+        assert_eq!(
+            server.lobby.servers[0].maintenance_message,
+            "Survival is restarting."
+        );
+        assert_eq!(server.lobby.servers[0].port, 25566);
+        assert_eq!(
+            server.lobby.menu_items[0].action.kind,
+            LobbyActionKind::Transfer
+        );
+        assert_eq!(server.lobby.menu_items[0].unknown_item, "minecraft:clock");
+        assert_eq!(
+            server.lobby.menu_items[0].offline_item,
+            "minecraft:red_wool"
+        );
+        assert_eq!(
+            server.lobby.menu_items[0].disabled_item,
+            "minecraft:gray_wool"
+        );
+        assert_eq!(
+            server.lobby.menu_items[0].maintenance_item,
+            "minecraft:orange_wool"
+        );
+        assert_eq!(
+            server.lobby.menu_items[0].lore,
+            vec!["Status: {status_label}", "{status_description}"]
+        );
+        assert_eq!(server.lobby.menu_items[0].action.target, "survival");
+        assert_eq!(
+            server.lobby.npc_actions[0].action.kind,
+            LobbyActionKind::OpenMenu
+        );
+        assert!(server.lobby.broadcast.enable);
+        assert_eq!(server.lobby.broadcast.interval_secs, 30);
+        assert_eq!(server.lobby.broadcast.messages.len(), 2);
+        assert!(server.lobby.boss_bar.enable);
+        assert_eq!(server.lobby.boss_bar.title, "Lobby");
+        assert_eq!(server.lobby.boss_bar.color, LobbyBossBarColor::Blue);
+        assert_eq!(
+            server.lobby.boss_bar.overlay,
+            LobbyBossBarOverlay::Notched10
+        );
+        assert!(server.lobby.boss_bar.darken_screen);
+        assert!(!server.lobby.boss_bar.play_music);
+        assert!(server.lobby.boss_bar.create_world_fog);
+        assert_eq!(server.lobby.health_check.interval_secs, 5);
+        assert_eq!(server.lobby.health_check.timeout_ms, 250);
     }
 }
