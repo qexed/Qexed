@@ -832,6 +832,10 @@ impl NoiseSettings {
                     .unwrap_or_else(|| self.default_block.clone())
             }
         } else {
+            if self.is_open_surface_water(y, surface_height) {
+                return self.default_fluid.clone();
+            }
+
             match self
                 .aquifer
                 .substance_at(x, y, z, density, preliminary_surface)
@@ -856,6 +860,10 @@ impl NoiseSettings {
         water_height.is_none_or(|height| y >= height)
     }
 
+    fn is_open_surface_water(&self, y: i32, surface_height: i32) -> bool {
+        y <= self.sea_level && y > surface_height
+    }
+
     fn water_height(
         &self,
         x: i32,
@@ -866,6 +874,10 @@ impl NoiseSettings {
     ) -> Option<i32> {
         let start = self.first_available_height(surface_height) + self.min_y - 1;
         (self.min_y..=start).rev().find(|y| {
+            if self.is_open_surface_water(*y, surface_height) {
+                return true;
+            }
+
             let density = self.density.sample_with_profile(x, *y, z, profile);
             if density > 0.0 {
                 return false;
@@ -890,6 +902,10 @@ impl NoiseSettings {
             .max(self.sea_level)
             .min(self.min_y + self.height - 1);
         (self.min_y..=start).rev().find(|y| {
+            if self.is_open_surface_water(*y, density_cache.surface_height) {
+                return true;
+            }
+
             let density = density_cache.density_at(*y, self.min_y);
             if density > 0.0 {
                 return false;

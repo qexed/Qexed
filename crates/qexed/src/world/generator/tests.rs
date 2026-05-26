@@ -405,6 +405,61 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_fills_open_surface_below_sea_level_with_water() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let surface_height = settings.sea_level - 5;
+        let layer = settings.layer_at_with_density(
+            0,
+            settings.sea_level,
+            0,
+            -1.0,
+            surface_height,
+            surface_height,
+            0,
+            None,
+        );
+
+        assert!(layer.is("minecraft:water"));
+    }
+
+    #[test]
+    fn vanilla_noise_treats_open_surface_water_as_underwater_for_surface_rules() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let surface_height = settings.sea_level - 5;
+        let water_height = Some(settings.sea_level);
+        let layer = settings.layer_at_with_density(
+            0,
+            surface_height,
+            0,
+            1.0,
+            surface_height,
+            surface_height,
+            0,
+            water_height,
+        );
+
+        assert!(layer.is("minecraft:dirt"));
+    }
+
+    #[test]
+    fn vanilla_noise_leaves_open_surface_above_sea_level_as_air() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let surface_height = settings.sea_level - 5;
+        let layer = settings.layer_at_with_density(
+            0,
+            settings.sea_level + 1,
+            0,
+            -1.0,
+            surface_height,
+            surface_height,
+            0,
+            None,
+        );
+
+        assert!(layer.is_air);
+    }
+
+    #[test]
     fn vanilla_noise_uses_lava_below_global_fluid_cutoff() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
 
