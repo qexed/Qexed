@@ -110,11 +110,196 @@ impl PlacedBlockColumnFeature {
                 let world_x = base_x + self.xz_offset.sample(random);
                 let world_y = base_y + self.y_offset.sample(random);
                 let world_z = base_z + self.xz_offset.sample(random);
-                self.column.place_at(
+                self.place_candidate(
                     settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
                 );
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.outer_count.sample(origin_x, origin_z) {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
+
+            let base_x = origin_x + random.next_int(16);
+            let base_z = origin_z + random.next_int(16);
+            let Some((base_local_x, base_local_z)) =
+                local_coords(base_x, base_z, origin_x, origin_z)
+            else {
+                continue;
+            };
+            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            if base_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, base_x, base_y, base_z)
+            {
+                continue;
+            }
+
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+                self.place_candidate_with_neighbors(
+                    settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y,
+                    world_z,
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.outer_count.sample(source_origin_x, source_origin_z) {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
+
+            let base_x = source_origin_x + random.next_int(16);
+            let base_z = source_origin_z + random.next_int(16);
+            let Some((base_local_x, base_local_z)) =
+                local_coords(base_x, base_z, source_origin_x, source_origin_z)
+            else {
+                continue;
+            };
+            let base_y =
+                source_chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            if base_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, base_x, base_y, base_z)
+            {
+                continue;
+            }
+
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+
+                let candidate_random = random.clone();
+                let mut source_random = candidate_random.clone();
+                let in_source = overlaps_chunk(world_x, world_z, source_origin_x, source_origin_z);
+                let mut source_placed = false;
+                if in_source {
+                    source_placed = self.place_candidate_with_neighbors(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        source_chunk,
+                        &[(target_origin_x, target_origin_z, &*target_chunk)],
+                        &mut source_random,
+                        world_x,
+                        world_y,
+                        world_z,
+                    );
+                }
+
+                let mut target_random = candidate_random;
+                let in_target = overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z);
+                self.place_candidate_with_neighbors(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &[(source_origin_x, source_origin_z, &*source_chunk)],
+                    &mut target_random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+                if source_placed {
+                    let mut spillover_random = random.clone();
+                    self.column.place_side_effect_spillover(
+                        settings,
+                        target_origin_x,
+                        target_origin_z,
+                        target_chunk,
+                        &mut spillover_random,
+                        world_x,
+                        world_z,
+                    );
+                }
+
+                if in_source {
+                    *random = source_random;
+                } else if in_target {
+                    *random = target_random;
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_candidate(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.column.place_at(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_candidate_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.column.place_at_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
     }
 }
 
@@ -213,6 +398,57 @@ impl BlockColumnFeatureConfig {
             chunk,
             chunk_min_x,
             chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return false;
+        }
+        if let BlockColumnKind::Bamboo { podzol_probability } = self.kind {
+            self.place_bamboo(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                podzol_probability,
+            )
+        } else {
+            self.place_basic(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_at_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !self.support.allows_at_world_with_neighbors(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
             world_x,
             world_y,
             world_z,
@@ -402,7 +638,60 @@ impl BlockColumnFeatureConfig {
         origin_z: i32,
     ) {
         let radius = random.next_int(4) + 1;
+        self.place_bamboo_podzol_radius(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            origin_x,
+            origin_z,
+            radius,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_side_effect_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_z: i32,
+    ) -> bool {
+        let BlockColumnKind::Bamboo { podzol_probability } = self.kind else {
+            return false;
+        };
+        random.next_int(12);
+        if random.next_float() >= podzol_probability {
+            return false;
+        }
+        let radius = random.next_int(4) + 1;
+        self.place_bamboo_podzol_radius(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            origin_x,
+            origin_z,
+            radius,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_bamboo_podzol_radius(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        origin_x: i32,
+        origin_z: i32,
+        radius: i32,
+    ) -> bool {
         let podzol = BlockLayer::new("minecraft:podzol");
+        let mut placed = false;
         for world_x in origin_x - radius..=origin_x + radius {
             for world_z in origin_z - radius..=origin_z + radius {
                 let dx = world_x - origin_x;
@@ -421,9 +710,11 @@ impl BlockColumnFeatureConfig {
                     .is_some_and(supports_vegetation_layer)
                 {
                     chunk.set_layer(local_x, y, local_z, settings.min_y, podzol.clone());
+                    placed = true;
                 }
             }
         }
+        placed
     }
 }
 
@@ -501,7 +792,7 @@ impl BlockColumnSupport {
                     return false;
                 }
                 horizontal_directions().iter().any(|(dx, dz)| {
-                    is_water_at_world(
+                    layer_at_world(
                         chunk,
                         chunk_min_x,
                         chunk_min_z,
@@ -510,6 +801,7 @@ impl BlockColumnSupport {
                         world_z + dz,
                         min_y,
                     )
+                    .is_some_and(supports_sugar_cane_adjacently_layer)
                 })
             }
             Self::Cactus => {
@@ -537,7 +829,7 @@ impl BlockColumnSupport {
                         world_z + dz,
                         min_y,
                     )
-                    .is_none_or(|layer| layer.is_air)
+                    .is_none_or(cactus_side_is_clear)
                 })
             }
             Self::Bamboo => layer_at_world(
@@ -549,7 +841,139 @@ impl BlockColumnSupport {
                 world_z,
                 min_y,
             )
-            .is_some_and(is_substrate_overworld_layer),
+            .is_some_and(supports_bamboo_layer),
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn allows_at_world_with_neighbors(
+        self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        if !is_air_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        ) {
+            return false;
+        }
+        match self {
+            Self::SugarCane => {
+                let below_y = world_y - 1;
+                let Some(below) = column_context_layer(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    world_x,
+                    below_y,
+                    world_z,
+                    min_y,
+                ) else {
+                    return false;
+                };
+                supports_sugar_cane_layer(&below)
+                    && horizontal_directions().iter().any(|(dx, dz)| {
+                        column_context_layer(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            neighbors,
+                            world_x + dx,
+                            below_y,
+                            world_z + dz,
+                            min_y,
+                        )
+                        .is_some_and(|layer| supports_sugar_cane_adjacently_layer(&layer))
+                    })
+            }
+            Self::Cactus => {
+                let Some(below) = column_context_layer(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    world_x,
+                    world_y - 1,
+                    world_z,
+                    min_y,
+                ) else {
+                    return false;
+                };
+                supports_cactus_layer(&below)
+                    && horizontal_directions().iter().all(|(dx, dz)| {
+                        column_context_layer(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            neighbors,
+                            world_x + dx,
+                            world_y,
+                            world_z + dz,
+                            min_y,
+                        )
+                        .is_none_or(|layer| cactus_side_is_clear(&layer))
+                    })
+            }
+            Self::Bamboo => column_context_layer(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbors,
+                world_x,
+                world_y - 1,
+                world_z,
+                min_y,
+            )
+            .is_some_and(|layer| supports_bamboo_layer(&layer)),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn column_context_layer(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> Option<BlockLayer> {
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    ) {
+        return Some(layer.clone());
+    }
+
+    neighbors.iter().find_map(|(neighbor_min_x, neighbor_min_z, neighbor_chunk)| {
+        layer_at_world(
+            neighbor_chunk,
+            *neighbor_min_x,
+            *neighbor_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+        .cloned()
+    })
 }

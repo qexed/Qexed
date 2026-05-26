@@ -44,6 +44,97 @@ impl PlacedStructureFeature {
             Self::Fossil(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
         }
     }
+
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        match self {
+            Self::DesertWell(feature) => {
+                feature.place_with_neighbors(settings, origin_x, origin_z, chunk, neighbors, random)
+            }
+            Self::Fossil(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        match self {
+            Self::DesertWell(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Fossil(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        source_neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        match self {
+            Self::DesertWell(feature) => feature.place_with_spillover_neighbors(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                source_neighbors,
+                random,
+            ),
+            Self::Fossil(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +183,174 @@ impl PlacedDesertWellFeature {
         }
         self.config.place(
             settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+        );
+    }
+
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return;
+        }
+        let world_x = origin_x + random.next_int(16);
+        let world_z = origin_z + random.next_int(16);
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, origin_x, origin_z) else {
+            return;
+        };
+        let world_y = chunk.world_surface_wg_height(local_x, local_z, settings.min_y);
+        if world_y <= settings.min_y
+            || !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return;
+        }
+        self.config.place_with_neighbors(
+            settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y, world_z,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return;
+        }
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        let Some((local_x, local_z)) =
+            local_coords(world_x, world_z, source_origin_x, source_origin_z)
+        else {
+            return;
+        };
+        let world_y = source_chunk.world_surface_wg_height(local_x, local_z, settings.min_y);
+        if world_y <= settings.min_y
+            || !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return;
+        }
+        let Some(origin_y) = self.config.resolve_origin_y(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            world_x,
+            world_y,
+            world_z,
+        ) else {
+            return;
+        };
+
+        let mut replay_random = random.clone();
+        self.config.place_resolved(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            random,
+            world_x,
+            origin_y,
+            world_z,
+        );
+        self.config.place_resolved(
+            settings,
+            target_origin_x,
+            target_origin_z,
+            target_chunk,
+            &mut replay_random,
+            world_x,
+            origin_y,
+            world_z,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        source_neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return;
+        }
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        let Some((local_x, local_z)) =
+            local_coords(world_x, world_z, source_origin_x, source_origin_z)
+        else {
+            return;
+        };
+        let world_y = source_chunk.world_surface_wg_height(local_x, local_z, settings.min_y);
+        if world_y <= settings.min_y
+            || !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return;
+        }
+
+        let source_context: Vec<_> = source_neighbors
+            .iter()
+            .copied()
+            .chain(std::iter::once((target_origin_x, target_origin_z, &*target_chunk)))
+            .collect();
+        let Some(origin_y) = self.config.resolve_origin_y_with_neighbors(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            &source_context,
+            world_x,
+            world_y,
+            world_z,
+        ) else {
+            return;
+        };
+
+        let mut replay_random = random.clone();
+        self.config.place_resolved(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            random,
+            world_x,
+            origin_y,
+            world_z,
+        );
+        self.config.place_resolved(
+            settings,
+            target_origin_x,
+            target_origin_z,
+            target_chunk,
+            &mut replay_random,
+            world_x,
+            origin_y,
+            world_z,
         );
     }
 }
@@ -153,6 +412,54 @@ impl PlacedFossilFeature {
             settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
         );
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return;
+        }
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        let world_y = self.height.sample(settings, random);
+        if !self
+            .biome_filter
+            .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return;
+        }
+
+        let mut replay_random = random.clone();
+        self.config.place(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        );
+        self.config.place(
+            settings,
+            target_origin_x,
+            target_origin_z,
+            target_chunk,
+            &mut replay_random,
+            world_x,
+            world_y,
+            world_z,
+        );
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -187,6 +494,79 @@ impl DesertWellFeatureConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
+        let Some(origin_y) = self.resolve_origin_y(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            world_x,
+            world_y,
+            world_z,
+        ) else {
+            return false;
+        };
+
+        self.place_resolved(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            origin_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some(origin_y) = self.resolve_origin_y_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            world_x,
+            world_y,
+            world_z,
+        ) else {
+            return false;
+        };
+
+        self.place_resolved(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            origin_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_origin_y(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> Option<i32> {
         let mut origin_y = world_y + 1;
         while origin_y > settings.min_y + 2
             && is_air_at_world(
@@ -213,7 +593,7 @@ impl DesertWellFeatureConfig {
         )
         .is_some_and(|layer| layer.is("minecraft:sand"))
         {
-            return false;
+            return None;
         }
 
         for dx in -2..=2 {
@@ -237,15 +617,109 @@ impl DesertWellFeatureConfig {
                     settings.min_y,
                 );
                 if empty_below_1 && empty_below_2 {
-                    return false;
+                    return None;
                 }
             }
         }
 
+        Some(origin_y)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_origin_y_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> Option<i32> {
+        let mut origin_y = world_y + 1;
+        while origin_y > settings.min_y + 2
+            && desert_well_context_layer(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbors,
+                world_x,
+                origin_y,
+                world_z,
+            )
+            .is_some_and(|layer| layer.is_air)
+        {
+            origin_y -= 1;
+        }
+
+        if !desert_well_context_layer(
+            settings,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
+            world_x,
+            origin_y,
+            world_z,
+        )
+        .is_some_and(|layer| layer.is("minecraft:sand"))
+        {
+            return None;
+        }
+
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                let empty_below_1 = desert_well_context_layer(
+                    settings,
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    world_x + dx,
+                    origin_y - 1,
+                    world_z + dz,
+                )
+                .is_some_and(|layer| layer.is_air);
+                let empty_below_2 = desert_well_context_layer(
+                    settings,
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    world_x + dx,
+                    origin_y - 2,
+                    world_z + dz,
+                )
+                .is_some_and(|layer| layer.is_air);
+                if empty_below_1 && empty_below_2 {
+                    return None;
+                }
+            }
+        }
+
+        Some(origin_y)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_resolved(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        origin_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let mut placed = false;
+
         for dy in -2..=0 {
             for dx in -2..=2 {
                 for dz in -2..=2 {
-                    self.set_block(
+                    placed |= self.set_block(
                         settings,
                         chunk_min_x,
                         chunk_min_z,
@@ -259,7 +733,7 @@ impl DesertWellFeatureConfig {
             }
         }
 
-        self.set_block(
+        placed |= self.set_block(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -270,7 +744,7 @@ impl DesertWellFeatureConfig {
             self.water.clone(),
         );
         for (dx, dz) in horizontal_directions() {
-            self.set_block(
+            placed |= self.set_block(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
@@ -282,7 +756,7 @@ impl DesertWellFeatureConfig {
             );
         }
 
-        self.set_block(
+        placed |= self.set_block(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -293,7 +767,7 @@ impl DesertWellFeatureConfig {
             self.sand.clone(),
         );
         for (dx, dz) in horizontal_directions() {
-            self.set_block(
+            placed |= self.set_block(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
@@ -308,7 +782,7 @@ impl DesertWellFeatureConfig {
         for dx in -2..=2 {
             for dz in -2..=2 {
                 if dx == -2 || dx == 2 || dz == -2 || dz == 2 {
-                    self.set_block(
+                    placed |= self.set_block(
                         settings,
                         chunk_min_x,
                         chunk_min_z,
@@ -322,7 +796,7 @@ impl DesertWellFeatureConfig {
             }
         }
         for (dx, dz) in [(2, 0), (-2, 0), (0, 2), (0, -2)] {
-            self.set_block(
+            placed |= self.set_block(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
@@ -341,7 +815,7 @@ impl DesertWellFeatureConfig {
                 } else {
                     self.sand_slab.clone()
                 };
-                self.set_block(
+                placed |= self.set_block(
                     settings,
                     chunk_min_x,
                     chunk_min_z,
@@ -356,7 +830,7 @@ impl DesertWellFeatureConfig {
 
         for dy in 1..=3 {
             for (dx, dz) in [(-1, -1), (-1, 1), (1, -1), (1, 1)] {
-                self.set_block(
+                placed |= self.set_block(
                     settings,
                     chunk_min_x,
                     chunk_min_z,
@@ -372,7 +846,7 @@ impl DesertWellFeatureConfig {
         let water_positions = [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)];
         let first = water_positions[random.next_int(water_positions.len() as i32) as usize];
         let second = water_positions[random.next_int(water_positions.len() as i32) as usize];
-        self.place_suspicious_sand(
+        placed |= self.place_suspicious_sand(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -382,7 +856,7 @@ impl DesertWellFeatureConfig {
             world_z + first.1,
             random.next_long(),
         );
-        self.place_suspicious_sand(
+        placed |= self.place_suspicious_sand(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -392,7 +866,7 @@ impl DesertWellFeatureConfig {
             world_z + second.1,
             random.next_long(),
         );
-        true
+        placed
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -555,6 +1029,46 @@ impl FossilShape {
         ];
         shapes[random.next_int(shapes.len() as i32) as usize]
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn desert_well_context_layer(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> Option<BlockLayer> {
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    ) {
+        return Some(layer.clone());
+    }
+
+    for (neighbor_min_x, neighbor_min_z, neighbor_chunk) in neighbors {
+        if let Some(layer) = layer_at_world(
+            neighbor_chunk,
+            *neighbor_min_x,
+            *neighbor_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return Some(layer.clone());
+        }
+    }
+
+    settings.terrain_layer_at(world_x, world_y, world_z)
 }
 
 fn rotate_offset(x: i32, z: i32, rotation: i32) -> (i32, i32) {

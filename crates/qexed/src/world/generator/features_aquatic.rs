@@ -88,6 +88,77 @@ impl PlacedAquaticFeature {
                 .place(settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z);
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.placement.sample(source_origin_x, source_origin_z, random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let Some((local_x, local_z)) =
+                local_coords(world_x, world_z, source_origin_x, source_origin_z)
+            else {
+                continue;
+            };
+            let world_y = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if world_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            match &self.config {
+                AquaticFeatureConfig::Coral(config) => {
+                    let mut replay_random = random.clone();
+                    if config.place(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        source_chunk,
+                        random,
+                        world_x,
+                        world_y,
+                        world_z,
+                    ) {
+                        config.place_spillover(
+                            settings,
+                            Some((source_origin_x, source_origin_z, &*source_chunk)),
+                            target_origin_x,
+                            target_origin_z,
+                            target_chunk,
+                            &mut replay_random,
+                            world_x,
+                            world_y,
+                            world_z,
+                        );
+                    }
+                }
+                _ => {
+                    self.config.place(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        source_chunk,
+                        random,
+                        world_x,
+                        world_y,
+                        world_z,
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -238,6 +309,7 @@ impl AquaticFeatureConfig {
             ),
         }
     }
+
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -456,6 +528,60 @@ impl CoralFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let coral_block = self.random_coral_block(random);
+        match random.next_int(3) {
+            0 => self.place_tree_spillover(
+                settings,
+                source_context,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                coral_block,
+            ),
+            1 => self.place_claw_spillover(
+                settings,
+                source_context,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                coral_block,
+            ),
+            _ => self.place_mushroom_spillover(
+                settings,
+                source_context,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                coral_block,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_tree(
         &self,
         settings: &NoiseSettings,
@@ -502,6 +628,80 @@ impl CoralFeatureConfig {
             for j in 0..branch_height {
                 if !self.place_coral_block(
                     settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    branch_x,
+                    branch_y,
+                    branch_z,
+                    coral_block,
+                ) {
+                    break;
+                }
+                placed = true;
+                segment_length += 1;
+                branch_y += 1;
+                if j == 0 || segment_length >= 2 && random.next_float() < 0.25 {
+                    branch_x += dx;
+                    branch_z += dz;
+                    segment_length = 0;
+                }
+            }
+        }
+        placed
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_tree_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        coral_block: &str,
+    ) -> bool {
+        let trunk_height = random.next_int(3) + 1;
+        let mut y = world_y;
+        let mut placed = false;
+        for _ in 0..trunk_height {
+            if !self.place_coral_block_spillover(
+                settings,
+                source_context,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                y,
+                world_z,
+                coral_block,
+            ) {
+                return placed;
+            }
+            placed = true;
+            y += 1;
+        }
+
+        let top_y = y;
+        let branches = random.next_int(3) + 2;
+        let mut directions = horizontal_directions().to_vec();
+        shuffle_horizontal_directions(&mut directions, random);
+        for (dx, dz) in directions.into_iter().take(branches as usize) {
+            let mut branch_x = world_x + dx;
+            let mut branch_y = top_y;
+            let mut branch_z = world_z + dz;
+            let branch_height = random.next_int(5) + 2;
+            let mut segment_length = 0;
+            for j in 0..branch_height {
+                if !self.place_coral_block_spillover(
+                    settings,
+                    source_context,
                     chunk_min_x,
                     chunk_min_z,
                     chunk,
@@ -631,6 +831,114 @@ impl CoralFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_claw_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        coral_block: &str,
+    ) -> bool {
+        if !self.place_coral_block_spillover(
+            settings,
+            source_context,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+            coral_block,
+        ) {
+            return false;
+        }
+
+        let claw_direction = horizontal_directions()[random.next_int(4) as usize];
+        let branches = random.next_int(2) + 2;
+        let mut possible = [
+            claw_direction,
+            rotate_horizontal_direction(claw_direction, true),
+            rotate_horizontal_direction(claw_direction, false),
+        ];
+        shuffle_horizontal_directions(&mut possible, random);
+
+        for branch_direction in possible.into_iter().take(branches as usize) {
+            let mut x = world_x + branch_direction.0;
+            let mut y = world_y;
+            let mut z = world_z + branch_direction.1;
+            let sideway_length = random.next_int(2) + 1;
+            let (segment_direction, inway_length) = if branch_direction == claw_direction {
+                (claw_direction, random.next_int(3) + 2)
+            } else {
+                y += 1;
+                let direction = if random.next_bool() {
+                    branch_direction
+                } else {
+                    (0, 0)
+                };
+                (direction, random.next_int(3) + 3)
+            };
+
+            for _ in 0..sideway_length {
+                if !self.place_coral_block_spillover(
+                    settings,
+                    source_context,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    x,
+                    y,
+                    z,
+                    coral_block,
+                ) {
+                    break;
+                }
+                x += segment_direction.0;
+                z += segment_direction.1;
+                if segment_direction == (0, 0) {
+                    y += 1;
+                }
+            }
+
+            x -= segment_direction.0;
+            z -= segment_direction.1;
+            if segment_direction == (0, 0) {
+                y -= 1;
+            }
+            y += 1;
+            for _ in 0..inway_length {
+                x += claw_direction.0;
+                z += claw_direction.1;
+                if !self.place_coral_block_spillover(
+                    settings,
+                    source_context,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    x,
+                    y,
+                    z,
+                    coral_block,
+                ) {
+                    break;
+                }
+                if random.next_float() < 0.25 {
+                    y += 1;
+                }
+            }
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_mushroom(
         &self,
         settings: &NoiseSettings,
@@ -664,6 +972,58 @@ impl CoralFeatureConfig {
                     if on_shell && not_corner && random.next_float() >= 0.1 {
                         placed |= self.place_coral_block(
                             settings,
+                            chunk_min_x,
+                            chunk_min_z,
+                            chunk,
+                            random,
+                            world_x + dx,
+                            world_y + dy - sink,
+                            world_z + dz,
+                            coral_block,
+                        );
+                    }
+                }
+            }
+        }
+        placed
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_mushroom_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        coral_block: &str,
+    ) -> bool {
+        let height = random.next_int(3) + 3;
+        let width = random.next_int(3) + 3;
+        let length = random.next_int(3) + 3;
+        let sink = random.next_int(3) + 1;
+        let mut placed = false;
+
+        for dx in 0..=width {
+            for dy in 0..=height {
+                for dz in 0..=length {
+                    let on_shell = dx == 0
+                        || dx == width
+                        || dy == 0
+                        || dy == height
+                        || dz == 0
+                        || dz == length;
+                    let not_corner = (dx != 0 && dx != width || dy != 0 && dy != height)
+                        && (dz != 0 && dz != length || dy != 0 && dy != height)
+                        && (dx != 0 && dx != width || dz != 0 && dz != length);
+                    if on_shell && not_corner && random.next_float() >= 0.1 {
+                        placed |= self.place_coral_block_spillover(
+                            settings,
+                            source_context,
                             chunk_min_x,
                             chunk_min_z,
                             chunk,
@@ -780,6 +1140,119 @@ impl CoralFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_coral_block_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        coral_block: &str,
+    ) -> bool {
+        if !(settings.min_y..settings.min_y + settings.height).contains(&world_y) {
+            return false;
+        }
+        let target_local = local_coords(world_x, world_z, chunk_min_x, chunk_min_z);
+        if !is_coral_replaceable_at_world_with_context(
+            settings,
+            source_context,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+        ) {
+            return false;
+        }
+        if !is_water_at_world_with_context(
+            settings,
+            source_context,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y + 1,
+            world_z,
+        ) {
+            return false;
+        }
+
+        if let Some((local_x, local_z)) = target_local {
+            chunk.set_layer(
+                local_x,
+                world_y,
+                local_z,
+                settings.min_y,
+                BlockLayer::new(coral_block),
+            );
+        }
+        if random.next_float() < 0.25 {
+            self.place_coral_fan_with_context(
+                settings,
+                source_context,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y + 1,
+                world_z,
+            );
+        } else if random.next_float() < 0.05 {
+            place_coral_sea_pickle_with_context(
+                settings,
+                source_context,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y + 1,
+                world_z,
+            );
+        }
+
+        for (dx, dz, facing) in [
+            (0, -1, "north"),
+            (0, 1, "south"),
+            (-1, 0, "west"),
+            (1, 0, "east"),
+        ] {
+            if random.next_float() < 0.2
+                && is_water_at_world_with_context(
+                    settings,
+                    source_context,
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    world_x + dx,
+                    world_y,
+                    world_z + dz,
+                )
+            {
+                self.place_wall_coral_fan_with_context(
+                    settings,
+                    source_context,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    random,
+                    world_x + dx,
+                    world_y,
+                    world_z + dz,
+                    facing,
+                );
+            }
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_coral_fan(
         &self,
         settings: &NoiseSettings,
@@ -791,28 +1264,40 @@ impl CoralFeatureConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
-        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
-        else {
-            return false;
-        };
-        if !is_water_at_world(
+        self.place_coral_fan_with_context(
+            settings, None, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_coral_fan_with_context(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !is_water_at_world_with_context(
+            settings,
+            source_context,
             chunk,
             chunk_min_x,
             chunk_min_z,
             world_x,
             world_y,
             world_z,
-            settings.min_y,
         ) {
             return false;
         }
-        chunk.set_layer(
-            local_x,
-            world_y,
-            local_z,
-            settings.min_y,
-            BlockLayer::new(self.random_coral_fan(random)),
-        );
+        let block = BlockLayer::new(self.random_coral_fan(random));
+        if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) {
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+        }
         true
     }
 
@@ -829,28 +1314,43 @@ impl CoralFeatureConfig {
         world_z: i32,
         facing: &str,
     ) -> bool {
-        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
-        else {
-            return false;
-        };
-        if !is_water_at_world(
+        self.place_wall_coral_fan_with_context(
+            settings, None, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+            facing,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_wall_coral_fan_with_context(
+        &self,
+        settings: &NoiseSettings,
+        source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        facing: &str,
+    ) -> bool {
+        if !is_water_at_world_with_context(
+            settings,
+            source_context,
             chunk,
             chunk_min_x,
             chunk_min_z,
             world_x,
             world_y,
             world_z,
-            settings.min_y,
         ) {
             return false;
         }
-        chunk.set_layer(
-            local_x,
-            world_y,
-            local_z,
-            settings.min_y,
-            BlockLayer::with_properties(self.random_coral_wall_fan(random), &[("facing", facing)]),
-        );
+        let block =
+            BlockLayer::with_properties(self.random_coral_wall_fan(random), &[("facing", facing)]);
+        if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) {
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+        }
         true
     }
 
@@ -878,17 +1378,35 @@ fn place_coral_sea_pickle(
     world_y: i32,
     world_z: i32,
 ) -> bool {
+    place_coral_sea_pickle_with_context(
+        settings, None, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_coral_sea_pickle_with_context(
+    settings: &NoiseSettings,
+    source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    chunk: &mut NoiseChunkBlocks,
+    random: &mut FeatureRandom,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
     let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) else {
         return false;
     };
-    if !is_water_at_world(
+    if !is_water_at_world_with_context(
+        settings,
+        source_context,
         chunk,
         chunk_min_x,
         chunk_min_z,
         world_x,
         world_y,
         world_z,
-        settings.min_y,
     ) {
         return false;
     }
@@ -904,6 +1422,88 @@ fn place_coral_sea_pickle(
         ),
     );
     true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_water_at_world_with_context(
+    settings: &NoiseSettings,
+    source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    ) {
+        return is_water_layer(layer);
+    }
+    if let Some((source_min_x, source_min_z, source_chunk)) = source_context
+        && let Some(layer) = layer_at_world(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        )
+    {
+        return is_water_layer(layer);
+    }
+    settings
+        .terrain_layer_at(world_x, world_y, world_z)
+        .is_some_and(|layer| is_water_layer(&layer))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_coral_replaceable_at_world_with_context(
+    settings: &NoiseSettings,
+    source_context: Option<(i32, i32, &NoiseChunkBlocks)>,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    let matches_coral_target =
+        |layer: &BlockLayer| layer.is("minecraft:water") || is_coral_layer(layer);
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    ) {
+        return matches_coral_target(layer);
+    }
+    if let Some((source_min_x, source_min_z, source_chunk)) = source_context
+        && let Some(layer) = layer_at_world(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        )
+    {
+        return matches_coral_target(layer);
+    }
+    settings
+        .terrain_layer_at(world_x, world_y, world_z)
+        .is_some_and(|layer| matches_coral_target(&layer))
 }
 
 fn rotate_horizontal_direction(direction: (i32, i32), clockwise: bool) -> (i32, i32) {

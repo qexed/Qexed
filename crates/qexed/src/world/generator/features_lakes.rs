@@ -53,6 +53,47 @@ impl PlacedLakeFeature {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        let Some((world_x, world_y, world_z)) =
+            self.sample_origin(settings, source_origin_x, source_origin_z, source_chunk, random)
+        else {
+            return;
+        };
+
+        if !self
+            .biome_filter
+            .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return;
+        }
+
+        let config = LakeFeatureConfig::lava();
+        config.place_with_spillover(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            target_origin_x,
+            target_origin_z,
+            source_chunk,
+            target_chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        );
+    }
+
     fn sample_origin(
         &self,
         settings: &NoiseSettings,
@@ -246,6 +287,105 @@ impl LakeFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        target_min_x: i32,
+        target_min_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        if origin_y <= settings.min_y + 4 {
+            return false;
+        }
+
+        let base_x = origin_x - 8;
+        let base_y = origin_y - 4;
+        let base_z = origin_z - 8;
+        let grid = self.sample_grid(random);
+
+        if !self.can_place_in_context(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            base_x,
+            base_y,
+            base_z,
+            &grid,
+        ) {
+            return false;
+        }
+
+        self.place_body_in_context(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            base_x,
+            base_y,
+            base_z,
+            &grid,
+        );
+        self.place_barrier_in_context(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            random,
+            base_x,
+            base_y,
+            base_z,
+            &grid,
+        );
+        true
+    }
+
+    fn sample_grid(&self, random: &mut FeatureRandom) -> Vec<bool> {
+        let mut grid = vec![false; 16 * 16 * 8];
+        let spots = random.next_int(4) + 4;
+
+        for _ in 0..spots {
+            let xr = random.next_double() * 6.0 + 3.0;
+            let yr = random.next_double() * 4.0 + 2.0;
+            let zr = random.next_double() * 6.0 + 3.0;
+            let xp = random.next_double() * (16.0 - xr - 2.0) + 1.0 + xr / 2.0;
+            let yp = random.next_double() * (8.0 - yr - 4.0) + 2.0 + yr / 2.0;
+            let zp = random.next_double() * (16.0 - zr - 2.0) + 1.0 + zr / 2.0;
+
+            for xx in 1..15 {
+                for zz in 1..15 {
+                    for yy in 1..7 {
+                        let xd = (xx as f64 - xp) / (xr / 2.0);
+                        let yd = (yy as f64 - yp) / (yr / 2.0);
+                        let zd = (zz as f64 - zp) / (zr / 2.0);
+                        if xd * xd + yd * yd + zd * zd < 1.0 {
+                            grid[lake_index(xx, yy, zz)] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        grid
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn can_place(
         &self,
         settings: &NoiseSettings,
@@ -287,4 +427,275 @@ impl LakeFeatureConfig {
 
         true
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn can_place_in_context(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        source_chunk: &NoiseChunkBlocks,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &NoiseChunkBlocks,
+        base_x: i32,
+        base_y: i32,
+        base_z: i32,
+        grid: &[bool],
+    ) -> bool {
+        for xx in 0..16 {
+            for zz in 0..16 {
+                for yy in 0..8 {
+                    if grid[lake_index(xx, yy, zz)] || !is_lake_boundary(grid, xx, yy, zz) {
+                        continue;
+                    }
+                    let world_x = base_x + xx as i32;
+                    let world_y = base_y + yy as i32;
+                    let world_z = base_z + zz as i32;
+                    let Some(layer) = lake_context_layer(
+                        source_chunk,
+                        source_min_x,
+                        source_min_z,
+                        target_chunk,
+                        target_min_x,
+                        target_min_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    ) else {
+                        continue;
+                    };
+                    if yy >= 4 && is_fluid_layer(layer) {
+                        return false;
+                    }
+                    if yy < 4 && !is_full_solid_layer(layer) && !layer.is("minecraft:lava") {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_body_in_context(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        base_x: i32,
+        base_y: i32,
+        base_z: i32,
+        grid: &[bool],
+    ) {
+        for xx in 0..16 {
+            for zz in 0..16 {
+                for yy in 0..8 {
+                    if !grid[lake_index(xx, yy, zz)] {
+                        continue;
+                    }
+                    let world_x = base_x + xx as i32;
+                    let world_y = base_y + yy as i32;
+                    let world_z = base_z + zz as i32;
+                    if lake_context_layer(
+                        source_chunk,
+                        source_min_x,
+                        source_min_z,
+                        target_chunk,
+                        target_min_x,
+                        target_min_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    )
+                    .is_some_and(can_lake_replace_block)
+                    {
+                        let layer = if yy >= 4 {
+                            settings.cave_air_block.clone()
+                        } else {
+                            settings.lava_lake_fluid_block.clone()
+                        };
+                        set_lake_block_in_context(
+                            settings,
+                            source_min_x,
+                            source_min_z,
+                            source_chunk,
+                            target_min_x,
+                            target_min_z,
+                            target_chunk,
+                            world_x,
+                            world_y,
+                            world_z,
+                            layer,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_barrier_in_context(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        base_x: i32,
+        base_y: i32,
+        base_z: i32,
+        grid: &[bool],
+    ) {
+        for xx in 0..16 {
+            for zz in 0..16 {
+                for yy in 0..8 {
+                    if grid[lake_index(xx, yy, zz)]
+                        || !is_lake_boundary(grid, xx, yy, zz)
+                        || (yy >= 4 && random.next_int(2) == 0)
+                    {
+                        continue;
+                    }
+                    let world_x = base_x + xx as i32;
+                    let world_y = base_y + yy as i32;
+                    let world_z = base_z + zz as i32;
+                    if lake_context_layer(
+                        source_chunk,
+                        source_min_x,
+                        source_min_z,
+                        target_chunk,
+                        target_min_x,
+                        target_min_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    )
+                    .is_some_and(is_full_solid_layer)
+                    {
+                        set_lake_block_in_context(
+                            settings,
+                            source_min_x,
+                            source_min_z,
+                            source_chunk,
+                            target_min_x,
+                            target_min_z,
+                            target_chunk,
+                            world_x,
+                            world_y,
+                            world_z,
+                            settings.lava_lake_barrier_block.clone(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lake_context_layer<'a>(
+    source_chunk: &'a NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &'a NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> Option<&'a BlockLayer> {
+    layer_at_world(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .or_else(|| {
+        layer_at_world(
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_lake_block_in_context(
+    settings: &NoiseSettings,
+    source_min_x: i32,
+    source_min_z: i32,
+    source_chunk: &mut NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    target_chunk: &mut NoiseChunkBlocks,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    block: BlockLayer,
+) -> bool {
+    if overlaps_chunk(world_x, world_z, source_min_x, source_min_z) {
+        set_lake_block(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            world_x,
+            world_y,
+            world_z,
+            block,
+        )
+    } else if overlaps_chunk(world_x, world_z, target_min_x, target_min_z) {
+        set_lake_block(
+            settings,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            world_x,
+            world_y,
+            world_z,
+            block,
+        )
+    } else {
+        false
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_lake_block(
+    settings: &NoiseSettings,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    chunk: &mut NoiseChunkBlocks,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    block: BlockLayer,
+) -> bool {
+    let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) else {
+        return false;
+    };
+    if chunk.layer(local_x, world_y, local_z, settings.min_y).is_none() {
+        return false;
+    }
+    chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+    true
 }

@@ -654,33 +654,233 @@ impl PlacedSimpleVegetationFeature {
                 let world_x = base_x + self.xz_offset.sample(random);
                 let world_y = base_y + self.y_offset.sample(random);
                 let world_z = base_z + self.xz_offset.sample(random);
-                if !self.placement_predicate.allows(
-                    chunk,
-                    origin_x,
-                    origin_z,
-                    world_x,
-                    world_y,
-                    world_z,
-                    settings.min_y,
-                ) {
-                    continue;
-                }
-                if !self.has_required_support(
-                    chunk,
-                    origin_x,
-                    origin_z,
-                    world_x,
-                    world_y - 1,
-                    world_z,
-                    settings.min_y,
-                ) {
-                    continue;
-                }
-                self.block.place_at(
+                self.place_candidate(
                     settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
                 );
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        let outer_count = self
+            .noise_threshold
+            .as_ref()
+            .map(|threshold| threshold.sample(origin_x, origin_z))
+            .unwrap_or_else(|| self.count_provider.sample(self.outer_count, random));
+        for _ in 0..outer_count {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
+
+            let base_x = origin_x + random.next_int(16);
+            let base_z = origin_z + random.next_int(16);
+            let Some((base_local_x, base_local_z)) =
+                local_coords(base_x, base_z, origin_x, origin_z)
+            else {
+                continue;
+            };
+            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            if base_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, base_x, base_y, base_z)
+            {
+                continue;
+            }
+
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+                self.place_candidate_with_neighbors(
+                    settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y,
+                    world_z,
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        let outer_count = self
+            .noise_threshold
+            .as_ref()
+            .map(|threshold| threshold.sample(source_origin_x, source_origin_z))
+            .unwrap_or_else(|| self.count_provider.sample(self.outer_count, random));
+        for _ in 0..outer_count {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
+
+            let base_x = source_origin_x + random.next_int(16);
+            let base_z = source_origin_z + random.next_int(16);
+            let Some((base_local_x, base_local_z)) =
+                local_coords(base_x, base_z, source_origin_x, source_origin_z)
+            else {
+                continue;
+            };
+            let base_y =
+                source_chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            if base_y <= settings.min_y
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, base_x, base_y, base_z)
+            {
+                continue;
+            }
+
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+
+                let candidate_random = random.clone();
+                let mut source_random = candidate_random.clone();
+                let in_source = overlaps_chunk(world_x, world_z, source_origin_x, source_origin_z);
+                if in_source {
+                    self.place_candidate_with_neighbors(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        source_chunk,
+                        &[(target_origin_x, target_origin_z, &*target_chunk)],
+                        &mut source_random,
+                        world_x,
+                        world_y,
+                        world_z,
+                    );
+                }
+
+                let mut target_random = candidate_random;
+                let in_target = overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z);
+                self.place_candidate_with_neighbors(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &[(source_origin_x, source_origin_z, &*source_chunk)],
+                    &mut target_random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+
+                if in_source {
+                    *random = source_random;
+                } else if in_target {
+                    *random = target_random;
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_candidate(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !self.placement_predicate.allows(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) || !self.has_required_support(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y - 1,
+            world_z,
+            settings.min_y,
+        ) {
+            return false;
+        }
+        self.block.place_at(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_candidate_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !self.placement_predicate.allows_with_neighbors(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) || !self.has_required_support_with_neighbors(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
+            world_x,
+            world_y - 1,
+            world_z,
+            settings.min_y,
+        ) {
+            return false;
+        }
+        self.block.place_at_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
     }
 
     fn has_required_support(
@@ -700,6 +900,33 @@ impl PlacedSimpleVegetationFeature {
             chunk,
             chunk_min_x,
             chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+        .is_some_and(|layer| layer.is(required_support))
+    }
+
+    fn has_required_support_with_neighbors(
+        &self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        let Some(required_support) = self.required_support else {
+            return true;
+        };
+        vegetation_context_layer(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
             world_x,
             world_y,
             world_z,
@@ -1138,6 +1365,35 @@ impl SimpleVegetationBlock {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_at_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let lower = self
+            .provider
+            .block_at(&self.lower, random, world_x, world_z);
+        self.place_selected_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            lower,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_selected(
         &self,
         settings: &NoiseSettings,
@@ -1169,6 +1425,72 @@ impl SimpleVegetationBlock {
                 chunk,
                 chunk_min_x,
                 chunk_min_z,
+                world_x,
+                world_y - 1,
+                world_z,
+                settings.min_y,
+            )
+        {
+            return false;
+        }
+
+        if let Some(upper) = selected_upper {
+            if !matches!(
+                layer_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    world_x,
+                    world_y + 1,
+                    world_z,
+                    settings.min_y,
+                ),
+                Some(layer) if layer.is_air
+            ) {
+                return false;
+            }
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, lower);
+            chunk.set_layer(local_x, world_y + 1, local_z, settings.min_y, upper);
+        } else {
+            chunk.set_layer(local_x, world_y, local_z, settings.min_y, lower);
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_selected_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        lower: BlockLayer,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let selected_upper = self
+            .upper
+            .clone()
+            .or_else(|| double_plant_upper_for(&lower));
+        let lower = if selected_upper.is_some() {
+            lower.with_property("half", "lower")
+        } else {
+            lower
+        };
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        if !chunk
+            .layer(local_x, world_y, local_z, settings.min_y)
+            .is_some_and(|layer| layer.is_air)
+            || !self.support.allows_at_world_with_neighbors(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbors,
                 world_x,
                 world_y - 1,
                 world_z,
@@ -1289,6 +1611,61 @@ impl SimpleVegetationPlacementPredicate {
             }
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn allows_with_neighbors(
+        self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        if !is_air_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        ) {
+            return false;
+        }
+
+        match self {
+            Self::Air => true,
+            Self::AirSurvivesNearWater => {
+                vegetation_context_layer(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    world_x,
+                    world_y - 1,
+                    world_z,
+                    min_y,
+                )
+                .is_some_and(|layer| supports_vegetation_layer(&layer))
+                    && horizontal_directions().iter().any(|(dx, dz)| {
+                        vegetation_context_layer(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            neighbors,
+                            world_x + dx,
+                            world_y - 1,
+                            world_z + dz,
+                            min_y,
+                        )
+                        .is_some_and(|layer| is_water_layer(&layer))
+                    })
+            }
+        }
+    }
 }
 
 fn double_plant_upper_for(layer: &BlockLayer) -> Option<BlockLayer> {
@@ -1333,9 +1710,77 @@ impl SimpleVegetationSupport {
             Self::Vegetation => supports_vegetation_layer(layer),
             Self::DeadBush => supports_dead_bush_layer(layer),
             Self::DryVegetation => supports_dry_vegetation_layer(layer),
-            Self::WaterSurface => is_water_layer(layer),
+            Self::WaterSurface => supports_lily_pad_layer(layer),
         }
     }
+
+    fn allows_at_world_with_neighbors(
+        self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        let Some(layer) = vegetation_context_layer(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        ) else {
+            return false;
+        };
+        match self {
+            Self::Vegetation => supports_vegetation_layer(&layer),
+            Self::DeadBush => supports_dead_bush_layer(&layer),
+            Self::DryVegetation => supports_dry_vegetation_layer(&layer),
+            Self::WaterSurface => supports_lily_pad_layer(&layer),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn vegetation_context_layer(
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> Option<BlockLayer> {
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    ) {
+        return Some(layer.clone());
+    }
+
+    neighbors.iter().find_map(|(neighbor_min_x, neighbor_min_z, neighbor_chunk)| {
+        layer_at_world(
+            neighbor_chunk,
+            *neighbor_min_x,
+            *neighbor_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+        .cloned()
+    })
 }
 
 #[derive(Debug, Clone)]

@@ -54,6 +54,52 @@ impl PlacedOreFeature {
                 .place(settings, origin_x, origin_z, chunk, random, x, y, z);
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let y = self.height.sample(settings, random);
+            if !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
+
+            let mut replay_random = random.clone();
+            self.ore.place_with_neighbor(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                Some((target_origin_x, target_origin_z, &*target_chunk)),
+                random,
+                x,
+                y,
+                z,
+            );
+            self.ore.place_with_neighbor(
+                settings,
+                target_origin_x,
+                target_origin_z,
+                target_chunk,
+                Some((source_origin_x, source_origin_z, &*source_chunk)),
+                &mut replay_random,
+                x,
+                y,
+                z,
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +179,47 @@ impl PlacedUnderwaterMagmaFeature {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let y = self.height.sample(settings, random);
+            let local_x = (x - source_origin_x) as usize;
+            let local_z = (z - source_origin_z) as usize;
+            let ocean_floor = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if y > ocean_floor - 2 || !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
+
+            if let Some(floor_y) = self.find_floor_y(settings, source_chunk, local_x, y, local_z) {
+                self.place_around_floor_with_context(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    target_origin_x,
+                    target_origin_z,
+                    source_chunk,
+                    target_chunk,
+                    random,
+                    x,
+                    floor_y,
+                    z,
+                );
+            }
+        }
+    }
+
     fn find_floor_y(
         &self,
         settings: &NoiseSettings,
@@ -196,6 +283,74 @@ impl PlacedUnderwaterMagmaFeature {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn place_around_floor_with_context(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        floor_x: i32,
+        floor_y: i32,
+        floor_z: i32,
+    ) -> bool {
+        let radius = self.placement_radius_around_floor;
+        let mut placed = false;
+        for world_x in floor_x - radius..=floor_x + radius {
+            for world_y in floor_y - radius..=floor_y + radius {
+                for world_z in floor_z - radius..=floor_z + radius {
+                    if random.next_float() >= self.placement_probability_per_valid_position
+                        || !self.is_valid_placement_in_context(
+                            settings,
+                            source_chunk,
+                            source_origin_x,
+                            source_origin_z,
+                            target_chunk,
+                            target_origin_x,
+                            target_origin_z,
+                            world_x,
+                            world_y,
+                            world_z,
+                        )
+                    {
+                        continue;
+                    }
+
+                    if overlaps_chunk(world_x, world_z, source_origin_x, source_origin_z) {
+                        let (local_x, local_z) =
+                            local_coords(world_x, world_z, source_origin_x, source_origin_z)
+                                .expect("overlaps_chunk guarantees local coordinates");
+                        source_chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            self.magma_block.clone(),
+                        );
+                        placed = true;
+                    } else if overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
+                        let (local_x, local_z) =
+                            local_coords(world_x, world_z, target_origin_x, target_origin_z)
+                                .expect("overlaps_chunk guarantees local coordinates");
+                        target_chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            self.magma_block.clone(),
+                        );
+                        placed = true;
+                    }
+                }
+            }
+        }
+        placed
+    }
+
     fn is_valid_placement(
         &self,
         settings: &NoiseSettings,
@@ -218,13 +373,13 @@ impl PlacedUnderwaterMagmaFeature {
         }
 
         for (dx, dz) in [(-1_i32, 0_i32), (1, 0), (0, -1), (0, 1)] {
-            let local_x = local_x as i32 + dx;
-            let local_z = local_z as i32 + dz;
-            if !(0..16).contains(&local_x) || !(0..16).contains(&local_z) {
+            let neighbor_x = local_x as i32 + dx;
+            let neighbor_z = local_z as i32 + dz;
+            if !(0..16).contains(&neighbor_x) || !(0..16).contains(&neighbor_z) {
                 return false;
             }
             let Some(neighbor) =
-                chunk.layer(local_x as usize, world_y, local_z as usize, settings.min_y)
+                chunk.layer(neighbor_x as usize, world_y, neighbor_z as usize, settings.min_y)
             else {
                 return false;
             };
@@ -235,6 +390,116 @@ impl PlacedUnderwaterMagmaFeature {
 
         true
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn is_valid_placement_in_context(
+        &self,
+        settings: &NoiseSettings,
+        source_chunk: &NoiseChunkBlocks,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_chunk: &NoiseChunkBlocks,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some(current) = magma_context_layer(
+            settings,
+            source_chunk,
+            source_origin_x,
+            source_origin_z,
+            target_chunk,
+            target_origin_x,
+            target_origin_z,
+            world_x,
+            world_y,
+            world_z,
+        ) else {
+            return false;
+        };
+        if is_water_or_air_layer(&current) {
+            return false;
+        }
+
+        let Some(below) = magma_context_layer(
+            settings,
+            source_chunk,
+            source_origin_x,
+            source_origin_z,
+            target_chunk,
+            target_origin_x,
+            target_origin_z,
+            world_x,
+            world_y - 1,
+            world_z,
+        ) else {
+            return false;
+        };
+        if !is_full_solid_layer(&below) {
+            return false;
+        }
+
+        for (dx, dz) in [(-1_i32, 0_i32), (1, 0), (0, -1), (0, 1)] {
+            let Some(neighbor) = magma_context_layer(
+                settings,
+                source_chunk,
+                source_origin_x,
+                source_origin_z,
+                target_chunk,
+                target_origin_x,
+                target_origin_z,
+                world_x + dx,
+                world_y,
+                world_z + dz,
+            ) else {
+                return false;
+            };
+            if !is_full_solid_layer(&neighbor) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn magma_context_layer(
+    settings: &NoiseSettings,
+    source_chunk: &NoiseChunkBlocks,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> Option<BlockLayer> {
+    layer_at_world(
+        source_chunk,
+        source_origin_x,
+        source_origin_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    )
+    .or_else(|| {
+        layer_at_world(
+            target_chunk,
+            target_origin_x,
+            target_origin_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        )
+    })
+    .cloned()
+    .or_else(|| settings.terrain_layer_at(world_x, world_y, world_z))
 }
 
 #[derive(Debug, Clone)]
@@ -360,6 +625,47 @@ impl PlacedDiskFeature {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let local_x = (x - source_origin_x) as usize;
+            let local_z = (z - source_origin_z) as usize;
+            let y = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if y <= settings.min_y
+                || !self.biome_filter.allows_at(&settings.density, x, y, z)
+                || !self.can_start_at(source_chunk, local_x, y, local_z, settings.min_y)
+            {
+                continue;
+            }
+
+            self.place_disk_with_context(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+                x,
+                y,
+                z,
+            );
+        }
+    }
+
     fn can_start_at(
         &self,
         chunk: &NoiseChunkBlocks,
@@ -429,6 +735,93 @@ impl PlacedDiskFeature {
             }
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_disk_with_context(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        center_x: i32,
+        center_y: i32,
+        center_z: i32,
+    ) {
+        let radius = self.radius.sample(random);
+        let min_y = (center_y - self.half_height).max(settings.min_y);
+        let max_y = (center_y + self.half_height).min(settings.min_y + settings.height - 1);
+        if min_y > max_y {
+            return;
+        }
+
+        for world_x in center_x - radius..=center_x + radius {
+            let dx = world_x - center_x;
+            for world_z in center_z - radius..=center_z + radius {
+                let dz = world_z - center_z;
+                if dx * dx + dz * dz > radius * radius {
+                    continue;
+                }
+                for world_y in (min_y..=max_y).rev() {
+                    let Some(current) = ore_context_layer(
+                        settings,
+                        source_chunk,
+                        source_origin_x,
+                        source_origin_z,
+                        target_chunk,
+                        target_origin_x,
+                        target_origin_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                    ) else {
+                        continue;
+                    };
+                    if !self.target_blocks.contains(&current.block.as_ref()) {
+                        continue;
+                    }
+
+                    let replacement = self.state_provider.block_at_world(
+                        settings,
+                        source_chunk,
+                        source_origin_x,
+                        source_origin_z,
+                        target_chunk,
+                        target_origin_x,
+                        target_origin_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                    );
+
+                    if let Some((local_x, local_z)) =
+                        local_coords(world_x, world_z, source_origin_x, source_origin_z)
+                    {
+                        source_chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            replacement,
+                        );
+                    } else if let Some((local_x, local_z)) =
+                        local_coords(world_x, world_z, target_origin_x, target_origin_z)
+                    {
+                        target_chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            replacement,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -477,6 +870,102 @@ impl DiskStateProvider {
             }
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn block_at_world(
+        &self,
+        settings: &NoiseSettings,
+        source_chunk: &NoiseChunkBlocks,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_chunk: &NoiseChunkBlocks,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> BlockLayer {
+        match self {
+            Self::Simple(block) => block.clone(),
+            Self::Sand { sand, sandstone } => {
+                if ore_context_layer(
+                    settings,
+                    source_chunk,
+                    source_origin_x,
+                    source_origin_z,
+                    target_chunk,
+                    target_origin_x,
+                    target_origin_z,
+                    world_x,
+                    world_y - 1,
+                    world_z,
+                )
+                .is_some_and(|layer| layer.is_air)
+                {
+                    sandstone.clone()
+                } else {
+                    sand.clone()
+                }
+            }
+            Self::Grass { dirt, grass } => {
+                if !ore_context_layer(
+                    settings,
+                    source_chunk,
+                    source_origin_x,
+                    source_origin_z,
+                    target_chunk,
+                    target_origin_x,
+                    target_origin_z,
+                    world_x,
+                    world_y + 1,
+                    world_z,
+                )
+                .is_some_and(|layer| is_full_solid_layer(&layer) || is_water_layer(&layer))
+                {
+                    grass.clone()
+                } else {
+                    dirt.clone()
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ore_context_layer(
+    settings: &NoiseSettings,
+    source_chunk: &NoiseChunkBlocks,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> Option<BlockLayer> {
+    layer_at_world(
+        source_chunk,
+        source_origin_x,
+        source_origin_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    )
+    .or_else(|| {
+        layer_at_world(
+            target_chunk,
+            target_origin_x,
+            target_origin_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        )
+    })
+    .cloned()
+    .or_else(|| settings.terrain_layer_at(world_x, world_y, world_z))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -579,8 +1068,46 @@ impl PlacedSpringFeature {
             let Some(local_z) = local_coord(world_z, origin_z) else {
                 continue;
             };
-            self.config
-                .try_place(settings, chunk, local_x, world_y, local_z);
+            debug_assert_eq!(local_x, (world_x - origin_x) as usize);
+            debug_assert_eq!(local_z, (world_z - origin_z) as usize);
+            self.config.try_place_at_world(
+                settings, origin_x, origin_z, chunk, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.try_place_at_world_with_neighbor(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                Some((target_origin_x, target_origin_z, target_chunk)),
+                world_x,
+                world_y,
+                world_z,
+            );
         }
     }
 }
@@ -595,6 +1122,7 @@ struct SpringFeatureConfig {
 }
 
 impl SpringFeatureConfig {
+    #[cfg(test)]
     fn try_place(
         &self,
         settings: &NoiseSettings,
@@ -603,16 +1131,96 @@ impl SpringFeatureConfig {
         world_y: i32,
         local_z: usize,
     ) -> bool {
-        if !self.is_valid_block(chunk, local_x, world_y + 1, local_z, settings.min_y) {
+        self.try_place_at_world(
+            settings,
+            0,
+            0,
+            chunk,
+            local_x as i32,
+            world_y,
+            local_z as i32,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_at_world(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.try_place_at_world_with_neighbor(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            None,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_place_at_world_with_neighbor(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+
+        if !self.is_valid_block_at_world(
+            settings,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbor,
+            world_x,
+            world_y + 1,
+            world_z,
+        ) {
             return false;
         }
         if self.requires_block_below
-            && !self.is_valid_block(chunk, local_x, world_y - 1, local_z, settings.min_y)
+            && !self.is_valid_block_at_world(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbor,
+                world_x,
+                world_y - 1,
+                world_z,
+            )
         {
             return false;
         }
 
-        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+        let Some(current) =
+            self.context_layer(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbor,
+                world_x,
+                world_y,
+                world_z,
+            )
+        else {
             return false;
         };
         if !current.is_air && !self.valid_blocks.contains(&current.block.as_ref()) {
@@ -628,17 +1236,23 @@ impl SpringFeatureConfig {
             (0, 0, 1),
             (0, -1, 0),
         ] {
-            let local_x = local_x as i32 + dx;
-            let local_z = local_z as i32 + dz;
-            if !(0..16).contains(&local_x) || !(0..16).contains(&local_z) {
-                continue;
-            }
             let y = world_y + dy;
-            if self.is_valid_block(chunk, local_x as usize, y, local_z as usize, settings.min_y) {
+            let x = world_x + dx;
+            let z = world_z + dz;
+            if self.is_valid_block_at_world(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbor,
+                x,
+                y,
+                z,
+            ) {
                 rock_count += 1;
             }
-            if chunk
-                .layer(local_x as usize, y, local_z as usize, settings.min_y)
+            if self
+                .context_layer(settings, chunk, chunk_min_x, chunk_min_z, neighbor, x, y, z)
                 .is_some_and(|layer| layer.is_air)
             {
                 hole_count += 1;
@@ -659,18 +1273,70 @@ impl SpringFeatureConfig {
         }
     }
 
-    fn is_valid_block(
+    #[allow(clippy::too_many_arguments)]
+    fn is_valid_block_at_world(
         &self,
+        settings: &NoiseSettings,
         chunk: &NoiseChunkBlocks,
-        local_x: usize,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        world_x: i32,
         world_y: i32,
-        local_z: usize,
-        min_y: i32,
+        world_z: i32,
     ) -> bool {
-        chunk
-            .layer(local_x, world_y, local_z, min_y)
+        self.context_layer(
+            settings,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbor,
+            world_x,
+            world_y,
+            world_z,
+        )
             .is_some_and(|layer| self.valid_blocks.contains(&layer.block.as_ref()))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn context_layer(
+        &self,
+        settings: &NoiseSettings,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> Option<BlockLayer> {
+        if let Some(layer) = layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return Some(layer.clone());
+        }
+        if let Some((neighbor_min_x, neighbor_min_z, neighbor_chunk)) = neighbor
+            && let Some(layer) = layer_at_world(
+                neighbor_chunk,
+                neighbor_min_x,
+                neighbor_min_z,
+                world_x,
+                world_y,
+                world_z,
+                settings.min_y,
+            )
+        {
+            return Some(layer.clone());
+        }
+        settings.terrain_layer_at(world_x, world_y, world_z)
+    }
+
 }
 
 #[derive(Debug, Clone)]
@@ -734,6 +1400,32 @@ impl OreFeatureConfig {
         chunk_min_x: i32,
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        self.place_with_neighbor(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            None,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbor(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
         random: &mut FeatureRandom,
         origin_x: i32,
         origin_y: i32,
@@ -822,11 +1514,12 @@ impl OreFeatureConfig {
                             continue;
                         }
                         if tested.insert((world_x, world_y, world_z))
-                            && self.try_place_block(
+                            && self.try_place_block_with_neighbor(
                                 settings,
                                 chunk_min_x,
                                 chunk_min_z,
                                 chunk,
+                                neighbor,
                                 random,
                                 world_x,
                                 world_y,
@@ -844,12 +1537,13 @@ impl OreFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn try_place_block(
+    fn try_place_block_with_neighbor(
         &self,
         settings: &NoiseSettings,
         chunk_min_x: i32,
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
         random: &mut FeatureRandom,
         world_x: i32,
         world_y: i32,
@@ -864,7 +1558,16 @@ impl OreFeatureConfig {
             return false;
         };
         if !self.should_skip_air_check(random)
-            && is_adjacent_to_air(settings, chunk, local_x, world_y, local_z)
+            && is_adjacent_to_air_with_neighbor(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbor,
+                world_x,
+                world_y,
+                world_z,
+            )
         {
             return false;
         }
@@ -889,6 +1592,48 @@ impl OreFeatureConfig {
             random.next_float() >= self.discard_chance_on_air_exposure
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_adjacent_to_air_with_neighbor(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    const DIRECTIONS: [(i32, i32, i32); 6] = [
+        (1, 0, 0),
+        (-1, 0, 0),
+        (0, 1, 0),
+        (0, -1, 0),
+        (0, 0, 1),
+        (0, 0, -1),
+    ];
+
+    DIRECTIONS.into_iter().any(|(dx, dy, dz)| {
+        let x = world_x + dx;
+        let y = world_y + dy;
+        let z = world_z + dz;
+        if !(settings.min_y..settings.min_y + settings.height).contains(&y) {
+            return false;
+        }
+
+        if let Some(layer) = layer_at_world(chunk, chunk_min_x, chunk_min_z, x, y, z, settings.min_y)
+        {
+            return layer.is_air;
+        }
+        if let Some((neighbor_min_x, neighbor_min_z, neighbor_chunk)) = neighbor
+            && let Some(layer) =
+                layer_at_world(neighbor_chunk, neighbor_min_x, neighbor_min_z, x, y, z, settings.min_y)
+        {
+            return layer.is_air;
+        }
+        false
+    })
 }
 
 impl OreTargetPredicate {

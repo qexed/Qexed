@@ -704,103 +704,241 @@ impl OverworldOreFeatures {
         let origin_z = chunk_z * 16;
         let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
         let features = self.ordered_features();
+        let mut neighbor_sources = self.neighbor_feature_sources(settings, chunk_x, chunk_z);
 
-        for feature in features {
+        for feature in features.iter().copied() {
             let mut random = FeatureRandom::for_feature(
                 decoration_seed,
                 feature.feature_index(),
                 feature.step_index(),
             );
-            feature.place(settings, origin_x, origin_z, chunk, &mut random);
-        }
+            match feature {
+                PlacedUndergroundFeature::MultifaceGrowth(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                PlacedUndergroundFeature::ClassicVines(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                PlacedUndergroundFeature::BlockColumn(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                PlacedUndergroundFeature::SimpleVegetation(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                PlacedUndergroundFeature::MonsterRoom(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                PlacedUndergroundFeature::Structure(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                PlacedUndergroundFeature::HugeMushroom(feature) => {
+                    let neighbor_chunks: Vec<_> = neighbor_sources
+                        .iter()
+                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                        .collect();
+                    feature.place_with_neighbors(
+                        settings,
+                        origin_x,
+                        origin_z,
+                        chunk,
+                        &neighbor_chunks,
+                        &mut random,
+                    );
+                }
+                _ => feature.place(settings, origin_x, origin_z, chunk, &mut random),
+            }
 
-        self.place_neighbor_tree_spillover(settings, chunk_x, chunk_z, chunk);
+            for source_index in 0..neighbor_sources.len() {
+                let (before, current_and_after) = neighbor_sources.split_at_mut(source_index);
+                let Some((source, after)) = current_and_after.split_first_mut() else {
+                    continue;
+                };
+                let mut random = FeatureRandom::for_feature(
+                    source.decoration_seed,
+                    feature.feature_index(),
+                    feature.step_index(),
+                );
+                match feature {
+                    PlacedUndergroundFeature::MonsterRoom(feature) => {
+                        let source_neighbors: Vec<_> = before
+                            .iter()
+                            .chain(after.iter())
+                            .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                            .collect();
+                        feature.place_with_spillover_neighbors(
+                            settings,
+                            source.origin_x,
+                            source.origin_z,
+                            origin_x,
+                            origin_z,
+                            &mut source.chunk,
+                            chunk,
+                            &source_neighbors,
+                            &mut random,
+                        );
+                    }
+                    PlacedUndergroundFeature::Structure(feature) => {
+                        let source_neighbors: Vec<_> = before
+                            .iter()
+                            .chain(after.iter())
+                            .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                            .collect();
+                        feature.place_with_spillover_neighbors(
+                            settings,
+                            source.origin_x,
+                            source.origin_z,
+                            origin_x,
+                            origin_z,
+                            &mut source.chunk,
+                            chunk,
+                            &source_neighbors,
+                            &mut random,
+                        );
+                    }
+                    PlacedUndergroundFeature::HugeMushroom(feature) => {
+                        let source_neighbors: Vec<_> = before
+                            .iter()
+                            .chain(after.iter())
+                            .map(|source| (source.origin_x, source.origin_z, &source.chunk))
+                            .collect();
+                        feature.place_with_spillover_neighbors(
+                            settings,
+                            source.origin_x,
+                            source.origin_z,
+                            origin_x,
+                            origin_z,
+                            &mut source.chunk,
+                            chunk,
+                            &source_neighbors,
+                            &mut random,
+                        );
+                    }
+                    _ => feature.place_spillover_from(
+                        settings,
+                        source.origin_x,
+                        source.origin_z,
+                        origin_x,
+                        origin_z,
+                        &mut source.chunk,
+                        chunk,
+                        &mut random,
+                    ),
+                }
+            }
+        }
     }
 
-    fn place_neighbor_tree_spillover(
+    fn neighbor_feature_sources(
         &self,
         settings: &NoiseSettings,
         chunk_x: i32,
         chunk_z: i32,
-        chunk: &mut NoiseChunkBlocks,
-    ) {
-        let target_origin_x = chunk_x * 16;
-        let target_origin_z = chunk_z * 16;
-        let features = self.ordered_features();
-
+    ) -> Vec<NeighborFeatureSource> {
+        let mut sources = Vec::with_capacity(8);
         for source_dx in -1..=1 {
             for source_dz in -1..=1 {
                 if source_dx == 0 && source_dz == 0 {
                     continue;
                 }
 
-                let source_chunk_x = chunk_x + source_dx;
-                let source_chunk_z = chunk_z + source_dz;
-                let source_origin_x = source_chunk_x * 16;
-                let source_origin_z = source_chunk_z * 16;
-                let decoration_seed =
-                    FeatureRandom::decoration_seed(self.seed, source_origin_x, source_origin_z);
-
-                let (mut source_chunk, preliminary_surfaces) =
-                    settings.generate_base_chunk(source_chunk_x, source_chunk_z);
+                let chunk_x = chunk_x + source_dx;
+                let chunk_z = chunk_z + source_dz;
+                let origin_x = chunk_x * 16;
+                let origin_z = chunk_z * 16;
+                let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
+                let (mut chunk, preliminary_surfaces) =
+                    settings.generate_base_chunk(chunk_x, chunk_z);
                 settings.carvers.carve_chunk(
                     settings,
-                    source_chunk_x,
-                    source_chunk_z,
+                    chunk_x,
+                    chunk_z,
                     &preliminary_surfaces,
-                    &mut source_chunk,
+                    &mut chunk,
                 );
 
-                for feature in features.iter().copied() {
-                    let mut random = FeatureRandom::for_feature(
-                        decoration_seed,
-                        feature.feature_index(),
-                        feature.step_index(),
-                    );
-                    match feature {
-                        PlacedUndergroundFeature::Surface(feature) => feature.place_with_spillover(
-                            settings,
-                            source_origin_x,
-                            source_origin_z,
-                            target_origin_x,
-                            target_origin_z,
-                            &mut source_chunk,
-                            chunk,
-                            &mut random,
-                        ),
-                        PlacedUndergroundFeature::HugeMushroom(feature) => feature
-                            .place_with_spillover(
-                                settings,
-                                source_origin_x,
-                                source_origin_z,
-                                target_origin_x,
-                                target_origin_z,
-                                &mut source_chunk,
-                                chunk,
-                                &mut random,
-                            ),
-                        PlacedUndergroundFeature::Tree(feature) => feature.place_with_spillover(
-                            settings,
-                            source_origin_x,
-                            source_origin_z,
-                            target_origin_x,
-                            target_origin_z,
-                            &mut source_chunk,
-                            chunk,
-                            &mut random,
-                        ),
-                        _ => feature.place(
-                            settings,
-                            source_origin_x,
-                            source_origin_z,
-                            &mut source_chunk,
-                            &mut random,
-                        ),
-                    }
-                }
+                sources.push(NeighborFeatureSource {
+                    origin_x,
+                    origin_z,
+                    decoration_seed,
+                    chunk,
+                });
             }
         }
+        sources
     }
+}
+
+struct NeighborFeatureSource {
+    origin_x: i32,
+    origin_z: i32,
+    decoration_seed: i64,
+    chunk: NoiseChunkBlocks,
 }
 
 #[derive(Clone, Copy)]
@@ -945,6 +1083,211 @@ impl PlacedUndergroundFeature<'_> {
                 feature.place(settings, origin_x, origin_z, chunk, random);
             }
             Self::FreezeTopLayer(feature) => feature.place(settings, origin_x, origin_z, chunk),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover_from(
+        self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        match self {
+            Self::Lake(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Geode(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Dripstone(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Sculk(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Structure(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Ore(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Spring(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::UnderwaterMagma(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Disk(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::MultifaceGrowth(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Surface(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::MonsterRoom(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::EnvironmentScan(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Aquatic(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::HugeMushroom(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::SimpleVegetation(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::BlockColumn(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::ClassicVines(feature) => feature.place_with_neighbors(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                &[(target_origin_x, target_origin_z, &*target_chunk)],
+                random,
+            ),
+            Self::Tree(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            _ => self.place(settings, source_origin_x, source_origin_z, source_chunk, random),
         }
     }
 }

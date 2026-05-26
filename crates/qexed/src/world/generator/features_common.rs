@@ -142,6 +142,91 @@ impl MultifaceGrowthFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let Some(origin_state) = layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            origin_x,
+            origin_y,
+            origin_z,
+            settings.min_y,
+        ) else {
+            return false;
+        };
+        if !is_air_or_water_layer(origin_state) {
+            return false;
+        }
+
+        let search_directions = self.shuffled_directions(random);
+        if self.place_growth_if_possible_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            &search_directions,
+        ) {
+            return true;
+        }
+
+        for search_direction in &search_directions {
+            let placement_directions =
+                self.shuffled_directions_except(random, direction_opposite(*search_direction));
+            for step in 1..=self.search_range {
+                let world_x = origin_x + search_direction.0 * step;
+                let world_y = origin_y + search_direction.1 * step;
+                let world_z = origin_z + search_direction.2 * step;
+                let Some(state) = layer_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
+                ) else {
+                    break;
+                };
+                if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
+                    break;
+                }
+                if self.place_growth_if_possible_with_neighbors(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    neighbors,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    &placement_directions,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_growth_if_possible(
         &self,
         settings: &NoiseSettings,
@@ -198,6 +283,231 @@ impl MultifaceGrowthFeatureConfig {
                 );
             }
             return true;
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_growth_if_possible_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        directions: &[(i32, i32, i32, &'static str)],
+    ) -> bool {
+        for direction in directions {
+            let neighbor_x = world_x + direction.0;
+            let neighbor_y = world_y + direction.1;
+            let neighbor_z = world_z + direction.2;
+            if !self.can_be_placed_on_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbors,
+                neighbor_x,
+                neighbor_y,
+                neighbor_z,
+                settings.min_y,
+            ) {
+                continue;
+            }
+            if !self.try_place_face(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                world_x,
+                world_y,
+                world_z,
+                direction.3,
+            ) {
+                continue;
+            }
+            if random.next_float() < self.chance_of_spreading {
+                self.spread_once_with_neighbors(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    neighbors,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    *direction,
+                );
+            }
+            return true;
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn replay_growth_if_possible_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        directions: &[(i32, i32, i32, &'static str)],
+    ) -> bool {
+        for direction in directions {
+            let neighbor_x = world_x + direction.0;
+            let neighbor_y = world_y + direction.1;
+            let neighbor_z = world_z + direction.2;
+            if (local_coords(neighbor_x, neighbor_z, chunk_min_x, chunk_min_z).is_some()
+                || neighbors.iter().any(|(neighbor_min_x, neighbor_min_z, _)| {
+                    local_coords(neighbor_x, neighbor_z, *neighbor_min_x, *neighbor_min_z).is_some()
+                }))
+                && !self.can_be_placed_on_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    neighbor_x,
+                    neighbor_y,
+                    neighbor_z,
+                    settings.min_y,
+                )
+            {
+                continue;
+            }
+            let visible_target =
+                local_coords(world_x, world_z, chunk_min_x, chunk_min_z).is_some()
+                    && (settings.min_y..settings.min_y + settings.height).contains(&world_y);
+            let placed = visible_target
+                && self.try_place_face(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    world_x,
+                    world_y,
+                    world_z,
+                    direction.3,
+                );
+            if !placed && !visible_target {
+                let _ = self.try_place_face(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    world_x,
+                    world_y,
+                    world_z,
+                    direction.3,
+                );
+            }
+            if random.next_float() < self.chance_of_spreading {
+                self.spread_once_with_neighbors(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    neighbors,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    *direction,
+                );
+            }
+            return placed;
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn replay_place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let search_directions = self.shuffled_directions(random);
+        let origin_visible = local_coords(origin_x, origin_z, chunk_min_x, chunk_min_z).is_some();
+        if (!origin_visible
+            || layer_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                origin_x,
+                origin_y,
+                origin_z,
+                settings.min_y,
+            )
+            .is_some_and(is_air_or_water_layer))
+            && self.replay_growth_if_possible_with_neighbors(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                neighbors,
+                random,
+                origin_x,
+                origin_y,
+                origin_z,
+                &search_directions,
+            )
+        {
+            return true;
+        }
+
+        for search_direction in &search_directions {
+            let placement_directions =
+                self.shuffled_directions_except(random, direction_opposite(*search_direction));
+            for step in 1..=self.search_range {
+                let world_x = origin_x + search_direction.0 * step;
+                let world_y = origin_y + search_direction.1 * step;
+                let world_z = origin_z + search_direction.2 * step;
+                if local_coords(world_x, world_z, chunk_min_x, chunk_min_z).is_some() {
+                    let Some(state) = layer_at_world(
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    ) else {
+                        break;
+                    };
+                    if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
+                        break;
+                    }
+                }
+                if self.replay_growth_if_possible_with_neighbors(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    neighbors,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    &placement_directions,
+                ) {
+                    return true;
+                }
+            }
         }
         false
     }
@@ -314,6 +624,104 @@ impl MultifaceGrowthFeatureConfig {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn spread_once_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        from_face: (i32, i32, i32, &'static str),
+    ) -> bool {
+        for spread_direction in shuffled_all_directions(random) {
+            if spread_direction_axis(spread_direction) == spread_direction_axis(from_face) {
+                continue;
+            }
+            for (target_x, target_y, target_z, target_face) in [
+                (world_x, world_y, world_z, spread_direction.3),
+                (
+                    world_x + spread_direction.0,
+                    world_y + spread_direction.1,
+                    world_z + spread_direction.2,
+                    from_face.3,
+                ),
+                (
+                    world_x + spread_direction.0 + from_face.0,
+                    world_y + spread_direction.1 + from_face.1,
+                    world_z + spread_direction.2 + from_face.2,
+                    direction_opposite_name(spread_direction.3),
+                ),
+            ] {
+                let neighbor = direction_by_name(target_face);
+                if self.can_be_placed_on_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    target_x + neighbor.0,
+                    target_y + neighbor.1,
+                    target_z + neighbor.2,
+                    settings.min_y,
+                ) && self.try_place_face(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    target_x,
+                    target_y,
+                    target_z,
+                    target_face,
+                ) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn can_be_placed_on_at_world(
+        &self,
+        chunk: &NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        min_y: i32,
+    ) -> bool {
+        if let Some(layer) = layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        ) {
+            return self.can_be_placed_on.contains(&layer.block.as_ref());
+        }
+
+        neighbors.iter().any(|(neighbor_min_x, neighbor_min_z, neighbor_chunk)| {
+            layer_at_world(
+                neighbor_chunk,
+                *neighbor_min_x,
+                *neighbor_min_z,
+                world_x,
+                world_y,
+                world_z,
+                min_y,
+            )
+            .is_some_and(|layer| self.can_be_placed_on.contains(&layer.block.as_ref()))
+        })
+    }
+
     fn shuffled_directions(
         &self,
         random: &mut FeatureRandom,
@@ -357,6 +765,16 @@ struct MonsterRoomFeatureConfig {
     spawner: BlockLayer,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MonsterRoomShape {
+    x_radius: i32,
+    z_radius: i32,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+}
+
 impl MonsterRoomFeatureConfig {
     fn new() -> Self {
         Self {
@@ -380,13 +798,74 @@ impl MonsterRoomFeatureConfig {
         origin_y: i32,
         origin_z: i32,
     ) -> bool {
+        let shape = self.sample_shape(random);
+        self.place_resolved(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let shape = self.sample_shape(random);
+        self.place_resolved_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+        )
+    }
+
+    fn sample_shape(&self, random: &mut FeatureRandom) -> MonsterRoomShape {
         let x_radius = random.next_int(2) + 2;
         let z_radius = random.next_int(2) + 2;
-        let min_x = -x_radius - 1;
-        let max_x = x_radius + 1;
-        let min_z = -z_radius - 1;
-        let max_z = z_radius + 1;
+        MonsterRoomShape {
+            x_radius,
+            z_radius,
+            min_x: -x_radius - 1,
+            max_x: x_radius + 1,
+            min_z: -z_radius - 1,
+            max_z: z_radius + 1,
+        }
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn place_resolved(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) -> bool {
         if !self.can_place(
             settings,
             chunk_min_x,
@@ -395,14 +874,81 @@ impl MonsterRoomFeatureConfig {
             origin_x,
             origin_y,
             origin_z,
-            min_x,
-            max_x,
-            min_z,
-            max_z,
+            shape,
         ) {
             return false;
         }
 
+        self.place_spillover(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+        );
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_resolved_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) -> bool {
+        if !self.can_place_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+        ) {
+            return false;
+        }
+
+        self.place_spillover_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+        );
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) {
         self.place_shell_and_room(
             settings,
             chunk_min_x,
@@ -412,10 +958,10 @@ impl MonsterRoomFeatureConfig {
             origin_x,
             origin_y,
             origin_z,
-            min_x,
-            max_x,
-            min_z,
-            max_z,
+            shape.min_x,
+            shape.max_x,
+            shape.min_z,
+            shape.max_z,
         );
         self.place_chests(
             settings,
@@ -426,8 +972,8 @@ impl MonsterRoomFeatureConfig {
             origin_x,
             origin_y,
             origin_z,
-            x_radius,
-            z_radius,
+            shape.x_radius,
+            shape.z_radius,
         );
         self.place_spawner(
             settings,
@@ -439,7 +985,59 @@ impl MonsterRoomFeatureConfig {
             origin_y,
             origin_z,
         );
-        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) {
+        self.place_shell_and_room_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape.min_x,
+            shape.max_x,
+            shape.min_z,
+            shape.max_z,
+        );
+        self.place_chests_with_neighbors(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+        );
+        self.place_spawner(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            origin_x,
+            origin_y,
+            origin_z,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -452,34 +1050,33 @@ impl MonsterRoomFeatureConfig {
         origin_x: i32,
         origin_y: i32,
         origin_z: i32,
-        min_x: i32,
-        max_x: i32,
-        min_z: i32,
-        max_z: i32,
+        shape: MonsterRoomShape,
     ) -> bool {
         let mut hole_count = 0;
-        for dx in min_x..=max_x {
+        let mut skipped_horizontal_bounds = false;
+        for dx in shape.min_x..=shape.max_x {
             for dy in -1..=4 {
-                for dz in min_z..=max_z {
+                for dz in shape.min_z..=shape.max_z {
                     let world_x = origin_x + dx;
                     let world_y = origin_y + dy;
                     let world_z = origin_z + dz;
-                    let Some(layer) = layer_at_world(
-                        chunk,
-                        chunk_min_x,
-                        chunk_min_z,
-                        world_x,
-                        world_y,
-                        world_z,
-                        settings.min_y,
-                    ) else {
+                    let Some((local_x, local_z)) =
+                        local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                    else {
+                        skipped_horizontal_bounds = true;
+                        continue;
+                    };
+                    let Some(layer) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
                         return false;
                     };
                     let solid = is_full_solid_layer(layer);
                     if (dy == -1 || dy == 4) && !solid {
                         return false;
                     }
-                    if (dx == min_x || dx == max_x || dz == min_z || dz == max_z)
+                    if (dx == shape.min_x
+                        || dx == shape.max_x
+                        || dz == shape.min_z
+                        || dz == shape.max_z)
                         && dy == 0
                         && layer.is_air
                         && is_air_at_world(
@@ -491,6 +1088,69 @@ impl MonsterRoomFeatureConfig {
                             world_z,
                             settings.min_y,
                         )
+                    {
+                        hole_count += 1;
+                    }
+                }
+            }
+        }
+
+        (1..=5).contains(&hole_count) || (skipped_horizontal_bounds && hole_count <= 5)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn can_place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) -> bool {
+        let mut hole_count = 0;
+        for dx in shape.min_x..=shape.max_x {
+            for dy in -1..=4 {
+                for dz in shape.min_z..=shape.max_z {
+                    let world_x = origin_x + dx;
+                    let world_y = origin_y + dy;
+                    let world_z = origin_z + dz;
+                    let Some(layer) = monster_room_context_layer(
+                        settings,
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        neighbors,
+                        world_x,
+                        world_y,
+                        world_z,
+                    ) else {
+                        return false;
+                    };
+                    let solid = is_full_solid_layer(&layer);
+                    if (dy == -1 || dy == 4) && !solid {
+                        return false;
+                    }
+                    if (dx == shape.min_x
+                        || dx == shape.max_x
+                        || dz == shape.min_z
+                        || dz == shape.max_z)
+                        && dy == 0
+                        && layer.is_air
+                        && monster_room_context_layer(
+                            settings,
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            neighbors,
+                            world_x,
+                            world_y + 1,
+                            world_z,
+                        )
+                        .is_some_and(|layer| layer.is_air)
                     {
                         hole_count += 1;
                     }
@@ -589,6 +1249,105 @@ impl MonsterRoomFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_shell_and_room_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+    ) {
+        for dx in min_x..=max_x {
+            for dy in (-1..=4).rev() {
+                for dz in min_z..=max_z {
+                    let world_x = origin_x + dx;
+                    let world_y = origin_y + dy;
+                    let world_z = origin_z + dz;
+                    let Some(current) = monster_room_context_layer(
+                        settings,
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        neighbors,
+                        world_x,
+                        world_y,
+                        world_z,
+                    ) else {
+                        continue;
+                    };
+                    let local = local_coords(world_x, world_z, chunk_min_x, chunk_min_z);
+                    let boundary = dx == min_x
+                        || dy == -1
+                        || dz == min_z
+                        || dx == max_x
+                        || dy == 4
+                        || dz == max_z;
+                    if boundary {
+                        if world_y >= settings.min_y
+                            && !monster_room_context_is_solid(
+                                settings,
+                                chunk,
+                                chunk_min_x,
+                                chunk_min_z,
+                                neighbors,
+                                world_x,
+                                world_y - 1,
+                                world_z,
+                            )
+                        {
+                            if let Some((local_x, local_z)) = local {
+                                self.set_room_block(
+                                    chunk,
+                                    local_x,
+                                    world_y,
+                                    local_z,
+                                    settings.min_y,
+                                    self.cave_air.clone(),
+                                );
+                            }
+                        } else if is_full_solid_layer(&current) && !current.is("minecraft:chest") {
+                            let block = if dy == -1 && random.next_int(4) != 0 {
+                                self.mossy_cobblestone.clone()
+                            } else {
+                                self.cobblestone.clone()
+                            };
+                            if let Some((local_x, local_z)) = local {
+                                self.set_room_block(
+                                    chunk,
+                                    local_x,
+                                    world_y,
+                                    local_z,
+                                    settings.min_y,
+                                    block,
+                                );
+                            }
+                        }
+                    } else if !current.is("minecraft:chest") && !current.is("minecraft:spawner") {
+                        if let Some((local_x, local_z)) = local {
+                            self.set_room_block(
+                                chunk,
+                                local_x,
+                                world_y,
+                                local_z,
+                                settings.min_y,
+                                self.cave_air.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_chests(
         &self,
         settings: &NoiseSettings,
@@ -666,6 +1425,103 @@ impl MonsterRoomFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_chests_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) {
+        for _ in 0..2 {
+            for _ in 0..3 {
+                let world_x = origin_x + random.next_int(shape.x_radius * 2 + 1) - shape.x_radius;
+                let world_z = origin_z + random.next_int(shape.z_radius * 2 + 1) - shape.z_radius;
+                if !monster_room_after_shell_is_air(
+                    settings,
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    origin_x,
+                    origin_y,
+                    origin_z,
+                    shape,
+                    world_x,
+                    origin_y,
+                    world_z,
+                ) {
+                    continue;
+                }
+
+                let wall_count = horizontal_directions()
+                    .iter()
+                    .filter(|(dx, dz)| {
+                        monster_room_after_shell_is_solid(
+                            settings,
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            neighbors,
+                            origin_x,
+                            origin_y,
+                            origin_z,
+                            shape,
+                            world_x + dx,
+                            origin_y,
+                            world_z + dz,
+                        )
+                    })
+                    .count();
+                if wall_count != 1 {
+                    continue;
+                }
+
+                let loot_table_seed = random.next_long();
+                if let Some((local_x, local_z)) =
+                    local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                {
+                    let chest = self
+                        .chest
+                        .with_property(
+                            "facing",
+                            monster_room_chest_facing_with_neighbors(
+                                settings,
+                                chunk,
+                                chunk_min_x,
+                                chunk_min_z,
+                                neighbors,
+                                origin_x,
+                                origin_y,
+                                origin_z,
+                                shape,
+                                world_x,
+                                origin_y,
+                                world_z,
+                            ),
+                        )
+                        .with_property("waterlogged", "false")
+                        .with_property("type", "single");
+                    chunk.set_layer(local_x, origin_y, local_z, settings.min_y, chest);
+                    chunk.push_block_entity(
+                        world_x,
+                        origin_y,
+                        world_z,
+                        CHEST_BLOCK_ENTITY_TYPE_ID,
+                        chest_block_entity_nbt(loot_table_seed),
+                    );
+                }
+                break;
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_spawner(
         &self,
         settings: &NoiseSettings,
@@ -708,6 +1564,254 @@ impl MonsterRoomFeatureConfig {
     ) {
         chunk.set_layer(local_x, world_y, local_z, min_y, block);
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn monster_room_context_layer(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> Option<BlockLayer> {
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    ) {
+        return Some(layer.clone());
+    }
+
+    for (neighbor_min_x, neighbor_min_z, neighbor_chunk) in neighbors {
+        if let Some(layer) = layer_at_world(
+            neighbor_chunk,
+            *neighbor_min_x,
+            *neighbor_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return Some(layer.clone());
+        }
+    }
+
+    settings.terrain_layer_at(world_x, world_y, world_z)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn monster_room_context_is_solid(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    monster_room_context_layer(
+        settings,
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        neighbors,
+        world_x,
+        world_y,
+        world_z,
+    )
+    .is_some_and(|layer| is_full_solid_layer(&layer))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn monster_room_after_shell_layer(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    origin_x: i32,
+    origin_y: i32,
+    origin_z: i32,
+    shape: MonsterRoomShape,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> Option<BlockLayer> {
+    let dx = world_x - origin_x;
+    let dy = world_y - origin_y;
+    let dz = world_z - origin_z;
+    if !(shape.min_x..=shape.max_x).contains(&dx)
+        || !(-1..=4).contains(&dy)
+        || !(shape.min_z..=shape.max_z).contains(&dz)
+    {
+        return monster_room_context_layer(
+            settings,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
+            world_x,
+            world_y,
+            world_z,
+        );
+    }
+
+    let current = monster_room_context_layer(
+        settings,
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        neighbors,
+        world_x,
+        world_y,
+        world_z,
+    )?;
+    let boundary = dx == shape.min_x
+        || dy == -1
+        || dz == shape.min_z
+        || dx == shape.max_x
+        || dy == 4
+        || dz == shape.max_z;
+
+    if boundary {
+        if world_y >= settings.min_y
+            && !monster_room_context_is_solid(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                neighbors,
+                world_x,
+                world_y - 1,
+                world_z,
+            )
+        {
+            return Some(BlockLayer::new("minecraft:cave_air"));
+        }
+        if is_full_solid_layer(&current) && !current.is("minecraft:chest") {
+            return Some(BlockLayer::new("minecraft:cobblestone"));
+        }
+        return Some(current);
+    }
+
+    if current.is("minecraft:chest") || current.is("minecraft:spawner") {
+        Some(current)
+    } else {
+        Some(BlockLayer::new("minecraft:cave_air"))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn monster_room_after_shell_is_air(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    origin_x: i32,
+    origin_y: i32,
+    origin_z: i32,
+    shape: MonsterRoomShape,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    monster_room_after_shell_layer(
+        settings,
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        neighbors,
+        origin_x,
+        origin_y,
+        origin_z,
+        shape,
+        world_x,
+        world_y,
+        world_z,
+    )
+    .is_some_and(|layer| layer.is_air)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn monster_room_after_shell_is_solid(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    origin_x: i32,
+    origin_y: i32,
+    origin_z: i32,
+    shape: MonsterRoomShape,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    monster_room_after_shell_layer(
+        settings,
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        neighbors,
+        origin_x,
+        origin_y,
+        origin_z,
+        shape,
+        world_x,
+        world_y,
+        world_z,
+    )
+    .is_some_and(|layer| is_full_solid_layer(&layer))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn monster_room_chest_facing_with_neighbors(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    origin_x: i32,
+    origin_y: i32,
+    origin_z: i32,
+    shape: MonsterRoomShape,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> &'static str {
+    for (dx, dz, facing) in [
+        (0, -1, "south"),
+        (1, 0, "west"),
+        (0, 1, "north"),
+        (-1, 0, "east"),
+    ] {
+        if monster_room_after_shell_is_solid(
+            settings,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbors,
+            origin_x,
+            origin_y,
+            origin_z,
+            shape,
+            world_x + dx,
+            world_y,
+            world_z + dz,
+        ) {
+            return facing;
+        }
+    }
+    "north"
 }
 
 #[derive(Debug, Clone)]

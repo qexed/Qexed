@@ -48,6 +48,52 @@ impl PlacedDripstoneFeature {
             Self::Pointed(feature) => feature.place(settings, origin_x, origin_z, chunk, random),
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        match self {
+            Self::Pointed(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Large(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+            Self::Cluster(feature) => feature.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +141,44 @@ impl PlacedLargeDripstoneFeature {
             );
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +223,44 @@ impl PlacedDripstoneClusterFeature {
             }
             self.config.place(
                 settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place_with_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             );
         }
     }
@@ -212,6 +334,63 @@ impl PlacedPointedDripstoneFeature {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.outer_count.sample(random) {
+            let base_x = source_origin_x + random.next_int(16);
+            let base_z = source_origin_z + random.next_int(16);
+            let base_y = self.height.sample(settings, random);
+            for _ in 0..self.inner_count.sample(random) {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let world_y = base_y + self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+                if !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+                {
+                    continue;
+                }
+
+                let candidate_random = random.clone();
+                self.place_selected(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+
+                let mut replay_random = candidate_random;
+                self.place_selected_spillover_target(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &mut replay_random,
+                    world_x,
+                    world_y,
+                    world_z,
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_selected(
         &self,
         settings: &NoiseSettings,
@@ -253,6 +432,58 @@ impl PlacedPointedDripstoneFeature {
             world_z,
         )
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_selected_spillover_target(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        source_chunk: &NoiseChunkBlocks,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let direction = if random.next_bool() {
+            DripstoneDirection::Up
+        } else {
+            DripstoneDirection::Down
+        };
+        let Some(target_y) = scan_air_or_water_to_solid_in_context(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            world_x,
+            world_y,
+            world_z,
+            direction.scan_sign(),
+            12,
+        ) else {
+            return false;
+        };
+        let placement_y = target_y - direction.scan_sign();
+        self.config.place_at_spillover_target(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            random,
+            world_x,
+            placement_y,
+            world_z,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +494,16 @@ struct LargeDripstoneFeatureConfig {
     max_column_radius_to_cave_height_ratio: f32,
     stalactite_bluntness: FeatureUniformFloat,
     stalagmite_bluntness: FeatureUniformFloat,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LargeDripstoneResolved {
+    floor_y: i32,
+    ceiling_y: i32,
+    radius: i32,
+    scale: f64,
+    stalactite_bluntness: f64,
+    stalagmite_bluntness: f64,
 }
 
 impl LargeDripstoneFeatureConfig {
@@ -317,30 +558,142 @@ impl LargeDripstoneFeatureConfig {
         let (Some(floor_y), Some(ceiling_y)) = (column.floor, column.ceiling) else {
             return false;
         };
-        let cave_height = ceiling_y - floor_y - 1;
-        if cave_height < 4 {
+        let Some(resolved) = self.sample_resolved(random, floor_y, ceiling_y) else {
             return false;
+        };
+
+        self.place_resolved(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_z,
+            resolved,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) {
+        if !is_empty_or_water_at_world(
+            source_chunk,
+            source_origin_x,
+            source_origin_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return;
         }
 
+        let Some(column) = scan_dripstone_column(
+            settings,
+            source_chunk,
+            source_origin_x,
+            source_origin_z,
+            world_x,
+            world_y,
+            world_z,
+            self.floor_to_ceiling_search_range,
+            is_dripstone_base_or_lava_layer,
+        ) else {
+            return;
+        };
+        let (Some(floor_y), Some(ceiling_y)) = (column.floor, column.ceiling) else {
+            return;
+        };
+        let Some(resolved) = self.sample_resolved(random, floor_y, ceiling_y) else {
+            return;
+        };
+
+        let mut replay_random = random.clone();
+        self.place_resolved(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            random,
+            world_x,
+            world_z,
+            resolved,
+        );
+        self.place_resolved(
+            settings,
+            target_origin_x,
+            target_origin_z,
+            target_chunk,
+            &mut replay_random,
+            world_x,
+            world_z,
+            resolved,
+        );
+    }
+
+    fn sample_resolved(
+        &self,
+        random: &mut FeatureRandom,
+        floor_y: i32,
+        ceiling_y: i32,
+    ) -> Option<LargeDripstoneResolved> {
+        let cave_height = ceiling_y - floor_y - 1;
+        if cave_height < 4 {
+            return None;
+        }
         let radius_limit = ((cave_height as f32) * self.max_column_radius_to_cave_height_ratio)
             .floor() as i32;
         let max_radius = radius_limit.clamp(self.column_radius.min, self.column_radius.max);
-        let radius = self.column_radius.min + random.next_int(max_radius - self.column_radius.min + 1);
-        let scale = self.height_scale.sample(random) as f64;
-
-        let stalactite = LargeDripstoneCone {
-            root_y: ceiling_y - 1,
-            pointing_up: false,
+        let radius =
+            self.column_radius.min + random.next_int(max_radius - self.column_radius.min + 1);
+        Some(LargeDripstoneResolved {
+            floor_y,
+            ceiling_y,
             radius,
-            bluntness: self.stalactite_bluntness.sample(random) as f64,
-            scale,
+            scale: self.height_scale.sample(random) as f64,
+            stalactite_bluntness: self.stalactite_bluntness.sample(random) as f64,
+            stalagmite_bluntness: self.stalagmite_bluntness.sample(random) as f64,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_resolved(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_z: i32,
+        resolved: LargeDripstoneResolved,
+    ) -> bool {
+        let stalactite = LargeDripstoneCone {
+            root_y: resolved.ceiling_y - 1,
+            pointing_up: false,
+            radius: resolved.radius,
+            bluntness: resolved.stalactite_bluntness,
+            scale: resolved.scale,
         };
         let stalagmite = LargeDripstoneCone {
-            root_y: floor_y + 1,
+            root_y: resolved.floor_y + 1,
             pointing_up: true,
-            radius,
-            bluntness: self.stalagmite_bluntness.sample(random) as f64,
-            scale,
+            radius: resolved.radius,
+            bluntness: resolved.stalagmite_bluntness,
+            scale: resolved.scale,
         };
 
         let placed_stalactite = stalactite.place_blocks(
@@ -378,6 +731,15 @@ struct DripstoneClusterFeatureConfig {
     max_stalagmite_stalactite_height_diff: i32,
     radius: UniformInt,
     wetness: ClampedNormalFloat,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DripstoneClusterResolved {
+    cluster_height: i32,
+    wetness: f32,
+    density: f32,
+    x_radius: i32,
+    z_radius: i32,
 }
 
 impl DripstoneClusterFeatureConfig {
@@ -426,16 +788,130 @@ impl DripstoneClusterFeatureConfig {
             return false;
         }
 
-        let cluster_height = self.height.sample(random);
-        let wetness = self.wetness.sample(random);
-        let density = self.density.sample(random);
-        let x_radius = self.radius.sample(random);
-        let z_radius = self.radius.sample(random);
+        let resolved = self.sample_resolved(random);
+        self.place_resolved(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+            resolved,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) {
+        if !is_empty_or_water_at_world(
+            source_chunk,
+            source_origin_x,
+            source_origin_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return;
+        }
+
+        let resolved = self.sample_resolved(random);
+        for dx in -resolved.x_radius..=resolved.x_radius {
+            for dz in -resolved.z_radius..=resolved.z_radius {
+                let chance = self.chance_of_stalagmite_or_stalactite(
+                    resolved.x_radius,
+                    resolved.z_radius,
+                    dx,
+                    dz,
+                );
+                let column_random = random.clone();
+                let mut source_random = column_random.clone();
+                self.place_column(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    &mut source_random,
+                    world_x + dx,
+                    world_y,
+                    world_z + dz,
+                    dx,
+                    dz,
+                    resolved.wetness,
+                    chance,
+                    resolved.cluster_height,
+                    resolved.density,
+                );
+
+                let mut replay_random = column_random;
+                self.place_column(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &mut replay_random,
+                    world_x + dx,
+                    world_y,
+                    world_z + dz,
+                    dx,
+                    dz,
+                    resolved.wetness,
+                    chance,
+                    resolved.cluster_height,
+                    resolved.density,
+                );
+                *random = source_random;
+            }
+        }
+    }
+
+    fn sample_resolved(&self, random: &mut FeatureRandom) -> DripstoneClusterResolved {
+        DripstoneClusterResolved {
+            cluster_height: self.height.sample(random),
+            wetness: self.wetness.sample(random),
+            density: self.density.sample(random),
+            x_radius: self.radius.sample(random),
+            z_radius: self.radius.sample(random),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_resolved(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        resolved: DripstoneClusterResolved,
+    ) -> bool {
         let mut placed = false;
 
-        for dx in -x_radius..=x_radius {
-            for dz in -z_radius..=z_radius {
-                let chance = self.chance_of_stalagmite_or_stalactite(x_radius, z_radius, dx, dz);
+        for dx in -resolved.x_radius..=resolved.x_radius {
+            for dz in -resolved.z_radius..=resolved.z_radius {
+                let chance = self.chance_of_stalagmite_or_stalactite(
+                    resolved.x_radius,
+                    resolved.z_radius,
+                    dx,
+                    dz,
+                );
                 placed |= self.place_column(
                     settings,
                     chunk_min_x,
@@ -447,10 +923,10 @@ impl DripstoneClusterFeatureConfig {
                     world_z + dz,
                     dx,
                     dz,
-                    wetness,
+                    resolved.wetness,
                     chance,
-                    cluster_height,
-                    density,
+                    resolved.cluster_height,
+                    resolved.density,
                 );
             }
         }
@@ -960,6 +1436,178 @@ impl PointedDripstoneFeatureConfig {
             );
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_at_spillover_target(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        source_chunk: &NoiseChunkBlocks,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        if !is_air_or_water_at_world_in_context(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return false;
+        }
+
+        let can_place_above = is_dripstone_base_at_world_in_context(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y + 1,
+            world_z,
+            settings.min_y,
+        );
+        let can_place_below = is_dripstone_base_at_world_in_context(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y - 1,
+            world_z,
+            settings.min_y,
+        );
+        let Some(tip_direction) =
+            dripstone_tip_direction(can_place_above, can_place_below, random)
+        else {
+            return false;
+        };
+
+        let root_y = world_y - tip_direction.dy();
+        self.create_patch_of_dripstone_blocks_spillover_target(
+            settings,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            random,
+            world_x,
+            root_y,
+            world_z,
+        );
+        let height = if random.next_float() < self.chance_of_taller_dripstone
+            && is_air_or_water_at_world_in_context(
+                source_chunk,
+                source_min_x,
+                source_min_z,
+                target_chunk,
+                target_min_x,
+                target_min_z,
+                world_x,
+                world_y + tip_direction.dy(),
+                world_z,
+                settings.min_y,
+            ) {
+            2
+        } else {
+            1
+        };
+
+        grow_pointed_dripstone_spillover_target(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            world_x,
+            world_y,
+            world_z,
+            tip_direction,
+            height,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_patch_of_dripstone_blocks_spillover_target(
+        &self,
+        settings: &NoiseSettings,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) {
+        place_dripstone_block_if_possible(
+            settings,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            world_x,
+            world_y,
+            world_z,
+        );
+
+        for (dx, dz) in horizontal_directions() {
+            if random.next_float() > self.chance_of_directional_spread {
+                continue;
+            }
+            let pos1 = (world_x + dx, world_y, world_z + dz);
+            place_dripstone_block_if_possible(
+                settings,
+                target_min_x,
+                target_min_z,
+                target_chunk,
+                pos1.0,
+                pos1.1,
+                pos1.2,
+            );
+            if random.next_float() > self.chance_of_spread_radius2 {
+                continue;
+            }
+            let spread2 = random_direction_offset(random);
+            let pos2 = (pos1.0 + spread2.0, pos1.1 + spread2.1, pos1.2 + spread2.2);
+            place_dripstone_block_if_possible(
+                settings,
+                target_min_x,
+                target_min_z,
+                target_chunk,
+                pos2.0,
+                pos2.1,
+                pos2.2,
+            );
+            if random.next_float() > self.chance_of_spread_radius3 {
+                continue;
+            }
+            let spread3 = random_direction_offset(random);
+            place_dripstone_block_if_possible(
+                settings,
+                target_min_x,
+                target_min_z,
+                target_chunk,
+                pos2.0 + spread3.0,
+                pos2.1 + spread3.1,
+                pos2.2 + spread3.2,
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1267,6 +1915,63 @@ fn scan_air_or_water_to_solid(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn scan_air_or_water_to_solid_in_context(
+    settings: &NoiseSettings,
+    source_min_x: i32,
+    source_min_z: i32,
+    source_chunk: &NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    dy: i32,
+    range: i32,
+) -> Option<i32> {
+    for step in 0..=range {
+        let y = world_y + dy * step;
+        if !(settings.min_y..settings.min_y + settings.height).contains(&y) {
+            return None;
+        }
+        let current = dripstone_context_layer(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            y,
+            world_z,
+            settings.min_y,
+        )?;
+        if !is_air_or_water_layer(current) {
+            return None;
+        }
+        let target_y = y + dy;
+        if !(settings.min_y..settings.min_y + settings.height).contains(&target_y) {
+            return None;
+        }
+        if is_dripstone_solid_at_world_in_context(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            target_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return Some(target_y);
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
 fn grow_pointed_dripstone(
     settings: &NoiseSettings,
     chunk_min_x: i32,
@@ -1322,6 +2027,85 @@ fn grow_pointed_dripstone(
             ),
         );
         chunk.set_layer(local_x, y, local_z, settings.min_y, block);
+        placed = true;
+    }
+    placed
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grow_pointed_dripstone_spillover_target(
+    settings: &NoiseSettings,
+    source_min_x: i32,
+    source_min_z: i32,
+    source_chunk: &NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    target_chunk: &mut NoiseChunkBlocks,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    direction: DripstoneDirection,
+    height: i32,
+    merged_tip: bool,
+) -> bool {
+    if height <= 0
+        || !is_dripstone_base_at_world_in_context(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y - direction.dy(),
+            world_z,
+            settings.min_y,
+        )
+    {
+        return false;
+    }
+
+    let mut placed = false;
+    for (offset, thickness) in dripstone_thicknesses(height, merged_tip) {
+        let y = world_y + direction.dy() * offset;
+        let Some(current) = dripstone_context_layer(
+            source_chunk,
+            source_min_x,
+            source_min_z,
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            y,
+            world_z,
+            settings.min_y,
+        ) else {
+            continue;
+        };
+        if !is_air_or_water_layer(current) && !current.is("minecraft:pointed_dripstone") {
+            continue;
+        }
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, target_min_x, target_min_z)
+        else {
+            continue;
+        };
+        let block = pointed_dripstone_block(
+            direction,
+            thickness,
+            waterlogged_at_world_in_context(
+                source_chunk,
+                source_min_x,
+                source_min_z,
+                target_chunk,
+                target_min_x,
+                target_min_z,
+                world_x,
+                y,
+                world_z,
+                settings.min_y,
+            ),
+        );
+        target_chunk.set_layer(local_x, y, local_z, settings.min_y, block);
         placed = true;
     }
     placed
@@ -1537,6 +2321,158 @@ fn is_dripstone_base_at_world(
         min_y,
     )
     .is_some_and(is_dripstone_base_layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_air_or_water_at_world_in_context(
+    source_chunk: &NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    dripstone_context_layer(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        target_chunk,
+        target_min_x,
+        target_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_air_or_water_layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_dripstone_solid_at_world_in_context(
+    source_chunk: &NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    dripstone_context_layer(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        target_chunk,
+        target_min_x,
+        target_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_full_solid_layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_dripstone_base_at_world_in_context(
+    source_chunk: &NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> bool {
+    dripstone_context_layer(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        target_chunk,
+        target_min_x,
+        target_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_dripstone_base_layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn waterlogged_at_world_in_context(
+    source_chunk: &NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> &'static str {
+    if dripstone_context_layer(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        target_chunk,
+        target_min_x,
+        target_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .is_some_and(is_water_layer)
+    {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dripstone_context_layer<'a>(
+    source_chunk: &'a NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &'a NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> Option<&'a BlockLayer> {
+    layer_at_world(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .or_else(|| {
+        layer_at_world(
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+    })
 }
 
 fn is_dripstone_base_or_lava_layer(layer: &BlockLayer) -> bool {

@@ -683,6 +683,11 @@ impl NoiseSettings {
     }
 
     fn block_state_at(&self, x: i32, y: i32, z: i32) -> Option<i32> {
+        let layer = self.terrain_layer_at(x, y, z)?;
+        (!layer.is_air).then_some(layer.block_state_id)
+    }
+
+    fn terrain_layer_at(&self, x: i32, y: i32, z: i32) -> Option<BlockLayer> {
         if !(self.min_y..self.min_y + self.height).contains(&y) {
             return None;
         }
@@ -690,7 +695,7 @@ impl NoiseSettings {
         let surface_height = self.surface_height_with_profile(x, z, &profile);
         let preliminary_surface = self.preliminary_surface_with_profile(x, z, &profile);
         let surface_slope = self.surface_slope(x, z, surface_height);
-        let layer = self.layer_at(
+        Some(self.layer_at(
             x,
             y,
             z,
@@ -699,8 +704,7 @@ impl NoiseSettings {
             surface_slope,
             self.water_height(x, z, surface_height, preliminary_surface, &profile),
             &profile,
-        );
-        (!layer.is_air).then_some(layer.block_state_id)
+        ))
     }
 
     fn surface_height_with_profile(

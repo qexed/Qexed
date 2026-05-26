@@ -25,7 +25,19 @@ fn is_base_stone_overworld(layer: &BlockLayer) -> bool {
 }
 
 fn is_substrate_overworld_layer(layer: &BlockLayer) -> bool {
-    supports_vegetation_layer(layer) || matches!(layer.block.as_ref(), "minecraft:mud")
+    matches!(
+        layer.block.as_ref(),
+        "minecraft:dirt"
+            | "minecraft:coarse_dirt"
+            | "minecraft:rooted_dirt"
+            | "minecraft:mud"
+            | "minecraft:muddy_mangrove_roots"
+            | "minecraft:moss_block"
+            | "minecraft:pale_moss_block"
+            | "minecraft:grass_block"
+            | "minecraft:podzol"
+            | "minecraft:mycelium"
+    )
 }
 
 fn is_forest_rock_can_place_on_layer(layer: &BlockLayer) -> bool {
@@ -293,64 +305,75 @@ fn supports_vegetation_layer(layer: &BlockLayer) -> bool {
 }
 
 fn supports_dead_bush_layer(layer: &BlockLayer) -> bool {
+    supports_dry_vegetation_layer(layer)
+}
+
+fn supports_dry_vegetation_layer(layer: &BlockLayer) -> bool {
     supports_vegetation_layer(layer)
         || matches!(
             layer.block.as_ref(),
             "minecraft:sand"
                 | "minecraft:red_sand"
+                | "minecraft:suspicious_sand"
                 | "minecraft:terracotta"
                 | "minecraft:white_terracotta"
                 | "minecraft:orange_terracotta"
+                | "minecraft:magenta_terracotta"
+                | "minecraft:light_blue_terracotta"
                 | "minecraft:yellow_terracotta"
-                | "minecraft:brown_terracotta"
-                | "minecraft:red_terracotta"
+                | "minecraft:lime_terracotta"
+                | "minecraft:pink_terracotta"
+                | "minecraft:gray_terracotta"
                 | "minecraft:light_gray_terracotta"
+                | "minecraft:cyan_terracotta"
+                | "minecraft:purple_terracotta"
+                | "minecraft:blue_terracotta"
+                | "minecraft:brown_terracotta"
+                | "minecraft:green_terracotta"
+                | "minecraft:red_terracotta"
+                | "minecraft:black_terracotta"
         )
 }
 
-fn supports_dry_vegetation_layer(layer: &BlockLayer) -> bool {
-    matches!(
-        layer.block.as_ref(),
-        "minecraft:sand"
-            | "minecraft:red_sand"
-            | "minecraft:terracotta"
-            | "minecraft:white_terracotta"
-            | "minecraft:orange_terracotta"
-            | "minecraft:magenta_terracotta"
-            | "minecraft:light_blue_terracotta"
-            | "minecraft:yellow_terracotta"
-            | "minecraft:lime_terracotta"
-            | "minecraft:pink_terracotta"
-            | "minecraft:gray_terracotta"
-            | "minecraft:light_gray_terracotta"
-            | "minecraft:cyan_terracotta"
-            | "minecraft:purple_terracotta"
-            | "minecraft:blue_terracotta"
-            | "minecraft:brown_terracotta"
-            | "minecraft:green_terracotta"
-            | "minecraft:red_terracotta"
-            | "minecraft:black_terracotta"
-    )
+fn supports_sugar_cane_layer(layer: &BlockLayer) -> bool {
+    is_substrate_overworld_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:sand" | "minecraft:red_sand" | "minecraft:suspicious_sand"
+        )
 }
 
-fn supports_sugar_cane_layer(layer: &BlockLayer) -> bool {
-    matches!(
-        layer.block.as_ref(),
-        "minecraft:grass_block"
-            | "minecraft:dirt"
-            | "minecraft:coarse_dirt"
-            | "minecraft:podzol"
-            | "minecraft:sand"
-            | "minecraft:red_sand"
-            | "minecraft:mud"
-    )
+fn supports_sugar_cane_adjacently_layer(layer: &BlockLayer) -> bool {
+    is_water_layer(layer) || layer.is("minecraft:frosted_ice")
 }
 
 fn supports_cactus_layer(layer: &BlockLayer) -> bool {
     matches!(
         layer.block.as_ref(),
-        "minecraft:sand" | "minecraft:red_sand" | "minecraft:cactus"
+        "minecraft:sand" | "minecraft:red_sand" | "minecraft:suspicious_sand" | "minecraft:cactus"
     )
+}
+
+fn cactus_side_is_clear(layer: &BlockLayer) -> bool {
+    layer.is_air || is_water_layer(layer)
+}
+
+fn supports_bamboo_layer(layer: &BlockLayer) -> bool {
+    is_substrate_overworld_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:sand"
+                | "minecraft:red_sand"
+                | "minecraft:suspicious_sand"
+                | "minecraft:gravel"
+                | "minecraft:suspicious_gravel"
+                | "minecraft:bamboo"
+                | "minecraft:bamboo_sapling"
+        )
+}
+
+fn supports_lily_pad_layer(layer: &BlockLayer) -> bool {
+    is_water_layer(layer) || matches!(layer.block.as_ref(), "minecraft:ice" | "minecraft:frosted_ice")
 }
 
 fn supports_underwater_vegetation_layer(layer: &BlockLayer) -> bool {
@@ -444,6 +467,10 @@ fn local_coords(
         local_coord(world_x, origin_x)?,
         local_coord(world_z, origin_z)?,
     ))
+}
+
+fn overlaps_chunk(world_x: i32, world_z: i32, origin_x: i32, origin_z: i32) -> bool {
+    local_coords(world_x, world_z, origin_x, origin_z).is_some()
 }
 
 fn can_feature_replace_block(layer: &BlockLayer) -> bool {
@@ -979,38 +1006,6 @@ fn is_lake_boundary(grid: &[bool], x: usize, y: usize, z: usize) -> bool {
         || (z > 0 && grid[lake_index(x, y, z - 1)])
         || (y < 7 && grid[lake_index(x, y + 1, z)])
         || (y > 0 && grid[lake_index(x, y - 1, z)])
-}
-
-fn is_adjacent_to_air(
-    settings: &NoiseSettings,
-    chunk: &NoiseChunkBlocks,
-    local_x: usize,
-    world_y: i32,
-    local_z: usize,
-) -> bool {
-    const DIRECTIONS: [(i32, i32, i32); 6] = [
-        (1, 0, 0),
-        (-1, 0, 0),
-        (0, 1, 0),
-        (0, -1, 0),
-        (0, 0, 1),
-        (0, 0, -1),
-    ];
-
-    DIRECTIONS.into_iter().any(|(dx, dy, dz)| {
-        let x = local_x as i32 + dx;
-        let y = world_y + dy;
-        let z = local_z as i32 + dz;
-        if !(0..16).contains(&x)
-            || !(0..16).contains(&z)
-            || !(settings.min_y..settings.min_y + settings.height).contains(&y)
-        {
-            return false;
-        }
-        chunk
-            .layer(x as usize, y, z as usize, settings.min_y)
-            .is_some_and(|layer| layer.is_air)
-    })
 }
 
 fn lerp_f64(delta: f64, start: f64, end: f64) -> f64 {

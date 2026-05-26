@@ -90,6 +90,57 @@ impl PlacedEnvironmentScanFeature {
                 .place(settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z);
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let start_y = self.height.sample(settings, random);
+            let Some(anchor_y) = self.search.find(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                world_x,
+                start_y,
+                world_z,
+            ) else {
+                continue;
+            };
+            let world_y = anchor_y + self.random_y_offset;
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            self.config.place_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -215,6 +266,64 @@ impl EnvironmentFeatureConfig {
                 world_y,
                 world_z,
             ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        match self {
+            Self::VegetationPatch(config) => config.place_spillover(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                source_chunk,
+                target_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+            ),
+            Self::RootedAzaleaTree(config) => {
+                let mut replay_random = random.clone();
+                if config.place(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                ) {
+                    config.place_spillover(
+                        settings,
+                        target_origin_x,
+                        target_origin_z,
+                        target_chunk,
+                        &mut replay_random,
+                        world_x,
+                        world_y,
+                        world_z,
+                    )
+                } else {
+                    false
+                }
+            }
         }
     }
 }
@@ -358,6 +467,122 @@ impl VegetationPatchConfig {
                 chunk_min_x,
                 chunk_min_z,
                 chunk,
+                random,
+                world_x,
+                vegetation_y,
+                world_z,
+            ) {
+                placed_any = true;
+            }
+        }
+
+        placed_any
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let radius_x = self.xz_radius.sample(random);
+        let radius_z = self.xz_radius.sample(random);
+        let mut placed_ground = Vec::new();
+
+        for dx in -radius_x..=radius_x {
+            for dz in -radius_z..=radius_z {
+                let edge = dx.abs() == radius_x || dz.abs() == radius_z;
+                if edge && random.next_float() >= self.extra_edge_column_chance {
+                    continue;
+                }
+                if (dx * dx * radius_z + dz * dz * radius_x) > radius_x * radius_z * 2 {
+                    continue;
+                }
+                let world_x = origin_x + dx;
+                let world_z = origin_z + dz;
+                if overlaps_chunk(world_x, world_z, source_origin_x, source_origin_z) {
+                    if let Some(ground_y) = self.find_surface_y(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        source_chunk,
+                        world_x,
+                        origin_y,
+                        world_z,
+                    ) && self.place_ground_column(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        source_chunk,
+                        random,
+                        world_x,
+                        ground_y,
+                        world_z,
+                    ) {
+                        placed_ground.push((world_x, ground_y, world_z, false));
+                    }
+                } else if overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z)
+                    && let Some(ground_y) = self.find_surface_y(
+                        settings,
+                        target_origin_x,
+                        target_origin_z,
+                        target_chunk,
+                        world_x,
+                        origin_y,
+                        world_z,
+                    )
+                    && self.place_ground_column(
+                        settings,
+                        target_origin_x,
+                        target_origin_z,
+                        target_chunk,
+                        random,
+                        world_x,
+                        ground_y,
+                        world_z,
+                    )
+                {
+                    placed_ground.push((world_x, ground_y, world_z, true));
+                }
+            }
+        }
+
+        let mut placed_any = !placed_ground.is_empty();
+        for (world_x, ground_y, world_z, in_target) in placed_ground {
+            if random.next_float() >= self.vegetation_chance {
+                continue;
+            }
+            let vegetation_y = match self.surface {
+                PatchSurface::Floor => ground_y + 1,
+                PatchSurface::Ceiling => ground_y - 1,
+            };
+            if in_target {
+                if self.vegetation.place(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    random,
+                    world_x,
+                    vegetation_y,
+                    world_z,
+                ) {
+                    placed_any = true;
+                }
+            } else if self.vegetation.place(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
                 random,
                 world_x,
                 vegetation_y,
@@ -795,6 +1020,51 @@ impl RootedAzaleaTreeConfig {
         {
             return false;
         }
+        self.place_roots(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y - 1,
+            world_z,
+        );
+        self.place_hanging_roots(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        );
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_spillover(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.tree.place_spillover(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        );
         self.place_roots(
             settings,
             chunk_min_x,

@@ -54,6 +54,146 @@ impl PlacedMonsterRoomFeature {
             );
         }
     }
+
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place_with_neighbors(
+                settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            let shape = self.config.sample_shape(random);
+            let mut replay_random = random.clone();
+            if self.config.place_resolved(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                shape,
+            ) {
+                self.config.place_spillover(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &mut replay_random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    shape,
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        source_neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            let shape = self.config.sample_shape(random);
+            let mut replay_random = random.clone();
+            let source_context: Vec<_> = source_neighbors
+                .iter()
+                .copied()
+                .chain(std::iter::once((target_origin_x, target_origin_z, &*target_chunk)))
+                .collect();
+            if self.config.place_resolved_with_neighbors(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                &source_context,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                shape,
+            ) {
+                let target_context: Vec<_> = source_neighbors
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once((source_origin_x, source_origin_z, &*source_chunk)))
+                    .collect();
+                self.config.place_spillover_with_neighbors(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    &target_context,
+                    &mut replay_random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    shape,
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -218,12 +358,93 @@ impl PlacedClassicVinesFeature {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.place_at_with_neighbors(
+                settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_at(
         &self,
         settings: &NoiseSettings,
         chunk_min_x: i32,
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.place_at_in_context(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            &[],
+            false,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_at_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        self.place_at_in_context(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbors,
+            true,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_at_in_context(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        use_terrain_fallback: bool,
         random: &mut FeatureRandom,
         world_x: i32,
         world_y: i32,
@@ -243,14 +464,16 @@ impl PlacedClassicVinesFeature {
 
         for face in shuffled_horizontal_vine_faces(random) {
             let neighbor = direction_by_name(direction_opposite_name(face));
-            if !is_solid_at_world(
+            if !is_solid_at_world_in_context(
+                settings,
                 chunk,
                 chunk_min_x,
                 chunk_min_z,
+                neighbors,
+                use_terrain_fallback,
                 world_x + neighbor.0,
                 world_y + neighbor.1,
                 world_z + neighbor.2,
-                settings.min_y,
             ) {
                 continue;
             }
@@ -270,6 +493,50 @@ impl PlacedClassicVinesFeature {
 
         false
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_solid_at_world_in_context(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+    use_terrain_fallback: bool,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    if let Some(layer) = layer_at_world(
+        chunk,
+        chunk_min_x,
+        chunk_min_z,
+        world_x,
+        world_y,
+        world_z,
+        settings.min_y,
+    ) {
+        return is_full_solid_layer(layer);
+    }
+
+    for (neighbor_min_x, neighbor_min_z, neighbor_chunk) in neighbors {
+        if let Some(layer) = layer_at_world(
+            neighbor_chunk,
+            *neighbor_min_x,
+            *neighbor_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        ) {
+            return is_full_solid_layer(layer);
+        }
+    }
+
+    use_terrain_fallback
+        && settings
+            .terrain_layer_at(world_x, world_y, world_z)
+            .is_some_and(|layer| is_full_solid_layer(&layer))
 }
 
 impl PlacedSporeBlossomFeature {
@@ -372,6 +639,89 @@ impl PlacedMultifaceGrowthFeature {
             }
             self.config.place(
                 settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = origin_x + random.next_int(16);
+            let world_z = origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            let local_x = (world_x - origin_x) as usize;
+            let local_z = (world_z - origin_z) as usize;
+            let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if world_y > ocean_floor + self.max_below_ocean_floor
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            self.config.place_with_neighbors(
+                settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y, world_z,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            let local_x = (world_x - source_origin_x) as usize;
+            let local_z = (world_z - source_origin_z) as usize;
+            let ocean_floor = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            if world_y > ocean_floor + self.max_below_ocean_floor
+                || !self
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            let mut replay_random = random.clone();
+            self.config.place_with_neighbors(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                &[(target_origin_x, target_origin_z, &*target_chunk)],
+                random,
+                world_x,
+                world_y,
+                world_z,
+            );
+            self.config.replay_place_with_neighbors(
+                settings,
+                target_origin_x,
+                target_origin_z,
+                target_chunk,
+                &[(source_origin_x, source_origin_z, &*source_chunk)],
+                &mut replay_random,
+                world_x,
+                world_y,
+                world_z,
             );
         }
     }

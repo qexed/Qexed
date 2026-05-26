@@ -43,6 +43,46 @@ impl PlacedGeodeFeature {
             );
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return;
+        }
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        let world_y = self.height.sample(settings, random);
+        if !self
+            .biome_filter
+            .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return;
+        }
+
+        self.config.place_with_spillover(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            target_origin_x,
+            target_origin_z,
+            source_chunk,
+            target_chunk,
+            random,
+            world_x,
+            world_y,
+            world_z,
+        );
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -164,13 +204,7 @@ impl GeodeFeatureConfig {
         let mut potential_crystal_placements = Vec::new();
 
         for world_x in origin_x + self.min_gen_offset..=origin_x + self.max_gen_offset {
-            let Some(local_x) = local_coord(world_x, chunk_min_x) else {
-                continue;
-            };
             for world_z in origin_z + self.min_gen_offset..=origin_z + self.max_gen_offset {
-                let Some(local_z) = local_coord(world_z, chunk_min_z) else {
-                    continue;
-                };
                 for world_y in origin_y + self.min_gen_offset..=origin_y + self.max_gen_offset {
                     if !(settings.min_y..settings.min_y + settings.height).contains(&world_y) {
                         continue;
@@ -208,17 +242,16 @@ impl GeodeFeatureConfig {
                         Some(self.filling_block.clone())
                     } else if dist_sum_shell >= innermost_block_layer {
                         let use_alternate = random.next_float() < self.use_alternate_layer0_chance;
-                        let block = if use_alternate {
-                            self.alternate_inner_block.clone()
-                        } else {
-                            self.inner_block.clone()
-                        };
                         if (!self.placements_require_layer0_alternate || use_alternate)
                             && random.next_float() < self.use_potential_placements_chance
                         {
                             potential_crystal_placements.push((world_x, world_y, world_z));
                         }
-                        Some(block)
+                        Some(if use_alternate {
+                            self.alternate_inner_block.clone()
+                        } else {
+                            self.inner_block.clone()
+                        })
                     } else if dist_sum_shell >= inner_crust {
                         Some(self.middle_block.clone())
                     } else if dist_sum_shell >= outer_crust {
@@ -227,12 +260,15 @@ impl GeodeFeatureConfig {
                         None
                     };
 
-                    if let Some(block) = replacement
-                        && chunk
-                            .layer(local_x, world_y, local_z, settings.min_y)
-                            .is_some_and(can_geode_replace_block)
-                    {
-                        chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+                    if let Some(block) = replacement {
+                        if let Some((local_x, local_z)) =
+                            local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                            && chunk
+                                .layer(local_x, world_y, local_z, settings.min_y)
+                                .is_some_and(can_geode_replace_block)
+                        {
+                            chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+                        }
                     }
                 }
             }
@@ -273,6 +309,223 @@ impl GeodeFeatureConfig {
                         place_y,
                         local_z,
                         settings.min_y,
+                        block
+                            .with_property("facing", facing)
+                            .with_property("waterlogged", waterlogged),
+                    );
+                    break;
+                }
+            }
+        }
+
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        target_min_x: i32,
+        target_min_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let num_points = self.distribution_points.sample(random);
+        let mut points = Vec::with_capacity(num_points as usize);
+        let mut invalid_points = 0;
+        for _ in 0..num_points {
+            let point = (
+                origin_x + self.outer_wall_distance.sample(random),
+                origin_y + self.outer_wall_distance.sample(random),
+                origin_z + self.outer_wall_distance.sample(random),
+            );
+            if geode_context_layer(
+                source_chunk,
+                source_min_x,
+                source_min_z,
+                target_chunk,
+                target_min_x,
+                target_min_z,
+                point.0,
+                point.1,
+                point.2,
+                settings.min_y,
+            )
+            .is_some_and(is_geode_invalid_block)
+            {
+                invalid_points += 1;
+                if invalid_points > self.invalid_blocks_threshold {
+                    return false;
+                }
+            }
+            points.push((point, self.point_offset.sample(random)));
+        }
+
+        let crack_size_adjustment = num_points as f64 / self.outer_wall_distance.max as f64;
+        let inner_air = 1.0 / self.filling.sqrt();
+        let innermost_block_layer = 1.0 / (self.inner_layer + crack_size_adjustment).sqrt();
+        let inner_crust = 1.0 / (self.middle_layer + crack_size_adjustment).sqrt();
+        let outer_crust = 1.0 / (self.outer_layer + crack_size_adjustment).sqrt();
+        let crack_size = 1.0
+            / (self.base_crack_size
+                + random.next_double() / 2.0
+                + if num_points > 3 {
+                    crack_size_adjustment
+                } else {
+                    0.0
+                })
+            .sqrt();
+        let should_generate_crack = random.next_float() < self.generate_crack_chance;
+        let crack_points = if should_generate_crack {
+            self.crack_points(random, origin_x, origin_y, origin_z, num_points)
+        } else {
+            Vec::new()
+        };
+        let mut potential_crystal_placements = Vec::new();
+
+        for world_x in origin_x + self.min_gen_offset..=origin_x + self.max_gen_offset {
+            for world_z in origin_z + self.min_gen_offset..=origin_z + self.max_gen_offset {
+                for world_y in origin_y + self.min_gen_offset..=origin_y + self.max_gen_offset {
+                    if !(settings.min_y..settings.min_y + settings.height).contains(&world_y) {
+                        continue;
+                    }
+                    let noise_offset =
+                        geode_noise(world_x, world_y, world_z) * self.noise_multiplier;
+                    let mut dist_sum_shell = 0.0;
+                    let mut dist_sum_crack = 0.0;
+                    for (point, offset) in &points {
+                        dist_sum_shell += inv_sqrt_distance(
+                            world_x, world_y, world_z, point.0, point.1, point.2, *offset,
+                        ) + noise_offset;
+                    }
+                    for point in &crack_points {
+                        dist_sum_crack += inv_sqrt_distance(
+                            world_x,
+                            world_y,
+                            world_z,
+                            point.0,
+                            point.1,
+                            point.2,
+                            self.crack_point_offset,
+                        ) + noise_offset;
+                    }
+
+                    if dist_sum_shell < outer_crust {
+                        continue;
+                    }
+                    let replacement = if should_generate_crack
+                        && dist_sum_crack >= crack_size
+                        && dist_sum_shell < inner_air
+                    {
+                        Some(self.filling_block.clone())
+                    } else if dist_sum_shell >= inner_air {
+                        Some(self.filling_block.clone())
+                    } else if dist_sum_shell >= innermost_block_layer {
+                        let use_alternate = random.next_float() < self.use_alternate_layer0_chance;
+                        if (!self.placements_require_layer0_alternate || use_alternate)
+                            && random.next_float() < self.use_potential_placements_chance
+                        {
+                            potential_crystal_placements.push((world_x, world_y, world_z));
+                        }
+                        Some(if use_alternate {
+                            self.alternate_inner_block.clone()
+                        } else {
+                            self.inner_block.clone()
+                        })
+                    } else if dist_sum_shell >= inner_crust {
+                        Some(self.middle_block.clone())
+                    } else if dist_sum_shell >= outer_crust {
+                        Some(self.outer_block.clone())
+                    } else {
+                        None
+                    };
+
+                    if let Some(block) = replacement {
+                        if geode_context_layer(
+                            source_chunk,
+                            source_min_x,
+                            source_min_z,
+                            target_chunk,
+                            target_min_x,
+                            target_min_z,
+                            world_x,
+                            world_y,
+                            world_z,
+                            settings.min_y,
+                        )
+                        .is_some_and(can_geode_replace_block)
+                        {
+                            set_geode_block_in_context(
+                                settings,
+                                source_min_x,
+                                source_min_z,
+                                source_chunk,
+                                target_min_x,
+                                target_min_z,
+                                target_chunk,
+                                world_x,
+                                world_y,
+                                world_z,
+                                block,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        for (world_x, world_y, world_z) in potential_crystal_placements {
+            let block = self.inner_placements
+                [random.next_int(self.inner_placements.len() as i32) as usize]
+                .clone();
+            for (dx, dy, dz, facing) in [
+                (0, -1, 0, "down"),
+                (0, 1, 0, "up"),
+                (0, 0, -1, "north"),
+                (0, 0, 1, "south"),
+                (-1, 0, 0, "west"),
+                (1, 0, 0, "east"),
+            ] {
+                let place_x = world_x + dx;
+                let place_y = world_y + dy;
+                let place_z = world_z + dz;
+                let Some(place_state) = geode_context_layer(
+                    source_chunk,
+                    source_min_x,
+                    source_min_z,
+                    target_chunk,
+                    target_min_x,
+                    target_min_z,
+                    place_x,
+                    place_y,
+                    place_z,
+                    settings.min_y,
+                ) else {
+                    continue;
+                };
+                if can_amethyst_cluster_grow_at(place_state) {
+                    let waterlogged = if place_state.is("minecraft:water") {
+                        "true"
+                    } else {
+                        "false"
+                    };
+                    set_geode_block_in_context(
+                        settings,
+                        source_min_x,
+                        source_min_z,
+                        source_chunk,
+                        target_min_x,
+                        target_min_z,
+                        target_chunk,
+                        place_x,
+                        place_y,
+                        place_z,
                         block
                             .with_property("facing", facing)
                             .with_property("waterlogged", waterlogged),
@@ -329,6 +582,103 @@ impl GeodeFeatureConfig {
             ],
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn geode_context_layer<'a>(
+    source_chunk: &'a NoiseChunkBlocks,
+    source_min_x: i32,
+    source_min_z: i32,
+    target_chunk: &'a NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    min_y: i32,
+) -> Option<&'a BlockLayer> {
+    layer_at_world(
+        source_chunk,
+        source_min_x,
+        source_min_z,
+        world_x,
+        world_y,
+        world_z,
+        min_y,
+    )
+    .or_else(|| {
+        layer_at_world(
+            target_chunk,
+            target_min_x,
+            target_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_geode_block_in_context(
+    settings: &NoiseSettings,
+    source_min_x: i32,
+    source_min_z: i32,
+    source_chunk: &mut NoiseChunkBlocks,
+    target_min_x: i32,
+    target_min_z: i32,
+    target_chunk: &mut NoiseChunkBlocks,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    block: BlockLayer,
+) -> bool {
+    if overlaps_chunk(world_x, world_z, source_min_x, source_min_z) {
+        set_geode_block(
+            settings,
+            source_min_x,
+            source_min_z,
+            source_chunk,
+            world_x,
+            world_y,
+            world_z,
+            block,
+        )
+    } else if overlaps_chunk(world_x, world_z, target_min_x, target_min_z) {
+        set_geode_block(
+            settings,
+            target_min_x,
+            target_min_z,
+            target_chunk,
+            world_x,
+            world_y,
+            world_z,
+            block,
+        )
+    } else {
+        false
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_geode_block(
+    settings: &NoiseSettings,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    chunk: &mut NoiseChunkBlocks,
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    block: BlockLayer,
+) -> bool {
+    let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) else {
+        return false;
+    };
+    if chunk.layer(local_x, world_y, local_z, settings.min_y).is_none() {
+        return false;
+    }
+    chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+    true
 }
 
 #[derive(Debug, Clone)]

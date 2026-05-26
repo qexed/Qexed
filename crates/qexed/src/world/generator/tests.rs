@@ -2854,6 +2854,101 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_ore_spillover_places_neighbor_ore() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let ore = PlacedOreFeature::new(
+            0,
+            OrePlacementCount::Constant(1),
+            OreHeight::Uniform(HeightAnchor::Absolute(48), HeightAnchor::Absolute(48)),
+            OreFeatureConfig::base_stone(32, "minecraft:andesite"),
+        );
+        let placed = (0..256).any(|seed| {
+            let mut source = surface_test_chunk(&settings, 80, "minecraft:stone");
+            let mut target = surface_test_chunk(&settings, 80, "minecraft:stone");
+            let mut random = FeatureRandom::new(seed);
+
+            ore.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut random,
+            );
+
+            chunk_contains_block(&target, "minecraft:andesite")
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
+    fn vanilla_noise_ore_spillover_air_exposure_reads_source_neighbor() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let ore = OreFeatureConfig::new(
+            1,
+            1.0,
+            "minecraft:diamond_ore",
+            "minecraft:deepslate_diamond_ore",
+        );
+        let mut source = surface_test_chunk(&settings, 80, "minecraft:stone");
+        let mut target = surface_test_chunk(&settings, 80, "minecraft:stone");
+        source.set_layer(15, 48, 8, settings.min_y, BlockLayer::new("minecraft:air"));
+
+        assert!(!ore.try_place_block_with_neighbor(
+            &settings,
+            16,
+            0,
+            &mut target,
+            Some((0, 0, &source)),
+            &mut FeatureRandom::new(0),
+            16,
+            48,
+            8,
+        ));
+        assert!(target
+            .layer(0, 48, 8, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:stone")));
+    }
+
+    #[test]
+    fn vanilla_noise_underwater_magma_spillover_uses_source_solid_neighbor() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedUnderwaterMagmaFeature {
+            step_index: 6,
+            feature_index: 0,
+            count: OrePlacementCount::Constant(1),
+            height: OreHeight::Uniform(HeightAnchor::Absolute(62), HeightAnchor::Absolute(62)),
+            floor_search_range: 5,
+            placement_radius_around_floor: 0,
+            placement_probability_per_valid_position: 1.0,
+            magma_block: BlockLayer::new("minecraft:magma_block"),
+            biome_filter: FeatureBiomeFilter::All,
+        };
+        let mut source = surface_test_chunk(&settings, 80, "minecraft:stone");
+        let mut target = surface_test_chunk(&settings, 80, "minecraft:stone");
+
+        assert!(feature.place_around_floor_with_context(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(1),
+            16,
+            62,
+            8,
+        ));
+        assert!(target
+            .layer(0, 62, 8, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:magma_block")));
+    }
+
+    #[test]
     fn vanilla_noise_soft_disk_replaces_submerged_floor() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let stone = BlockLayer::new("minecraft:stone");
@@ -2892,6 +2987,69 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_soft_disk_spillover_places_neighbor_floor() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let disk = PlacedDiskFeature {
+            step_index: 6,
+            feature_index: 0,
+            count: OrePlacementCount::Constant(1),
+            half_height: 2,
+            radius: UniformInt { min: 6, max: 6 },
+            target_blocks: DISK_DIRT_GRASS_TARGETS,
+            state_provider: DiskStateProvider::Simple(BlockLayer::new("minecraft:gravel")),
+            surface_anchor: None,
+            biome_filter: FeatureBiomeFilter::All,
+        };
+        let placed = (0..256).any(|seed| {
+            let mut source = underwater_test_chunk(&settings, 62, 63, "minecraft:dirt");
+            let mut target = underwater_test_chunk(&settings, 62, 63, "minecraft:dirt");
+            let mut random = FeatureRandom::new(seed);
+
+            disk.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut random,
+            );
+
+            chunk_contains_block(&target, "minecraft:gravel")
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
+    fn vanilla_noise_soft_disk_spillover_uses_context_for_sandstone_state() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = underwater_test_chunk(&settings, 62, 63, "minecraft:dirt");
+        let mut target = underwater_test_chunk(&settings, 62, 63, "minecraft:dirt");
+        target.set_layer(0, 61, 8, settings.min_y, BlockLayer::new("minecraft:air"));
+        let disk = PlacedDiskFeature::sand(0);
+
+        disk.place_disk_with_context(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(0),
+            15,
+            62,
+            8,
+        );
+
+        assert!(target
+            .layer(0, 62, 8, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:sandstone")));
+    }
+
+    #[test]
     fn vanilla_noise_spring_places_when_rock_and_hole_counts_match() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let stone = BlockLayer::new("minecraft:stone");
@@ -2919,6 +3077,53 @@ mod tests {
                 .layer(8, 64, 8, settings.min_y)
                 .map(|layer| layer.block.as_ref()),
             Some("minecraft:water")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_spring_uses_neighbor_chunk_for_boundary_hole_count() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| stone.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        source.set_layer(15, 64, 8, settings.min_y, air.clone());
+        target.set_layer(0, 64, 8, settings.min_y, air);
+
+        assert!(PlacedSpringFeature::water(0)
+            .config
+            .try_place_at_world_with_neighbor(
+                &settings,
+                0,
+                0,
+                &mut source,
+                Some((16, 0, &target)),
+                15,
+                64,
+                8,
+            ));
+        assert!(
+            source
+                .layer(15, 64, 8, settings.min_y)
+                .is_some_and(|layer| layer.is("minecraft:water"))
         );
     }
 
@@ -2963,6 +3168,58 @@ mod tests {
 
         assert!(has_lava);
         assert!(has_cave_air);
+    }
+
+    #[test]
+    fn vanilla_noise_lava_lake_spillover_places_neighbor_cavity() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| stone.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(12345);
+        let mut replay_random = random.clone();
+
+        assert!(LakeFeatureConfig::lava().place(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &mut random,
+            15,
+            80,
+            8,
+        ));
+        assert!(LakeFeatureConfig::lava().place(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            80,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&target, "minecraft:lava"));
+        assert!(chunk_contains_block(&target, "minecraft:cave_air"));
     }
 
     #[test]
@@ -3045,6 +3302,142 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_monster_room_spillover_places_neighbor_room() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let cave_air = BlockLayer::new("minecraft:cave_air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| stone.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+
+        for y in 64..=65 {
+            source.set_layer(12, y, 8, settings.min_y, cave_air.clone());
+        }
+
+        let config = MonsterRoomFeatureConfig::new();
+        let shape = MonsterRoomShape {
+            x_radius: 2,
+            z_radius: 2,
+            min_x: -3,
+            max_x: 3,
+            min_z: -3,
+            max_z: 3,
+        };
+        let mut random = FeatureRandom::new(5);
+        let mut replay_random = random.clone();
+
+        assert!(config.place_resolved(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &mut random,
+            15,
+            64,
+            8,
+            shape,
+        ));
+        config.place_spillover(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            64,
+            8,
+            shape,
+        );
+
+        assert!(chunk_contains_block(&target, "minecraft:cave_air"));
+        assert!(
+            chunk_contains_block(&target, "minecraft:cobblestone")
+                || chunk_contains_block(&target, "minecraft:mossy_cobblestone")
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_monster_room_boundary_uses_neighbor_entrance() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let cave_air = BlockLayer::new("minecraft:cave_air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| stone.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let config = MonsterRoomFeatureConfig::new();
+        let shape = MonsterRoomShape {
+            x_radius: 2,
+            z_radius: 2,
+            min_x: -3,
+            max_x: 3,
+            min_z: -3,
+            max_z: 3,
+        };
+
+        assert!(!config.can_place_with_neighbors(
+            &settings,
+            0,
+            0,
+            &source,
+            &[(16, 0, &target)],
+            15,
+            64,
+            8,
+            shape,
+        ));
+
+        for y in 64..=65 {
+            target.set_layer(2, y, 8, settings.min_y, cave_air.clone());
+        }
+
+        assert!(config.can_place_with_neighbors(
+            &settings,
+            0,
+            0,
+            &source,
+            &[(16, 0, &target)],
+            15,
+            64,
+            8,
+            shape,
+        ));
+    }
+
+    #[test]
     fn vanilla_noise_glow_lichen_places_on_air_or_water_next_to_rock() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let stone = BlockLayer::new("minecraft:stone");
@@ -3088,6 +3481,110 @@ mod tests {
         assert!(layer.properties.iter().any(|(name, value)| {
             matches!(name.as_str(), "up" | "north" | "south" | "east" | "west") && value == "true"
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_glow_lichen_spillover_places_neighbor_growth() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|y| if y <= 50 { stone.clone() } else { air.clone() })
+                        .collect(),
+                    first_available_height: 51 - settings.min_y,
+                })
+                .collect()
+        };
+        let config = MultifaceGrowthFeatureConfig::glow_lichen();
+        let placed = (0..256).any(|seed| {
+            let mut source = NoiseChunkBlocks {
+                columns: columns(),
+                biomes: Vec::new(),
+                block_entities: Vec::new(),
+            };
+            let mut target = NoiseChunkBlocks {
+                columns: columns(),
+                biomes: Vec::new(),
+                block_entities: Vec::new(),
+            };
+            let mut random = FeatureRandom::new(seed);
+            let mut replay_random = random.clone();
+            config.place(
+                &settings,
+                0,
+                0,
+                &mut source,
+                &mut random,
+                15,
+                48,
+                8,
+            );
+            config.replay_place_with_neighbors(
+                &settings,
+                16,
+                0,
+                &mut target,
+                &[(0, 0, &source)],
+                &mut replay_random,
+                15,
+                48,
+                8,
+            );
+
+            chunk_contains_block(&target, "minecraft:glow_lichen")
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
+    fn vanilla_noise_glow_lichen_attaches_to_neighbor_chunk_wall() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let air_columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| air.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: air_columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: air_columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        target.set_layer(0, 64, 8, settings.min_y, stone);
+
+        assert!(MultifaceGrowthFeatureConfig::glow_lichen().place_with_neighbors(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &[(16, 0, &target)],
+            &mut FeatureRandom::new(2),
+            15,
+            64,
+            8,
+        ));
+
+        let layer = source.layer(15, 64, 8, settings.min_y).unwrap();
+        assert!(layer.is("minecraft:glow_lichen"));
+        assert!(layer
+            .properties
+            .iter()
+            .any(|(name, value)| name == "east" && value == "true"));
     }
 
     #[test]
@@ -3328,6 +3825,43 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_pointed_dripstone_spillover_places_neighbor_tip() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = cave_room_test_chunk(&settings, 63, 72);
+        let mut target = cave_room_test_chunk(&settings, 63, 72);
+        let mut feature = PlacedPointedDripstoneFeature::new(0);
+        feature.biome_filter = FeatureBiomeFilter::All;
+        feature.outer_count = OrePlacementCount::Constant(1);
+        feature.inner_count = OrePlacementCount::Constant(1);
+        feature.height = OreHeight::Uniform(HeightAnchor::Absolute(67), HeightAnchor::Absolute(67));
+        feature.xz_offset = ClampedNormalInt {
+            mean: 16.0,
+            deviation: 0.0,
+            min: 16,
+            max: 16,
+        };
+        feature.y_offset = ClampedNormalInt {
+            mean: 0.0,
+            deviation: 0.0,
+            min: 0,
+            max: 0,
+        };
+
+        feature.place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            16,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(5),
+        );
+
+        assert!(chunk_contains_block(&target, "minecraft:pointed_dripstone"));
+    }
+
+    #[test]
     fn vanilla_noise_dripstone_cluster_places_blocks_and_points() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let config = DripstoneClusterFeatureConfig::new();
@@ -3367,6 +3901,34 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_dripstone_cluster_spillover_places_neighbor_blocks() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = DripstoneClusterFeatureConfig::new();
+        let placed = (0..64).any(|seed| {
+            let mut source = cave_room_test_chunk(&settings, 63, 74);
+            let mut target = cave_room_test_chunk(&settings, 63, 74);
+            config.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut FeatureRandom::new(seed),
+                15,
+                68,
+                8,
+            );
+
+            chunk_contains_block(&target, "minecraft:dripstone_block")
+                || chunk_contains_block(&target, "minecraft:pointed_dripstone")
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
     fn vanilla_noise_large_dripstone_places_cone() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = cave_room_test_chunk(&settings, 48, 88);
@@ -3383,6 +3945,30 @@ mod tests {
             8,
         ));
         assert!(chunk_contains_block(&chunk, "minecraft:dripstone_block"));
+    }
+
+    #[test]
+    fn vanilla_noise_large_dripstone_spillover_places_neighbor_cone() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = LargeDripstoneFeatureConfig::new();
+        let mut source = cave_room_test_chunk(&settings, 48, 88);
+        let mut target = cave_room_test_chunk(&settings, 48, 88);
+
+        config.place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(7),
+            15,
+            68,
+            8,
+        );
+
+        assert!(chunk_contains_block(&target, "minecraft:dripstone_block"));
     }
 
     #[test]
@@ -3412,6 +3998,62 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_sculk_vein_spillover_uses_neighbor_chunk_support() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = cave_room_test_chunk(&settings, 63, 72);
+        let mut target = cave_room_test_chunk(&settings, 63, 72);
+        target.set_layer(0, 64, 8, settings.min_y, BlockLayer::new("minecraft:stone"));
+
+        assert!(place_sculk_vein_in_context(
+            &settings,
+            0,
+            0,
+            &mut source,
+            16,
+            0,
+            &mut target,
+            &mut FeatureRandom::new(2),
+            15,
+            64,
+            8,
+        ));
+
+        let layer = source.layer(15, 64, 8, settings.min_y).unwrap();
+        assert!(layer.is("minecraft:sculk_vein"));
+        assert!(layer
+            .properties
+            .iter()
+            .any(|(name, value)| name == "east" && value == "true"));
+    }
+
+    #[test]
+    fn vanilla_noise_sculk_vein_replay_uses_source_support_for_target() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = cave_room_test_chunk(&settings, 63, 72);
+        let mut target = cave_room_test_chunk(&settings, 63, 72);
+        source.set_layer(15, 64, 8, settings.min_y, BlockLayer::new("minecraft:stone"));
+
+        assert!(sculk_vein_growth_config().replay_place_with_neighbors(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &[(0, 0, &source)],
+            &mut FeatureRandom::new(2),
+            16,
+            64,
+            8,
+        ));
+
+        let layer = target.layer(0, 64, 8, settings.min_y).unwrap();
+        assert!(layer.is("minecraft:sculk_vein"));
+        assert!(layer
+            .properties
+            .iter()
+            .any(|(name, value)| name == "west" && value == "true"));
+    }
+
+    #[test]
     fn vanilla_noise_sculk_patch_spreads_over_cave_surface() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let config = SculkPatchFeatureConfig::deep_dark();
@@ -3432,6 +4074,34 @@ mod tests {
             chunk_contains_block(&chunk, "minecraft:sculk_vein")
                 || chunk_contains_block(&chunk, "minecraft:sculk_catalyst")
         );
+    }
+
+    #[test]
+    fn vanilla_noise_sculk_patch_spillover_places_neighbor_sculk() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = SculkPatchFeatureConfig::deep_dark();
+        let placed = (0..64).any(|seed| {
+            let mut source = cave_room_test_chunk(&settings, 63, 72);
+            let mut target = cave_room_test_chunk(&settings, 63, 72);
+            config.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut FeatureRandom::new(seed),
+                15,
+                64,
+                8,
+            );
+
+            chunk_contains_block(&target, "minecraft:sculk")
+                || chunk_contains_block(&target, "minecraft:sculk_vein")
+        });
+
+        assert!(placed);
     }
 
     #[test]
@@ -3542,6 +4212,53 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_classic_vines_attach_to_neighbor_chunk_wall() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let air_columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| air.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: air_columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: air_columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        target.set_layer(0, 64, 8, settings.min_y, stone);
+        let feature = PlacedClassicVinesFeature::cave(0);
+
+        assert!(feature.place_at_with_neighbors(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &[(16, 0, &target)],
+            &mut FeatureRandom::new(2),
+            15,
+            64,
+            8,
+        ));
+        let vine = source.layer(15, 64, 8, settings.min_y).unwrap();
+        assert!(vine.is("minecraft:vine"));
+        assert!(vine
+            .properties
+            .iter()
+            .any(|(name, value)| name == "west" && value == "true"));
+    }
+
+    #[test]
     fn vanilla_noise_moss_patch_replaces_floor_and_places_lush_vegetation() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = cave_floor_test_chunk(&settings, 63);
@@ -3570,6 +4287,35 @@ mod tests {
                 )
             })
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_environment_scan_spillover_places_neighbor_moss_patch() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut feature = PlacedEnvironmentScanFeature::lush_caves_vegetation(0);
+        feature.count = OrePlacementCount::Constant(1);
+        feature.height = OreHeight::Uniform(HeightAnchor::Absolute(68), HeightAnchor::Absolute(68));
+        feature.biome_filter = FeatureBiomeFilter::All;
+        let placed = (0..256).any(|seed| {
+            let mut source = cave_floor_test_chunk(&settings, 63);
+            let mut target = cave_floor_test_chunk(&settings, 63);
+            let mut random = FeatureRandom::new(seed);
+
+            feature.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut random,
+            );
+
+            chunk_contains_block(&target, "minecraft:moss_block")
+        });
+
+        assert!(placed);
     }
 
     #[test]
@@ -3622,9 +4368,34 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_rooted_azalea_spillover_requires_source_tree() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = surface_test_chunk(&settings, 63, "minecraft:stone");
+        let mut target = grass_surface_test_chunk(&settings, 63);
+        let feature = EnvironmentFeatureConfig::rooted_azalea_tree();
+
+        assert!(!feature.place_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(3),
+            15,
+            64,
+            8,
+        ));
+        assert!(!chunk_contains_block(&target, "minecraft:azalea_leaves"));
+        assert!(!chunk_contains_block(&target, "minecraft:rooted_dirt"));
+    }
+
+    #[test]
     fn vanilla_noise_waterlily_places_on_water_surface() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = water_surface_test_chunk(&settings, 61, 63);
+        let mut ice_chunk = surface_test_chunk(&settings, 63, "minecraft:frosted_ice");
 
         assert!(SimpleVegetationBlock::waterlily().place_at(
             &settings,
@@ -3638,6 +4409,21 @@ mod tests {
         ));
         assert!(chunk.layer(8, 64, 8, settings.min_y).unwrap().is("minecraft:lily_pad"));
         assert!(chunk.layer(8, 63, 8, settings.min_y).unwrap().is("minecraft:water"));
+
+        assert!(SimpleVegetationBlock::waterlily().place_at(
+            &settings,
+            0,
+            0,
+            &mut ice_chunk,
+            &mut FeatureRandom::new(1),
+            8,
+            64,
+            8,
+        ));
+        assert!(ice_chunk
+            .layer(8, 64, 8, settings.min_y)
+            .unwrap()
+            .is("minecraft:lily_pad"));
     }
 
     #[test]
@@ -3657,6 +4443,33 @@ mod tests {
             8,
         ));
         assert!(chunk_contains_block(&chunk, "minecraft:mossy_cobblestone"));
+    }
+
+    #[test]
+    fn vanilla_noise_surface_blob_spillover_places_neighbor_rock() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = SurfaceFeatureConfig::BlockBlob(BlockBlobSurfaceConfig::forest_rock());
+        let placed = (0..512).any(|seed| {
+            let mut source = grass_surface_test_chunk(&settings, 63);
+            let mut target = grass_surface_test_chunk(&settings, 63);
+
+            config.place_spillover_resolved(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut FeatureRandom::new(seed),
+                15,
+                64,
+                8,
+            );
+            chunk_contains_block(&target, "minecraft:mossy_cobblestone")
+        });
+
+        assert!(placed);
     }
 
     #[test]
@@ -3685,6 +4498,46 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_ice_spike_spillover_places_neighbor_packed_ice() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = SurfaceFeatureConfig::IceSpike(IceSpikeSurfaceConfig::new());
+        let placed = (0..256).any(|seed| {
+            let mut source = grass_surface_test_chunk(&settings, 63);
+            let mut target = grass_surface_test_chunk(&settings, 63);
+            for chunk in [&mut source, &mut target] {
+                for x in 0..16 {
+                    for z in 0..16 {
+                        chunk.set_layer(
+                            x,
+                            63,
+                            z,
+                            settings.min_y,
+                            BlockLayer::new("minecraft:snow_block"),
+                        );
+                    }
+                }
+            }
+
+            config.place_spillover_resolved(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut FeatureRandom::new(seed),
+                15,
+                63,
+                8,
+            );
+            chunk_contains_block(&target, "minecraft:packed_ice")
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
     fn vanilla_noise_ice_patch_replaces_snowy_surface() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = grass_surface_test_chunk(&settings, 63);
@@ -3706,6 +4559,45 @@ mod tests {
             8,
         ));
         assert!(chunk_contains_block(&chunk, "minecraft:packed_ice"));
+    }
+
+    #[test]
+    fn vanilla_noise_ice_patch_spillover_places_neighbor_surface() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = grass_surface_test_chunk(&settings, 63);
+        let mut target = grass_surface_test_chunk(&settings, 63);
+        for chunk in [&mut source, &mut target] {
+            for x in 0..16 {
+                for z in 0..16 {
+                    chunk.set_layer(
+                        x,
+                        63,
+                        z,
+                        settings.min_y,
+                        BlockLayer::new("minecraft:snow_block"),
+                    );
+                }
+            }
+        }
+
+        assert!(SurfaceDiskConfig::ice_patch().place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(2),
+            15,
+            63,
+            8,
+        ));
+        assert!(
+            target
+                .layer(0, 63, 8, settings.min_y)
+                .is_some_and(|layer| layer.is("minecraft:packed_ice"))
+        );
     }
 
     #[test]
@@ -3731,6 +4623,29 @@ mod tests {
                     && layer.is("minecraft:packed_ice")
             })
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_iceberg_spillover_places_neighbor_ice_body() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = SurfaceFeatureConfig::Iceberg(IcebergSurfaceConfig::packed());
+        let mut source = underwater_test_chunk(&settings, 45, settings.sea_level, "minecraft:sand");
+        let mut target = underwater_test_chunk(&settings, 45, settings.sea_level, "minecraft:sand");
+
+        assert!(config.place_spillover_resolved(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(1),
+            15,
+            settings.sea_level,
+            8,
+        ));
+        assert!(chunk_contains_block(&target, "minecraft:packed_ice"));
     }
 
     #[test]
@@ -3765,6 +4680,39 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_blue_ice_spillover_uses_source_packed_ice_neighbor() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = underwater_test_chunk(&settings, 45, settings.sea_level, "minecraft:sand");
+        let mut target = underwater_test_chunk(&settings, 45, settings.sea_level, "minecraft:sand");
+        source.set_layer(
+            15,
+            55,
+            8,
+            settings.min_y,
+            BlockLayer::new("minecraft:packed_ice"),
+        );
+
+        assert!(BlueIceSurfaceConfig::new().place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(2),
+            16,
+            55,
+            8,
+        ));
+        assert!(
+            target
+                .layer(0, 55, 8, settings.min_y)
+                .is_some_and(|layer| layer.is("minecraft:blue_ice"))
+        );
+    }
+
+    #[test]
     fn vanilla_noise_pale_moss_patch_places_pale_moss_vegetation() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = cave_floor_test_chunk(&settings, 63);
@@ -3789,6 +4737,29 @@ mod tests {
                 )
             })
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_pale_moss_patch_spillover_places_neighbor_ground() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = SurfaceFeatureConfig::VegetationPatch(VegetationPatchConfig::pale_moss_patch());
+        let mut source = cave_floor_test_chunk(&settings, 63);
+        let mut target = cave_floor_test_chunk(&settings, 63);
+
+        assert!(config.place_spillover_resolved(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(9),
+            15,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&target, "minecraft:pale_moss_block"));
     }
 
     #[test]
@@ -3824,6 +4795,38 @@ mod tests {
             &mut chunk,
             &mut FeatureRandom::new(1),
             8,
+            64,
+            8,
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_firefly_bush_near_water_uses_neighbor_chunk_water() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = grass_surface_test_chunk(&settings, 63);
+        let mut target = grass_surface_test_chunk(&settings, 63);
+        target.set_layer(0, 63, 8, settings.min_y, BlockLayer::new("minecraft:water"));
+
+        assert!(
+            SimpleVegetationPlacementPredicate::AirSurvivesNearWater.allows_with_neighbors(
+                &source,
+                0,
+                0,
+                &[(16, 0, &target)],
+                15,
+                64,
+                8,
+                settings.min_y,
+            )
+        );
+        assert!(SimpleVegetationBlock::single("minecraft:firefly_bush").place_at_with_neighbors(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &[(16, 0, &target)],
+            &mut FeatureRandom::new(1),
+            15,
             64,
             8,
         ));
@@ -3906,6 +4909,58 @@ mod tests {
                         .any(|(name, value)| name == "leaves" && value == "large")
             })
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_bamboo_uses_vanilla_support_tag() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = surface_test_chunk(&settings, 63, "minecraft:gravel");
+
+        assert!(BlockColumnFeatureConfig::bamboo(0.0).place_at(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut FeatureRandom::new(2),
+            8,
+            64,
+            8,
+        ));
+        assert!(chunk_contains_block(&chunk, "minecraft:bamboo"));
+    }
+
+    #[test]
+    fn vanilla_noise_bamboo_podzol_spillover_places_neighbor_ground() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let config = BlockColumnFeatureConfig::bamboo(1.0);
+        let mut source = grass_surface_test_chunk(&settings, 63);
+        let mut target = grass_surface_test_chunk(&settings, 63);
+        let mut random = FeatureRandom::new(2);
+        let mut replay_random = random.clone();
+
+        assert!(config.place_at(
+            &settings,
+            0,
+            0,
+            &mut source,
+            &mut random,
+            15,
+            64,
+            8,
+        ));
+        assert!(config.place_side_effect_spillover(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            8,
+        ));
+
+        assert!(target
+            .layer(0, 63, 8, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:podzol")));
     }
 
     #[test]
@@ -4152,6 +5207,85 @@ mod tests {
                 .iter()
                 .any(|layer| CORAL_BLOCKS.contains(&layer.block.as_ref()))
         }));
+    }
+
+    #[test]
+    fn vanilla_noise_warm_ocean_coral_spillover_places_neighbor_reef_blocks() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedAquaticFeature::warm_ocean_vegetation(0);
+        let placed = (0..128).any(|seed| {
+            let mut source = underwater_test_chunk(&settings, 62, 82, "minecraft:sand");
+            let mut target = underwater_test_chunk(&settings, 62, 82, "minecraft:sand");
+            let mut random = FeatureRandom::new(seed);
+
+            feature.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut random,
+            );
+
+            target
+                .columns
+                .iter()
+                .any(|column| column.blocks.iter().any(is_coral_layer))
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
+    fn vanilla_noise_coral_spillover_reads_source_water_context() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let water = BlockLayer::new("minecraft:water");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| air.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        target.set_layer(0, 63, 8, settings.min_y, water.clone());
+        source.set_layer(15, 63, 8, settings.min_y, water.clone());
+        source.set_layer(15, 64, 8, settings.min_y, water);
+
+        let placed = (0..64).any(|seed| {
+            let mut target = target.clone();
+            assert!(CoralFeatureConfig::new().place_coral_block_spillover(
+                &settings,
+                Some((0, 0, &source)),
+                16,
+                0,
+                &mut target,
+                &mut FeatureRandom::new(seed),
+                15,
+                63,
+                8,
+                "minecraft:tube_coral_block",
+            ));
+            target
+                .layer(0, 63, 8, settings.min_y)
+                .is_some_and(|layer| CORAL_WALL_FANS.contains(&layer.block.as_ref()))
+        });
+        assert!(placed);
     }
 
     #[test]
@@ -4571,6 +5705,15 @@ mod tests {
         assert!(supports_dead_bush_layer(
             chunk.layer(8, 64, 8, settings.min_y).unwrap()
         ));
+        assert!(supports_dead_bush_layer(&BlockLayer::new(
+            "minecraft:blue_terracotta"
+        )));
+        assert!(supports_dead_bush_layer(&BlockLayer::new(
+            "minecraft:suspicious_sand"
+        )));
+        assert!(supports_dead_bush_layer(&BlockLayer::new(
+            "minecraft:grass_block"
+        )));
     }
 
     #[test]
@@ -4714,6 +5857,15 @@ mod tests {
         assert!(supports_dry_vegetation_layer(
             chunk.layer(8, 64, 8, settings.min_y).unwrap()
         ));
+        assert!(supports_dry_vegetation_layer(&BlockLayer::new(
+            "minecraft:grass_block"
+        )));
+        assert!(supports_dry_vegetation_layer(&BlockLayer::new(
+            "minecraft:suspicious_sand"
+        )));
+        assert!(supports_dry_vegetation_layer(&BlockLayer::new(
+            "minecraft:farmland"
+        )));
     }
 
     #[test]
@@ -4847,6 +5999,100 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_sugar_cane_uses_neighbor_chunk_water() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let sand = BlockLayer::new("minecraft:sand");
+        let water = BlockLayer::new("minecraft:water");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|y| if y <= 64 { sand.clone() } else { air.clone() })
+                        .collect(),
+                    first_available_height: 65 - settings.min_y,
+                })
+                .collect()
+        };
+        let source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        target.set_layer(0, 64, 8, settings.min_y, water);
+
+        assert!(BlockColumnSupport::SugarCane.allows_at_world_with_neighbors(
+            &source,
+            0,
+            0,
+            &[(16, 0, &target)],
+            15,
+            65,
+            8,
+            settings.min_y,
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_sugar_cane_uses_vanilla_support_tag() {
+        for block in [
+            "minecraft:suspicious_sand",
+            "minecraft:muddy_mangrove_roots",
+            "minecraft:moss_block",
+            "minecraft:pale_moss_block",
+            "minecraft:mycelium",
+        ] {
+            assert!(
+                supports_sugar_cane_layer(&BlockLayer::new(block)),
+                "{block} should support sugar cane"
+            );
+        }
+        assert!(!supports_sugar_cane_layer(&BlockLayer::new(
+            "minecraft:gravel"
+        )));
+        assert!(!supports_sugar_cane_layer(&BlockLayer::new(
+            "minecraft:farmland"
+        )));
+    }
+
+    #[test]
+    fn vanilla_noise_sugar_cane_uses_vanilla_adjacent_support_tag() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let sand = BlockLayer::new("minecraft:sand");
+        let frosted_ice = BlockLayer::new("minecraft:frosted_ice");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|y| if y <= 64 { sand.clone() } else { air.clone() })
+                    .collect(),
+                first_available_height: 65 - settings.min_y,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        chunk.set_layer(9, 64, 8, settings.min_y, frosted_ice);
+
+        assert!(BlockColumnSupport::SugarCane.allows_at_world(
+            &chunk,
+            0,
+            0,
+            8,
+            65,
+            8,
+            settings.min_y
+        ));
+    }
+
+    #[test]
     fn vanilla_noise_sugar_cane_places_column() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let sand = BlockLayer::new("minecraft:sand");
@@ -4894,6 +6140,7 @@ mod tests {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let sand = BlockLayer::new("minecraft:sand");
         let stone = BlockLayer::new("minecraft:stone");
+        let water = BlockLayer::new("minecraft:water");
         let air = BlockLayer::new("minecraft:air");
         let columns = (0..HEIGHTMAP_ENTRY_COUNT)
             .map(|_| NoiseColumnBlocks {
@@ -4911,6 +6158,17 @@ mod tests {
 
         assert!(BlockColumnSupport::Cactus.allows_at_world(&chunk, 0, 0, 8, 65, 8, settings.min_y));
 
+        chunk.set_layer(9, 65, 8, settings.min_y, water);
+        assert!(BlockColumnSupport::Cactus.allows_at_world(
+            &chunk,
+            0,
+            0,
+            8,
+            65,
+            8,
+            settings.min_y
+        ));
+
         chunk.set_layer(9, 65, 8, settings.min_y, stone);
         assert!(!BlockColumnSupport::Cactus.allows_at_world(
             &chunk,
@@ -4920,6 +6178,56 @@ mod tests {
             65,
             8,
             settings.min_y
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_cactus_uses_vanilla_support_tag() {
+        assert!(supports_cactus_layer(&BlockLayer::new(
+            "minecraft:suspicious_sand"
+        )));
+        assert!(!supports_cactus_layer(&BlockLayer::new(
+            "minecraft:gravel"
+        )));
+    }
+
+    #[test]
+    fn vanilla_noise_cactus_rejects_neighbor_chunk_solid_side() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let sand = BlockLayer::new("minecraft:sand");
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|y| if y <= 64 { sand.clone() } else { air.clone() })
+                        .collect(),
+                    first_available_height: 65 - settings.min_y,
+                })
+                .collect()
+        };
+        let source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        target.set_layer(0, 65, 8, settings.min_y, stone);
+
+        assert!(!BlockColumnSupport::Cactus.allows_at_world_with_neighbors(
+            &source,
+            0,
+            0,
+            &[(16, 0, &target)],
+            15,
+            65,
+            8,
+            settings.min_y,
         ));
     }
 
@@ -5051,6 +6359,144 @@ mod tests {
             .properties
             .iter()
             .any(|(name, value)| name == "half" && value == "upper"));
+    }
+
+    #[test]
+    fn vanilla_noise_simple_vegetation_spillover_places_neighbor_patch() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedSimpleVegetationFeature {
+            step_index: 9,
+            feature_index: 0,
+            outer_count: 1,
+            count_provider: SimpleVegetationCountProvider::Fixed,
+            noise_threshold: None,
+            rarity: 1,
+            inner_count: 1,
+            xz_offset: TrapezoidInt::new(16, 16, 0),
+            y_offset: TrapezoidInt::new(0, 0, 0),
+            block: SimpleVegetationBlock::single("minecraft:short_grass"),
+            required_support: None,
+            placement_predicate: SimpleVegetationPlacementPredicate::Air,
+            biome_filter: FeatureBiomeFilter::All,
+        };
+        let mut source = grass_surface_test_chunk(&settings, 64);
+        let mut target = grass_surface_test_chunk(&settings, 64);
+        let mut random = FeatureRandom::new(1);
+
+        feature.place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            16,
+            &mut source,
+            &mut target,
+            &mut random,
+        );
+
+        assert!(chunk_contains_block(&target, "minecraft:short_grass"));
+    }
+
+    #[test]
+    fn vanilla_noise_block_column_spillover_places_neighbor_cactus() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedBlockColumnFeature {
+            step_index: 9,
+            feature_index: 0,
+            rarity: 1,
+            outer_count: BlockColumnOuterCount::Fixed(1),
+            inner_count: 1,
+            xz_offset: TrapezoidInt::new(16, 16, 0),
+            y_offset: TrapezoidInt::new(0, 0, 0),
+            column: BlockColumnFeatureConfig::cactus(),
+            biome_filter: FeatureBiomeFilter::All,
+        };
+        let mut source = surface_test_chunk(&settings, 64, "minecraft:sand");
+        let mut target = surface_test_chunk(&settings, 64, "minecraft:sand");
+        let mut random = FeatureRandom::new(1);
+
+        feature.place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            16,
+            &mut source,
+            &mut target,
+            &mut random,
+        );
+
+        assert!(chunk_contains_block(&target, "minecraft:cactus"));
+    }
+
+    #[test]
+    fn vanilla_noise_desert_well_spillover_places_neighbor_blocks() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedDesertWellFeature {
+            step_index: 4,
+            feature_index: 0,
+            rarity: 1,
+            config: DesertWellFeatureConfig::new(),
+            biome_filter: FeatureBiomeFilter::All,
+        };
+
+        let placed = (0..256).any(|seed| {
+            let mut source = surface_test_chunk(&settings, 63, "minecraft:sand");
+            let mut target = surface_test_chunk(&settings, 63, "minecraft:sand");
+            let mut random = FeatureRandom::new(seed);
+
+            feature.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut random,
+            );
+
+            chunk_contains_block(&target, "minecraft:sandstone")
+                || chunk_contains_block(&target, "minecraft:water")
+                || chunk_contains_block(&target, "minecraft:suspicious_sand")
+        });
+
+        assert!(placed);
+    }
+
+    #[test]
+    fn vanilla_noise_fossil_spillover_places_neighbor_bone() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedFossilFeature {
+            step_index: 3,
+            feature_index: 0,
+            rarity: 1,
+            height: OreHeight::Uniform(HeightAnchor::Absolute(40), HeightAnchor::Absolute(40)),
+            config: FossilFeatureConfig::new("minecraft:coal_ore"),
+            biome_filter: FeatureBiomeFilter::All,
+        };
+
+        let placed = (0..256).any(|seed| {
+            let mut source = surface_test_chunk(&settings, 80, "minecraft:stone");
+            let mut target = surface_test_chunk(&settings, 80, "minecraft:stone");
+            let mut random = FeatureRandom::new(seed);
+
+            feature.place_with_spillover(
+                &settings,
+                0,
+                0,
+                16,
+                0,
+                &mut source,
+                &mut target,
+                &mut random,
+            );
+
+            chunk_contains_block(&target, "minecraft:bone_block")
+                || chunk_contains_block(&target, "minecraft:coal_ore")
+        });
+
+        assert!(placed);
     }
 
     #[test]
@@ -5461,14 +6907,15 @@ mod tests {
 
         let packet_entities = chunk.block_entities_as_packet(0, 0);
 
-        assert_eq!(packet_entities.len(), 1);
-        assert_eq!(packet_entities[0].xz, 0x12);
-        assert_eq!(packet_entities[0].y, 64);
-        assert_eq!(
-            packet_entities[0].entity_type,
-            VarInt(CHEST_BLOCK_ENTITY_TYPE_ID)
-        );
-        assert!(matches!(packet_entities[0].nbt, OptionalNbt(Some(_))));
+        let chest = packet_entities
+            .iter()
+            .find(|entity| {
+                entity.xz == 0x12
+                    && entity.y == 64
+                    && entity.entity_type == VarInt(CHEST_BLOCK_ENTITY_TYPE_ID)
+            })
+            .expect("chunk packet should include the inserted chest block entity");
+        assert!(matches!(chest.nbt, OptionalNbt(Some(_))));
     }
 
     #[test]
@@ -5522,6 +6969,60 @@ mod tests {
             found.contains("minecraft:amethyst_block")
                 || found.contains("minecraft:budding_amethyst")
         );
+    }
+
+    #[test]
+    fn vanilla_noise_amethyst_geode_spillover_places_neighbor_shell() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let columns = || {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| stone.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let mut source = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let config = GeodeFeatureConfig::amethyst();
+
+        assert!(config.place_with_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut FeatureRandom::new(12345),
+            15,
+            0,
+            8,
+        ));
+
+        assert!(target.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:smooth_basalt"))
+        }));
+        assert!(target.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| layer.is("minecraft:calcite"))
+        }));
     }
 
     #[test]
