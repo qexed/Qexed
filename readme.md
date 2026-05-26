@@ -1,8 +1,9 @@
 # Qexed 量子叠加态(Quantum Existence State)
 Qexed是我的世界java版服务端
-还在开发中，
+还在开发中
+> v3分支已停止更新，请阅读v4分支
 
-QQ群:627495509
+QQ群:722632621
 
 # 开发环境要求
 Rust
