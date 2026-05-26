@@ -861,7 +861,7 @@ impl NoiseSettings {
     }
 
     fn is_open_surface_water(&self, y: i32, surface_height: i32) -> bool {
-        y <= self.sea_level && y > surface_height
+        y < self.sea_level && y > surface_height
     }
 
     fn water_height(
@@ -971,7 +971,7 @@ impl NoiseSettings {
     }
 
     fn first_available_height(&self, surface_height: i32) -> i32 {
-        let height = surface_height.max(self.sea_level) + 1;
+        let height = surface_height.max(self.sea_level - 1) + 1;
         (height - self.min_y).clamp(0, self.height)
     }
 

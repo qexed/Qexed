@@ -112,6 +112,80 @@ impl NoiseChunkBlocks {
         self.column(x, z).blocks.get(index)
     }
 
+    fn surface_water_reaches(
+        &self,
+        x: usize,
+        y: i32,
+        z: usize,
+        min_y: i32,
+        sea_level: i32,
+    ) -> bool {
+        let Some(start) = usize::try_from(y - min_y).ok() else {
+            return false;
+        };
+        self.surface_water_reaches_from(x, z, start, min_y, sea_level)
+    }
+
+    fn surface_water_reaches_above(
+        &self,
+        x: usize,
+        y: i32,
+        z: usize,
+        min_y: i32,
+        sea_level: i32,
+    ) -> bool {
+        let Some(start) = usize::try_from(y + 1 - min_y).ok() else {
+            return false;
+        };
+        self.surface_water_reaches_from(x, z, start, min_y, sea_level)
+    }
+
+    fn adjacent_surface_water_reaches(
+        &self,
+        x: usize,
+        y: i32,
+        z: usize,
+        min_y: i32,
+        sea_level: i32,
+    ) -> bool {
+        [(1_isize, 0_isize), (-1, 0), (0, 1), (0, -1)]
+            .into_iter()
+            .filter_map(|(dx, dz)| {
+                let nx = x.checked_add_signed(dx)?;
+                let nz = z.checked_add_signed(dz)?;
+                (nx < 16 && nz < 16).then_some((nx, nz))
+            })
+            .any(|(nx, nz)| self.surface_water_reaches(nx, y, nz, min_y, sea_level))
+    }
+
+    fn surface_water_reaches_from(
+        &self,
+        x: usize,
+        z: usize,
+        start: usize,
+        min_y: i32,
+        sea_level: i32,
+    ) -> bool {
+        let column = self.column(x, z);
+        let Some(sea_index) = usize::try_from(sea_level - 1 - min_y).ok() else {
+            return false;
+        };
+        let end = sea_index.min(column.blocks.len().saturating_sub(1));
+        if start > end {
+            return false;
+        }
+
+        let mut has_water = false;
+        for layer in &column.blocks[start..=end] {
+            if is_water_layer(layer) {
+                has_water = true;
+            } else if !layer.is_air {
+                return false;
+            }
+        }
+        has_water
+    }
+
     fn set_layer(&mut self, x: usize, y: i32, z: usize, min_y: i32, layer: BlockLayer) {
         if let Ok(index) = usize::try_from(y - min_y) {
             let is_air = layer.is_air;

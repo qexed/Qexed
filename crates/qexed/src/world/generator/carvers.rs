@@ -681,6 +681,26 @@ fn carve_block(
         return false;
     }
 
+    let surface_water_reachable = world_y < settings.sea_level
+        && (chunk.surface_water_reaches(
+            local_x,
+            world_y,
+            local_z,
+            settings.min_y,
+            settings.sea_level,
+        ) || chunk.surface_water_reaches_above(
+            local_x,
+            world_y,
+            local_z,
+            settings.min_y,
+            settings.sea_level,
+        ) || chunk.adjacent_surface_water_reaches(
+            local_x,
+            world_y,
+            local_z,
+            settings.min_y,
+            settings.sea_level,
+        ));
     let Some(layer) = carve_layer(
         settings,
         world_x,
@@ -688,6 +708,7 @@ fn carve_block(
         world_z,
         preliminary_surfaces[local_z * 16 + local_x],
         lava_level,
+        surface_water_reachable,
     ) else {
         return false;
     };
@@ -718,9 +739,12 @@ fn carve_layer(
     world_z: i32,
     preliminary_surface: i32,
     lava_level: i32,
+    surface_water_reachable: bool,
 ) -> Option<BlockLayer> {
     if world_y <= lava_level {
         Some(settings.lava_block.clone())
+    } else if surface_water_reachable {
+        Some(settings.default_fluid.clone())
     } else {
         match settings
             .aquifer

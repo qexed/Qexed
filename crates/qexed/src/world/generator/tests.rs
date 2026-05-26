@@ -410,7 +410,7 @@ mod tests {
         let surface_height = settings.sea_level - 5;
         let layer = settings.layer_at_with_density(
             0,
-            settings.sea_level,
+            settings.sea_level - 1,
             0,
             -1.0,
             surface_height,
@@ -423,10 +423,28 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_keeps_sea_level_surface_as_air() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let surface_height = settings.sea_level - 5;
+        let layer = settings.layer_at_with_density(
+            0,
+            settings.sea_level,
+            0,
+            -1.0,
+            surface_height,
+            surface_height,
+            0,
+            None,
+        );
+
+        assert!(layer.is_air);
+    }
+
+    #[test]
     fn vanilla_noise_treats_open_surface_water_as_underwater_for_surface_rules() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let surface_height = settings.sea_level - 5;
-        let water_height = Some(settings.sea_level);
+        let water_height = Some(settings.sea_level - 1);
         let layer = settings.layer_at_with_density(
             0,
             surface_height,
@@ -499,6 +517,79 @@ mod tests {
         });
 
         assert!(carved_air);
+    }
+
+    #[test]
+    fn vanilla_noise_carver_keeps_surface_water_column_filled() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk =
+            underwater_test_chunk(&settings, 60, settings.sea_level - 1, "minecraft:stone");
+        let preliminary_surfaces = vec![60; HEIGHTMAP_ENTRY_COUNT];
+        let mut has_grass = false;
+
+        assert!(carve_block(
+            &settings,
+            &mut chunk,
+            &preliminary_surfaces,
+            8,
+            8,
+            60,
+            8,
+            8,
+            settings.min_y + 8,
+            &mut has_grass,
+        ));
+
+        assert!(chunk.layer(8, 60, 8, settings.min_y).unwrap().is("minecraft:water"));
+    }
+
+    #[test]
+    fn vanilla_noise_carver_floods_blocks_adjacent_to_surface_water() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let water = BlockLayer::new("minecraft:water");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|column| {
+                let x = column % 16;
+                NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|y| {
+                            if x == 7 && (61..settings.sea_level).contains(&y) {
+                                water.clone()
+                            } else if y < settings.sea_level {
+                                stone.clone()
+                            } else {
+                                air.clone()
+                            }
+                        })
+                        .collect(),
+                    first_available_height: settings.sea_level - settings.min_y,
+                }
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let preliminary_surfaces = vec![settings.sea_level; HEIGHTMAP_ENTRY_COUNT];
+        let mut has_grass = false;
+
+        assert!(carve_block(
+            &settings,
+            &mut chunk,
+            &preliminary_surfaces,
+            8,
+            8,
+            62,
+            8,
+            8,
+            settings.min_y + 8,
+            &mut has_grass,
+        ));
+
+        assert!(chunk.layer(8, 62, 8, settings.min_y).unwrap().is("minecraft:water"));
     }
 
     #[test]
