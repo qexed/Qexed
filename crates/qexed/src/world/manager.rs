@@ -8,6 +8,7 @@ use qexed_protocol::to_client::play::{
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, AtomicUsize, Ordering},
+    mpsc,
 };
 
 use super::{
@@ -24,11 +25,69 @@ pub struct WorldManager {
     light_algorithm: WorldLightAlgorithm,
     light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
     generator: Arc<dyn generator::WorldChunkGenerator>,
-    placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, i32>>>,
+    placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, PendingBlock>>>,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
     region_locks: Arc<Mutex<std::collections::HashMap<RegionKey, Arc<Mutex<()>>>>>,
+    block_write_queue: WorldWriteQueue,
+    block_write_revision: Arc<AtomicU64>,
     active_sessions: Arc<AtomicUsize>,
     cache_epoch: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+struct WorldWriteQueue {
+    sender: mpsc::Sender<WorldWriteTask>,
+}
+
+impl std::fmt::Debug for WorldWriteQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WorldWriteQueue")
+    }
+}
+
+enum WorldWriteTask {
+    Run(Box<dyn FnOnce() + Send + 'static>),
+    #[cfg(test)]
+    Flush(mpsc::Sender<()>),
+}
+
+impl WorldWriteQueue {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel::<WorldWriteTask>();
+        std::thread::Builder::new()
+            .name("qexed-world-write".to_string())
+            .spawn(move || {
+                while let Ok(task) = receiver.recv() {
+                    match task {
+                        WorldWriteTask::Run(task) => task(),
+                        #[cfg(test)]
+                        WorldWriteTask::Flush(done) => {
+                            let _ = done.send(());
+                        }
+                    }
+                }
+            })
+            .expect("create world write queue thread");
+        Self { sender }
+    }
+
+    fn spawn(&self, task: impl FnOnce() + Send + 'static) {
+        if self
+            .sender
+            .send(WorldWriteTask::Run(Box::new(task)))
+            .is_err()
+        {
+            log::warn!("failed to queue world write task because write queue stopped");
+        }
+    }
+
+    #[cfg(test)]
+    fn flush(&self) {
+        let (sender, receiver) = mpsc::channel();
+        if self.sender.send(WorldWriteTask::Flush(sender)).is_ok() {
+            let _ = receiver.recv();
+        }
+    }
 }
 
 impl WorldManager {
@@ -79,6 +138,8 @@ impl WorldManager {
             placed_blocks: Default::default(),
             chunk_light_dampening: Default::default(),
             region_locks: Default::default(),
+            block_write_queue: WorldWriteQueue::new(),
+            block_write_revision: Default::default(),
             active_sessions: Default::default(),
             cache_epoch: Default::default(),
         }
@@ -112,6 +173,11 @@ impl WorldManager {
             .lock()
             .expect("world light cache poisoned")
             .len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flush_block_writes(&self) {
+        self.block_write_queue.flush();
     }
 
     #[cfg(test)]
@@ -336,26 +402,15 @@ impl WorldManager {
             return;
         }
 
+        let pending = PendingBlock {
+            block_state,
+            revision: self.next_block_write_revision(),
+        };
         self.placed_blocks
             .lock()
             .expect("world block store poisoned")
-            .insert(BlockKey::new(dimension, &position), block_state);
-        match self.persist_block_change(dimension, &position, block_state) {
-            Ok(()) => {
-                self.placed_blocks
-                    .lock()
-                    .expect("world block store poisoned")
-                    .remove(&BlockKey::new(dimension, &position));
-            }
-            Err(err) => {
-                log::warn!(
-                    "failed to persist block change, keeping in memory overlay: dimension={dimension}, position=({}, {}, {}), error={err:#}",
-                    position.x,
-                    position.y,
-                    position.z
-                );
-            }
-        }
+            .insert(BlockKey::new(dimension, &position), pending);
+        self.queue_block_persist(dimension.to_string(), position.clone(), pending);
         self.mark_placed_block_light_dampening(
             dimension,
             &position,
@@ -390,33 +445,23 @@ impl WorldManager {
             })
             .collect::<Vec<_>>();
 
+        let mut expected = Vec::with_capacity(blocks.len());
         {
             let mut placed_blocks = self
                 .placed_blocks
                 .lock()
                 .expect("world block store poisoned");
             for (position, block_state) in &blocks {
-                placed_blocks.insert(BlockKey::new(dimension, position), *block_state);
+                let pending = PendingBlock {
+                    block_state: *block_state,
+                    revision: self.next_block_write_revision(),
+                };
+                placed_blocks.insert(BlockKey::new(dimension, position), pending);
+                expected.push((position.clone(), pending));
             }
         }
 
-        match self.persist_block_changes(dimension, &blocks) {
-            Ok(()) => {
-                let mut placed_blocks = self
-                    .placed_blocks
-                    .lock()
-                    .expect("world block store poisoned");
-                for (position, _) in &blocks {
-                    placed_blocks.remove(&BlockKey::new(dimension, position));
-                }
-            }
-            Err(err) => {
-                log::warn!(
-                    "failed to persist bulk block changes, keeping in memory overlay: dimension={dimension}, count={}, error={err:#}",
-                    blocks.len()
-                );
-            }
-        }
+        self.queue_blocks_persist(dimension.to_string(), blocks.clone(), expected);
 
         for (position, block_state) in &blocks {
             self.mark_placed_block_light_dampening(
@@ -433,6 +478,127 @@ impl WorldManager {
         Ok(updates)
     }
 
+    fn queue_block_persist(
+        &self,
+        dimension: String,
+        position: qexed_packet::net_types::Position,
+        pending: PendingBlock,
+    ) {
+        let world = self.clone();
+        self.block_write_queue.spawn(move || {
+            if !world.placed_block_is_current(&dimension, &position, pending) {
+                return;
+            }
+            match world.persist_block_change(&dimension, &position, pending.block_state) {
+                Ok(()) => {
+                    world.remove_placed_block_if_current(&dimension, &position, pending);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "failed to persist block change, keeping in memory overlay: dimension={dimension}, position=({}, {}, {}), error={err:#}",
+                        position.x,
+                        position.y,
+                        position.z
+                    );
+                }
+            }
+        });
+    }
+
+    fn queue_blocks_persist(
+        &self,
+        dimension: String,
+        blocks: Vec<(qexed_packet::net_types::Position, i32)>,
+        expected: Vec<(qexed_packet::net_types::Position, PendingBlock)>,
+    ) {
+        let world = self.clone();
+        self.block_write_queue.spawn(move || {
+            let current = blocks
+                .into_iter()
+                .zip(expected)
+                .filter(|((position, _), (_, pending))| {
+                    world.placed_block_is_current(&dimension, position, *pending)
+                })
+                .collect::<Vec<_>>();
+            if current.is_empty() {
+                return;
+            }
+
+            let blocks = current
+                .iter()
+                .map(|((position, block_state), _)| (position.clone(), *block_state))
+                .collect::<Vec<_>>();
+            let expected = current
+                .into_iter()
+                .map(|(_, expected)| expected)
+                .collect::<Vec<_>>();
+
+            match world.persist_block_changes(&dimension, &blocks) {
+                Ok(()) => {
+                    world.remove_placed_blocks_if_current(&dimension, &expected);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "failed to persist bulk block changes, keeping in memory overlay: dimension={dimension}, count={}, error={err:#}",
+                        blocks.len()
+                    );
+                }
+            }
+        });
+    }
+
+    fn placed_block_is_current(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+        expected: PendingBlock,
+    ) -> bool {
+        let key = BlockKey::new(dimension, position);
+        self.placed_blocks
+            .lock()
+            .expect("world block store poisoned")
+            .get(&key)
+            .copied()
+            == Some(expected)
+    }
+
+    fn remove_placed_block_if_current(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+        expected: PendingBlock,
+    ) {
+        let key = BlockKey::new(dimension, position);
+        let mut placed_blocks = self
+            .placed_blocks
+            .lock()
+            .expect("world block store poisoned");
+        if placed_blocks.get(&key).copied() == Some(expected) {
+            placed_blocks.remove(&key);
+        }
+    }
+
+    fn remove_placed_blocks_if_current(
+        &self,
+        dimension: &str,
+        blocks: &[(qexed_packet::net_types::Position, PendingBlock)],
+    ) {
+        let mut placed_blocks = self
+            .placed_blocks
+            .lock()
+            .expect("world block store poisoned");
+        for (position, expected) in blocks {
+            let key = BlockKey::new(dimension, position);
+            if placed_blocks.get(&key).copied() == Some(*expected) {
+                placed_blocks.remove(&key);
+            }
+        }
+    }
+
+    fn next_block_write_revision(&self) -> u64 {
+        self.block_write_revision.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     pub fn block_state_at(
         &self,
         dimension: &str,
@@ -443,7 +609,7 @@ impl WorldManager {
             .lock()
             .expect("world block store poisoned")
             .get(&BlockKey::new(dimension, position))
-            .copied()
+            .map(|pending| pending.block_state)
         {
             return Some(block_state);
         }
@@ -497,7 +663,7 @@ impl WorldManager {
                             y: key.y,
                             z: key.z,
                         },
-                        block_state: VarInt(*block_state),
+                        block_state: VarInt(block_state.block_state),
                     })
             })
             .collect()
@@ -519,14 +685,18 @@ impl WorldManager {
     ) -> Result<()> {
         let chunk_x = position.x.div_euclid(16);
         let chunk_z = position.z.div_euclid(16);
+        let fallback_block_state = self.generator.block_state_at(dimension, position);
+        let generated = if self
+            .load_region_chunk(dimension, chunk_x, chunk_z)?
+            .is_none()
+        {
+            self.generator.region_chunk(dimension, chunk_x, chunk_z)?
+        } else {
+            None
+        };
+
         self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
             let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
-            let generated = if existing.is_none() {
-                self.generator.region_chunk(dimension, chunk_x, chunk_z)?
-            } else {
-                None
-            };
-            let fallback_block_state = self.generator.block_state_at(dimension, position);
             let chunk = chunk_nbt::set_block_state_in_region(
                 chunk_x,
                 chunk_z,
@@ -560,13 +730,16 @@ impl WorldManager {
         }
 
         for ((chunk_x, chunk_z), chunk_blocks) in by_chunk {
+            let generated = if self
+                .load_region_chunk(dimension, chunk_x, chunk_z)?
+                .is_none()
+            {
+                self.generator.region_chunk(dimension, chunk_x, chunk_z)?
+            } else {
+                None
+            };
             self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
                 let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
-                let generated = if existing.is_none() {
-                    self.generator.region_chunk(dimension, chunk_x, chunk_z)?
-                } else {
-                    None
-                };
                 let chunk = chunk_nbt::set_block_states_in_region(
                     chunk_x,
                     chunk_z,
@@ -828,6 +1001,12 @@ struct BlockKey {
     x: i32,
     y: i32,
     z: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingBlock {
+    block_state: i32,
+    revision: u64,
 }
 
 impl BlockKey {

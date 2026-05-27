@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    sync::{OnceLock, mpsc},
     time::{Duration, Instant},
 };
 
@@ -23,6 +24,7 @@ const MAX_CHUNKS_PER_TICK: f32 = 64.0;
 const START_CHUNKS_PER_TICK: f32 = 9.0;
 const INITIAL_MAX_UNACKNOWLEDGED_BATCHES: usize = 1;
 const MAX_UNACKNOWLEDGED_BATCHES: usize = 10;
+const MAX_CHUNK_TASK_THREADS: usize = 8;
 
 pub(super) struct ChunkSendState {
     pub(super) dimension: String,
@@ -45,6 +47,139 @@ pub(super) struct ChunkLoadResult {
     pub(super) chunk_x: i32,
     pub(super) chunk_z: i32,
     payload: Result<bytes::Bytes>,
+}
+
+#[derive(Clone, Debug)]
+struct ChunkTaskPool {
+    sender: mpsc::Sender<ChunkTask>,
+}
+
+impl ChunkTaskPool {
+    fn shared() -> &'static Self {
+        static POOL: OnceLock<ChunkTaskPool> = OnceLock::new();
+        POOL.get_or_init(|| {
+            let worker_count = default_chunk_task_threads();
+            let (sender, receiver) = mpsc::channel::<ChunkTask>();
+            let receiver = std::sync::Arc::new(std::sync::Mutex::new(receiver));
+            for index in 0..worker_count {
+                let receiver = receiver.clone();
+                std::thread::Builder::new()
+                    .name(format!("qexed-chunk-{index}"))
+                    .spawn(move || {
+                        loop {
+                            let task =
+                                { receiver.lock().expect("chunk task queue poisoned").recv() };
+                            match task {
+                                Ok(task) => task.run(),
+                                Err(_) => break,
+                            }
+                        }
+                    })
+                    .expect("create chunk task worker");
+            }
+            log::info!("initialized chunk task pool: workers={worker_count}");
+            Self { sender }
+        })
+    }
+
+    async fn build_payload(
+        &self,
+        world: WorldManager,
+        dimension: String,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: u64,
+    ) -> Result<bytes::Bytes> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.sender
+            .send(ChunkTask::BuildPayload {
+                world,
+                dimension,
+                chunk_x,
+                chunk_z,
+                cache_epoch,
+                reply: ChunkTaskReply::OneShot(sender),
+            })
+            .context("queue chunk packet build task")?;
+        receiver.await.context("join chunk packet build task")?
+    }
+
+    fn spawn_payload(
+        &self,
+        world: WorldManager,
+        dimension: String,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: u64,
+        sender: tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
+    ) {
+        if self
+            .sender
+            .send(ChunkTask::BuildPayload {
+                world,
+                dimension,
+                chunk_x,
+                chunk_z,
+                cache_epoch,
+                reply: ChunkTaskReply::Channel(sender),
+            })
+            .is_err()
+        {
+            log::warn!("failed to queue chunk payload task because chunk task pool stopped");
+        }
+    }
+}
+
+enum ChunkTask {
+    BuildPayload {
+        world: WorldManager,
+        dimension: String,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: u64,
+        reply: ChunkTaskReply,
+    },
+}
+
+impl ChunkTask {
+    fn run(self) {
+        match self {
+            ChunkTask::BuildPayload {
+                world,
+                dimension,
+                chunk_x,
+                chunk_z,
+                cache_epoch,
+                reply,
+            } => {
+                let payload =
+                    build_chunk_payload_sync(world, dimension, chunk_x, chunk_z, cache_epoch);
+                reply.send(chunk_x, chunk_z, payload);
+            }
+        }
+    }
+}
+
+enum ChunkTaskReply {
+    OneShot(tokio::sync::oneshot::Sender<Result<bytes::Bytes>>),
+    Channel(tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>),
+}
+
+impl ChunkTaskReply {
+    fn send(self, chunk_x: i32, chunk_z: i32, payload: Result<bytes::Bytes>) {
+        match self {
+            ChunkTaskReply::OneShot(sender) => {
+                let _ = sender.send(payload);
+            }
+            ChunkTaskReply::Channel(sender) => {
+                let _ = sender.send(ChunkLoadResult {
+                    chunk_x,
+                    chunk_z,
+                    payload,
+                });
+            }
+        }
+    }
 }
 
 impl ChunkSendState {
@@ -166,14 +301,16 @@ impl ChunkSendState {
         self.remove_pending_chunk(chunk);
         self.loading_chunks.remove(&chunk);
 
-        let world_for_task = world.clone();
-        let dimension = self.dimension.clone();
         let cache_epoch = world.cache_epoch();
-        let chunk_payload = tokio::task::spawn_blocking(move || {
-            build_chunk_payload_sync(world_for_task, dimension, chunk.0, chunk.1, cache_epoch)
-        })
-        .await
-        .context("join center chunk packet build task")??;
+        let chunk_payload = ChunkTaskPool::shared()
+            .build_payload(
+                world.clone(),
+                self.dimension.clone(),
+                chunk.0,
+                chunk.1,
+                cache_epoch,
+            )
+            .await?;
 
         sink.send(ChunkBatchStart {}).await?;
         sink.send_raw(chunk_payload).await?;
@@ -207,15 +344,17 @@ impl ChunkSendState {
 
         sink.send(ChunkBatchStart {}).await?;
         for (chunk_x, chunk_z) in &chunks {
-            let world_for_task = world.clone();
-            let dimension = self.dimension.clone();
             let chunk_x = *chunk_x;
             let chunk_z = *chunk_z;
-            let chunk_payload = tokio::task::spawn_blocking(move || {
-                build_chunk_payload_sync(world_for_task, dimension, chunk_x, chunk_z, cache_epoch)
-            })
-            .await
-            .context("join chunk packet build task")??;
+            let chunk_payload = ChunkTaskPool::shared()
+                .build_payload(
+                    world.clone(),
+                    self.dimension.clone(),
+                    chunk_x,
+                    chunk_z,
+                    cache_epoch,
+                )
+                .await?;
             sink.send_raw(chunk_payload).await?;
             for update in world.placed_block_updates(&self.dimension, chunk_x, chunk_z) {
                 sink.send(update).await?;
@@ -350,19 +489,15 @@ impl ChunkSendState {
                 continue;
             }
 
-            let world = world.clone();
-            let dimension = self.dimension.clone();
-            let sender = sender.clone();
             let cache_epoch = world.cache_epoch();
-            tokio::task::spawn_blocking(move || {
-                let payload =
-                    build_chunk_payload_sync(world, dimension, chunk_x, chunk_z, cache_epoch);
-                let _ = sender.send(ChunkLoadResult {
-                    chunk_x,
-                    chunk_z,
-                    payload,
-                });
-            });
+            ChunkTaskPool::shared().spawn_payload(
+                world.clone(),
+                self.dimension.clone(),
+                chunk_x,
+                chunk_z,
+                cache_epoch,
+                sender.clone(),
+            );
             self.loading_chunks.insert(chunk);
         }
     }
@@ -547,6 +682,13 @@ pub(super) fn chunk_load_parallelism_limit(value: usize) -> usize {
         value
     };
     value.clamp(1, MAX_CHUNK_LOAD_PARALLELISM)
+}
+
+fn default_chunk_task_threads() -> usize {
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(DEFAULT_CHUNK_LOAD_PARALLELISM);
+    available.saturating_sub(1).clamp(1, MAX_CHUNK_TASK_THREADS)
 }
 
 fn visible_chunk_set(center_x: i32, center_z: i32, view_distance: i32) -> HashSet<(i32, i32)> {
