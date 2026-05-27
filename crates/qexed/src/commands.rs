@@ -140,7 +140,15 @@ impl CommandMessages {
 }
 
 pub fn command_tree() -> Commands {
-    command_tree_for(&["help", "list", "lobby", "server", "spawn", "entity"])
+    command_tree_for(&[
+        "help",
+        "list",
+        "lobby",
+        "server",
+        "spawn",
+        "entity",
+        "structure",
+    ])
 }
 
 pub fn command_tree_for(commands: &[&str]) -> Commands {
@@ -167,8 +175,8 @@ pub fn command_tree_for_lobby(commands: &[&str], server_ids: &[String]) -> Comma
             for server_id in &server_ids {
                 nodes.push(executable_literal(server_id));
             }
-        } else if *command == "entity" {
-            nodes.push(entity_literal(index + 1));
+        } else if *command == "entity" || *command == "structure" {
+            nodes.push(greedy_command_literal(command, index + 1));
             nodes.push(greedy_string_argument("action"));
         } else {
             nodes.push(executable_literal(command));
@@ -198,7 +206,15 @@ pub async fn visible_commands(
     profile: &qexed_packet::net_types::GameProfile,
 ) -> anyhow::Result<Vec<&'static str>> {
     let mut commands = Vec::new();
-    for command in ["help", "list", "lobby", "server", "spawn", "entity"] {
+    for command in [
+        "help",
+        "list",
+        "lobby",
+        "server",
+        "spawn",
+        "entity",
+        "structure",
+    ] {
         if permissions.can_run_command(profile, command).await? {
             commands.push(command);
         }
@@ -254,11 +270,11 @@ fn server_literal(argument_index: i32, literal_start_index: i32, literal_count: 
     }
 }
 
-fn entity_literal(argument_index: i32) -> Node {
+fn greedy_command_literal(name: &str, argument_index: i32) -> Node {
     Node {
         flags: 0x01 | 0x04,
         children: vec![VarInt(argument_index)],
-        name: Some("entity".to_string()),
+        name: Some(name.to_string()),
         ..Node::default()
     }
 }
@@ -277,7 +293,7 @@ fn greedy_string_argument(name: &str) -> Node {
 }
 
 fn default_help() -> String {
-    "---- Minecraft Help ----\n/list - Lists players on the server.\n/lobby - Opens the lobby menu.\n/lobby status - Shows lobby backend status.\n/lobby refresh - Refreshes lobby backend status.\n/server [id] - Lists or joins a backend server.\n/spawn - Returns to spawn.\n/entity list|spawn|move|remove - Manages runtime lobby entities.".to_string()
+    "---- Minecraft Help ----\n/list - Lists players on the server.\n/lobby - Opens the lobby menu.\n/lobby status - Shows lobby backend status.\n/lobby refresh - Refreshes lobby backend status.\n/server [id] - Lists or joins a backend server.\n/spawn - Returns to spawn.\n/entity list|spawn|move|remove - Manages runtime lobby entities.\n/structure list|place|locate - Manages built-in structures.".to_string()
 }
 
 fn default_list() -> String {
@@ -345,7 +361,7 @@ mod tests {
     fn command_tree_contains_help_and_list() {
         let tree = super::command_tree();
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes.len(), 11);
+        assert_eq!(tree.nodes.len(), 13);
         assert_eq!(tree.nodes[1].name.as_deref(), Some("help"));
         assert_eq!(tree.nodes[2].name.as_deref(), Some("list"));
         assert_eq!(tree.nodes[3].name.as_deref(), Some("lobby"));
@@ -355,6 +371,8 @@ mod tests {
         assert_eq!(tree.nodes[7].name.as_deref(), Some("target"));
         assert_eq!(tree.nodes[9].name.as_deref(), Some("entity"));
         assert_eq!(tree.nodes[10].name.as_deref(), Some("action"));
+        assert_eq!(tree.nodes[11].name.as_deref(), Some("structure"));
+        assert_eq!(tree.nodes[12].name.as_deref(), Some("action"));
 
         let mut buf = bytes::BytesMut::new();
         let mut writer = qexed_packet::PacketWriter::new(&mut buf);
@@ -429,6 +447,19 @@ mod tests {
         assert_eq!(tree.root_index.0, 0);
         assert_eq!(tree.nodes.len(), 3);
         assert_eq!(tree.nodes[1].name.as_deref(), Some("entity"));
+        assert_eq!(
+            tree.nodes[1].children,
+            vec![qexed_packet::net_types::VarInt(2)]
+        );
+        assert_eq!(tree.nodes[2].name.as_deref(), Some("action"));
+    }
+
+    #[test]
+    fn structure_command_accepts_greedy_action() {
+        let tree = super::command_tree_for(&["structure"]);
+        assert_eq!(tree.root_index.0, 0);
+        assert_eq!(tree.nodes.len(), 3);
+        assert_eq!(tree.nodes[1].name.as_deref(), Some("structure"));
         assert_eq!(
             tree.nodes[1].children,
             vec![qexed_packet::net_types::VarInt(2)]

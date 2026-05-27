@@ -124,6 +124,18 @@ impl FeatureBiomeFilter {
             Self::Include(_) | Self::Exclude(_) => self.allows(density.biome(x, y, z)),
         }
     }
+
+    fn can_match_chunk(self, chunk: &NoiseChunkBlocks) -> bool {
+        if chunk.biomes.is_empty() {
+            return true;
+        }
+
+        match self {
+            Self::All => true,
+            Self::Include(biomes) => chunk.biomes.iter().any(|biome| biomes.contains(biome)),
+            Self::Exclude(biomes) => chunk.biomes.iter().any(|biome| !biomes.contains(biome)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -650,19 +662,29 @@ impl PlacedDiskFeature {
                 continue;
             }
 
-            self.place_disk_with_context(
-                settings,
-                source_origin_x,
-                source_origin_z,
+            let radius = self.radius.sample(random);
+            if horizontal_box_overlaps_chunk(
+                x - radius,
+                x + radius,
+                z - radius,
+                z + radius,
                 target_origin_x,
                 target_origin_z,
-                source_chunk,
-                target_chunk,
-                random,
-                x,
-                y,
-                z,
-            );
+            ) {
+                self.place_disk_with_context(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    target_origin_x,
+                    target_origin_z,
+                    source_chunk,
+                    target_chunk,
+                    radius,
+                    x,
+                    y,
+                    z,
+                );
+            }
         }
     }
 
@@ -746,12 +768,11 @@ impl PlacedDiskFeature {
         target_origin_z: i32,
         source_chunk: &mut NoiseChunkBlocks,
         target_chunk: &mut NoiseChunkBlocks,
-        random: &mut FeatureRandom,
+        radius: i32,
         center_x: i32,
         center_y: i32,
         center_z: i32,
     ) {
-        let radius = self.radius.sample(random);
         let min_y = (center_y - self.half_height).max(settings.min_y);
         let max_y = (center_y + self.half_height).min(settings.min_y + settings.height - 1);
         if min_y > max_y {
@@ -1591,6 +1612,10 @@ impl OreFeatureConfig {
         } else {
             random.next_float() >= self.discard_chance_on_air_exposure
         }
+    }
+
+    fn max_horizontal_spillover(&self) -> i32 {
+        (self.size / 8 + self.size / 16 + 2).max(2)
     }
 }
 

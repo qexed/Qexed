@@ -227,8 +227,8 @@ impl VanillaNoiseGenerator {
         }
     }
 
-    fn can_generate_dimension(dimension: &str) -> bool {
-        dimension == "minecraft:overworld"
+    fn supported_dimension(dimension: &str) -> Option<NoiseDimension> {
+        NoiseDimension::from_name(dimension)
     }
 }
 
@@ -240,10 +240,27 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         chunk_z: i32,
         light_algorithm: WorldLightAlgorithm,
     ) -> Result<GeneratedChunk> {
-        if !Self::can_generate_dimension(dimension) {
+        let Some(dimension) = Self::supported_dimension(dimension) else {
             return Ok(GeneratedChunk {
                 packet: empty_chunk_packet(chunk_x, chunk_z, super::WorldLightMode::Static),
                 light_dampening: vec![0; CHUNK_DAMPENING_LEN],
+            });
+        };
+        if dimension != NoiseDimension::Overworld {
+            let chunk =
+                basic_dimension_chunk(dimension, self.settings.seed(), chunk_x, chunk_z);
+            let root = noise_chunk_root(&chunk, dimension.biome());
+            let (mut packet, light_dampening) =
+                chunk_nbt::network_chunk_and_light_dampening_from_nbt(
+                    chunk_x,
+                    chunk_z,
+                    &root,
+                    light_algorithm,
+                )?;
+            packet.data.block_entities = chunk.block_entities_as_packet(chunk_x, chunk_z);
+            return Ok(GeneratedChunk {
+                packet,
+                light_dampening,
             });
         }
 
@@ -291,12 +308,18 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
-        if !Self::can_generate_dimension(dimension) {
-            return None;
+        match Self::supported_dimension(dimension)? {
+            NoiseDimension::Overworld => self
+                .settings
+                .block_state_at(position.x, position.y, position.z),
+            dimension => basic_dimension_block_state_at(
+                dimension,
+                self.settings.seed(),
+                position.x,
+                position.y,
+                position.z,
+            ),
         }
-
-        self.settings
-            .block_state_at(position.x, position.y, position.z)
     }
 
     fn region_chunk(
@@ -305,8 +328,16 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         chunk_x: i32,
         chunk_z: i32,
     ) -> Result<Option<super::region::ChunkData>> {
-        if !Self::can_generate_dimension(dimension) {
+        let Some(dimension) = Self::supported_dimension(dimension) else {
             return Ok(None);
+        };
+        if dimension != NoiseDimension::Overworld {
+            let chunk =
+                basic_dimension_chunk(dimension, self.settings.seed(), chunk_x, chunk_z);
+            let root = noise_chunk_root(&chunk, dimension.biome());
+            return Ok(Some(chunk_nbt::region_chunk_from_nbt(
+                chunk_x, chunk_z, &root,
+            )?));
         }
 
         let (chunk, _) =
@@ -394,6 +425,7 @@ struct FlatLayerSetting {
 
 #[derive(Debug, Clone)]
 struct NoiseSettings {
+    seed: i64,
     min_y: i32,
     height: i32,
     sea_level: i32,
@@ -442,6 +474,7 @@ struct NoiseSettings {
     lava_lake_fluid_block: BlockLayer,
     lava_lake_barrier_block: BlockLayer,
     cave_air_block: BlockLayer,
+    feature_source_cache: FeatureSourceCache,
 }
 
 impl NoiseSettings {
@@ -449,6 +482,7 @@ impl NoiseSettings {
         let surface_rules = vanilla_noise::OverworldSurfaceRules::new(seed);
         let sea_level = 63;
         Self {
+            seed,
             min_y: WORLD_MIN_Y,
             height: super::WORLD_SECTION_COUNT as i32 * SECTION_HEIGHT,
             sea_level,
@@ -497,7 +531,12 @@ impl NoiseSettings {
             lava_lake_fluid_block: BlockLayer::new("minecraft:lava"),
             lava_lake_barrier_block: BlockLayer::new("minecraft:stone"),
             cave_air_block: BlockLayer::new("minecraft:cave_air"),
+            feature_source_cache: FeatureSourceCache::default(),
         }
+    }
+
+    fn seed(&self) -> i64 {
+        self.seed
     }
 
     #[cfg(test)]
@@ -628,6 +667,21 @@ impl NoiseSettings {
             },
             preliminary_surfaces,
         )
+    }
+
+    fn feature_source_chunk(&self, chunk_x: i32, chunk_z: i32) -> NoiseChunkBlocks {
+        self.feature_source_cache
+            .get_or_insert_with(chunk_x, chunk_z, || {
+                let (mut chunk, preliminary_surfaces) = self.generate_base_chunk(chunk_x, chunk_z);
+                self.carvers.carve_chunk(
+                    self,
+                    chunk_x,
+                    chunk_z,
+                    &preliminary_surfaces,
+                    &mut chunk,
+                );
+                chunk
+            })
     }
 
     fn generate_biomes(&self, chunk_x: i32, chunk_z: i32) -> Vec<&'static str> {

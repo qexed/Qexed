@@ -3,7 +3,7 @@ _version: 2
 autodoc:
   header:
     en: |-
-      # Official documentation: https://www.qexed.com/doc?path=/qexed/doc/autodoc
+      # Official documentation: https://doc.qexed.com/docs/autodoc/
       # Do not modify fields prefixed with auto_doc_system_
       # Example: auto_doc_system_lang
       # These settings are used for automatically updating the language-specific comments in the config file.
@@ -13,7 +13,7 @@ autodoc:
       # Comments below "=======================" will not be modified by the system.
       # Comments above "=======================" will be modified by the system. Please do not edit them.
     zh-CN: |-
-      # 官方文档：https://www.qexed.com/doc?path=/qexed/doc/autodoc
+      # 官方文档：https://doc.qexed.com/docs/autodoc/
       # 请不要修改 auto_doc_system_ 开头的字段
       # 例如: auto_doc_system_lang
       # 这些设置是用于自动更新配置文件语言自动注释的

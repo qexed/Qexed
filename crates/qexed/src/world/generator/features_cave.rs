@@ -104,6 +104,20 @@ impl PlacedMonsterRoomFeature {
             }
 
             let shape = self.config.sample_shape(random);
+            if !shape.overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
+                self.config.place_resolved(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    shape,
+                );
+                continue;
+            }
             let mut replay_random = random.clone();
             if self.config.place_resolved(
                 settings,
@@ -156,6 +170,20 @@ impl PlacedMonsterRoomFeature {
             }
 
             let shape = self.config.sample_shape(random);
+            if !shape.overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
+                self.config.place_resolved(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    shape,
+                );
+                continue;
+            }
             let mut replay_random = random.clone();
             let source_context: Vec<_> = source_neighbors
                 .iter()

@@ -337,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn vanilla_noise_does_not_generate_non_overworld_dimensions() {
+    fn vanilla_noise_generates_basic_nether_and_end_dimensions() {
         let config = WorldConfig {
             generator: WorldGeneratorConfig::VanillaNoise,
             generator_preset: "minecraft:overworld".to_string(),
@@ -348,17 +348,128 @@ mod tests {
         let generated = generator
             .generate("minecraft:the_nether", 0, 0, WorldLightAlgorithm::Fast)
             .unwrap();
+        let netherrack = chunk_nbt::default_block_state_id("minecraft:netherrack");
+        let lava = chunk_nbt::default_block_state_id("minecraft:lava");
+        let end_stone = chunk_nbt::default_block_state_id("minecraft:end_stone");
 
-        assert_eq!(generated.light_dampening, vec![0; CHUNK_DAMPENING_LEN]);
+        assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
+        assert!(
+            generated
+                .light_dampening
+                .iter()
+                .any(|dampening| *dampening > 0)
+        );
         assert_eq!(generated.packet.data.heightmaps.len(), 3);
+        assert!(
+            (32..=96).any(|y| {
+                generator.block_state_at(
+                    "minecraft:the_nether",
+                    &qexed_packet::net_types::Position { x: 0, y, z: 0 },
+                ) == Some(netherrack)
+            })
+        );
+        assert!((-8..=8).any(|x| {
+            (-8..=8).any(|z| {
+                (16..=31).any(|y| {
+                    generator.block_state_at(
+                        "minecraft:the_nether",
+                        &qexed_packet::net_types::Position { x, y, z },
+                    ) == Some(lava)
+                })
+            })
+        }));
         assert_eq!(
             generator.block_state_at(
                 "minecraft:the_end",
                 &qexed_packet::net_types::Position { x: 0, y: 64, z: 0 }
             ),
-            None
+            Some(end_stone)
         );
-        assert!(generator.region_chunk("minecraft:the_nether", 0, 0).unwrap().is_none());
+        assert!(
+            generator
+                .region_chunk("minecraft:the_nether", 0, 0)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            generator
+                .region_chunk("minecraft:the_end", 0, 0)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            generator
+                .region_chunk("minecraft:unknown", 0, 0)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_basic_nether_places_ores_and_patches() {
+        let config = WorldConfig {
+            generator: WorldGeneratorConfig::VanillaNoise,
+            generator_preset: "minecraft:overworld".to_string(),
+            seed: 12345,
+            ..WorldConfig::default()
+        };
+        let generator = VanillaNoiseGenerator::from_config(&config);
+        let quartz = chunk_nbt::default_block_state_id("minecraft:nether_quartz_ore");
+        let gold = chunk_nbt::default_block_state_id("minecraft:nether_gold_ore");
+        let ancient_debris = chunk_nbt::default_block_state_id("minecraft:ancient_debris");
+        let magma = chunk_nbt::default_block_state_id("minecraft:magma_block");
+        let soul_sand = chunk_nbt::default_block_state_id("minecraft:soul_sand");
+        let gravel = chunk_nbt::default_block_state_id("minecraft:gravel");
+        let blackstone = chunk_nbt::default_block_state_id("minecraft:blackstone");
+
+        let contains = |block_state| {
+            (-32..=32).any(|x| {
+                (-32..=32).any(|z| {
+                    (8..=118).any(|y| {
+                        generator.block_state_at(
+                            "minecraft:the_nether",
+                            &qexed_packet::net_types::Position { x, y, z },
+                        ) == Some(block_state)
+                    })
+                })
+            })
+        };
+
+        assert!(contains(quartz));
+        assert!(contains(gold));
+        assert!(contains(ancient_debris));
+        assert!(contains(magma));
+        assert!(contains(soul_sand));
+        assert!(contains(gravel));
+        assert!(contains(blackstone));
+    }
+
+    #[test]
+    fn vanilla_noise_basic_end_places_obsidian_pillars() {
+        let config = WorldConfig {
+            generator: WorldGeneratorConfig::VanillaNoise,
+            generator_preset: "minecraft:overworld".to_string(),
+            seed: 12345,
+            ..WorldConfig::default()
+        };
+        let generator = VanillaNoiseGenerator::from_config(&config);
+        let obsidian = chunk_nbt::default_block_state_id("minecraft:obsidian");
+        let end_stone = chunk_nbt::default_block_state_id("minecraft:end_stone");
+
+        assert_eq!(
+            generator.block_state_at(
+                "minecraft:the_end",
+                &qexed_packet::net_types::Position { x: 42, y: 64, z: 0 }
+            ),
+            Some(obsidian)
+        );
+        assert_eq!(
+            generator.block_state_at(
+                "minecraft:the_end",
+                &qexed_packet::net_types::Position { x: 0, y: 64, z: 0 }
+            ),
+            Some(end_stone)
+        );
     }
 
     #[test]
@@ -3038,7 +3149,7 @@ mod tests {
             0,
             &mut source,
             &mut target,
-            &mut FeatureRandom::new(0),
+            1,
             15,
             62,
             8,

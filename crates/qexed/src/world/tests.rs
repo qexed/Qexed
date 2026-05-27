@@ -281,6 +281,71 @@ fn world_manager_persists_placed_blocks_to_region() {
 }
 
 #[test]
+fn world_manager_bulk_persists_placed_blocks_across_chunks() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let positions = [
+        qexed_packet::net_types::Position { x: 15, y: 70, z: 0 },
+        qexed_packet::net_types::Position { x: 16, y: 70, z: 0 },
+        qexed_packet::net_types::Position {
+            x: -1,
+            y: 71,
+            z: -1,
+        },
+    ];
+
+    let updates = manager
+        .place_blocks(
+            "minecraft:overworld",
+            positions.iter().cloned().map(|position| (position, stone)),
+        )
+        .unwrap();
+
+    assert_eq!(updates.len(), positions.len());
+    let reloaded = WorldManager::new(dir.path());
+    for position in &positions {
+        assert_eq!(
+            reloaded.block_state_at("minecraft:overworld", position),
+            Some(stone)
+        );
+    }
+}
+
+#[test]
+fn world_manager_serializes_parallel_region_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let first = qexed_packet::net_types::Position { x: 3, y: 70, z: 4 };
+    let second = qexed_packet::net_types::Position { x: 19, y: 71, z: 4 };
+    let first_writer = manager.clone();
+    let second_writer = manager.clone();
+    let first_position = first.clone();
+    let second_position = second.clone();
+
+    let first_thread = std::thread::spawn(move || {
+        first_writer.place_block("minecraft:overworld", first_position, stone);
+    });
+    let second_thread = std::thread::spawn(move || {
+        second_writer.place_block("minecraft:overworld", second_position, stone);
+    });
+
+    first_thread.join().unwrap();
+    second_thread.join().unwrap();
+
+    let reloaded = WorldManager::new(dir.path());
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &first),
+        Some(stone)
+    );
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &second),
+        Some(stone)
+    );
+}
+
+#[test]
 fn world_manager_uses_nether_and_end_region_paths() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::new(dir.path());

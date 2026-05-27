@@ -26,6 +26,7 @@ pub struct WorldManager {
     generator: Arc<dyn generator::WorldChunkGenerator>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, i32>>>,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
+    region_locks: Arc<Mutex<std::collections::HashMap<RegionKey, Arc<Mutex<()>>>>>,
     active_sessions: Arc<AtomicUsize>,
     cache_epoch: Arc<AtomicU64>,
 }
@@ -77,6 +78,7 @@ impl WorldManager {
             generator,
             placed_blocks: Default::default(),
             chunk_light_dampening: Default::default(),
+            region_locks: Default::default(),
             active_sessions: Default::default(),
             cache_epoch: Default::default(),
         }
@@ -219,7 +221,7 @@ impl WorldManager {
         light_for_mode(self.light_mode)
     }
 
-    pub fn load_region_chunk(
+    fn load_region_chunk_unlocked(
         &self,
         dimension: &str,
         chunk_x: i32,
@@ -245,8 +247,19 @@ impl WorldManager {
             .with_context(|| format!("读取区块失败: {chunk_x}, {chunk_z}"))
     }
 
+    pub fn load_region_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<region::ChunkData>> {
+        self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+            self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
+        })
+    }
+
     #[allow(dead_code)]
-    pub fn write_region_chunk(
+    fn write_region_chunk_unlocked(
         &self,
         dimension: &str,
         chunk_x: i32,
@@ -278,6 +291,23 @@ impl WorldManager {
         region.write_chunk(chunk_x, chunk_z, chunk)?;
         region.save()?;
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn write_region_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        chunk: region::ChunkData,
+    ) -> Result<()> {
+        if self.read_only {
+            anyhow::bail!("world is read-only");
+        }
+
+        self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+            self.write_region_chunk_unlocked(dimension, chunk_x, chunk_z, chunk)
+        })
     }
 
     pub fn ensure_storage(&self, dimension: &str) -> Result<()> {
@@ -335,6 +365,72 @@ impl WorldManager {
                 15
             },
         );
+    }
+
+    pub fn place_blocks(
+        &self,
+        dimension: &str,
+        blocks: impl IntoIterator<Item = (qexed_packet::net_types::Position, i32)>,
+    ) -> Result<Vec<BlockUpdate>> {
+        if self.read_only {
+            log::debug!("ignored bulk block placement because world is read-only");
+            return Ok(Vec::new());
+        }
+
+        let blocks = blocks.into_iter().collect::<Vec<_>>();
+        if blocks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let updates = blocks
+            .iter()
+            .map(|(position, block_state)| BlockUpdate {
+                location: position.clone(),
+                block_state: VarInt(*block_state),
+            })
+            .collect::<Vec<_>>();
+
+        {
+            let mut placed_blocks = self
+                .placed_blocks
+                .lock()
+                .expect("world block store poisoned");
+            for (position, block_state) in &blocks {
+                placed_blocks.insert(BlockKey::new(dimension, position), *block_state);
+            }
+        }
+
+        match self.persist_block_changes(dimension, &blocks) {
+            Ok(()) => {
+                let mut placed_blocks = self
+                    .placed_blocks
+                    .lock()
+                    .expect("world block store poisoned");
+                for (position, _) in &blocks {
+                    placed_blocks.remove(&BlockKey::new(dimension, position));
+                }
+            }
+            Err(err) => {
+                log::warn!(
+                    "failed to persist bulk block changes, keeping in memory overlay: dimension={dimension}, count={}, error={err:#}",
+                    blocks.len()
+                );
+            }
+        }
+
+        for (position, block_state) in &blocks {
+            self.mark_placed_block_light_dampening(
+                dimension,
+                position,
+                if *block_state == AIR_BLOCK_STATE_ID {
+                    0
+                } else {
+                    15
+                },
+            );
+        }
+
+        Ok(updates)
     }
 
     pub fn block_state_at(
@@ -423,22 +519,87 @@ impl WorldManager {
     ) -> Result<()> {
         let chunk_x = position.x.div_euclid(16);
         let chunk_z = position.z.div_euclid(16);
-        let existing = self.load_region_chunk(dimension, chunk_x, chunk_z)?;
-        let generated = if existing.is_none() {
-            self.generator.region_chunk(dimension, chunk_x, chunk_z)?
-        } else {
-            None
+        self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+            let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
+            let generated = if existing.is_none() {
+                self.generator.region_chunk(dimension, chunk_x, chunk_z)?
+            } else {
+                None
+            };
+            let fallback_block_state = self.generator.block_state_at(dimension, position);
+            let chunk = chunk_nbt::set_block_state_in_region(
+                chunk_x,
+                chunk_z,
+                existing.as_ref().or(generated.as_ref()),
+                position,
+                block_state,
+                fallback_block_state,
+            )?;
+            self.write_region_chunk_unlocked(dimension, chunk_x, chunk_z, chunk)
+        })
+    }
+
+    fn persist_block_changes(
+        &self,
+        dimension: &str,
+        blocks: &[(qexed_packet::net_types::Position, i32)],
+    ) -> Result<()> {
+        let mut by_chunk: std::collections::BTreeMap<
+            (i32, i32),
+            Vec<(qexed_packet::net_types::Position, i32, Option<i32>)>,
+        > = std::collections::BTreeMap::new();
+        for (position, block_state) in blocks {
+            by_chunk
+                .entry((position.x.div_euclid(16), position.z.div_euclid(16)))
+                .or_default()
+                .push((
+                    position.clone(),
+                    *block_state,
+                    self.generator.block_state_at(dimension, position),
+                ));
+        }
+
+        for ((chunk_x, chunk_z), chunk_blocks) in by_chunk {
+            self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+                let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
+                let generated = if existing.is_none() {
+                    self.generator.region_chunk(dimension, chunk_x, chunk_z)?
+                } else {
+                    None
+                };
+                let chunk = chunk_nbt::set_block_states_in_region(
+                    chunk_x,
+                    chunk_z,
+                    existing.as_ref().or(generated.as_ref()),
+                    &chunk_blocks,
+                )?;
+                self.write_region_chunk_unlocked(dimension, chunk_x, chunk_z, chunk)
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn with_region_io_lock<T>(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let key = RegionKey::from_chunk(dimension, chunk_x, chunk_z);
+        let lock = {
+            let mut locks = self
+                .region_locks
+                .lock()
+                .expect("world region locks poisoned");
+            locks
+                .entry(key)
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
         };
-        let fallback_block_state = self.generator.block_state_at(dimension, position);
-        let chunk = chunk_nbt::set_block_state_in_region(
-            chunk_x,
-            chunk_z,
-            existing.as_ref().or(generated.as_ref()),
-            position,
-            block_state,
-            fallback_block_state,
-        )?;
-        self.write_region_chunk(dimension, chunk_x, chunk_z, chunk)
+        let _guard = lock.lock().expect("world region lock poisoned");
+        action()
     }
 
     pub(crate) fn remember_chunk_light_dampening(
@@ -693,6 +854,23 @@ impl ChunkKey {
             dimension: dimension.to_string(),
             x,
             z,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct RegionKey {
+    dimension: String,
+    x: i32,
+    z: i32,
+}
+
+impl RegionKey {
+    fn from_chunk(dimension: &str, chunk_x: i32, chunk_z: i32) -> Self {
+        Self {
+            dimension: dimension.to_string(),
+            x: floor_div(chunk_x, 32),
+            z: floor_div(chunk_z, 32),
         }
     }
 }

@@ -3,9 +3,9 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use qexed_nbt::{ListHeader, Tag, tag_id};
-use qexed_packet::{PacketCodec, PacketWriter, net_types::VarInt};
+use qexed_packet::{PacketCodec, PacketWriter, net_types::OptionalNbt, net_types::VarInt};
 use qexed_protocol::to_client::play::map_chunk::{
-    Chunk, Heightmaps, LIGHT_ARRAY_BYTES, Light, LightArray, MapChunk,
+    BlockEntities, Chunk, Heightmaps, LIGHT_ARRAY_BYTES, Light, LightArray, MapChunk,
 };
 
 use super::{
@@ -21,15 +21,14 @@ mod registry;
 use nbt::{
     byte_array, compound, int_field, list_items, long_array, string_field, string_properties,
 };
-#[cfg(test)]
-pub(crate) use registry::default_block_state_id;
 #[allow(unused_imports)]
 pub(crate) use registry::{
     BlockStateDefinition, block_state, block_state_entry, default_block_state,
+    default_block_state_id,
 };
 use registry::{
-    biome_registry, block_state_registry, has_fluid, is_air_block, light_dampening,
-    normalize_identifier, state_key,
+    biome_registry, block_entity_type_id, block_state_registry, has_fluid, is_air_block,
+    light_dampening, normalize_identifier, state_key,
 };
 
 const MIN_SECTION_Y: i32 = -4;
@@ -104,6 +103,35 @@ pub fn set_block_state_in_region(
     ChunkData::zlib(&raw).context("compress chunk nbt")
 }
 
+pub fn set_block_states_in_region(
+    chunk_x: i32,
+    chunk_z: i32,
+    existing: Option<&ChunkData>,
+    blocks: &[(qexed_packet::net_types::Position, i32, Option<i32>)],
+) -> Result<ChunkData> {
+    let mut root = if let Some(existing) = existing {
+        let raw = existing.decompress().context("decompress chunk nbt")?;
+        let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
+        root
+    } else {
+        minimal_chunk_root(chunk_x, chunk_z)
+    };
+
+    for (position, block_state, fallback_block_state) in blocks {
+        root = set_block_state_in_nbt(
+            &root,
+            chunk_x,
+            chunk_z,
+            position,
+            *block_state,
+            *fallback_block_state,
+        )?;
+    }
+
+    let raw = qexed_nbt::to_vec("", &root).context("serialize chunk nbt")?;
+    ChunkData::zlib(&raw).context("compress chunk nbt")
+}
+
 pub fn region_chunk_from_nbt(chunk_x: i32, chunk_z: i32, root: &Tag) -> Result<ChunkData> {
     let root = normalized_chunk_root(root, chunk_x, chunk_z)?;
     let raw = qexed_nbt::to_vec("", &root).context("serialize chunk nbt")?;
@@ -139,7 +167,7 @@ pub fn network_chunk_and_light_dampening_from_nbt(
         data: Chunk {
             heightmaps: heightmaps(root),
             data: section_data,
-            block_entities: Vec::new(),
+            block_entities: block_entities(root, chunk_x, chunk_z),
         },
         light,
     };
@@ -721,6 +749,54 @@ fn heightmaps(root: &HashMap<String, Tag>) -> Vec<Heightmaps> {
             .unwrap_or_else(|| vec![0; 37]),
     })
     .collect()
+}
+
+fn block_entities(root: &HashMap<String, Tag>, chunk_x: i32, chunk_z: i32) -> Vec<BlockEntities> {
+    let chunk_min_x = chunk_x * 16;
+    let chunk_min_z = chunk_z * 16;
+    let mut entities = root
+        .get("block_entities")
+        .and_then(|tag| list_items(Some(tag)))
+        .into_iter()
+        .flatten()
+        .filter_map(|item| block_entity(item, chunk_min_x, chunk_min_z))
+        .collect::<Vec<_>>();
+    entities.sort_by_key(|entity| (entity.y, entity.xz));
+    entities
+}
+
+fn block_entity(item: &Tag, chunk_min_x: i32, chunk_min_z: i32) -> Option<BlockEntities> {
+    let fields = compound(item)?;
+    let id = string_field(fields, "id")?;
+    let entity_type = block_entity_type_id(id).or_else(|| {
+        log::warn!("unknown saved block entity type, skipping: {id}");
+        None
+    })?;
+    let x = int_field(fields, "x")?;
+    let y = int_field(fields, "y")?;
+    let z = int_field(fields, "z")?;
+    let local_x = local_chunk_coord(x, chunk_min_x)?;
+    let local_z = local_chunk_coord(z, chunk_min_z)?;
+    Some(BlockEntities {
+        xz: ((local_x as u8) << 4) | local_z as u8,
+        y: y as u16,
+        entity_type: VarInt(entity_type),
+        nbt: OptionalNbt(block_entity_update_tag(fields)),
+    })
+}
+
+fn local_chunk_coord(world_coord: i32, chunk_min: i32) -> Option<usize> {
+    let local = world_coord - chunk_min;
+    (0..16).contains(&local).then_some(local as usize)
+}
+
+fn block_entity_update_tag(fields: &HashMap<String, Tag>) -> Option<Tag> {
+    let update_fields = fields
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "id" | "x" | "y" | "z"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<HashMap<_, _>>();
+    (!update_fields.is_empty()).then(|| Tag::Compound(Arc::new(update_fields)))
 }
 
 fn minimal_chunk_root(chunk_x: i32, chunk_z: i32) -> Tag {

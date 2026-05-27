@@ -61,6 +61,13 @@ impl PlacedAquaticFeature {
         self
     }
 
+    fn max_horizontal_spillover(&self) -> i32 {
+        match &self.config {
+            AquaticFeatureConfig::Coral(_) => 8,
+            _ => 0,
+        }
+    }
+
     fn place(
         &self,
         settings: &NoiseSettings,

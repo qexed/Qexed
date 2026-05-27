@@ -74,6 +74,45 @@ fn converts_region_chunk_payload() {
 }
 
 #[test]
+fn converts_saved_block_entities_to_chunk_packet() {
+    let mut root = chunk_root(vec![section(
+        0,
+        paletted_container(vec![block_state("minecraft:chest", &[])], None),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+    insert_block_entities(
+        &mut root,
+        vec![
+            saved_block_entity(
+                "minecraft:chest",
+                3,
+                64,
+                5,
+                vec![("LootTable", string("minecraft:chests/simple_dungeon"))],
+            ),
+            saved_block_entity("minecraft:unknown", 4, 65, 5, Vec::new()),
+            saved_block_entity("minecraft:beehive", 32, 70, 5, Vec::new()),
+        ],
+    );
+
+    let packet = network_chunk_from_nbt(0, 0, &root).unwrap();
+
+    assert_eq!(packet.data.block_entities.len(), 1);
+    let entity = &packet.data.block_entities[0];
+    assert_eq!(entity.xz, 0x35);
+    assert_eq!(entity.y, 64);
+    assert_eq!(entity.entity_type, VarInt(1));
+    let Some(Tag::Compound(nbt)) = &entity.nbt.0 else {
+        panic!("chest block entity should include update nbt");
+    };
+    assert!(nbt.contains_key("LootTable"));
+    assert!(!nbt.contains_key("id"));
+    assert!(!nbt.contains_key("x"));
+    assert!(!nbt.contains_key("y"));
+    assert!(!nbt.contains_key("z"));
+}
+
+#[test]
 fn reads_single_block_state_from_saved_section() {
     let stone = default_block_state_id("minecraft:stone");
     let root = chunk_root(vec![section(
@@ -256,6 +295,43 @@ fn chunk_root(sections: Vec<Tag>) -> Tag {
             ]),
         ),
     ])
+}
+
+fn insert_block_entities(root: &mut Tag, entities: Vec<Tag>) {
+    let Tag::Compound(fields) = root else {
+        panic!("test chunk root should be compound");
+    };
+    let mut fields = (**fields).clone();
+    fields.insert(
+        "block_entities".to_string(),
+        Tag::List(
+            ListHeader {
+                tag_id: tag_id::COMPOUND,
+                length: entities.len() as i32,
+            },
+            Arc::from(entities),
+        ),
+    );
+    *root = Tag::Compound(Arc::new(fields));
+}
+
+fn saved_block_entity(
+    id: &str,
+    x: i32,
+    y: i32,
+    z: i32,
+    extra_fields: Vec<(&'static str, Tag)>,
+) -> Tag {
+    let mut fields = HashMap::from([
+        ("id".to_string(), string(id)),
+        ("x".to_string(), Tag::Int(x)),
+        ("y".to_string(), Tag::Int(y)),
+        ("z".to_string(), Tag::Int(z)),
+    ]);
+    for (name, value) in extra_fields {
+        fields.insert(name.to_string(), value);
+    }
+    Tag::Compound(Arc::new(fields))
 }
 
 fn section(y: i8, block_states: Tag, biomes: Tag) -> Tag {

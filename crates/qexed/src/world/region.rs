@@ -142,12 +142,13 @@ impl AnvilRegion {
             anyhow::bail!("区块数据过大，暂不支持外部 .mcc 存储");
         }
 
-        let existing_location = self.header.location(chunk_x, chunk_z).filter(|location| {
-            location.offset > 0
-                && location.sector_count > 0
-                && sector_count <= usize::from(location.sector_count)
-        });
-        let offset = if let Some(location) = existing_location {
+        let chunk_index = chunk_index(chunk_x, chunk_z);
+        let current_location = self.header.locations[chunk_index];
+        let fitting_current_location = valid_location(current_location)
+            .filter(|location| sector_count <= usize::from(location.sector_count));
+        let offset = if let Some(location) = fitting_current_location {
+            self.write_into_existing_location(location, &payload)?
+        } else if let Some(location) = self.free_location(sector_count, Some(chunk_index)) {
             self.write_into_existing_location(location, &payload)?
         } else {
             self.append_aligned(&payload)
@@ -209,12 +210,58 @@ impl AnvilRegion {
             anyhow::bail!("鍖哄潡鍋忕Щ瓒呭嚭鍖哄煙鏂囦欢鏁版嵁鑼冨洿");
         }
         if payload.len() > byte_len {
-            anyhow::bail!("鍖哄潡鏁版嵁瓒呭嚭鐜版湁扇区容量");
+            anyhow::bail!("chunk payload exceeds existing sector capacity");
         }
 
         self.data[local_offset..end].fill(0);
         self.data[local_offset..local_offset + payload.len()].copy_from_slice(payload);
         Ok(location.offset)
+    }
+
+    fn free_location(
+        &self,
+        sector_count: usize,
+        ignored_chunk_index: Option<usize>,
+    ) -> Option<ChunkLocation> {
+        let total_sectors = (HEADER_SIZE + self.data.len()).div_ceil(SECTOR_SIZE);
+        let mut occupied = vec![false; total_sectors.max(2)];
+        occupied[0] = true;
+        occupied[1] = true;
+
+        for (index, location) in self.header.locations.iter().copied().enumerate() {
+            if Some(index) == ignored_chunk_index {
+                continue;
+            }
+            let Some(location) = valid_location(location) else {
+                continue;
+            };
+            let start = location.offset as usize;
+            let end = start.saturating_add(usize::from(location.sector_count));
+            for sector in start..end.min(occupied.len()) {
+                occupied[sector] = true;
+            }
+        }
+
+        let mut run_start = 0usize;
+        let mut run_len = 0usize;
+        for (sector, is_occupied) in occupied.iter().copied().enumerate().skip(2) {
+            if is_occupied {
+                run_len = 0;
+                continue;
+            }
+            if run_len == 0 {
+                run_start = sector;
+            }
+            run_len += 1;
+            if run_len >= sector_count {
+                return Some(ChunkLocation {
+                    offset: run_start as u32,
+                    sector_count: sector_count as u8,
+                });
+            }
+        }
+
+        None
     }
 }
 
@@ -302,6 +349,10 @@ impl ChunkLocation {
     }
 }
 
+fn valid_location(location: ChunkLocation) -> Option<ChunkLocation> {
+    (location.offset > 0 && location.sector_count > 0).then_some(location)
+}
+
 fn chunk_index(chunk_x: i32, chunk_z: i32) -> usize {
     (chunk_x.rem_euclid(32) + chunk_z.rem_euclid(32) * 32) as usize
 }
@@ -332,6 +383,91 @@ mod tests {
         let loaded = region.read_chunk(0, 0).unwrap().unwrap();
         assert_eq!(loaded.decompress().unwrap(), raw);
         assert!(region.read_chunk(1, 0).unwrap().is_none());
+    }
+
+    #[test]
+    fn rewriting_chunk_reuses_existing_sectors_when_payload_fits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.0.0.mca");
+        let large_raw = vec![42_u8; 7000];
+        let small_raw = b"small chunk";
+        let large = ChunkData {
+            compression: super::COMPRESSION_NONE,
+            data: large_raw.clone(),
+        };
+        let small = ChunkData {
+            compression: super::COMPRESSION_NONE,
+            data: small_raw.to_vec(),
+        };
+
+        let mut region = AnvilRegion::new(&path);
+        region.write_chunk(0, 0, large).unwrap();
+        region.save().unwrap();
+        let initial_len = std::fs::metadata(&path).unwrap().len();
+
+        let mut region = AnvilRegion::from_file(&path).unwrap();
+        region.write_chunk(0, 0, small).unwrap();
+        region.save().unwrap();
+
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), initial_len);
+        let region = AnvilRegion::from_file(&path).unwrap();
+        let loaded = region.read_chunk(0, 0).unwrap().unwrap();
+        assert_eq!(loaded.decompress().unwrap(), small_raw);
+    }
+
+    #[test]
+    fn writing_chunk_reuses_free_sectors_left_by_moved_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.0.0.mca");
+        let large_raw = vec![1_u8; 7000];
+        let larger_raw = vec![2_u8; 13_000];
+        let small_raw = b"uses free sectors";
+        let large = ChunkData {
+            compression: super::COMPRESSION_NONE,
+            data: large_raw,
+        };
+        let larger = ChunkData {
+            compression: super::COMPRESSION_NONE,
+            data: larger_raw.clone(),
+        };
+        let small = ChunkData {
+            compression: super::COMPRESSION_NONE,
+            data: small_raw.to_vec(),
+        };
+
+        let mut region = AnvilRegion::new(&path);
+        region.write_chunk(0, 0, large).unwrap();
+        region.write_chunk(0, 0, larger).unwrap();
+        region.save().unwrap();
+        let len_before_free_reuse = std::fs::metadata(&path).unwrap().len();
+
+        let mut region = AnvilRegion::from_file(&path).unwrap();
+        region.write_chunk(1, 0, small).unwrap();
+        region.save().unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            len_before_free_reuse
+        );
+        let region = AnvilRegion::from_file(&path).unwrap();
+        assert_eq!(
+            region
+                .read_chunk(0, 0)
+                .unwrap()
+                .unwrap()
+                .decompress()
+                .unwrap(),
+            larger_raw
+        );
+        assert_eq!(
+            region
+                .read_chunk(1, 0)
+                .unwrap()
+                .unwrap()
+                .decompress()
+                .unwrap(),
+            small_raw
+        );
     }
 
     #[test]

@@ -1,3 +1,9 @@
+use std::collections::VecDeque;
+use std::sync::{Condvar, Mutex};
+
+const FEATURE_SOURCE_CACHE_LIMIT: usize = 96;
+const FEATURE_PROFILE_TOP_COUNT: usize = 12;
+
 #[derive(Debug, Clone)]
 struct OverworldOreFeatures {
     seed: i64,
@@ -704,241 +710,663 @@ impl OverworldOreFeatures {
         let origin_z = chunk_z * 16;
         let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
         let features = self.ordered_features();
-        let mut neighbor_sources = self.neighbor_feature_sources(settings, chunk_x, chunk_z);
+        let mut neighbor_sources = NeighborFeatureSources::new(self.seed, chunk_x, chunk_z);
+        let mut profile = log::log_enabled!(log::Level::Trace)
+            .then(FeaturePlacementProfile::default);
 
         for feature in features.iter().copied() {
-            let mut random = FeatureRandom::for_feature(
-                decoration_seed,
-                feature.feature_index(),
-                feature.step_index(),
-            );
-            match feature {
-                PlacedUndergroundFeature::MultifaceGrowth(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                PlacedUndergroundFeature::ClassicVines(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                PlacedUndergroundFeature::BlockColumn(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                PlacedUndergroundFeature::SimpleVegetation(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                PlacedUndergroundFeature::MonsterRoom(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                PlacedUndergroundFeature::Structure(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                PlacedUndergroundFeature::HugeMushroom(feature) => {
-                    let neighbor_chunks: Vec<_> = neighbor_sources
-                        .iter()
-                        .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                        .collect();
-                    feature.place_with_neighbors(
-                        settings,
-                        origin_x,
-                        origin_z,
-                        chunk,
-                        &neighbor_chunks,
-                        &mut random,
-                    );
-                }
-                _ => feature.place(settings, origin_x, origin_z, chunk, &mut random),
-            }
-
-            for source_index in 0..neighbor_sources.len() {
-                let (before, current_and_after) = neighbor_sources.split_at_mut(source_index);
-                let Some((source, after)) = current_and_after.split_first_mut() else {
-                    continue;
-                };
+            let feature_name = feature.name();
+            let biome_filter = feature.biome_filter();
+            if biome_filter.can_match_chunk(chunk) {
                 let mut random = FeatureRandom::for_feature(
-                    source.decoration_seed,
+                    decoration_seed,
                     feature.feature_index(),
                     feature.step_index(),
                 );
-                match feature {
-                    PlacedUndergroundFeature::MonsterRoom(feature) => {
-                        let source_neighbors: Vec<_> = before
-                            .iter()
-                            .chain(after.iter())
-                            .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                            .collect();
-                        feature.place_with_spillover_neighbors(
+                let local_elapsed = match feature {
+                    PlacedUndergroundFeature::MultifaceGrowth(feature) => {
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
                             settings,
-                            source.origin_x,
-                            source.origin_z,
                             origin_x,
                             origin_z,
-                            &mut source.chunk,
                             chunk,
-                            &source_neighbors,
+                            &neighbor_chunks,
                             &mut random,
                         );
+                        local_start.elapsed()
+                    }
+                    PlacedUndergroundFeature::ClassicVines(feature) => {
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
+                            settings,
+                            origin_x,
+                            origin_z,
+                            chunk,
+                            &neighbor_chunks,
+                            &mut random,
+                        );
+                        local_start.elapsed()
+                    }
+                    PlacedUndergroundFeature::BlockColumn(feature) => {
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
+                            settings,
+                            origin_x,
+                            origin_z,
+                            chunk,
+                            &neighbor_chunks,
+                            &mut random,
+                        );
+                        local_start.elapsed()
+                    }
+                    PlacedUndergroundFeature::SimpleVegetation(feature) => {
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
+                            settings,
+                            origin_x,
+                            origin_z,
+                            chunk,
+                            &neighbor_chunks,
+                            &mut random,
+                        );
+                        local_start.elapsed()
+                    }
+                    PlacedUndergroundFeature::MonsterRoom(feature) => {
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
+                            settings,
+                            origin_x,
+                            origin_z,
+                            chunk,
+                            &neighbor_chunks,
+                            &mut random,
+                        );
+                        local_start.elapsed()
                     }
                     PlacedUndergroundFeature::Structure(feature) => {
-                        let source_neighbors: Vec<_> = before
-                            .iter()
-                            .chain(after.iter())
-                            .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                            .collect();
-                        feature.place_with_spillover_neighbors(
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
                             settings,
-                            source.origin_x,
-                            source.origin_z,
                             origin_x,
                             origin_z,
-                            &mut source.chunk,
                             chunk,
-                            &source_neighbors,
+                            &neighbor_chunks,
                             &mut random,
                         );
+                        local_start.elapsed()
                     }
                     PlacedUndergroundFeature::HugeMushroom(feature) => {
-                        let source_neighbors: Vec<_> = before
-                            .iter()
-                            .chain(after.iter())
-                            .map(|source| (source.origin_x, source.origin_z, &source.chunk))
-                            .collect();
-                        feature.place_with_spillover_neighbors(
+                        let context_start = Instant::now();
+                        let neighbor_chunks = neighbor_sources.all_context(settings);
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                feature_name,
+                                FeatureProfilePhase::NeighborLoad,
+                                context_start.elapsed(),
+                            );
+                        }
+                        let local_start = Instant::now();
+                        feature.place_with_neighbors(
                             settings,
-                            source.origin_x,
-                            source.origin_z,
                             origin_x,
                             origin_z,
-                            &mut source.chunk,
+                            chunk,
+                            &neighbor_chunks,
+                            &mut random,
+                        );
+                        local_start.elapsed()
+                    }
+                    _ => {
+                        let local_start = Instant::now();
+                        feature.place(settings, origin_x, origin_z, chunk, &mut random);
+                        local_start.elapsed()
+                    }
+                };
+                if let Some(profile) = profile.as_mut() {
+                    profile.record(feature_name, FeatureProfilePhase::Local, local_elapsed);
+                }
+            }
+
+            if !feature.can_spill_into_neighbor_chunk() {
+                continue;
+            }
+
+            let candidate_indexes =
+                neighbor_sources.candidates(feature.max_horizontal_spillover(), feature);
+            for source_index in candidate_indexes {
+                let load_start = Instant::now();
+                if feature.needs_source_neighbor_context() {
+                    neighbor_sources.ensure_all(settings);
+                } else {
+                    neighbor_sources.ensure_loaded(settings, source_index);
+                }
+                if let Some(profile) = profile.as_mut() {
+                    profile.record(
+                        feature_name,
+                        FeatureProfilePhase::NeighborLoad,
+                        load_start.elapsed(),
+                    );
+                }
+
+                if !biome_filter.can_match_chunk(neighbor_sources.chunk_ref(source_index)) {
+                    continue;
+                }
+                let source_origin_x = neighbor_sources.origin_x(source_index);
+                let source_origin_z = neighbor_sources.origin_z(source_index);
+                let mut random = FeatureRandom::for_feature(
+                    neighbor_sources.decoration_seed(source_index),
+                    feature.feature_index(),
+                    feature.step_index(),
+                );
+                let spillover_start = Instant::now();
+                match feature {
+                    PlacedUndergroundFeature::MonsterRoom(feature) => {
+                        let mut source = neighbor_sources.take_source(source_index);
+                        let source_neighbors = neighbor_sources.context_chunks();
+                        feature.place_with_spillover_neighbors(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            origin_x,
+                            origin_z,
+                            source.chunk_mut(),
                             chunk,
                             &source_neighbors,
                             &mut random,
                         );
+                        neighbor_sources.restore_source(source_index, source);
                     }
-                    _ => feature.place_spillover_from(
-                        settings,
-                        source.origin_x,
-                        source.origin_z,
-                        origin_x,
-                        origin_z,
-                        &mut source.chunk,
-                        chunk,
-                        &mut random,
-                    ),
+                    PlacedUndergroundFeature::Structure(feature) => {
+                        let mut source = neighbor_sources.take_source(source_index);
+                        let source_neighbors = neighbor_sources.context_chunks();
+                        feature.place_with_spillover_neighbors(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            origin_x,
+                            origin_z,
+                            source.chunk_mut(),
+                            chunk,
+                            &source_neighbors,
+                            &mut random,
+                        );
+                        neighbor_sources.restore_source(source_index, source);
+                    }
+                    PlacedUndergroundFeature::HugeMushroom(feature) => {
+                        let mut source = neighbor_sources.take_source(source_index);
+                        let source_neighbors = neighbor_sources.context_chunks();
+                        feature.place_with_spillover_neighbors(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            origin_x,
+                            origin_z,
+                            source.chunk_mut(),
+                            chunk,
+                            &source_neighbors,
+                            &mut random,
+                        );
+                        neighbor_sources.restore_source(source_index, source);
+                    }
+                    _ => {
+                        let source = neighbor_sources.source_mut(source_index);
+                        feature.place_spillover_from(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            origin_x,
+                            origin_z,
+                            source.chunk_mut(),
+                            chunk,
+                            &mut random,
+                        )
+                    }
+                }
+                if let Some(profile) = profile.as_mut() {
+                    profile.record(
+                        feature_name,
+                        FeatureProfilePhase::Spillover,
+                        spillover_start.elapsed(),
+                    );
                 }
             }
         }
-    }
 
-    fn neighbor_feature_sources(
-        &self,
-        settings: &NoiseSettings,
-        chunk_x: i32,
-        chunk_z: i32,
-    ) -> Vec<NeighborFeatureSource> {
-        let mut sources = Vec::with_capacity(8);
-        for source_dx in -1..=1 {
-            for source_dz in -1..=1 {
-                if source_dx == 0 && source_dz == 0 {
-                    continue;
-                }
-
-                let chunk_x = chunk_x + source_dx;
-                let chunk_z = chunk_z + source_dz;
-                let origin_x = chunk_x * 16;
-                let origin_z = chunk_z * 16;
-                let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
-                let (mut chunk, preliminary_surfaces) =
-                    settings.generate_base_chunk(chunk_x, chunk_z);
-                settings.carvers.carve_chunk(
-                    settings,
-                    chunk_x,
-                    chunk_z,
-                    &preliminary_surfaces,
-                    &mut chunk,
-                );
-
-                sources.push(NeighborFeatureSource {
-                    origin_x,
-                    origin_z,
-                    decoration_seed,
-                    chunk,
-                });
-            }
+        if let Some(profile) = profile {
+            profile.log(chunk_x, chunk_z);
         }
-        sources
     }
 }
 
+#[derive(Debug, Default)]
+struct FeaturePlacementProfile {
+    entries: HashMap<&'static str, FeaturePlacementProfileEntry>,
+}
+
+impl FeaturePlacementProfile {
+    fn record(&mut self, feature: &'static str, phase: FeatureProfilePhase, duration: Duration) {
+        let entry = self.entries.entry(feature).or_default();
+        match phase {
+            FeatureProfilePhase::Local => {
+                entry.local += duration;
+                entry.local_calls += 1;
+            }
+            FeatureProfilePhase::Spillover => {
+                entry.spillover += duration;
+                entry.spillover_calls += 1;
+            }
+            FeatureProfilePhase::NeighborLoad => {
+                entry.neighbor_load += duration;
+                entry.neighbor_load_calls += 1;
+            }
+        }
+    }
+
+    fn log(&self, chunk_x: i32, chunk_z: i32) {
+        if self.entries.is_empty() {
+            return;
+        }
+
+        let mut entries: Vec<_> = self.entries.iter().collect();
+        entries.sort_by(|(_, left), (_, right)| {
+            right
+                .total()
+                .cmp(&left.total())
+                .then_with(|| right.spillover.cmp(&left.spillover))
+                .then_with(|| right.neighbor_load.cmp(&left.neighbor_load))
+        });
+
+        let summary = entries
+            .into_iter()
+            .take(FEATURE_PROFILE_TOP_COUNT)
+            .map(|(name, entry)| {
+                format!(
+                    "{}:total={:.2},local={:.2}/{} spill={:.2}/{} load={:.2}/{}",
+                    name,
+                    duration_ms(entry.total()),
+                    duration_ms(entry.local),
+                    entry.local_calls,
+                    duration_ms(entry.spillover),
+                    entry.spillover_calls,
+                    duration_ms(entry.neighbor_load),
+                    entry.neighbor_load_calls,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        log::trace!("vanilla_noise feature profile: chunk=({chunk_x}, {chunk_z}), top=[{summary}]");
+    }
+}
+
+#[derive(Debug, Default)]
+struct FeaturePlacementProfileEntry {
+    local: Duration,
+    spillover: Duration,
+    neighbor_load: Duration,
+    local_calls: usize,
+    spillover_calls: usize,
+    neighbor_load_calls: usize,
+}
+
+impl FeaturePlacementProfileEntry {
+    fn total(&self) -> Duration {
+        self.local + self.spillover + self.neighbor_load
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FeatureProfilePhase {
+    Local,
+    Spillover,
+    NeighborLoad,
+}
+
+#[derive(Debug, Default)]
+struct FeatureSourceCache {
+    inner: Mutex<FeatureSourceCacheInner>,
+    ready: Condvar,
+}
+
+impl Clone for FeatureSourceCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl FeatureSourceCache {
+    fn get_or_insert_with(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        build: impl FnOnce() -> NoiseChunkBlocks,
+    ) -> NoiseChunkBlocks {
+        let key = (chunk_x, chunk_z);
+        {
+            let mut inner = self.inner.lock().expect("feature source cache poisoned");
+            loop {
+                if let Some(chunk) = inner.chunks.get(&key).cloned() {
+                    inner.touch(key);
+                    return chunk;
+                }
+
+                if inner.in_progress.insert(key) {
+                    break;
+                }
+
+                inner = self
+                    .ready
+                    .wait(inner)
+                    .expect("feature source cache poisoned");
+            }
+        }
+
+        let chunk = build();
+        let mut inner = self.inner.lock().expect("feature source cache poisoned");
+        inner.insert(key, chunk.clone());
+        inner.in_progress.remove(&key);
+        self.ready.notify_all();
+        chunk
+    }
+}
+
+#[derive(Debug, Default)]
+struct FeatureSourceCacheInner {
+    chunks: HashMap<(i32, i32), NoiseChunkBlocks>,
+    in_progress: HashSet<(i32, i32)>,
+    order: VecDeque<(i32, i32)>,
+}
+
+impl FeatureSourceCacheInner {
+    fn touch(&mut self, key: (i32, i32)) {
+        self.order.retain(|existing| *existing != key);
+        self.order.push_back(key);
+    }
+
+    fn insert(&mut self, key: (i32, i32), chunk: NoiseChunkBlocks) {
+        self.chunks.insert(key, chunk);
+        self.touch(key);
+        while self.chunks.len() > FEATURE_SOURCE_CACHE_LIMIT {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if oldest != key {
+                self.chunks.remove(&oldest);
+            }
+        }
+    }
+}
+
+struct NeighborFeatureSources {
+    seed: i64,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    entries: Vec<Option<NeighborFeatureSource>>,
+}
+
+impl NeighborFeatureSources {
+    fn new(seed: i64, chunk_x: i32, chunk_z: i32) -> Self {
+        let mut entries = Vec::with_capacity(8);
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                entries.push(Some(NeighborFeatureSource::placeholder(
+                    chunk_x + dx,
+                    chunk_z + dz,
+                )));
+            }
+        }
+        Self {
+            seed,
+            target_origin_x: chunk_x * 16,
+            target_origin_z: chunk_z * 16,
+            entries,
+        }
+    }
+
+    fn all_context(&mut self, settings: &NoiseSettings) -> Vec<(i32, i32, &NoiseChunkBlocks)> {
+        self.ensure_all(settings);
+        self.entries
+            .iter()
+            .filter_map(Option::as_ref)
+            .map(|source| (source.origin_x, source.origin_z, source.chunk_ref()))
+            .collect()
+    }
+
+    fn ensure_all(&mut self, settings: &NoiseSettings) {
+        for index in 0..self.entries.len() {
+            self.ensure_loaded(settings, index);
+        }
+    }
+
+    fn candidates(&self, max_spillover: i32, feature: PlacedUndergroundFeature<'_>) -> Vec<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| {
+                let source = source.as_ref()?;
+                (feature_can_reach_chunk(
+                    feature,
+                    source.origin_x,
+                    source.origin_z,
+                    self.target_origin_x,
+                    self.target_origin_z,
+                    max_spillover,
+                ))
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    fn ensure_loaded(&mut self, settings: &NoiseSettings, index: usize) {
+        let Some(source) = self.entries[index].as_mut() else {
+            return;
+        };
+        if source.chunk.is_some() {
+            return;
+        }
+        source.decoration_seed = FeatureRandom::decoration_seed(
+            self.seed,
+            source.origin_x,
+            source.origin_z,
+        );
+        source.chunk = Some(settings.feature_source_chunk(source.chunk_x, source.chunk_z));
+    }
+
+    fn context_chunks(&self) -> Vec<(i32, i32, &NoiseChunkBlocks)> {
+        self.entries
+            .iter()
+            .filter_map(Option::as_ref)
+            .map(|source| (source.origin_x, source.origin_z, source.chunk_ref()))
+            .collect()
+    }
+
+    fn take_source(&mut self, index: usize) -> NeighborFeatureSource {
+        self.entries[index]
+            .take()
+            .expect("neighbor source entry exists")
+    }
+
+    fn restore_source(&mut self, index: usize, source: NeighborFeatureSource) {
+        debug_assert!(self.entries[index].is_none());
+        self.entries[index] = Some(source);
+    }
+
+    fn source_mut(&mut self, index: usize) -> &mut NeighborFeatureSource {
+        self.entries[index]
+            .as_mut()
+            .expect("neighbor source entry exists")
+    }
+
+    fn chunk_ref(&self, index: usize) -> &NoiseChunkBlocks {
+        self.entries[index]
+            .as_ref()
+            .expect("neighbor source entry exists")
+            .chunk_ref()
+    }
+
+    fn origin_x(&self, index: usize) -> i32 {
+        self.entries[index]
+            .as_ref()
+            .expect("neighbor source entry exists")
+            .origin_x
+    }
+
+    fn origin_z(&self, index: usize) -> i32 {
+        self.entries[index]
+            .as_ref()
+            .expect("neighbor source entry exists")
+            .origin_z
+    }
+
+    fn decoration_seed(&self, index: usize) -> i64 {
+        self.entries[index]
+            .as_ref()
+            .expect("neighbor source entry exists")
+            .decoration_seed
+    }
+}
+
+fn origin_distance_to_chunk(delta: i32) -> i32 {
+    if delta == 0 {
+        0
+    } else {
+        delta.abs() - 15
+    }
+}
+
+fn feature_can_reach_chunk(
+    feature: PlacedUndergroundFeature<'_>,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    max_spillover: i32,
+) -> bool {
+    match feature {
+        PlacedUndergroundFeature::Lake(_) => origin_box_can_reach_chunk(
+            source_origin_x - 8,
+            source_origin_x + 23,
+            source_origin_z - 8,
+            source_origin_z + 23,
+            target_origin_x,
+            target_origin_z,
+        ),
+        PlacedUndergroundFeature::Disk(feature) => origin_box_can_reach_chunk(
+            source_origin_x - feature.radius.max,
+            source_origin_x + 15 + feature.radius.max,
+            source_origin_z - feature.radius.max,
+            source_origin_z + 15 + feature.radius.max,
+            target_origin_x,
+            target_origin_z,
+        ),
+        _ => {
+            origin_distance_to_chunk(source_origin_x - target_origin_x) <= max_spillover
+                && origin_distance_to_chunk(source_origin_z - target_origin_z) <= max_spillover
+        }
+    }
+}
+
+fn origin_box_can_reach_chunk(
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    target_origin_x: i32,
+    target_origin_z: i32,
+) -> bool {
+    horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
+}
+
 struct NeighborFeatureSource {
+    chunk_x: i32,
+    chunk_z: i32,
     origin_x: i32,
     origin_z: i32,
     decoration_seed: i64,
-    chunk: NoiseChunkBlocks,
+    chunk: Option<NoiseChunkBlocks>,
+}
+
+impl NeighborFeatureSource {
+    fn placeholder(chunk_x: i32, chunk_z: i32) -> Self {
+        Self {
+            chunk_x,
+            chunk_z,
+            origin_x: chunk_x * 16,
+            origin_z: chunk_z * 16,
+            decoration_seed: 0,
+            chunk: None,
+        }
+    }
+
+    fn chunk_ref(&self) -> &NoiseChunkBlocks {
+        self.chunk
+            .as_ref()
+            .expect("neighbor feature source was loaded")
+    }
+
+    fn chunk_mut(&mut self) -> &mut NoiseChunkBlocks {
+        self.chunk
+            .as_mut()
+            .expect("neighbor feature source was loaded")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -968,6 +1396,43 @@ enum PlacedUndergroundFeature<'a> {
 }
 
 impl PlacedUndergroundFeature<'_> {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Lake(_) => "lake",
+            Self::Geode(_) => "geode",
+            Self::Dripstone(feature) => match feature {
+                PlacedDripstoneFeature::Large(_) => "dripstone_large",
+                PlacedDripstoneFeature::Cluster(_) => "dripstone_cluster",
+                PlacedDripstoneFeature::Pointed(_) => "dripstone_pointed",
+            },
+            Self::Sculk(feature) => match feature {
+                PlacedSculkFeature::Vein(_) => "sculk_vein",
+                PlacedSculkFeature::Patch(_) => "sculk_patch",
+            },
+            Self::Structure(feature) => match feature {
+                PlacedStructureFeature::DesertWell(_) => "structure_desert_well",
+                PlacedStructureFeature::Fossil(_) => "structure_fossil",
+            },
+            Self::Surface(_) => "surface",
+            Self::MonsterRoom(_) => "monster_room",
+            Self::Ore(_) => "ore",
+            Self::UnderwaterMagma(_) => "underwater_magma",
+            Self::Disk(_) => "disk",
+            Self::Spring(_) => "spring",
+            Self::MultifaceGrowth(_) => "multiface_growth",
+            Self::CaveVines(_) => "cave_vines",
+            Self::ClassicVines(_) => "classic_vines",
+            Self::SporeBlossom(_) => "spore_blossom",
+            Self::EnvironmentScan(_) => "environment_scan",
+            Self::Aquatic(_) => "aquatic",
+            Self::HugeMushroom(_) => "huge_mushroom",
+            Self::SimpleVegetation(_) => "simple_vegetation",
+            Self::BlockColumn(_) => "block_column",
+            Self::Tree(_) => "tree",
+            Self::FreezeTopLayer(_) => "freeze_top_layer",
+        }
+    }
+
     fn step_index(self) -> i32 {
         match self {
             Self::Lake(feature) => feature.step_index,
@@ -1020,6 +1485,84 @@ impl PlacedUndergroundFeature<'_> {
             Self::Tree(feature) => feature.feature_index,
             Self::FreezeTopLayer(feature) => feature.feature_index,
         }
+    }
+
+    fn biome_filter(self) -> FeatureBiomeFilter {
+        match self {
+            Self::Lake(feature) => feature.biome_filter,
+            Self::Geode(feature) => feature.biome_filter,
+            Self::Dripstone(feature) => match feature {
+                PlacedDripstoneFeature::Large(feature) => feature.biome_filter,
+                PlacedDripstoneFeature::Cluster(feature) => feature.biome_filter,
+                PlacedDripstoneFeature::Pointed(feature) => feature.biome_filter,
+            },
+            Self::Sculk(feature) => match feature {
+                PlacedSculkFeature::Vein(feature) => feature.biome_filter,
+                PlacedSculkFeature::Patch(feature) => feature.biome_filter,
+            },
+            Self::Structure(feature) => match feature {
+                PlacedStructureFeature::DesertWell(feature) => feature.biome_filter,
+                PlacedStructureFeature::Fossil(feature) => feature.biome_filter,
+            },
+            Self::Surface(feature) => feature.biome_filter,
+            Self::MonsterRoom(feature) => feature.biome_filter,
+            Self::Ore(feature) => feature.biome_filter,
+            Self::UnderwaterMagma(feature) => feature.biome_filter,
+            Self::Disk(feature) => feature.biome_filter,
+            Self::Spring(feature) => feature.biome_filter,
+            Self::MultifaceGrowth(feature) => feature.biome_filter,
+            Self::CaveVines(feature) => feature.biome_filter,
+            Self::ClassicVines(feature) => feature.biome_filter,
+            Self::SporeBlossom(feature) => feature.biome_filter,
+            Self::EnvironmentScan(feature) => feature.biome_filter,
+            Self::Aquatic(feature) => feature.biome_filter,
+            Self::HugeMushroom(feature) => feature.biome_filter,
+            Self::SimpleVegetation(feature) => feature.biome_filter,
+            Self::BlockColumn(feature) => feature.biome_filter,
+            Self::Tree(feature) => feature.biome_filter,
+            Self::FreezeTopLayer(_) => FeatureBiomeFilter::All,
+        }
+    }
+
+    fn can_spill_into_neighbor_chunk(self) -> bool {
+        !matches!(
+            self,
+            Self::Spring(_) | Self::CaveVines(_) | Self::SporeBlossom(_) | Self::FreezeTopLayer(_)
+        )
+    }
+
+    fn max_horizontal_spillover(self) -> i32 {
+        match self {
+            Self::Lake(_) => 8,
+            Self::Geode(_) => 16,
+            Self::Dripstone(_) => 20,
+            Self::Sculk(_) => 8,
+            Self::Structure(_) => 16,
+            Self::Surface(_) => 16,
+            Self::MonsterRoom(_) => 4,
+            Self::Ore(feature) => feature.ore.max_horizontal_spillover(),
+            Self::UnderwaterMagma(feature) => feature.placement_radius_around_floor,
+            Self::Disk(feature) => feature.radius.max,
+            Self::MultifaceGrowth(_) => 20,
+            Self::ClassicVines(_) => 1,
+            Self::EnvironmentScan(_) => 8,
+            Self::Aquatic(feature) => feature.max_horizontal_spillover(),
+            Self::HugeMushroom(_) => 4,
+            Self::SimpleVegetation(feature) => feature.max_horizontal_spillover(),
+            Self::BlockColumn(feature) => feature.max_horizontal_spillover(),
+            Self::Tree(feature) => feature.max_horizontal_spillover(),
+            Self::Spring(_)
+            | Self::CaveVines(_)
+            | Self::SporeBlossom(_)
+            | Self::FreezeTopLayer(_) => 0,
+        }
+    }
+
+    fn needs_source_neighbor_context(self) -> bool {
+        matches!(
+            self,
+            Self::MonsterRoom(_) | Self::Structure(_) | Self::HugeMushroom(_)
+        )
     }
 
     fn place(

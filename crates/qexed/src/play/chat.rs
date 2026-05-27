@@ -173,6 +173,20 @@ where
             .await?;
             Ok(CommandOutcome::default())
         }
+        "structure" => {
+            handle_structure_command(
+                sink,
+                world,
+                players,
+                &config.server.world,
+                play_dimension,
+                profile.uuid,
+                *position,
+                argument.as_str(),
+            )
+            .await?;
+            Ok(CommandOutcome::default())
+        }
         _ => {
             sink.send(SystemChat {
                 content: messages.render_unknown(command),
@@ -311,6 +325,196 @@ where
     Ok(())
 }
 
+async fn handle_structure_command<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &crate::world::WorldManager,
+    players: &PlayerManager,
+    world_config: &qexed_config::app::qexed::server::World,
+    dimension: &str,
+    actor: uuid::Uuid,
+    player_position: EntityPosition,
+    argument: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut parts = argument.split_whitespace();
+    let Some(action) = parts.next() else {
+        send_structure_usage(sink).await?;
+        return Ok(());
+    };
+
+    match action {
+        "list" => {
+            let ids = crate::structures::list_templates()
+                .iter()
+                .map(|template| template.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            send_text(sink, format!("Structures: {ids}")).await?;
+        }
+        "place" => {
+            let Some(id) = parts.next() else {
+                send_structure_usage(sink).await?;
+                return Ok(());
+            };
+            let Some(origin) = parse_structure_position(&mut parts, player_position) else {
+                send_structure_usage(sink).await?;
+                return Ok(());
+            };
+            let blocks = match crate::structures::instantiate(id, origin.clone()) {
+                Ok(blocks) => blocks,
+                Err(err) => {
+                    send_text(sink, format!("Structure command failed: {err:#}")).await?;
+                    return Ok(());
+                }
+            };
+            let blocks = blocks
+                .into_iter()
+                .filter(|(position, _)| super::util::can_modify_world(world_config, position))
+                .collect::<Vec<_>>();
+            if blocks.is_empty() {
+                send_text(sink, "No structure blocks can be placed here.").await?;
+                return Ok(());
+            }
+
+            let updates = match world.place_blocks(dimension, blocks) {
+                Ok(updates) => updates,
+                Err(err) => {
+                    send_text(sink, format!("Structure command failed: {err:#}")).await?;
+                    return Ok(());
+                }
+            };
+            let mut light_chunks = std::collections::BTreeSet::new();
+            for update in &updates {
+                sink.send(update.clone()).await?;
+                light_chunks.insert((
+                    update.location.x.div_euclid(16),
+                    update.location.z.div_euclid(16),
+                ));
+                players.broadcast_block_changed(
+                    actor,
+                    update.location.clone(),
+                    update.block_state.0,
+                    None,
+                );
+            }
+            if world.dynamic_light_enabled() {
+                for (chunk_x, chunk_z) in light_chunks {
+                    let update = world.light_update(dimension, chunk_x, chunk_z);
+                    sink.send(update.clone()).await?;
+                    let packet =
+                        qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(
+                            update,
+                        )?;
+                    players.broadcast_packets_except(actor, vec![packet]);
+                }
+            }
+            send_text(
+                sink,
+                format!(
+                    "Placed structure {id} at {} {} {} ({} blocks)",
+                    origin.x,
+                    origin.y,
+                    origin.z,
+                    updates.len()
+                ),
+            )
+            .await?;
+        }
+        "locate" => {
+            let Some(id) = parts.next() else {
+                send_structure_usage(sink).await?;
+                return Ok(());
+            };
+            let Some(template) = crate::structures::get_template(id) else {
+                send_text(sink, format!("Unknown structure: {id}")).await?;
+                return Ok(());
+            };
+            let position = nearest_structure_candidate(template.id, player_position);
+            send_text(
+                sink,
+                format!(
+                    "Nearest {} candidate is at {} {} {}",
+                    template.id, position.x, position.y, position.z
+                ),
+            )
+            .await?;
+        }
+        _ => {
+            send_structure_usage(sink).await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_structure_position<'a>(
+    parts: &mut impl Iterator<Item = &'a str>,
+    player_position: EntityPosition,
+) -> Option<qexed_packet::net_types::Position> {
+    let Some(x) = parts.next() else {
+        return Some(qexed_packet::net_types::Position {
+            x: player_position.x.floor() as i32,
+            y: player_position.y.floor() as i32,
+            z: player_position.z.floor() as i32,
+        });
+    };
+    let y = parts.next()?;
+    let z = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(qexed_packet::net_types::Position {
+        x: parse_command_coord(x, player_position.x)?,
+        y: parse_command_coord(y, player_position.y)?,
+        z: parse_command_coord(z, player_position.z)?,
+    })
+}
+
+fn parse_command_coord(value: &str, base: f64) -> Option<i32> {
+    if value == "~" {
+        return Some(base.floor() as i32);
+    }
+    if let Some(offset) = value.strip_prefix('~') {
+        let offset = if offset.is_empty() {
+            0.0
+        } else {
+            offset.parse::<f64>().ok()?
+        };
+        return Some((base + offset).floor() as i32);
+    }
+    Some(value.parse::<f64>().ok()?.floor() as i32)
+}
+
+fn nearest_structure_candidate(
+    id: &str,
+    player_position: EntityPosition,
+) -> qexed_packet::net_types::Position {
+    let spacing = match id {
+        "qexed:desert_well" => 32,
+        "qexed:obsidian_pillar" => 48,
+        _ => 16,
+    };
+    let x = nearest_grid_coord(player_position.x.floor() as i32, spacing);
+    let z = nearest_grid_coord(player_position.z.floor() as i32, spacing);
+    qexed_packet::net_types::Position {
+        x,
+        y: player_position.y.floor() as i32,
+        z,
+    }
+}
+
+fn nearest_grid_coord(value: i32, spacing: i32) -> i32 {
+    let lower = value.div_euclid(spacing) * spacing;
+    let upper = lower + spacing;
+    if (value - lower).abs() <= (upper - value).abs() {
+        lower
+    } else {
+        upper
+    }
+}
+
 fn parse_entity_kind(value: &str) -> Option<crate::entities::ManagedEntityKind> {
     match value {
         "entity" => Some(crate::entities::ManagedEntityKind::Entity),
@@ -327,6 +531,17 @@ where
     send_text(
         sink,
         "Usage: /entity list | /entity spawn <entity|npc|hologram> <id> [entity_type] [name] | /entity move <id> | /entity remove <id>",
+    )
+    .await
+}
+
+async fn send_structure_usage<W>(sink: &mut qexed_tcp_connect::PacketSink<W>) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    send_text(
+        sink,
+        "Usage: /structure list | /structure place <id> [x y z] | /structure locate <id>",
     )
     .await
 }

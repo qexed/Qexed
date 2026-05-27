@@ -18,6 +18,7 @@ mod resource_pack;
 mod secure_chat;
 mod server;
 mod status;
+mod structures;
 mod world;
 
 rust_i18n::i18n!("locales");

@@ -23,6 +23,7 @@ use super::{
 include!("generator/constants.rs");
 include!("generator/core.rs");
 include!("generator/terrain.rs");
+include!("generator/dimensions.rs");
 include!("generator/carvers.rs");
 include!("generator/sampling.rs");
 include!("generator/features.rs");

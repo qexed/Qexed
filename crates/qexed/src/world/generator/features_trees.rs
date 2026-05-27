@@ -289,6 +289,10 @@ impl PlacedTreeFeature {
         self
     }
 
+    fn max_horizontal_spillover(&self) -> i32 {
+        self.config.max_horizontal_spillover()
+    }
+
     fn place(
         &self,
         settings: &NoiseSettings,
@@ -681,6 +685,23 @@ impl TreeFeatureConfig {
         }
     }
 
+    fn max_horizontal_spillover(&self) -> i32 {
+        let default_radius = self.default_tree.max_horizontal_spillover();
+        let variant_radius = self
+            .variants
+            .iter()
+            .map(TreeFeatureVariant::max_horizontal_spillover)
+            .max()
+            .unwrap_or(0);
+        let mushroom_radius = self
+            .mushroom_variants
+            .iter()
+            .map(|_| 4)
+            .max()
+            .unwrap_or(0);
+        default_radius.max(variant_radius).max(mushroom_radius)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn place(
         &self,
@@ -868,6 +889,10 @@ impl TreeFeatureVariant {
             tree,
             placement: TreePlacementKind::Fallen,
         }
+    }
+
+    fn max_horizontal_spillover(&self) -> i32 {
+        self.tree.max_horizontal_spillover()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1411,6 +1436,21 @@ impl OakTreeConfig {
             fallen_max_length: 11,
             ..Self::jungle_tree()
         }
+    }
+
+    fn max_horizontal_spillover(&self) -> i32 {
+        let trunk_radius = match self.trunk_placer {
+            TreeTrunkConfig::Straight | TreeTrunkConfig::Forking => 3,
+            TreeTrunkConfig::Giant => 4,
+        };
+        let foliage_radius = self.foliage_radius.max(match self.foliage {
+            TreeFoliageConfig::Blob => 2,
+            TreeFoliageConfig::Spruce { radius, .. }
+            | TreeFoliageConfig::Pine { radius, .. }
+            | TreeFoliageConfig::Acacia { radius, .. } => radius.max,
+        });
+        let fallen_radius = self.fallen_max_length.max(0) + 4;
+        trunk_radius.max(foliage_radius + 4).max(fallen_radius)
     }
 
     #[allow(clippy::too_many_arguments)]

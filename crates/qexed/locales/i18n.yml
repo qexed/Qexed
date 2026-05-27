@@ -30,3 +30,6 @@ qexed:
   tcp_connect_read_packet_error:
     en: "Failed to parse protocol from IP %{ip}. Error: %{err}"
     zh-CN: "来自 IP %{ip} 的协议解析失败，错误如下：%{err}"
+  listening_on:
+    en: "Starting Minecraft server on %{ip}"
+    zh-CN: "正在启动 Minecraft 服务器，地址：%{ip}"

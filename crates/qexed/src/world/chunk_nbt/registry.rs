@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use super::{AIR_BLOCK_STATE_ID, PLAINS_BIOME_ID, ceil_log2};
 
 const BLOCKS_REPORT: &str = "assets/reports/blocks.json";
+const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 const BIOME_REGISTRY_DIR: &str = "assets/decompiled_source/src/data/minecraft/worldgen/biome";
 
 pub(super) fn block_state_registry() -> &'static BlockStateRegistry {
@@ -78,7 +79,6 @@ pub(crate) fn block_state_entry(id: i32) -> BlockStateEntry {
         })
 }
 
-#[cfg(test)]
 pub(crate) fn default_block_state_id(name: &str) -> i32 {
     default_block_state(name).id
 }
@@ -89,6 +89,23 @@ pub(super) fn biome_registry() -> &'static BiomeRegistry {
         load_biome_registry().unwrap_or_else(|err| {
             log::warn!("failed to load biome registry from assets: {err:#}");
             BiomeRegistry::fallback()
+        })
+    })
+}
+
+pub(super) fn block_entity_type_id(name: &str) -> Option<i32> {
+    block_entity_type_registry()
+        .id_by_name
+        .get(normalize_identifier(name).as_str())
+        .copied()
+}
+
+fn block_entity_type_registry() -> &'static BlockEntityTypeRegistry {
+    static REGISTRY: OnceLock<BlockEntityTypeRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        load_block_entity_type_registry().unwrap_or_else(|err| {
+            log::warn!("failed to load block entity type registry report: {err:#}");
+            BlockEntityTypeRegistry::fallback()
         })
     })
 }
@@ -179,6 +196,41 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
         metadata_by_name,
         global_bits: ceil_log2((max_id as usize) + 1).max(1),
     })
+}
+
+fn load_block_entity_type_registry() -> Result<BlockEntityTypeRegistry> {
+    let path = workspace_root().join(REGISTRIES_REPORT);
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("read registry report {}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
+    let entries = value
+        .get("minecraft:block_entity_type")
+        .and_then(|registry| registry.get("entries"))
+        .and_then(serde_json::Value::as_object)
+        .with_context(|| {
+            format!(
+                "missing minecraft:block_entity_type entries in {}",
+                path.display()
+            )
+        })?;
+
+    let mut id_by_name = HashMap::new();
+    for (name, entry) in entries {
+        let Some(protocol_id) = entry.get("protocol_id").and_then(serde_json::Value::as_i64) else {
+            continue;
+        };
+        let Ok(protocol_id) = i32::try_from(protocol_id) else {
+            continue;
+        };
+        id_by_name.insert(normalize_identifier(name), protocol_id);
+    }
+
+    if id_by_name.is_empty() {
+        anyhow::bail!("block entity type registry contains no entries");
+    }
+
+    Ok(BlockEntityTypeRegistry { id_by_name })
 }
 
 fn load_biome_registry() -> Result<BiomeRegistry> {
@@ -394,6 +446,26 @@ pub(super) struct BlockStateRegistry {
 
 pub(super) struct BlockMetadata {
     pub(super) block_type: String,
+}
+
+struct BlockEntityTypeRegistry {
+    id_by_name: HashMap<String, i32>,
+}
+
+impl BlockEntityTypeRegistry {
+    fn fallback() -> Self {
+        Self {
+            id_by_name: HashMap::from([
+                ("minecraft:furnace".to_string(), 0),
+                ("minecraft:chest".to_string(), 1),
+                ("minecraft:trapped_chest".to_string(), 2),
+                ("minecraft:ender_chest".to_string(), 3),
+                ("minecraft:mob_spawner".to_string(), 9),
+                ("minecraft:beehive".to_string(), 34),
+                ("minecraft:brushable_block".to_string(), 41),
+            ]),
+        }
+    }
 }
 
 impl BlockStateRegistry {

@@ -775,6 +775,19 @@ struct MonsterRoomShape {
     max_z: i32,
 }
 
+impl MonsterRoomShape {
+    fn overlaps_chunk(self, origin_x: i32, origin_z: i32, chunk_min_x: i32, chunk_min_z: i32) -> bool {
+        horizontal_box_overlaps_chunk(
+            origin_x + self.min_x,
+            origin_x + self.max_x,
+            origin_z + self.min_z,
+            origin_z + self.max_z,
+            chunk_min_x,
+            chunk_min_z,
+        )
+    }
+}
+
 impl MonsterRoomFeatureConfig {
     fn new() -> Self {
         Self {

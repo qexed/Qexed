@@ -22,7 +22,7 @@
 !/assets/reports/*.json
 /world
 /plugins/examples/target/
-/qexed-config-docs
+/qexed-config-docs/*
 /META-INF
 /assets/LuckPerms-master
 /assets/seed-123456

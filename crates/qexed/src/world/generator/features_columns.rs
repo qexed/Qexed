@@ -77,6 +77,18 @@ impl PlacedBlockColumnFeature {
         self
     }
 
+    fn max_horizontal_spillover(&self) -> i32 {
+        let side_effect_radius = match self.column.kind {
+            BlockColumnKind::Bamboo { podzol_probability } if podzol_probability > 0.0 => 4,
+            _ => 0,
+        };
+        self.xz_offset
+            .min
+            .abs()
+            .max(self.xz_offset.max.abs())
+            .max(side_effect_radius)
+    }
+
     fn place(
         &self,
         settings: &NoiseSettings,

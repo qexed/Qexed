@@ -616,6 +616,18 @@ impl PlacedSimpleVegetationFeature {
         self
     }
 
+    fn max_horizontal_spillover(&self) -> i32 {
+        let support_radius = match self.placement_predicate {
+            SimpleVegetationPlacementPredicate::Air => 0,
+            SimpleVegetationPlacementPredicate::AirSurvivesNearWater => 1,
+        };
+        self.xz_offset
+            .min
+            .abs()
+            .max(self.xz_offset.max.abs())
+            .max(support_radius)
+    }
+
     fn place(
         &self,
         settings: &NoiseSettings,

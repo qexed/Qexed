@@ -473,6 +473,17 @@ fn overlaps_chunk(world_x: i32, world_z: i32, origin_x: i32, origin_z: i32) -> b
     local_coords(world_x, world_z, origin_x, origin_z).is_some()
 }
 
+fn horizontal_box_overlaps_chunk(
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    origin_x: i32,
+    origin_z: i32,
+) -> bool {
+    max_x >= origin_x && min_x < origin_x + 16 && max_z >= origin_z && min_z < origin_z + 16
+}
+
 fn can_feature_replace_block(layer: &BlockLayer) -> bool {
     !matches!(
         layer.block.as_ref(),

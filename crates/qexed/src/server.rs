@@ -10,7 +10,10 @@ pub async fn run(context: ServerContext) -> anyhow::Result<()> {
 
     let max_connections = context.config.server.max_port_connections as usize;
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_connections));
-
+    log::info!(
+        "{}",
+        t!("qexed.listening_on", ip = &context.config.server.ip)
+    );
     loop {
         let (stream, addr) = tcp_server.accept().await?;
         let permit = semaphore.clone().acquire_owned().await?;

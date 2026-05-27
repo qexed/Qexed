@@ -124,6 +124,7 @@ fn load_noise_settings(preset: &str, seed: i64) -> Result<NoiseSettings> {
     let noise_kind = vanilla_noise::OverworldNoiseKind::from_preset(preset);
 
     Ok(NoiseSettings {
+        seed,
         min_y,
         height,
         sea_level,
@@ -172,6 +173,7 @@ fn load_noise_settings(preset: &str, seed: i64) -> Result<NoiseSettings> {
         lava_lake_fluid_block: BlockLayer::new("minecraft:lava"),
         lava_lake_barrier_block: BlockLayer::new("minecraft:stone"),
         cave_air_block: BlockLayer::new("minecraft:cave_air"),
+        feature_source_cache: FeatureSourceCache::default(),
     })
 }
 
