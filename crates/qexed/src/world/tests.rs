@@ -272,11 +272,35 @@ fn world_manager_persists_placed_blocks_to_region() {
     let position = qexed_packet::net_types::Position { x: 3, y: 70, z: 4 };
 
     manager.place_block("minecraft:overworld", position.clone(), stone);
+    manager.flush_block_writes();
 
     let reloaded = WorldManager::new(dir.path());
     assert_eq!(
         reloaded.block_state_at("minecraft:overworld", &position),
         Some(stone)
+    );
+}
+
+#[test]
+fn world_manager_keeps_latest_overlay_when_same_block_is_changed_quickly() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let dirt = super::chunk_nbt::default_block_state_id("minecraft:dirt");
+    let position = qexed_packet::net_types::Position { x: 3, y: 70, z: 4 };
+
+    manager.place_block("minecraft:overworld", position.clone(), stone);
+    manager.place_block("minecraft:overworld", position.clone(), dirt);
+    manager.flush_block_writes();
+
+    assert_eq!(
+        manager.block_state_at("minecraft:overworld", &position),
+        Some(dirt)
+    );
+    let reloaded = WorldManager::new(dir.path());
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &position),
+        Some(dirt)
     );
 }
 
@@ -301,6 +325,7 @@ fn world_manager_bulk_persists_placed_blocks_across_chunks() {
             positions.iter().cloned().map(|position| (position, stone)),
         )
         .unwrap();
+    manager.flush_block_writes();
 
     assert_eq!(updates.len(), positions.len());
     let reloaded = WorldManager::new(dir.path());
@@ -333,6 +358,7 @@ fn world_manager_serializes_parallel_region_writes() {
 
     first_thread.join().unwrap();
     second_thread.join().unwrap();
+    manager.flush_block_writes();
 
     let reloaded = WorldManager::new(dir.path());
     assert_eq!(
@@ -355,6 +381,7 @@ fn world_manager_uses_nether_and_end_region_paths() {
 
     manager.place_block("minecraft:the_nether", nether_position.clone(), stone);
     manager.place_block("minecraft:the_end", end_position.clone(), stone);
+    manager.flush_block_writes();
 
     assert!(dir.path().join("DIM-1/region/r.0.0.mca").exists());
     assert!(dir.path().join("DIM1/region/r.0.0.mca").exists());
