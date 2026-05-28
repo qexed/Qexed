@@ -805,6 +805,46 @@ impl PlacedSimpleVegetationFeature {
         }
     }
 
+    fn may_spill_into(
+        &self,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        let outer_count = self
+            .noise_threshold
+            .as_ref()
+            .map(|threshold| threshold.sample(source_origin_x, source_origin_z))
+            .unwrap_or_else(|| self.count_provider.sample(self.outer_count, random));
+        let radius = self.max_horizontal_spillover();
+        for _ in 0..outer_count {
+            if random.next_float() >= 1.0 / self.rarity as f32 {
+                continue;
+            }
+
+            let base_x = source_origin_x + random.next_int(16);
+            let base_z = source_origin_z + random.next_int(16);
+            for _ in 0..self.inner_count {
+                let world_x = base_x + self.xz_offset.sample(random);
+                let _world_y = self.y_offset.sample(random);
+                let world_z = base_z + self.xz_offset.sample(random);
+                if horizontal_box_overlaps_chunk(
+                    world_x - radius,
+                    world_x + radius,
+                    world_z - radius,
+                    world_z + radius,
+                    target_origin_x,
+                    target_origin_z,
+                ) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn place_candidate(
         &self,

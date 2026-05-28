@@ -555,18 +555,16 @@ where
 
                 if packet_id == UseItemOn::ID {
                     let use_item_on = crate::connection::decode_payload::<UseItemOn>(&mut payload)?;
-                    sink.send(
-                        crate::inventory::acknowledge_block_change(use_item_on.sequence.clone())
-                            .packet(),
-                    )
-                    .await?;
+                    let sequence = use_item_on.sequence.clone();
                     if survival.is_dead() {
+                        send_block_change_ack(sink, sequence).await?;
                         sink.flush().await?;
                         continue;
                     }
                     pending_dig = None;
                     if lobby.protect_world() {
                         send_block_rollback(sink, world, &play_dimension, use_item_on.block_hit.position.clone()).await?;
+                        send_block_change_ack(sink, sequence).await?;
                         sink.flush().await?;
                         continue;
                     }
@@ -596,15 +594,17 @@ where
                             }
                         }
                     }
+                    send_block_change_ack(sink, sequence).await?;
                     sink.flush().await?;
                     continue;
                 }
 
                 if packet_id == PlayerAction::ID {
                     let action = crate::connection::decode_payload::<PlayerAction>(&mut payload)?;
-                    sink.send(crate::inventory::acknowledge_block_change(action.sequence).packet()).await?;
+                    let sequence = action.sequence.clone();
                     if survival.is_dead() {
                         pending_dig = None;
+                        send_block_change_ack(sink, sequence).await?;
                         sink.flush().await?;
                         continue;
                     }
@@ -623,6 +623,7 @@ where
                             )
                             .await?;
                         }
+                        send_block_change_ack(sink, sequence).await?;
                         sink.flush().await?;
                         continue;
                     }
@@ -642,24 +643,21 @@ where
                                     action.location,
                                 )
                                 .await?;
-                                sink.flush().await?;
-                                continue;
+                            } else {
+                                pending_dig = begin_destroy_block(
+                                    sink,
+                                    world,
+                                    plugins,
+                                    world_config.game_mode,
+                                    &play_dimension,
+                                    &action.location,
+                                    inventory.held_item(),
+                                )
+                                .await?;
                             }
-                            pending_dig = begin_destroy_block(
-                                sink,
-                                world,
-                                plugins,
-                                world_config.game_mode,
-                                &play_dimension,
-                                &action.location,
-                                inventory.held_item(),
-                            )
-                            .await?;
-                            sink.flush().await?;
                         }
                         PLAYER_ACTION_CANCEL_DESTROY_BLOCK => {
                             pending_dig = None;
-                            sink.flush().await?;
                         }
                         status if should_destroy_block(world_config.game_mode, status) => {
                             let can_destroy = can_finish_destroy_block(
@@ -673,49 +671,46 @@ where
                             )
                             .await?;
                             pending_dig = None;
-                            if !can_destroy {
-                                sink.flush().await?;
-                                continue;
-                            }
-                            destroy_block(
-                                sink,
-                                world,
-                                players,
-                                entities,
-                                plugins,
-                                world_config,
-                                &play_dimension,
-                                profile.uuid,
-                                inventory.held_item(),
-                                action.location,
-                            )
-                            .await?;
-                            survival.apply_exhaustion(MINING_EXHAUSTION_PER_BLOCK);
-                            if !survival.is_dead() {
-                                collect_nearby_drops(
+                            if can_destroy {
+                                destroy_block(
                                     sink,
+                                    world,
                                     players,
                                     entities,
+                                    plugins,
+                                    world_config,
                                     &play_dimension,
                                     profile.uuid,
-                                    session.player.entity_id,
-                                    position,
-                                    &mut inventory,
+                                    inventory.held_item(),
+                                    action.location,
                                 )
                                 .await?;
+                                survival.apply_exhaustion(MINING_EXHAUSTION_PER_BLOCK);
+                                if !survival.is_dead() {
+                                    collect_nearby_drops(
+                                        sink,
+                                        players,
+                                        entities,
+                                        &play_dimension,
+                                        profile.uuid,
+                                        session.player.entity_id,
+                                        position,
+                                        &mut inventory,
+                                    )
+                                    .await?;
+                                }
                             }
-                            sink.flush().await?;
                         }
-                        _ => {
-                            sink.flush().await?;
-                        }
+                        _ => {}
                     }
+                    send_block_change_ack(sink, sequence).await?;
+                    sink.flush().await?;
                     continue;
                 }
 
                 if packet_id == UseItem::ID {
                     let use_item = crate::connection::decode_payload::<UseItem>(&mut payload)?;
-                    sink.send(crate::inventory::acknowledge_block_change(use_item.sequence).packet()).await?;
+                    let sequence = use_item.sequence.clone();
                     if !survival.is_dead()
                         && use_item.hand.0 == 0
                         && lobby
@@ -725,6 +720,7 @@ where
                         lobby_menu_open = true;
                         pending_dig = None;
                     }
+                    send_block_change_ack(sink, sequence).await?;
                     sink.flush().await?;
                     continue;
                 }
@@ -2038,6 +2034,18 @@ where
             .unwrap_or_else(crate::inventory::air_block_state),
     ))
     .await?;
+    Ok(())
+}
+
+async fn send_block_change_ack<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    sequence: VarInt,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    sink.send(crate::inventory::acknowledge_block_change(sequence).packet())
+        .await?;
     Ok(())
 }
 

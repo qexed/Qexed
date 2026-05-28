@@ -405,6 +405,32 @@ impl PlacedTreeFeature {
             }
         }
     }
+
+    fn may_spill_into(
+        &self,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        let radius = self.max_horizontal_spillover();
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            if horizontal_box_overlaps_chunk(
+                world_x - radius,
+                world_x + radius,
+                world_z - radius,
+                world_z + radius,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, Clone)]

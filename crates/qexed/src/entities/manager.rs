@@ -6,6 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use qexed_protocol::to_client::play::add_entity::EntityPosition;
+use serde::Deserialize;
 
 use super::{
     DroppedItemEntity, EntityIdAllocator, EntitySpawnRequest, ManagedEntity, ManagedEntityKind,
@@ -44,6 +45,59 @@ impl EntityManager {
         }
 
         Ok(manager)
+    }
+
+    pub async fn from_config_with_skin_lookup(
+        config: &qexed_config::app::qexed::server::Entities,
+        entity_ids: Arc<EntityIdAllocator>,
+    ) -> Result<Self> {
+        let mut resolved = config.clone();
+        if !resolved.enable {
+            return Self::from_config(&resolved, entity_ids);
+        }
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .build()
+            .context("failed to create mojang skin lookup client")?;
+
+        for entity in &mut resolved.list {
+            if entity.kind != qexed_config::app::qexed::server::EntityKind::Npc {
+                continue;
+            }
+            if !entity.skin_textures.trim().is_empty() {
+                continue;
+            }
+            let player_id = entity.skin_player_id.trim();
+            if player_id.is_empty() {
+                continue;
+            }
+
+            match resolve_skin_by_player_id(&client, player_id).await {
+                Ok(Some(skin)) => {
+                    entity.skin_textures = skin.value;
+                    if let Some(signature) = skin.signature {
+                        entity.skin_signature = signature;
+                    }
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "npc skin lookup returned no textures: id={}, npc_id={}",
+                        player_id,
+                        entity.id
+                    );
+                }
+                Err(err) => {
+                    log::warn!(
+                        "npc skin lookup failed: id={}, npc_id={}, error={err:#}",
+                        player_id,
+                        entity.id
+                    );
+                }
+            }
+        }
+
+        Self::from_config(&resolved, entity_ids)
     }
 
     pub fn list_for_dimension(&self, dimension: &str) -> Vec<ManagedEntity> {
@@ -176,6 +230,9 @@ impl EntityManager {
             dimension: request.dimension,
             position: request.position,
             name: request.name,
+            display_name: request.display_name,
+            skin_textures: request.skin_textures,
+            skin_signature: request.skin_signature,
             data: request.data,
         };
 
@@ -247,6 +304,14 @@ impl EntityManager {
         }
         .to_string();
         let entity_type_id = entity_type_id(&entity_type)?;
+        let display_name = {
+            let name = config.display_name.trim();
+            if !name.is_empty() {
+                name.to_string()
+            } else {
+                config.name.clone()
+            }
+        };
         let entity = ManagedEntity {
             uuid: stable_entity_uuid(&key),
             entity_id: self.entity_ids.next(),
@@ -264,6 +329,9 @@ impl EntityManager {
                 on_ground: config.on_ground,
             },
             name: config.name.clone(),
+            display_name,
+            skin_textures: config.skin_textures.clone(),
+            skin_signature: config.skin_signature.clone(),
             data: config.data,
         };
 
@@ -273,6 +341,102 @@ impl EntityManager {
         }
         entities.push(entity.clone());
         Ok(entity)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct MojangNameLookup {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MojangProfile {
+    properties: Vec<MojangProperty>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MojangProperty {
+    name: String,
+    value: String,
+    #[serde(default)]
+    signature: Option<String>,
+}
+
+async fn resolve_skin_by_player_id(
+    client: &reqwest::Client,
+    player_id: &str,
+) -> Result<Option<MojangProperty>> {
+    let Some(uuid) = resolve_uuid(client, player_id).await? else {
+        return Ok(None);
+    };
+
+    let url =
+        format!("https://sessionserver.mojang.com/session/minecraft/profile/{uuid}?unsigned=false");
+    let response = client.get(url).send().await?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT
+        || response.status() == reqwest::StatusCode::NOT_FOUND
+    {
+        return Ok(None);
+    }
+    let response = response.error_for_status()?;
+    let profile: MojangProfile = response.json().await?;
+    Ok(profile
+        .properties
+        .into_iter()
+        .find(|property| property.name == "textures"))
+}
+
+async fn resolve_uuid(client: &reqwest::Client, player_id: &str) -> Result<Option<String>> {
+    if let Some(uuid) = normalize_uuid(player_id) {
+        return Ok(Some(uuid));
+    }
+
+    let name = player_id.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+
+    let url = format!("https://api.mojang.com/users/profiles/minecraft/{name}");
+    let response = client.get(url).send().await?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT
+        || response.status() == reqwest::StatusCode::NOT_FOUND
+    {
+        return Ok(None);
+    }
+    let response = response.error_for_status()?;
+    let data: MojangNameLookup = response.json().await?;
+    Ok(Some(data.id))
+}
+
+fn normalize_uuid(input: &str) -> Option<String> {
+    let id = input.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let parsed = uuid::Uuid::parse_str(id).ok()?;
+    Some(parsed.simple().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_uuid;
+
+    #[test]
+    fn normalize_uuid_accepts_dashed_and_compact() {
+        assert_eq!(
+            normalize_uuid("069a79f4-44e9-4726-a5be-fca90e38aaf5"),
+            Some("069a79f444e94726a5befca90e38aaf5".to_string())
+        );
+        assert_eq!(
+            normalize_uuid("069a79f444e94726a5befca90e38aaf5"),
+            Some("069a79f444e94726a5befca90e38aaf5".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_uuid_rejects_invalid_input() {
+        assert_eq!(normalize_uuid(""), None);
+        assert_eq!(normalize_uuid("not-a-uuid"), None);
     }
 }
 

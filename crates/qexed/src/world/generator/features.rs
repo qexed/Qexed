@@ -7,6 +7,7 @@ const FEATURE_PROFILE_TOP_COUNT: usize = 12;
 #[derive(Debug, Clone)]
 struct OverworldOreFeatures {
     seed: i64,
+    ordered_feature_keys: Vec<PlacedUndergroundFeatureKey>,
     features: Vec<PlacedOreFeature>,
     underwater_magma: PlacedUnderwaterMagmaFeature,
     disks: Vec<PlacedDiskFeature>,
@@ -126,8 +127,9 @@ impl OverworldOreFeatures {
             "minecraft:infested_deepslate",
         );
 
-        Self {
+        let mut features = Self {
             seed,
+            ordered_feature_keys: Vec::new(),
             features: vec![
                 PlacedOreFeature::new(
                     0,
@@ -599,10 +601,12 @@ impl OverworldOreFeatures {
                     .with_biome_filter(FeatureBiomeFilter::Include(MANGROVE_TREE_BIOMES)),
             ],
             freeze_top_layer: PlacedFreezeTopLayerFeature::new(0),
-        }
+        };
+        features.ordered_feature_keys = features.build_ordered_feature_keys();
+        features
     }
 
-    fn ordered_features(&self) -> Vec<PlacedUndergroundFeature<'_>> {
+    fn build_ordered_feature_keys(&self) -> Vec<PlacedUndergroundFeatureKey> {
         let mut features = Vec::with_capacity(
             self.features.len()
                 + self.disks.len()
@@ -622,81 +626,129 @@ impl OverworldOreFeatures {
                 + self.trees.len()
                 + 6,
         );
-        features.extend(self.lakes.iter().map(PlacedUndergroundFeature::Lake));
-        features.extend(self.geodes.iter().map(PlacedUndergroundFeature::Geode));
+        features.extend((0..self.lakes.len()).map(PlacedUndergroundFeatureKey::Lake));
+        features.extend((0..self.geodes.len()).map(PlacedUndergroundFeatureKey::Geode));
         features.extend(
-            self.dripstone_features
-                .iter()
-                .map(PlacedUndergroundFeature::Dripstone),
+            (0..self.dripstone_features.len()).map(PlacedUndergroundFeatureKey::Dripstone),
+        );
+        features.extend((0..self.sculk_features.len()).map(PlacedUndergroundFeatureKey::Sculk));
+        features.extend(
+            (0..self.structure_features.len()).map(PlacedUndergroundFeatureKey::Structure),
+        );
+        features.extend((0..self.surface_features.len()).map(PlacedUndergroundFeatureKey::Surface));
+        features.extend((0..self.monster_rooms.len()).map(PlacedUndergroundFeatureKey::MonsterRoom));
+        features.extend((0..self.features.len()).map(PlacedUndergroundFeatureKey::Ore));
+        features.push(PlacedUndergroundFeatureKey::UnderwaterMagma);
+        features.extend((0..self.disks.len()).map(PlacedUndergroundFeatureKey::Disk));
+        features.extend((0..self.springs.len()).map(PlacedUndergroundFeatureKey::Spring));
+        features.push(PlacedUndergroundFeatureKey::MultifaceGrowth);
+        features.extend(
+            (0..self.environment_scan_features.len())
+                .map(PlacedUndergroundFeatureKey::EnvironmentScan),
+        );
+        features.push(PlacedUndergroundFeatureKey::CaveVines);
+        features.push(PlacedUndergroundFeatureKey::SporeBlossom);
+        features.push(PlacedUndergroundFeatureKey::ClassicVines);
+        features.extend((0..self.aquatic_features.len()).map(PlacedUndergroundFeatureKey::Aquatic));
+        features.extend(
+            (0..self.huge_mushrooms.len()).map(PlacedUndergroundFeatureKey::HugeMushroom),
         );
         features.extend(
-            self.sculk_features
-                .iter()
-                .map(PlacedUndergroundFeature::Sculk),
+            (0..self.vegetation_patches.len())
+                .map(PlacedUndergroundFeatureKey::SimpleVegetation),
         );
-        features.extend(
-            self.structure_features
-                .iter()
-                .map(PlacedUndergroundFeature::Structure),
-        );
-        features.extend(
-            self.surface_features
-                .iter()
-                .map(PlacedUndergroundFeature::Surface),
-        );
-        features.extend(
-            self.monster_rooms
-                .iter()
-                .map(PlacedUndergroundFeature::MonsterRoom),
-        );
-        features.extend(self.features.iter().map(PlacedUndergroundFeature::Ore));
-        features.push(PlacedUndergroundFeature::UnderwaterMagma(
-            &self.underwater_magma,
-        ));
-        features.extend(self.disks.iter().map(PlacedUndergroundFeature::Disk));
-        features.extend(self.springs.iter().map(PlacedUndergroundFeature::Spring));
-        features.push(PlacedUndergroundFeature::MultifaceGrowth(&self.glow_lichen));
-        features.extend(
-            self.environment_scan_features
-                .iter()
-                .map(PlacedUndergroundFeature::EnvironmentScan),
-        );
-        features.push(PlacedUndergroundFeature::CaveVines(&self.cave_vines));
-        features.push(PlacedUndergroundFeature::SporeBlossom(
-            &self.spore_blossom,
-        ));
-        features.push(PlacedUndergroundFeature::ClassicVines(
-            &self.classic_vines,
-        ));
-        features.extend(
-            self.aquatic_features
-                .iter()
-                .map(PlacedUndergroundFeature::Aquatic),
-        );
-        features.extend(
-            self.huge_mushrooms
-                .iter()
-                .map(PlacedUndergroundFeature::HugeMushroom),
-        );
-        features.extend(
-            self.vegetation_patches
-                .iter()
-                .map(PlacedUndergroundFeature::SimpleVegetation),
-        );
-        features.push(PlacedUndergroundFeature::ClassicVines(
-            &self.surface_vines,
-        ));
-        features.extend(
-            self.block_columns
-                .iter()
-                .map(PlacedUndergroundFeature::BlockColumn),
-        );
-        features.extend(self.trees.iter().map(PlacedUndergroundFeature::Tree));
-        features.push(PlacedUndergroundFeature::FreezeTopLayer(
-            &self.freeze_top_layer,
-        ));
-        features.sort_by_key(|feature| (feature.step_index(), feature.feature_index()));
+        features.push(PlacedUndergroundFeatureKey::SurfaceVines);
+        features.extend((0..self.block_columns.len()).map(PlacedUndergroundFeatureKey::BlockColumn));
+        features.extend((0..self.trees.len()).map(PlacedUndergroundFeatureKey::Tree));
+        features.push(PlacedUndergroundFeatureKey::FreezeTopLayer);
+        features.sort_by_key(|key| {
+            let feature = self.feature_by_key(*key);
+            (feature.step_index(), feature.feature_index())
+        });
         features
+    }
+
+    #[cfg(test)]
+    fn ordered_features(&self) -> Vec<PlacedUndergroundFeature<'_>> {
+        self.ordered_feature_keys
+            .iter()
+            .copied()
+            .map(|key| self.feature_by_key(key))
+            .collect()
+    }
+
+    fn feature_by_key(&self, key: PlacedUndergroundFeatureKey) -> PlacedUndergroundFeature<'_> {
+        match key {
+            PlacedUndergroundFeatureKey::Lake(index) => {
+                PlacedUndergroundFeature::Lake(&self.lakes[index])
+            }
+            PlacedUndergroundFeatureKey::Geode(index) => {
+                PlacedUndergroundFeature::Geode(&self.geodes[index])
+            }
+            PlacedUndergroundFeatureKey::Dripstone(index) => {
+                PlacedUndergroundFeature::Dripstone(&self.dripstone_features[index])
+            }
+            PlacedUndergroundFeatureKey::Sculk(index) => {
+                PlacedUndergroundFeature::Sculk(&self.sculk_features[index])
+            }
+            PlacedUndergroundFeatureKey::Structure(index) => {
+                PlacedUndergroundFeature::Structure(&self.structure_features[index])
+            }
+            PlacedUndergroundFeatureKey::Surface(index) => {
+                PlacedUndergroundFeature::Surface(&self.surface_features[index])
+            }
+            PlacedUndergroundFeatureKey::MonsterRoom(index) => {
+                PlacedUndergroundFeature::MonsterRoom(&self.monster_rooms[index])
+            }
+            PlacedUndergroundFeatureKey::Ore(index) => {
+                PlacedUndergroundFeature::Ore(&self.features[index])
+            }
+            PlacedUndergroundFeatureKey::UnderwaterMagma => {
+                PlacedUndergroundFeature::UnderwaterMagma(&self.underwater_magma)
+            }
+            PlacedUndergroundFeatureKey::Disk(index) => {
+                PlacedUndergroundFeature::Disk(&self.disks[index])
+            }
+            PlacedUndergroundFeatureKey::Spring(index) => {
+                PlacedUndergroundFeature::Spring(&self.springs[index])
+            }
+            PlacedUndergroundFeatureKey::MultifaceGrowth => {
+                PlacedUndergroundFeature::MultifaceGrowth(&self.glow_lichen)
+            }
+            PlacedUndergroundFeatureKey::EnvironmentScan(index) => {
+                PlacedUndergroundFeature::EnvironmentScan(&self.environment_scan_features[index])
+            }
+            PlacedUndergroundFeatureKey::CaveVines => {
+                PlacedUndergroundFeature::CaveVines(&self.cave_vines)
+            }
+            PlacedUndergroundFeatureKey::SporeBlossom => {
+                PlacedUndergroundFeature::SporeBlossom(&self.spore_blossom)
+            }
+            PlacedUndergroundFeatureKey::ClassicVines => {
+                PlacedUndergroundFeature::ClassicVines(&self.classic_vines)
+            }
+            PlacedUndergroundFeatureKey::Aquatic(index) => {
+                PlacedUndergroundFeature::Aquatic(&self.aquatic_features[index])
+            }
+            PlacedUndergroundFeatureKey::HugeMushroom(index) => {
+                PlacedUndergroundFeature::HugeMushroom(&self.huge_mushrooms[index])
+            }
+            PlacedUndergroundFeatureKey::SimpleVegetation(index) => {
+                PlacedUndergroundFeature::SimpleVegetation(&self.vegetation_patches[index])
+            }
+            PlacedUndergroundFeatureKey::SurfaceVines => {
+                PlacedUndergroundFeature::ClassicVines(&self.surface_vines)
+            }
+            PlacedUndergroundFeatureKey::BlockColumn(index) => {
+                PlacedUndergroundFeature::BlockColumn(&self.block_columns[index])
+            }
+            PlacedUndergroundFeatureKey::Tree(index) => {
+                PlacedUndergroundFeature::Tree(&self.trees[index])
+            }
+            PlacedUndergroundFeatureKey::FreezeTopLayer => {
+                PlacedUndergroundFeature::FreezeTopLayer(&self.freeze_top_layer)
+            }
+        }
     }
 
     fn place_chunk(
@@ -709,12 +761,12 @@ impl OverworldOreFeatures {
         let origin_x = chunk_x * 16;
         let origin_z = chunk_z * 16;
         let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
-        let features = self.ordered_features();
         let mut neighbor_sources = NeighborFeatureSources::new(self.seed, chunk_x, chunk_z);
-        let mut profile = log::log_enabled!(log::Level::Trace)
+        let mut profile = log::log_enabled!(log::Level::Debug)
             .then(FeaturePlacementProfile::default);
 
-        for feature in features.iter().copied() {
+        for feature_key in self.ordered_feature_keys.iter().copied() {
+            let feature = self.feature_by_key(feature_key);
             let feature_name = feature.name();
             let biome_filter = feature.biome_filter();
             if biome_filter.can_match_chunk(chunk) {
@@ -809,25 +861,16 @@ impl OverworldOreFeatures {
                         local_start.elapsed()
                     }
                     PlacedUndergroundFeature::MonsterRoom(feature) => {
-                        let context_start = Instant::now();
-                        let neighbor_chunks = neighbor_sources.all_context(settings);
-                        if let Some(profile) = profile.as_mut() {
-                            profile.record(
-                                feature_name,
-                                FeatureProfilePhase::NeighborLoad,
-                                context_start.elapsed(),
-                            );
-                        }
-                        let local_start = Instant::now();
-                        feature.place_with_neighbors(
+                        feature.place_with_lazy_neighbors(
                             settings,
                             origin_x,
                             origin_z,
                             chunk,
-                            &neighbor_chunks,
                             &mut random,
-                        );
-                        local_start.elapsed()
+                            &mut neighbor_sources,
+                            &mut profile,
+                            feature_name,
+                        )
                     }
                     PlacedUndergroundFeature::Structure(feature) => {
                         let context_start = Instant::now();
@@ -886,15 +929,19 @@ impl OverworldOreFeatures {
                 continue;
             }
 
-            let candidate_indexes =
-                neighbor_sources.candidates(feature.max_horizontal_spillover(), feature);
+            let candidate_indexes = neighbor_sources.candidates(feature);
             for source_index in candidate_indexes {
-                let load_start = Instant::now();
-                if feature.needs_source_neighbor_context() {
-                    neighbor_sources.ensure_all(settings);
-                } else {
-                    neighbor_sources.ensure_loaded(settings, source_index);
+                if !neighbor_sources.can_match_biome(settings, source_index, biome_filter) {
+                    continue;
                 }
+
+                let load_start = Instant::now();
+                let can_place_spillover = if feature.needs_source_neighbor_context() {
+                    neighbor_sources.ensure_all(settings);
+                    true
+                } else {
+                    neighbor_sources.prepare_for_feature(settings, source_index, feature)
+                };
                 if let Some(profile) = profile.as_mut() {
                     profile.record(
                         feature_name,
@@ -902,10 +949,10 @@ impl OverworldOreFeatures {
                         load_start.elapsed(),
                     );
                 }
-
-                if !biome_filter.can_match_chunk(neighbor_sources.chunk_ref(source_index)) {
+                if !can_place_spillover {
                     continue;
                 }
+
                 let source_origin_x = neighbor_sources.origin_x(source_index);
                 let source_origin_z = neighbor_sources.origin_z(source_index);
                 let mut random = FeatureRandom::for_feature(
@@ -917,8 +964,7 @@ impl OverworldOreFeatures {
                 match feature {
                     PlacedUndergroundFeature::MonsterRoom(feature) => {
                         let mut source = neighbor_sources.take_source(source_index);
-                        let source_neighbors = neighbor_sources.context_chunks();
-                        feature.place_with_spillover_neighbors(
+                        feature.place_with_spillover_lazy_neighbors(
                             settings,
                             source_origin_x,
                             source_origin_z,
@@ -926,8 +972,10 @@ impl OverworldOreFeatures {
                             origin_z,
                             source.chunk_mut(),
                             chunk,
-                            &source_neighbors,
                             &mut random,
+                            &mut neighbor_sources,
+                            &mut profile,
+                            feature_name,
                         );
                         neighbor_sources.restore_source(source_index, source);
                     }
@@ -1050,7 +1098,7 @@ impl FeaturePlacementProfile {
             .collect::<Vec<_>>()
             .join("; ");
 
-        log::trace!("vanilla_noise feature profile: chunk=({chunk_x}, {chunk_z}), top=[{summary}]");
+        log::debug!("vanilla_noise feature profile: chunk=({chunk_x}, {chunk_z}), top=[{summary}]");
     }
 }
 
@@ -1090,6 +1138,12 @@ impl Clone for FeatureSourceCache {
 }
 
 impl FeatureSourceCache {
+    fn insert_generated(&self, chunk_x: i32, chunk_z: i32, chunk: NoiseChunkBlocks) {
+        let key = (chunk_x, chunk_z);
+        let mut inner = self.inner.lock().expect("feature source cache poisoned");
+        inner.insert(key, chunk);
+    }
+
     fn get_or_insert_with(
         &self,
         chunk_x: i32,
@@ -1130,6 +1184,33 @@ struct FeatureSourceCacheInner {
     chunks: HashMap<(i32, i32), NoiseChunkBlocks>,
     in_progress: HashSet<(i32, i32)>,
     order: VecDeque<(i32, i32)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PlacedUndergroundFeatureKey {
+    Lake(usize),
+    Geode(usize),
+    Dripstone(usize),
+    Sculk(usize),
+    Structure(usize),
+    Surface(usize),
+    MonsterRoom(usize),
+    Ore(usize),
+    UnderwaterMagma,
+    Disk(usize),
+    Spring(usize),
+    MultifaceGrowth,
+    CaveVines,
+    ClassicVines,
+    SporeBlossom,
+    EnvironmentScan(usize),
+    Aquatic(usize),
+    HugeMushroom(usize),
+    SimpleVegetation(usize),
+    SurfaceVines,
+    BlockColumn(usize),
+    Tree(usize),
+    FreezeTopLayer,
 }
 
 impl FeatureSourceCacheInner {
@@ -1196,7 +1277,8 @@ impl NeighborFeatureSources {
         }
     }
 
-    fn candidates(&self, max_spillover: i32, feature: PlacedUndergroundFeature<'_>) -> Vec<usize> {
+    fn candidates(&self, feature: PlacedUndergroundFeature<'_>) -> Vec<usize> {
+        let max_spillover = feature.max_horizontal_spillover();
         self.entries
             .iter()
             .enumerate()
@@ -1230,12 +1312,102 @@ impl NeighborFeatureSources {
         source.chunk = Some(settings.feature_source_chunk(source.chunk_x, source.chunk_z));
     }
 
+    fn can_match_biome(
+        &mut self,
+        settings: &NoiseSettings,
+        index: usize,
+        filter: FeatureBiomeFilter,
+    ) -> bool {
+        if matches!(filter, FeatureBiomeFilter::All) {
+            return true;
+        }
+
+        let Some(source) = self.entries[index].as_mut() else {
+            return false;
+        };
+        if let Some(chunk) = source.chunk.as_ref() {
+            return filter.can_match_chunk(chunk);
+        }
+        let biomes = source
+            .biome_sample
+            .get_or_insert_with(|| sample_chunk_biomes(&settings.density, source.chunk_x, source.chunk_z));
+        filter.can_match_biomes(biomes.iter().copied())
+    }
+
+    fn prepare_for_feature(
+        &mut self,
+        settings: &NoiseSettings,
+        index: usize,
+        feature: PlacedUndergroundFeature<'_>,
+    ) -> bool {
+        let Some(source) = self.entries[index].as_mut() else {
+            return false;
+        };
+        if source.decoration_seed == 0 {
+            source.decoration_seed = FeatureRandom::decoration_seed(
+                self.seed,
+                source.origin_x,
+                source.origin_z,
+            );
+        }
+        if !feature.may_spill_from_seed(
+            settings,
+            source.origin_x,
+            source.origin_z,
+            self.target_origin_x,
+            self.target_origin_z,
+            source.decoration_seed,
+        ) {
+            return false;
+        }
+        if source.chunk.is_none() {
+            source.chunk = Some(settings.feature_source_chunk(source.chunk_x, source.chunk_z));
+        }
+        true
+    }
+
     fn context_chunks(&self) -> Vec<(i32, i32, &NoiseChunkBlocks)> {
         self.entries
             .iter()
             .filter_map(Option::as_ref)
-            .map(|source| (source.origin_x, source.origin_z, source.chunk_ref()))
+            .filter_map(|source| {
+                source
+                    .chunk
+                    .as_ref()
+                    .map(|chunk| (source.origin_x, source.origin_z, chunk))
+            })
             .collect()
+    }
+
+    fn context_for_box(
+        &mut self,
+        settings: &NoiseSettings,
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+    ) -> Vec<(i32, i32, &NoiseChunkBlocks)> {
+        let indexes: Vec<_> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| {
+                let source = source.as_ref()?;
+                horizontal_box_overlaps_chunk(
+                    min_x,
+                    max_x,
+                    min_z,
+                    max_z,
+                    source.origin_x,
+                    source.origin_z,
+                )
+                .then_some(index)
+            })
+            .collect();
+        for index in indexes {
+            self.ensure_loaded(settings, index);
+        }
+        self.context_chunks()
     }
 
     fn take_source(&mut self, index: usize) -> NeighborFeatureSource {
@@ -1253,13 +1425,6 @@ impl NeighborFeatureSources {
         self.entries[index]
             .as_mut()
             .expect("neighbor source entry exists")
-    }
-
-    fn chunk_ref(&self, index: usize) -> &NoiseChunkBlocks {
-        self.entries[index]
-            .as_ref()
-            .expect("neighbor source entry exists")
-            .chunk_ref()
     }
 
     fn origin_x(&self, index: usize) -> i32 {
@@ -1282,6 +1447,30 @@ impl NeighborFeatureSources {
             .expect("neighbor source entry exists")
             .decoration_seed
     }
+}
+
+fn sample_chunk_biomes(
+    density: &TerrainDensity,
+    chunk_x: i32,
+    chunk_z: i32,
+) -> Vec<&'static str> {
+    let mut biomes = Vec::new();
+    for section_y in WORLD_MIN_SECTION_Y..WORLD_MIN_SECTION_Y + section_count() {
+        for local_y in 0..4 {
+            for local_x in 0..4 {
+                for local_z in 0..4 {
+                    let world_x = chunk_x * 16 + local_x * 4;
+                    let world_y = section_y * SECTION_HEIGHT + local_y * 4;
+                    let world_z = chunk_z * 16 + local_z * 4;
+                    let biome = density.biome(world_x, world_y, world_z);
+                    if !biomes.contains(&biome) {
+                        biomes.push(biome);
+                    }
+                }
+            }
+        }
+    }
+    biomes
 }
 
 fn origin_distance_to_chunk(delta: i32) -> i32 {
@@ -1341,6 +1530,7 @@ struct NeighborFeatureSource {
     origin_x: i32,
     origin_z: i32,
     decoration_seed: i64,
+    biome_sample: Option<Vec<&'static str>>,
     chunk: Option<NoiseChunkBlocks>,
 }
 
@@ -1352,6 +1542,7 @@ impl NeighborFeatureSource {
             origin_x: chunk_x * 16,
             origin_z: chunk_z * 16,
             decoration_seed: 0,
+            biome_sample: None,
             chunk: None,
         }
     }
@@ -1558,11 +1749,151 @@ impl PlacedUndergroundFeature<'_> {
         }
     }
 
-    fn needs_source_neighbor_context(self) -> bool {
-        matches!(
+    fn can_precheck_spillover_without_source(self) -> bool {
+        !matches!(
             self,
-            Self::MonsterRoom(_) | Self::Structure(_) | Self::HugeMushroom(_)
+            Self::Structure(_)
+                | Self::Surface(_)
+                | Self::HugeMushroom(_)
+                | Self::BlockColumn(_)
         )
+    }
+
+    fn may_spill_from_seed(
+        self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        decoration_seed: i64,
+    ) -> bool {
+        if !self.can_precheck_spillover_without_source() {
+            return true;
+        }
+
+        let mut random =
+            FeatureRandom::for_feature(decoration_seed, self.feature_index(), self.step_index());
+        self.may_spill_from_random(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            target_origin_x,
+            target_origin_z,
+            &mut random,
+        )
+    }
+
+    fn may_spill_from_random(
+        self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        match self {
+            Self::Lake(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Geode(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Ore(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::UnderwaterMagma(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Disk(feature) => feature.may_spill_into(
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::MultifaceGrowth(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::EnvironmentScan(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Aquatic(feature) => feature.may_spill_into(
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::SimpleVegetation(feature) => feature.may_spill_into(
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::MonsterRoom(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Tree(feature) => feature.may_spill_into(
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Spring(_)
+            | Self::CaveVines(_)
+            | Self::ClassicVines(_)
+            | Self::SporeBlossom(_)
+            | Self::Dripstone(_)
+            | Self::Sculk(_)
+            | Self::Structure(_)
+            | Self::Surface(_)
+            | Self::HugeMushroom(_)
+            | Self::BlockColumn(_)
+            | Self::FreezeTopLayer(_) => true,
+        }
+    }
+
+    fn needs_source_neighbor_context(self) -> bool {
+        matches!(self, Self::Structure(_) | Self::HugeMushroom(_))
     }
 
     fn place(

@@ -26,6 +26,7 @@ pub struct WorldManager {
     light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
     generator: Arc<dyn generator::WorldChunkGenerator>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, PendingBlock>>>,
+    region_chunk_cache: Arc<Mutex<RegionChunkCache>>,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
     region_locks: Arc<Mutex<std::collections::HashMap<RegionKey, Arc<Mutex<()>>>>>,
     block_write_queue: WorldWriteQueue,
@@ -33,6 +34,8 @@ pub struct WorldManager {
     active_sessions: Arc<AtomicUsize>,
     cache_epoch: Arc<AtomicU64>,
 }
+
+const REGION_CHUNK_CACHE_LIMIT: usize = 256;
 
 #[derive(Clone)]
 struct WorldWriteQueue {
@@ -90,6 +93,45 @@ impl WorldWriteQueue {
     }
 }
 
+#[derive(Debug, Default)]
+struct RegionChunkCache {
+    chunks: std::collections::HashMap<ChunkKey, region::ChunkData>,
+    order: std::collections::VecDeque<ChunkKey>,
+}
+
+impl RegionChunkCache {
+    fn get(&mut self, key: &ChunkKey) -> Option<region::ChunkData> {
+        let chunk = self.chunks.get(key).cloned()?;
+        self.touch(key.clone());
+        Some(chunk)
+    }
+
+    fn insert(&mut self, key: ChunkKey, chunk: region::ChunkData) {
+        self.chunks.insert(key.clone(), chunk);
+        self.touch(key.clone());
+        while self.chunks.len() > REGION_CHUNK_CACHE_LIMIT {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if oldest != key {
+                self.chunks.remove(&oldest);
+            }
+        }
+    }
+
+    fn clear(&mut self) -> usize {
+        let cleared = self.chunks.len();
+        self.chunks.clear();
+        self.order.clear();
+        cleared
+    }
+
+    fn touch(&mut self, key: ChunkKey) {
+        self.order.retain(|existing| existing != &key);
+        self.order.push_back(key);
+    }
+}
+
 impl WorldManager {
     #[cfg(test)]
     pub fn new(save_path: impl Into<std::path::PathBuf>) -> Self {
@@ -136,6 +178,7 @@ impl WorldManager {
             light_gpu,
             generator,
             placed_blocks: Default::default(),
+            region_chunk_cache: Default::default(),
             chunk_light_dampening: Default::default(),
             region_locks: Default::default(),
             block_write_queue: WorldWriteQueue::new(),
@@ -176,6 +219,15 @@ impl WorldManager {
     }
 
     #[cfg(test)]
+    pub(crate) fn cached_region_chunk_count(&self) -> usize {
+        self.region_chunk_cache
+            .lock()
+            .expect("world region chunk cache poisoned")
+            .chunks
+            .len()
+    }
+
+    #[cfg(test)]
     pub(crate) fn flush_block_writes(&self) {
         self.block_write_queue.flush();
     }
@@ -190,7 +242,20 @@ impl WorldManager {
         self.network_chunk_inner(dimension, chunk_x, chunk_z, None)
     }
 
-    pub fn network_chunk_for_session(
+    pub fn saved_network_chunk_for_session(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: u64,
+    ) -> Result<Option<MapChunk>> {
+        if !self.cache_epoch_is_active(cache_epoch) {
+            anyhow::bail!("chunk load cancelled because world session expired");
+        }
+        self.saved_network_chunk_inner(dimension, chunk_x, chunk_z, Some(cache_epoch))
+    }
+
+    pub fn generated_network_chunk_for_session(
         &self,
         dimension: &str,
         chunk_x: i32,
@@ -200,9 +265,10 @@ impl WorldManager {
         if !self.cache_epoch_is_active(cache_epoch) {
             anyhow::bail!("chunk load cancelled because world session expired");
         }
-        self.network_chunk_inner(dimension, chunk_x, chunk_z, Some(cache_epoch))
+        self.generated_network_chunk_inner(dimension, chunk_x, chunk_z, Some(cache_epoch))
     }
 
+    #[cfg(test)]
     fn network_chunk_inner(
         &self,
         dimension: &str,
@@ -210,6 +276,21 @@ impl WorldManager {
         chunk_z: i32,
         cache_epoch: Option<u64>,
     ) -> Result<MapChunk> {
+        if let Some(packet) =
+            self.saved_network_chunk_inner(dimension, chunk_x, chunk_z, cache_epoch)?
+        {
+            return Ok(packet);
+        }
+        self.generated_network_chunk_inner(dimension, chunk_x, chunk_z, cache_epoch)
+    }
+
+    fn saved_network_chunk_inner(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: Option<u64>,
+    ) -> Result<Option<MapChunk>> {
         if let Some(chunk) = self.load_region_chunk(dimension, chunk_x, chunk_z)? {
             match chunk_nbt::network_chunk_and_light_dampening_from_region(
                 chunk_x,
@@ -235,16 +316,26 @@ impl WorldManager {
                     log::debug!(
                         "loaded saved chunk as network chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z})"
                     );
-                    return Ok(packet);
+                    return Ok(Some(packet));
                 }
                 Err(err) => {
                     log::warn!(
-                        "failed to convert saved chunk, falling back to empty chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), error={err:#}"
+                        "failed to convert saved chunk, falling back to generated chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), error={err:#}"
                     );
                 }
             }
         }
 
+        Ok(None)
+    }
+
+    fn generated_network_chunk_inner(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: Option<u64>,
+    ) -> Result<MapChunk> {
         log::trace!("generating chunk: dimension={dimension}, chunk=({chunk_x}, {chunk_z})");
         let generated =
             self.generator
@@ -256,6 +347,9 @@ impl WorldManager {
             generated.light_dampening,
             cache_epoch,
         );
+        if let Some(region_chunk) = generated.region_chunk {
+            self.remember_region_chunk(dimension, chunk_x, chunk_z, region_chunk);
+        }
         let mut packet = generated.packet;
         packet.light = match self.light_mode {
             WorldLightMode::Fixed(_) => self.chunk_light(),
@@ -319,9 +413,23 @@ impl WorldManager {
         chunk_x: i32,
         chunk_z: i32,
     ) -> Result<Option<region::ChunkData>> {
-        self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+        let key = ChunkKey::new(dimension, chunk_x, chunk_z);
+        if let Some(chunk) = self
+            .region_chunk_cache
+            .lock()
+            .expect("world region chunk cache poisoned")
+            .get(&key)
+        {
+            return Ok(Some(chunk));
+        }
+
+        let loaded = self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
             self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
-        })
+        })?;
+        if let Some(chunk) = loaded.as_ref() {
+            self.remember_region_chunk(dimension, chunk_x, chunk_z, chunk.clone());
+        }
+        Ok(loaded)
     }
 
     #[allow(dead_code)]
@@ -354,8 +462,10 @@ impl WorldManager {
         } else {
             region::AnvilRegion::new(&region_path)
         };
+        let cached = chunk.clone();
         region.write_chunk(chunk_x, chunk_z, chunk)?;
         region.save()?;
+        self.remember_region_chunk(dimension, chunk_x, chunk_z, cached);
         Ok(())
     }
 
@@ -669,6 +779,19 @@ impl WorldManager {
             .collect()
     }
 
+    fn remember_region_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        chunk: region::ChunkData,
+    ) {
+        self.region_chunk_cache
+            .lock()
+            .expect("world region chunk cache poisoned")
+            .insert(ChunkKey::new(dimension, chunk_x, chunk_z), chunk);
+    }
+
     fn dimension_region_path(&self, dimension: &str) -> std::path::PathBuf {
         match dimension {
             "minecraft:the_nether" => self.save_path.join("DIM-1").join("region"),
@@ -686,21 +809,19 @@ impl WorldManager {
         let chunk_x = position.x.div_euclid(16);
         let chunk_z = position.z.div_euclid(16);
         let fallback_block_state = self.generator.block_state_at(dimension, position);
-        let generated = if self
-            .load_region_chunk(dimension, chunk_x, chunk_z)?
-            .is_none()
-        {
-            self.generator.region_chunk(dimension, chunk_x, chunk_z)?
-        } else {
-            None
-        };
+        let cached_or_generated =
+            if let Some(chunk) = self.load_region_chunk(dimension, chunk_x, chunk_z)? {
+                Some(chunk)
+            } else {
+                self.generator.region_chunk(dimension, chunk_x, chunk_z)?
+            };
 
         self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
             let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
             let chunk = chunk_nbt::set_block_state_in_region(
                 chunk_x,
                 chunk_z,
-                existing.as_ref().or(generated.as_ref()),
+                existing.as_ref().or(cached_or_generated.as_ref()),
                 position,
                 block_state,
                 fallback_block_state,
@@ -730,20 +851,18 @@ impl WorldManager {
         }
 
         for ((chunk_x, chunk_z), chunk_blocks) in by_chunk {
-            let generated = if self
-                .load_region_chunk(dimension, chunk_x, chunk_z)?
-                .is_none()
-            {
-                self.generator.region_chunk(dimension, chunk_x, chunk_z)?
-            } else {
-                None
-            };
+            let cached_or_generated =
+                if let Some(chunk) = self.load_region_chunk(dimension, chunk_x, chunk_z)? {
+                    Some(chunk)
+                } else {
+                    self.generator.region_chunk(dimension, chunk_x, chunk_z)?
+                };
             self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
                 let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
                 let chunk = chunk_nbt::set_block_states_in_region(
                     chunk_x,
                     chunk_z,
-                    existing.as_ref().or(generated.as_ref()),
+                    existing.as_ref().or(cached_or_generated.as_ref()),
                     &chunk_blocks,
                 )?;
                 self.write_region_chunk_unlocked(dimension, chunk_x, chunk_z, chunk)
@@ -974,6 +1093,10 @@ impl WorldManager {
             .expect("world light cache poisoned");
         let cleared = chunks.len();
         *chunks = std::collections::HashMap::new();
+        self.region_chunk_cache
+            .lock()
+            .expect("world region chunk cache poisoned")
+            .clear();
         if cleared > 0 {
             log::debug!("已清理世界区块光照缓存: chunks={cleared}");
         }

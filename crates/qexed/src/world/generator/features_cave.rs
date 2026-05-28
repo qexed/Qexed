@@ -55,15 +55,19 @@ impl PlacedMonsterRoomFeature {
         }
     }
 
-    fn place_with_neighbors(
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_lazy_neighbors(
         &self,
         settings: &NoiseSettings,
         origin_x: i32,
         origin_z: i32,
         chunk: &mut NoiseChunkBlocks,
-        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
         random: &mut FeatureRandom,
-    ) {
+        neighbor_sources: &mut NeighborFeatureSources,
+        profile: &mut Option<FeaturePlacementProfile>,
+        feature_name: &'static str,
+    ) -> Duration {
+        let started = Instant::now();
         for _ in 0..self.count.sample(random) {
             let world_x = origin_x + random.next_int(16);
             let world_z = origin_z + random.next_int(16);
@@ -74,10 +78,40 @@ impl PlacedMonsterRoomFeature {
             {
                 continue;
             }
-            self.config.place_with_neighbors(
-                settings, origin_x, origin_z, chunk, neighbors, random, world_x, world_y, world_z,
+
+            let shape = self.config.sample_shape(random);
+            if shape.fits_chunk(world_x, world_z, origin_x, origin_z) {
+                self.config.place_resolved(
+                    settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z, shape,
+                );
+                continue;
+            }
+
+            let (min_x, max_x, min_z, max_z) = shape.bounds(world_x, world_z);
+            let context_start = Instant::now();
+            let neighbor_chunks =
+                neighbor_sources.context_for_box(settings, min_x, max_x, min_z, max_z);
+            if let Some(profile) = profile.as_mut() {
+                profile.record(
+                    feature_name,
+                    FeatureProfilePhase::NeighborLoad,
+                    context_start.elapsed(),
+                );
+            }
+            self.config.place_resolved_with_neighbors(
+                settings,
+                origin_x,
+                origin_z,
+                chunk,
+                &neighbor_chunks,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                shape,
             );
         }
+        started.elapsed()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -145,8 +179,36 @@ impl PlacedMonsterRoomFeature {
         }
     }
 
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            let shape = self.config.sample_shape(random);
+            if shape.overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
+                return true;
+            }
+        }
+        false
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn place_with_spillover_neighbors(
+    fn place_with_spillover_lazy_neighbors(
         &self,
         settings: &NoiseSettings,
         source_origin_x: i32,
@@ -155,8 +217,10 @@ impl PlacedMonsterRoomFeature {
         target_origin_z: i32,
         source_chunk: &mut NoiseChunkBlocks,
         target_chunk: &mut NoiseChunkBlocks,
-        source_neighbors: &[(i32, i32, &NoiseChunkBlocks)],
         random: &mut FeatureRandom,
+        neighbor_sources: &mut NeighborFeatureSources,
+        profile: &mut Option<FeaturePlacementProfile>,
+        feature_name: &'static str,
     ) {
         for _ in 0..self.count.sample(random) {
             let world_x = source_origin_x + random.next_int(16);
@@ -184,7 +248,19 @@ impl PlacedMonsterRoomFeature {
                 );
                 continue;
             }
+
             let mut replay_random = random.clone();
+            let (min_x, max_x, min_z, max_z) = shape.bounds(world_x, world_z);
+            let context_start = Instant::now();
+            let source_neighbors =
+                neighbor_sources.context_for_box(settings, min_x, max_x, min_z, max_z);
+            if let Some(profile) = profile.as_mut() {
+                profile.record(
+                    feature_name,
+                    FeatureProfilePhase::NeighborLoad,
+                    context_start.elapsed(),
+                );
+            }
             let source_context: Vec<_> = source_neighbors
                 .iter()
                 .copied()
@@ -752,5 +828,33 @@ impl PlacedMultifaceGrowthFeature {
                 world_z,
             );
         }
+    }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let _world_y = self.height.sample(settings, random);
+            let radius = self.config.search_range;
+            if horizontal_box_overlaps_chunk(
+                world_x - radius,
+                world_x + radius,
+                world_z - radius,
+                world_z + radius,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
     }
 }

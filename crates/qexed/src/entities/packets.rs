@@ -1,6 +1,6 @@
 use anyhow::Result;
 use bytes::Bytes;
-use qexed_packet::net_types::{GameProfile, VarInt};
+use qexed_packet::net_types::{GameProfile, ProfileProperty, VarInt};
 use qexed_protocol::{
     to_client::play::{
         add_entity::{AddEntity, EntityPositionSync, PlayerInfoRemove, RemoveEntities, RotateHead},
@@ -33,9 +33,10 @@ impl ManagedEntity {
     pub fn spawn_packets(&self) -> Result<Vec<Bytes>> {
         let mut packets = Vec::new();
         if self.kind == ManagedEntityKind::Npc {
+            let display_name = self.display_name().map(|n| text_component(n));
             packets.push(crate::players::packet_bytes(PlayerInfoUpdate {
                 actions: PlayerInfoActions::player_initializing(),
-                entries: vec![npc_player_info_entry(&self.profile(), 0)],
+                entries: vec![npc_player_info_entry(&self.profile(), 0, display_name)],
             })?);
         }
 
@@ -90,15 +91,16 @@ impl ManagedEntity {
     }
 
     fn profile(&self) -> GameProfile {
+        let profile_name = self.display_name().unwrap_or(self.name.as_str());
         GameProfile {
             uuid: self.uuid,
-            username: npc_profile_name(self.profile_name()),
-            properties: Vec::new(),
+            username: npc_profile_name(profile_name),
+            properties: self.skin_properties(),
         }
     }
 
     fn display_name(&self) -> Option<&str> {
-        let name = self.name.trim();
+        let name = self.display_name.trim();
         if !name.is_empty() {
             return Some(name);
         }
@@ -109,8 +111,23 @@ impl ManagedEntity {
         }
     }
 
-    fn profile_name(&self) -> &str {
-        self.display_name().unwrap_or(&self.key)
+    fn skin_properties(&self) -> Vec<ProfileProperty> {
+        let textures = self.skin_textures.trim();
+        if textures.is_empty() {
+            return Vec::new();
+        }
+        vec![ProfileProperty {
+            name: "textures".to_string(),
+            value: textures.to_string(),
+            signature: {
+                let signature = self.skin_signature.trim();
+                if signature.is_empty() {
+                    None
+                } else {
+                    Some(signature.to_string())
+                }
+            },
+        }]
     }
 }
 
@@ -197,36 +214,26 @@ impl DroppedItemEntity {
     }
 }
 
-fn npc_player_info_entry(profile: &GameProfile, game_mode: i32) -> PlayerInfoEntry {
+fn npc_player_info_entry(
+    profile: &GameProfile,
+    game_mode: i32,
+    display_name: Option<qexed_protocol::types::TextComponent>,
+) -> PlayerInfoEntry {
     let mut entry = PlayerInfoEntry::from_profile(profile, game_mode);
     entry.listed = false;
+    entry.display_name = display_name;
     entry
 }
 
 pub(super) fn npc_profile_name(name: &str) -> String {
     let mut username = name
+        .trim()
         .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
+        .filter(|ch| !ch.is_control())
         .take(16)
         .collect::<String>();
-
-    while username.starts_with('_') {
-        username.remove(0);
-    }
-    while username.ends_with('_') {
-        username.pop();
-    }
     if username.is_empty() {
         username.push_str("NPC");
-    }
-    while username.len() < 3 {
-        username.push('_');
     }
     username
 }

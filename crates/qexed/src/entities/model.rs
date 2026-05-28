@@ -11,6 +11,9 @@ pub struct ManagedEntity {
     pub dimension: String,
     pub position: EntityPosition,
     pub name: String,
+    pub display_name: String,
+    pub skin_textures: String,
+    pub skin_signature: String,
     pub data: i32,
 }
 
@@ -29,6 +32,9 @@ pub struct EntitySpawnRequest {
     pub dimension: String,
     pub position: EntityPosition,
     pub name: String,
+    pub display_name: String,
+    pub skin_textures: String,
+    pub skin_signature: String,
     pub data: i32,
 }
 

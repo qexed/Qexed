@@ -1,8 +1,0 @@
-[book]
-title = "Qexed 配置文档"
-authors = ["Qexed AutoDoc"]
-language = "zh-CN"
-src = "src"
-
-[output.html]
-git-repository-url = "https://example.invalid/qexed/84f8657018f3e5d94c0573c3438a6206918a1ddf"

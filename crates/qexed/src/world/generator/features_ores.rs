@@ -100,6 +100,34 @@ impl PlacedOreFeature {
             );
         }
     }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let y = self.height.sample(settings, random);
+            let mut replay_random = random.clone();
+            if self.ore.may_spill_into(
+                target_origin_x,
+                target_origin_z,
+                &mut replay_random,
+                x,
+                y,
+                z,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -130,10 +158,14 @@ impl FeatureBiomeFilter {
             return true;
         }
 
+        self.can_match_biomes(chunk.biomes.iter().copied())
+    }
+
+    fn can_match_biomes(self, mut biomes: impl Iterator<Item = &'static str>) -> bool {
         match self {
             Self::All => true,
-            Self::Include(biomes) => chunk.biomes.iter().any(|biome| biomes.contains(biome)),
-            Self::Exclude(biomes) => chunk.biomes.iter().any(|biome| !biomes.contains(biome)),
+            Self::Include(allowed) => biomes.any(|biome| allowed.contains(&biome)),
+            Self::Exclude(excluded) => biomes.any(|biome| !excluded.contains(&biome)),
         }
     }
 }
@@ -230,6 +262,34 @@ impl PlacedUnderwaterMagmaFeature {
                 );
             }
         }
+    }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let floor_x = source_origin_x + random.next_int(16);
+            let floor_z = source_origin_z + random.next_int(16);
+            let _floor_y = self.height.sample(settings, random);
+            let radius = self.placement_radius_around_floor;
+            if horizontal_box_overlaps_chunk(
+                floor_x - radius,
+                floor_x + radius,
+                floor_z - radius,
+                floor_z + radius,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
     }
 
     fn find_floor_y(
@@ -688,6 +748,32 @@ impl PlacedDiskFeature {
         }
     }
 
+    fn may_spill_into(
+        &self,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let radius = self.radius.sample(random);
+            if horizontal_box_overlaps_chunk(
+                x - radius,
+                x + radius,
+                z - radius,
+                z + radius,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn can_start_at(
         &self,
         chunk: &NoiseChunkBlocks,
@@ -779,9 +865,17 @@ impl PlacedDiskFeature {
             return;
         }
 
-        for world_x in center_x - radius..=center_x + radius {
+        let min_x = (center_x - radius).max(source_origin_x.min(target_origin_x));
+        let max_x = (center_x + radius).min((source_origin_x + 15).max(target_origin_x + 15));
+        let min_z = (center_z - radius).max(source_origin_z.min(target_origin_z));
+        let max_z = (center_z + radius).min((source_origin_z + 15).max(target_origin_z + 15));
+        if min_x > max_x || min_z > max_z {
+            return;
+        }
+
+        for world_x in min_x..=max_x {
             let dx = world_x - center_x;
-            for world_z in center_z - radius..=center_z + radius {
+            for world_z in min_z..=max_z {
                 let dz = world_z - center_z;
                 if dx * dx + dz * dz > radius * radius {
                     continue;
@@ -1555,6 +1649,48 @@ impl OreFeatureConfig {
         }
 
         placed
+    }
+
+    fn may_spill_into(
+        &self,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let direction = random.next_float() * std::f32::consts::PI;
+        let spread_xy = self.size as f64 / 8.0;
+        let x0 = origin_x as f64 + direction.sin() as f64 * spread_xy;
+        let x1 = origin_x as f64 - direction.sin() as f64 * spread_xy;
+        let z0 = origin_z as f64 + direction.cos() as f64 * spread_xy;
+        let z1 = origin_z as f64 - direction.cos() as f64 * spread_xy;
+        let y0 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
+        let y1 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
+        let mut min_x = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut min_z = i32::MAX;
+        let mut max_z = i32::MIN;
+
+        for i in 0..self.size {
+            let step = i as f64 / self.size as f64;
+            let radius_noise = random.next_double() * self.size as f64 / 16.0;
+            let radius = (((std::f32::consts::PI * i as f32 / self.size as f32).sin() + 1.0)
+                as f64
+                * radius_noise
+                + 1.0)
+                / 2.0;
+            let x = lerp_f64(step, x0, x1);
+            let _y = lerp_f64(step, y0, y1);
+            let z = lerp_f64(step, z0, z1);
+            min_x = min_x.min((x - radius).floor() as i32);
+            max_x = max_x.max(((x + radius).floor() as i32).max(min_x));
+            min_z = min_z.min((z - radius).floor() as i32);
+            max_z = max_z.max(((z + radius).floor() as i32).max(min_z));
+        }
+
+        horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
     }
 
     #[allow(clippy::too_many_arguments)]

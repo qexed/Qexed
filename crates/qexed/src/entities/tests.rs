@@ -1,6 +1,6 @@
 use super::{
-    EntityIdAllocator, EntityManager, EntitySpawnRequest, ManagedEntityKind, entity_type_id,
-    packets::npc_profile_name,
+    EntityIdAllocator, EntityManager, EntitySpawnRequest, ManagedEntity, ManagedEntityKind,
+    entity_type_id, packets::npc_profile_name,
 };
 use qexed_packet::Packet;
 use qexed_protocol::to_client::play::add_entity::EntityPosition;
@@ -148,6 +148,9 @@ fn runtime_entities_can_spawn_move_and_remove() {
                 dimension: "minecraft:overworld".to_string(),
                 position,
                 name: "Guide".to_string(),
+                display_name: String::new(),
+                skin_textures: String::new(),
+                skin_signature: String::new(),
                 data: 0,
             },
         )
@@ -173,9 +176,95 @@ fn runtime_entities_can_spawn_move_and_remove() {
 }
 
 #[test]
+fn npc_spawn_packets_include_display_name_in_player_info() {
+    let entity = ManagedEntity {
+        key: "shop".to_string(),
+        entity_id: 1,
+        uuid: uuid::Uuid::new_v4(),
+        kind: ManagedEntityKind::Npc,
+        entity_type: "minecraft:player".to_string(),
+        entity_type_id: 155,
+        dimension: "minecraft:overworld".to_string(),
+        position: EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        name: "shop_001".to_string(),
+        display_name: "Shop".to_string(),
+        skin_textures: String::new(),
+        skin_signature: String::new(),
+        data: 0,
+    };
+
+    let packets = entity.spawn_packets().unwrap();
+    assert!(
+        packets.len() >= 4,
+        "NPC spawn should produce at least 4 packets, got {}",
+        packets.len()
+    );
+
+    let player_info_bytes = &packets[0];
+    let display_name_utf8 = "Shop".as_bytes();
+    let found = player_info_bytes
+        .windows(display_name_utf8.len())
+        .any(|window| window == display_name_utf8);
+    assert!(
+        found,
+        "PlayerInfoUpdate packet should contain display_name bytes."
+    );
+}
+
+#[test]
+fn npc_spawn_packets_include_skin_textures_in_player_info() {
+    let entity = ManagedEntity {
+        key: "skin-npc".to_string(),
+        entity_id: 2,
+        uuid: uuid::Uuid::new_v4(),
+        kind: ManagedEntityKind::Npc,
+        entity_type: "minecraft:player".to_string(),
+        entity_type_id: 155,
+        dimension: "minecraft:overworld".to_string(),
+        position: EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        name: "skin_npc".to_string(),
+        display_name: "Skin NPC".to_string(),
+        skin_textures: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYWJjIn19fQ==".to_string(),
+        skin_signature: "signed-by-mojang".to_string(),
+        data: 0,
+    };
+
+    let packets = entity.spawn_packets().unwrap();
+    let player_info_bytes = &packets[0];
+    let textures = entity.skin_textures.as_bytes();
+    let signature = entity.skin_signature.as_bytes();
+    assert!(
+        player_info_bytes
+            .windows(textures.len())
+            .any(|w| w == textures),
+        "PlayerInfoUpdate packet should contain textures property"
+    );
+    assert!(
+        player_info_bytes
+            .windows(signature.len())
+            .any(|w| w == signature),
+        "PlayerInfoUpdate packet should contain textures signature"
+    );
+}
+
+#[test]
 fn npc_profile_name_is_minecraft_safe() {
-    assert_eq!(npc_profile_name("鍚戝 NPC!"), "NPC");
-    assert_eq!(npc_profile_name("ab"), "ab_");
+    assert_eq!(npc_profile_name(""), "NPC");
+    assert_eq!(npc_profile_name("ab"), "ab");
     assert_eq!(
         npc_profile_name("Guide_0123456789012345"),
         "Guide_0123456789"

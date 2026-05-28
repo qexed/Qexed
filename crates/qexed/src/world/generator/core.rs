@@ -1,6 +1,7 @@
 pub(crate) struct GeneratedChunk {
     pub packet: MapChunk,
     pub light_dampening: Vec<u8>,
+    pub region_chunk: Option<super::region::ChunkData>,
 }
 
 pub(crate) trait WorldChunkGenerator: Send + Sync + std::fmt::Debug {
@@ -79,6 +80,7 @@ impl WorldChunkGenerator for EmptyWorldGenerator {
         Ok(GeneratedChunk {
             packet: empty_chunk_packet(chunk_x, chunk_z, super::WorldLightMode::Static),
             light_dampening: vec![0; CHUNK_DAMPENING_LEN],
+            region_chunk: None,
         })
     }
 
@@ -160,6 +162,9 @@ impl WorldChunkGenerator for VanillaFlatGenerator {
         Ok(GeneratedChunk {
             packet,
             light_dampening,
+            region_chunk: Some(chunk_nbt::region_chunk_from_nbt(
+                chunk_x, chunk_z, &self.root,
+            )?),
         })
     }
 
@@ -244,12 +249,14 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
             return Ok(GeneratedChunk {
                 packet: empty_chunk_packet(chunk_x, chunk_z, super::WorldLightMode::Static),
                 light_dampening: vec![0; CHUNK_DAMPENING_LEN],
+                region_chunk: None,
             });
         };
         if dimension != NoiseDimension::Overworld {
             let chunk =
                 basic_dimension_chunk(dimension, self.settings.seed(), chunk_x, chunk_z);
             let root = noise_chunk_root(&chunk, dimension.biome());
+            let region_chunk = chunk_nbt::region_chunk_from_nbt(chunk_x, chunk_z, &root)?;
             let (mut packet, light_dampening) =
                 chunk_nbt::network_chunk_and_light_dampening_from_nbt(
                     chunk_x,
@@ -261,6 +268,7 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
             return Ok(GeneratedChunk {
                 packet,
                 light_dampening,
+                region_chunk: Some(region_chunk),
             });
         }
 
@@ -270,8 +278,11 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
                 .generate_chunk_profiled(chunk_x, chunk_z, self.gpu_worldgen.as_deref());
 
         let root_start = Instant::now();
-        let root = noise_chunk_root(&chunk, self.settings.biome.as_str());
+        let mut root = noise_chunk_root(&chunk, self.settings.biome.as_str());
+        append_block_entities_to_chunk_root(&mut root, &chunk);
         let root_elapsed = root_start.elapsed();
+
+        let region_chunk = chunk_nbt::region_chunk_from_nbt(chunk_x, chunk_z, &root)?;
 
         let packet_start = Instant::now();
         let (packet, light_dampening) = chunk_nbt::network_chunk_and_light_dampening_from_nbt(
@@ -300,6 +311,7 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         Ok(GeneratedChunk {
             packet,
             light_dampening,
+            region_chunk: Some(region_chunk),
         })
     }
 
@@ -568,6 +580,9 @@ impl NoiseSettings {
         self.carvers
             .carve_chunk(self, chunk_x, chunk_z, &preliminary_surfaces, &mut chunk);
         let carvers = carvers_start.elapsed();
+
+        self.feature_source_cache
+            .insert_generated(chunk_x, chunk_z, chunk.clone());
 
         let features_start = Instant::now();
         self.ore_features

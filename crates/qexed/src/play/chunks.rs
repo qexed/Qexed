@@ -24,7 +24,8 @@ const MAX_CHUNKS_PER_TICK: f32 = 64.0;
 const START_CHUNKS_PER_TICK: f32 = 9.0;
 const INITIAL_MAX_UNACKNOWLEDGED_BATCHES: usize = 1;
 const MAX_UNACKNOWLEDGED_BATCHES: usize = 10;
-const MAX_CHUNK_TASK_THREADS: usize = 8;
+const MAX_CHUNK_LOAD_THREADS: usize = 4;
+const MAX_CHUNK_GENERATE_THREADS: usize = 8;
 
 pub(super) struct ChunkSendState {
     pub(super) dimension: String,
@@ -58,26 +59,52 @@ impl ChunkTaskPool {
     fn shared() -> &'static Self {
         static POOL: OnceLock<ChunkTaskPool> = OnceLock::new();
         POOL.get_or_init(|| {
-            let worker_count = default_chunk_task_threads();
+            let load_worker_count = default_chunk_load_threads();
+            let generate_worker_count = default_chunk_generate_threads();
             let (sender, receiver) = mpsc::channel::<ChunkTask>();
+            let (generate_sender, generate_receiver) = mpsc::channel::<ChunkGenerateTask>();
             let receiver = std::sync::Arc::new(std::sync::Mutex::new(receiver));
-            for index in 0..worker_count {
+            let generate_receiver = std::sync::Arc::new(std::sync::Mutex::new(generate_receiver));
+            for index in 0..load_worker_count {
                 let receiver = receiver.clone();
+                let generate_sender = generate_sender.clone();
                 std::thread::Builder::new()
-                    .name(format!("qexed-chunk-{index}"))
+                    .name(format!("qexed-chunk-load-{index}"))
                     .spawn(move || {
                         loop {
                             let task =
                                 { receiver.lock().expect("chunk task queue poisoned").recv() };
                             match task {
-                                Ok(task) => task.run(),
+                                Ok(task) => task.run(&generate_sender),
                                 Err(_) => break,
                             }
                         }
                     })
                     .expect("create chunk task worker");
             }
-            log::info!("initialized chunk task pool: workers={worker_count}");
+            for index in 0..generate_worker_count {
+                let generate_receiver = generate_receiver.clone();
+                std::thread::Builder::new()
+                    .name(format!("qexed-chunk-generate-{index}"))
+                    .spawn(move || {
+                        loop {
+                            let task = {
+                                generate_receiver
+                                    .lock()
+                                    .expect("chunk generate queue poisoned")
+                                    .recv()
+                            };
+                            match task {
+                                Ok(task) => task.run(),
+                                Err(_) => break,
+                            }
+                        }
+                    })
+                    .expect("create chunk generate worker");
+            }
+            log::info!(
+                "initialized chunk task pools: load_workers={load_worker_count}, generate_workers={generate_worker_count}"
+            );
             Self { sender }
         })
     }
@@ -142,7 +169,7 @@ enum ChunkTask {
 }
 
 impl ChunkTask {
-    fn run(self) {
+    fn run(self, generate_sender: &mpsc::Sender<ChunkGenerateTask>) {
         match self {
             ChunkTask::BuildPayload {
                 world,
@@ -152,8 +179,67 @@ impl ChunkTask {
                 cache_epoch,
                 reply,
             } => {
-                let payload =
-                    build_chunk_payload_sync(world, dimension, chunk_x, chunk_z, cache_epoch);
+                match build_saved_chunk_payload_sync(
+                    &world,
+                    &dimension,
+                    chunk_x,
+                    chunk_z,
+                    cache_epoch,
+                ) {
+                    Ok(Some(payload)) => reply.send(chunk_x, chunk_z, Ok(payload)),
+                    Ok(None) => {
+                        if generate_sender
+                            .send(ChunkGenerateTask::BuildPayload {
+                                world,
+                                dimension,
+                                chunk_x,
+                                chunk_z,
+                                cache_epoch,
+                                reply,
+                            })
+                            .is_err()
+                        {
+                            log::warn!(
+                                "failed to queue chunk generation task because generation pool stopped"
+                            );
+                        }
+                    }
+                    Err(err) => reply.send(chunk_x, chunk_z, Err(err)),
+                }
+            }
+        }
+    }
+}
+
+enum ChunkGenerateTask {
+    BuildPayload {
+        world: WorldManager,
+        dimension: String,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: u64,
+        reply: ChunkTaskReply,
+    },
+}
+
+impl ChunkGenerateTask {
+    fn run(self) {
+        match self {
+            ChunkGenerateTask::BuildPayload {
+                world,
+                dimension,
+                chunk_x,
+                chunk_z,
+                cache_epoch,
+                reply,
+            } => {
+                let payload = build_generated_chunk_payload_sync(
+                    world,
+                    dimension,
+                    chunk_x,
+                    chunk_z,
+                    cache_epoch,
+                );
                 reply.send(chunk_x, chunk_z, payload);
             }
         }
@@ -640,7 +726,42 @@ fn chunk_send_priority(
     (dx * dx + dz * dz, dx.abs().max(dz.abs()), chunk_z, chunk_x)
 }
 
-fn build_chunk_payload_sync(
+fn build_saved_chunk_payload_sync(
+    world: &WorldManager,
+    dimension: &str,
+    chunk_x: i32,
+    chunk_z: i32,
+    cache_epoch: u64,
+) -> Result<Option<bytes::Bytes>> {
+    let total_start = Instant::now();
+    let chunk_start = Instant::now();
+    let Some(chunk) =
+        world.saved_network_chunk_for_session(dimension, chunk_x, chunk_z, cache_epoch)?
+    else {
+        return Ok(None);
+    };
+    let chunk_elapsed = chunk_start.elapsed();
+
+    let encode_start = Instant::now();
+    let payload = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
+        .context("encode saved chunk packet")?;
+    let encode_elapsed = encode_start.elapsed();
+    let total_elapsed = total_start.elapsed();
+
+    if total_elapsed >= SLOW_CHUNK_PAYLOAD_LOG_THRESHOLD && log::log_enabled!(log::Level::Debug) {
+        log::debug!(
+            "chunk payload built: phase=load, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), total_ms={:.2}, world_ms={:.2}, encode_ms={:.2}, bytes={}",
+            duration_ms(total_elapsed),
+            duration_ms(chunk_elapsed),
+            duration_ms(encode_elapsed),
+            payload.len()
+        );
+    }
+
+    Ok(Some(payload))
+}
+
+fn build_generated_chunk_payload_sync(
     world: WorldManager,
     dimension: String,
     chunk_x: i32,
@@ -649,7 +770,8 @@ fn build_chunk_payload_sync(
 ) -> Result<bytes::Bytes> {
     let total_start = Instant::now();
     let chunk_start = Instant::now();
-    let chunk = world.network_chunk_for_session(&dimension, chunk_x, chunk_z, cache_epoch)?;
+    let chunk =
+        world.generated_network_chunk_for_session(&dimension, chunk_x, chunk_z, cache_epoch)?;
     let chunk_elapsed = chunk_start.elapsed();
 
     let encode_start = Instant::now();
@@ -684,11 +806,20 @@ pub(super) fn chunk_load_parallelism_limit(value: usize) -> usize {
     value.clamp(1, MAX_CHUNK_LOAD_PARALLELISM)
 }
 
-fn default_chunk_task_threads() -> usize {
+fn default_chunk_load_threads() -> usize {
     let available = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(DEFAULT_CHUNK_LOAD_PARALLELISM);
-    available.saturating_sub(1).clamp(1, MAX_CHUNK_TASK_THREADS)
+    (available / 2).clamp(1, MAX_CHUNK_LOAD_THREADS)
+}
+
+fn default_chunk_generate_threads() -> usize {
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(DEFAULT_CHUNK_LOAD_PARALLELISM);
+    available
+        .saturating_sub(1)
+        .clamp(1, MAX_CHUNK_GENERATE_THREADS)
 }
 
 fn visible_chunk_set(center_x: i32, center_z: i32, view_distance: i32) -> HashSet<(i32, i32)> {

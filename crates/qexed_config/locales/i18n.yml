@@ -388,6 +388,9 @@ config:
           name:
             en: "NPC player name or hologram text. Empty NPC names use the entity id."
             zh-CN: "NPC 玩家名。为空时使用实体 id。"
+          display_name:
+            en: "Custom display name shown above the entity. Supports JSON text and Unicode. Falls back to name when empty."
+            zh-CN: "实体上方显示的自定义名称，支持 JSON 文本和 Unicode。为空时回退到 name。"
           x:
             en: "Entity X coordinate"
             zh-CN: "实体 X 坐标"

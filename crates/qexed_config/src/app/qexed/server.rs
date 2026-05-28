@@ -655,6 +655,22 @@ pub struct Entity {
     pub name: String,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.display_name")]
+    pub display_name: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.skin_textures")]
+    pub skin_textures: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.skin_signature")]
+    pub skin_signature: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.skin_player_id")]
+    pub skin_player_id: String,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.list.x")]
     pub x: f64,
 
@@ -690,6 +706,10 @@ impl Default for Entity {
             kind: EntityKind::default(),
             entity_type: default_entity_type(),
             name: String::new(),
+            display_name: String::new(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            skin_player_id: String::new(),
             x: 0.0,
             y: 64.0,
             z: 0.0,
@@ -1989,6 +2009,7 @@ dimension = "minecraft:overworld"
 id = "spawn-guide"
 kind = "npc"
 name = "Guide"
+skin_player_id = "Notch"
 x = 1.0
 y = 65.0
 z = 2.0
@@ -2019,6 +2040,7 @@ z = 0.0
         assert_eq!(server.entities.list.len(), 3);
         assert_eq!(server.entities.list[0].kind, EntityKind::Npc);
         assert_eq!(server.entities.list[0].name, "Guide");
+        assert_eq!(server.entities.list[0].skin_player_id, "Notch");
         assert_eq!(server.entities.list[1].kind, EntityKind::Entity);
         assert_eq!(server.entities.list[1].entity_type, "minecraft:armor_stand");
         assert_eq!(server.entities.list[2].kind, EntityKind::Hologram);

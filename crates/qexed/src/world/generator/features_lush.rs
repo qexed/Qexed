@@ -141,6 +141,34 @@ impl PlacedEnvironmentScanFeature {
             );
         }
     }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        let radius = 8;
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let _start_y = self.height.sample(settings, random);
+            if horizontal_box_overlaps_chunk(
+                world_x - radius,
+                world_x + radius,
+                world_z - radius,
+                world_z + radius,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

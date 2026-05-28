@@ -1,9 +1,10 @@
 use qexed_packet::{Packet, PacketCodec};
 
 use super::{
-    LIGHT_SECTION_COUNT, WORLD_MAX_Y, WorldLightAlgorithm, WorldLightMode, WorldManager,
-    block_light_dampening_index, empty_chunk_section_bytes, generator, light_for_mode,
-    section_count, sky_light_from_dampening, sky_light_from_neighbourhood,
+    CHUNK_DAMPENING_LEN, LIGHT_SECTION_COUNT, WORLD_MAX_Y, WorldLightAlgorithm, WorldLightMode,
+    WorldManager, block_light_dampening_index, empty_chunk_packet, empty_chunk_section_bytes,
+    generator, light_for_mode, section_count, sky_light_from_dampening,
+    sky_light_from_neighbourhood,
 };
 use qexed_protocol::to_client::play::map_chunk::LIGHT_ARRAY_BYTES;
 use std::sync::Arc;
@@ -265,6 +266,141 @@ fn world_manager_loads_block_state_from_saved_region() {
 }
 
 #[test]
+fn world_manager_caches_loaded_region_chunks() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let position = qexed_packet::net_types::Position {
+        x: -17,
+        y: 12,
+        z: 35,
+    };
+    let chunk =
+        super::chunk_nbt::set_block_state_in_region(-2, 2, None, &position, stone, None).unwrap();
+
+    manager
+        .write_region_chunk("minecraft:overworld", -2, 2, chunk)
+        .unwrap();
+    assert_eq!(manager.cached_region_chunk_count(), 1);
+
+    assert_eq!(
+        manager.block_state_at("minecraft:overworld", &position),
+        Some(stone)
+    );
+    assert_eq!(manager.cached_region_chunk_count(), 1);
+}
+
+#[derive(Debug)]
+struct CachedGeneratedChunkGenerator {
+    position: qexed_packet::net_types::Position,
+    block_state: i32,
+}
+
+impl generator::WorldChunkGenerator for CachedGeneratedChunkGenerator {
+    fn generate(
+        &self,
+        _dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        _light_algorithm: WorldLightAlgorithm,
+    ) -> anyhow::Result<generator::GeneratedChunk> {
+        let region_chunk = super::chunk_nbt::set_block_state_in_region(
+            chunk_x,
+            chunk_z,
+            None,
+            &self.position,
+            self.block_state,
+            None,
+        )?;
+        Ok(generator::GeneratedChunk {
+            packet: empty_chunk_packet(chunk_x, chunk_z, WorldLightMode::Static),
+            light_dampening: vec![0; CHUNK_DAMPENING_LEN],
+            region_chunk: Some(region_chunk),
+        })
+    }
+
+    fn block_state_at(
+        &self,
+        _dimension: &str,
+        _position: &qexed_packet::net_types::Position,
+    ) -> Option<i32> {
+        None
+    }
+
+    fn region_chunk(
+        &self,
+        _dimension: &str,
+        _chunk_x: i32,
+        _chunk_z: i32,
+    ) -> anyhow::Result<Option<super::region::ChunkData>> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn world_manager_uses_generated_chunk_cache_for_block_state_queries() {
+    let dir = tempfile::tempdir().unwrap();
+    let position = qexed_packet::net_types::Position { x: 1, y: 70, z: 1 };
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let manager = WorldManager::with_generator(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        false,
+        Arc::new(CachedGeneratedChunkGenerator {
+            position: position.clone(),
+            block_state: stone,
+        }),
+    );
+
+    assert_eq!(
+        manager.block_state_at("minecraft:overworld", &position),
+        None
+    );
+    manager.network_chunk("minecraft:overworld", 0, 0).unwrap();
+
+    assert_eq!(
+        manager.block_state_at("minecraft:overworld", &position),
+        Some(stone)
+    );
+}
+
+#[test]
+fn world_manager_persists_edits_on_top_of_generated_chunk_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let generated_position = qexed_packet::net_types::Position { x: 1, y: 70, z: 1 };
+    let edited_position = qexed_packet::net_types::Position { x: 2, y: 70, z: 2 };
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let dirt = super::chunk_nbt::default_block_state_id("minecraft:dirt");
+    let manager = WorldManager::with_generator(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        false,
+        Arc::new(CachedGeneratedChunkGenerator {
+            position: generated_position.clone(),
+            block_state: stone,
+        }),
+    );
+
+    manager.network_chunk("minecraft:overworld", 0, 0).unwrap();
+    manager.place_block("minecraft:overworld", edited_position.clone(), dirt);
+    manager.flush_block_writes();
+
+    let reloaded = WorldManager::new(dir.path());
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &generated_position),
+        Some(stone)
+    );
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &edited_position),
+        Some(dirt)
+    );
+}
+
+#[test]
 fn world_manager_persists_placed_blocks_to_region() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::new(dir.path());
@@ -434,11 +570,21 @@ fn ending_last_world_session_clears_chunk_light_cache() {
         vec![0; super::CHUNK_DAMPENING_LEN],
         Some(epoch),
     );
+    manager
+        .write_region_chunk(
+            "minecraft:overworld",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"chunk").unwrap(),
+        )
+        .unwrap();
     assert_eq!(manager.cached_light_chunk_count(), 1);
+    assert_eq!(manager.cached_region_chunk_count(), 1);
 
     drop(session);
 
     assert_eq!(manager.cached_light_chunk_count(), 0);
+    assert_eq!(manager.cached_region_chunk_count(), 0);
     manager.remember_chunk_light_dampening(
         "minecraft:overworld",
         1,

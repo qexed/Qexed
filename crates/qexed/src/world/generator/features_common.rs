@@ -776,15 +776,32 @@ struct MonsterRoomShape {
 }
 
 impl MonsterRoomShape {
-    fn overlaps_chunk(self, origin_x: i32, origin_z: i32, chunk_min_x: i32, chunk_min_z: i32) -> bool {
-        horizontal_box_overlaps_chunk(
+    fn bounds(self, origin_x: i32, origin_z: i32) -> (i32, i32, i32, i32) {
+        (
             origin_x + self.min_x,
             origin_x + self.max_x,
             origin_z + self.min_z,
             origin_z + self.max_z,
-            chunk_min_x,
-            chunk_min_z,
         )
+    }
+
+    fn overlaps_chunk(
+        self,
+        origin_x: i32,
+        origin_z: i32,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+    ) -> bool {
+        let (min_x, max_x, min_z, max_z) = self.bounds(origin_x, origin_z);
+        horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, chunk_min_x, chunk_min_z)
+    }
+
+    fn fits_chunk(self, origin_x: i32, origin_z: i32, chunk_min_x: i32, chunk_min_z: i32) -> bool {
+        let (min_x, max_x, min_z, max_z) = self.bounds(origin_x, origin_z);
+        min_x >= chunk_min_x
+            && max_x < chunk_min_x + 16
+            && min_z >= chunk_min_z
+            && max_z < chunk_min_z + 16
     }
 }
 
@@ -817,34 +834,6 @@ impl MonsterRoomFeatureConfig {
             chunk_min_x,
             chunk_min_z,
             chunk,
-            random,
-            origin_x,
-            origin_y,
-            origin_z,
-            shape,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn place_with_neighbors(
-        &self,
-        settings: &NoiseSettings,
-        chunk_min_x: i32,
-        chunk_min_z: i32,
-        chunk: &mut NoiseChunkBlocks,
-        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
-        random: &mut FeatureRandom,
-        origin_x: i32,
-        origin_y: i32,
-        origin_z: i32,
-    ) -> bool {
-        let shape = self.sample_shape(random);
-        self.place_resolved_with_neighbors(
-            settings,
-            chunk_min_x,
-            chunk_min_z,
-            chunk,
-            neighbors,
             random,
             origin_x,
             origin_y,

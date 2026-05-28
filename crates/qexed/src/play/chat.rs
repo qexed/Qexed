@@ -266,7 +266,10 @@ where
                     entity_type,
                     dimension: dimension.to_string(),
                     position: player_position,
-                    name,
+                    name: name.clone(),
+                    display_name: name,
+                    skin_textures: String::new(),
+                    skin_signature: String::new(),
                     data: 0,
                 },
             ) {

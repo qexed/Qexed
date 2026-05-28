@@ -83,6 +83,26 @@ impl PlacedGeodeFeature {
             world_z,
         );
     }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return false;
+        }
+
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        let _world_y = self.height.sample(settings, random);
+        self.config
+            .may_spill_into(world_x, world_z, target_origin_x, target_origin_z)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +164,23 @@ impl GeodeFeatureConfig {
             base_crack_size: 2.0,
             crack_point_offset: 2,
         }
+    }
+
+    fn may_spill_into(
+        &self,
+        origin_x: i32,
+        origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+    ) -> bool {
+        horizontal_box_overlaps_chunk(
+            origin_x + self.min_gen_offset,
+            origin_x + self.max_gen_offset,
+            origin_z + self.min_gen_offset,
+            origin_z + self.max_gen_offset,
+            target_origin_x,
+            target_origin_z,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

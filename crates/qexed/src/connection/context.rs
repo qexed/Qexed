@@ -55,10 +55,11 @@ impl ServerContext {
         let content_filter =
             crate::content_filter::ContentFilter::from_config(&config.server.content_filter)?;
         let entity_ids = Arc::new(crate::entities::EntityIdAllocator::default());
-        let entities = crate::entities::EntityManager::from_config(
+        let entities = crate::entities::EntityManager::from_config_with_skin_lookup(
             &config.server.entities,
             entity_ids.clone(),
-        )?;
+        )
+        .await?;
         let mut resource_pack =
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
                 .await?;

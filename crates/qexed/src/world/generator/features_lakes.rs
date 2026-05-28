@@ -94,6 +94,30 @@ impl PlacedLakeFeature {
         );
     }
 
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        let Some((world_x, _world_y, world_z)) =
+            self.sample_origin_position(settings, source_origin_x, source_origin_z, random)
+        else {
+            return false;
+        };
+        horizontal_box_overlaps_chunk(
+            world_x - 8,
+            world_x + 7,
+            world_z - 8,
+            world_z + 7,
+            target_origin_x,
+            target_origin_z,
+        )
+    }
+
     fn sample_origin(
         &self,
         settings: &NoiseSettings,
@@ -137,6 +161,37 @@ impl PlacedLakeFeature {
                 let local_z = (world_z - origin_z) as usize;
                 let world_y = chunk.world_surface_wg_height(local_x, local_z, settings.min_y);
                 (world_y > settings.min_y).then_some((world_x, world_y, world_z))
+            }
+        }
+    }
+
+    fn sample_origin_position(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> Option<(i32, i32, i32)> {
+        match self.placement {
+            LakePlacement::Underground { rarity, height, .. } => {
+                if random.next_float() >= 1.0 / rarity as f32 {
+                    return None;
+                }
+                Some((
+                    origin_x + random.next_int(16),
+                    height.sample(settings, random),
+                    origin_z + random.next_int(16),
+                ))
+            }
+            LakePlacement::Surface { rarity } => {
+                if random.next_float() >= 1.0 / rarity as f32 {
+                    return None;
+                }
+                Some((
+                    origin_x + random.next_int(16),
+                    settings.sea_level,
+                    origin_z + random.next_int(16),
+                ))
             }
         }
     }
