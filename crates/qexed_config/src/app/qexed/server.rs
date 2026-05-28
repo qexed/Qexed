@@ -1,3 +1,4 @@
+use anyhow::Context;
 use qexed_config::{public::mongodb::MongoConfig, public::mysql::MysqlConfig};
 use qexed_config_macros::AutoDoc;
 use rust_i18n::t;
@@ -25,6 +26,10 @@ pub struct Server {
         warning = "config.qexed.server.warning.online_mode"
     )]
     pub online_mode: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.log_level")]
+    pub log_level: ServerLogLevel,
 
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.lan_discovery", sub)]
@@ -63,7 +68,7 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.code_of_conduct")]
     pub code_of_conduct: bool,
 
-    #[serde(default)]
+    #[serde(default, skip)]
     #[AutoDoc(key = "config.qexed.server.world", sub)]
     pub world: World,
 
@@ -115,6 +120,7 @@ impl Default for Server {
             max_player: -1,
             display_players: true,
             online_mode: true,
+            log_level: ServerLogLevel::default(),
             lan_discovery: LanDiscovery::default(),
             network_compression_threshold: 256,
             proxy: false,
@@ -1257,6 +1263,18 @@ pub enum PlayerDataEngine {
     Mysql,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerLogLevel {
+    Trace,
+    Debug,
+    #[default]
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
 pub struct LanDiscovery {
     #[AutoDoc(key = "config.qexed.server.lan_discovery.enable")]
@@ -1355,6 +1373,114 @@ impl Default for World {
             light_algorithm: LightAlgorithm::default(),
             gpu: WorldGpu::default(),
             spawn: Spawn::default(),
+        }
+    }
+}
+
+impl qexed_config::tool::AppConfigTrait for World {
+    const PATH: &'static str = "/";
+    const NAME: &'static str = "world";
+
+    fn load_legacy_config(base_dir: &std::path::Path) -> anyhow::Result<Option<Self>> {
+        for path in [
+            base_dir.join("qexed.d").join("world.toml"),
+            base_dir.join("qexed.d").join("server.toml"),
+            base_dir.join("qexed.toml"),
+        ] {
+            if let Some(world) = load_legacy_world_config(&path)? {
+                return Ok(Some(world));
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn load_legacy_world_config(path: &std::path::Path) -> anyhow::Result<Option<World>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read legacy world config {}", path.display()))?;
+    parse_legacy_world_config(&content)
+        .with_context(|| format!("failed to parse legacy world config {}", path.display()))
+}
+
+fn parse_legacy_world_config(content: &str) -> anyhow::Result<Option<World>> {
+    let doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| "legacy world TOML format error")?;
+    let Some(source) = select_legacy_world_item(&doc) else {
+        return Ok(None);
+    };
+
+    let mut default_doc = toml::to_string_pretty(&World::default())
+        .with_context(|| "serialize default world config failed")?
+        .parse::<toml_edit::DocumentMut>()
+        .expect("default world TOML must be valid");
+    overlay_legacy_world_items(default_doc.as_item_mut(), source);
+    Ok(Some(
+        toml::from_str::<World>(&default_doc.to_string())
+            .with_context(|| "legacy world config type mismatch")?,
+    ))
+}
+
+fn select_legacy_world_item(doc: &toml_edit::DocumentMut) -> Option<&toml_edit::Item> {
+    if let Some(world) = doc
+        .get("server")
+        .and_then(|item| item.as_table())
+        .and_then(|server| server.get("world"))
+    {
+        return Some(world);
+    }
+    if let Some(world) = doc.get("world") {
+        return Some(world);
+    }
+    if doc_contains_world_root_fields(doc) {
+        return Some(doc.as_item());
+    }
+    None
+}
+
+fn doc_contains_world_root_fields(doc: &toml_edit::DocumentMut) -> bool {
+    [
+        "path",
+        "read_only",
+        "generator",
+        "generator_preset",
+        "seed",
+        "game_mode",
+        "spawn_protection_radius",
+        "dimension",
+        "dimension_type",
+        "view_distance",
+        "chunk_load_parallelism",
+        "simulation_distance",
+        "light",
+        "light_algorithm",
+        "gpu",
+        "spawn",
+    ]
+    .iter()
+    .any(|key| doc.contains_key(*key))
+}
+
+fn overlay_legacy_world_items(target: &mut toml_edit::Item, source: &toml_edit::Item) {
+    match (target, source) {
+        (toml_edit::Item::Table(target_table), toml_edit::Item::Table(source_table)) => {
+            for (key, source_item) in source_table.iter() {
+                if key.starts_with("auto_doc_") {
+                    continue;
+                }
+                match target_table.get_mut(key) {
+                    Some(target_item) => overlay_legacy_world_items(target_item, source_item),
+                    None => {
+                        target_table.insert(key, source_item.clone());
+                    }
+                }
+            }
+        }
+        (target_item, source_item) => {
+            *target_item = source_item.clone();
         }
     }
 }
@@ -1688,8 +1814,7 @@ mod tests {
         GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
         LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerAudit, PlayerAuditStorage,
         PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
-        ResourcePackObjectStorageProvider, ResourcePackSource,
-        Server, World, WorldGenerator,
+        ResourcePackObjectStorageProvider, ResourcePackSource, Server, World, WorldGenerator,
     };
 
     #[test]

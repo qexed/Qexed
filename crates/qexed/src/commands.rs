@@ -281,6 +281,7 @@ pub fn permission_node(command: &str) -> Option<String> {
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let name = normalize_command_name(&name);
     (!name.is_empty()).then(|| format!("qexed.command.{name}"))
 }
 

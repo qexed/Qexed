@@ -161,4 +161,73 @@ impl PluginInstance {
         }
         Ok(Some(bytes))
     }
+
+    pub(super) fn call_event_or_query(
+        &mut self,
+        event: PluginEvent,
+        payload: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+            anyhow::bail!(
+                "鎻掍欢浜嬩欢 payload 瓒呰繃闄愬埗: {} > {}",
+                payload.len(),
+                MAX_EVENT_PAYLOAD_BYTES
+            );
+        }
+
+        if let Ok(func) = self
+            .instance
+            .get_typed_func::<(i32, i32), i64>(&mut self.store, event.export_name())
+        {
+            let len = i32::try_from(payload.len()).context("鎻掍欢 query payload 闀垮害婧㈠嚭")?;
+            let ptr = self.alloc.call(&mut self.store, len)?;
+            let offset = usize::try_from(ptr).context("鎻掍欢鍒嗛厤鍣ㄨ繑鍥炶礋鍦板潃")?;
+            self.memory.write(&mut self.store, offset, payload)?;
+            let response = func.call(&mut self.store, (ptr, len))?;
+            if let Some(dealloc) = &self.dealloc {
+                dealloc.call(&mut self.store, (ptr, len))?;
+            }
+
+            let response_ptr = (response >> 32) as i32;
+            let response_len = response as i32;
+            if response_ptr <= 0 || response_len <= 0 {
+                return Ok(None);
+            }
+            let response_len_usize =
+                usize::try_from(response_len).context("鎻掍欢 query response 闀垮害鏃犳晥")?;
+            if response_len_usize > MAX_QUERY_RESPONSE_BYTES {
+                anyhow::bail!(
+                    "鎻掍欢 query response 瓒呰繃闄愬埗: {} > {}",
+                    response_len_usize,
+                    MAX_QUERY_RESPONSE_BYTES
+                );
+            }
+            let response_offset =
+                usize::try_from(response_ptr).context("鎻掍欢 query response 鍦板潃鏃犳晥")?;
+            let mut bytes = vec![0; response_len_usize];
+            self.memory
+                .read(&mut self.store, response_offset, &mut bytes)
+                .context("璇诲彇鎻掍欢 query response 澶辫触")?;
+            if let Some(dealloc) = &self.dealloc {
+                dealloc.call(&mut self.store, (response_ptr, response_len))?;
+            }
+            return Ok(Some(bytes));
+        }
+
+        if let Ok(func) = self
+            .instance
+            .get_typed_func::<(i32, i32), ()>(&mut self.store, event.export_name())
+        {
+            let len = i32::try_from(payload.len()).context("鎻掍欢浜嬩欢 payload 闀垮害婧㈠嚭")?;
+            let ptr = self.alloc.call(&mut self.store, len)?;
+            let offset = usize::try_from(ptr).context("鎻掍欢鍒嗛厤鍣ㄨ繑鍥炶礋鍦板潃")?;
+            self.memory.write(&mut self.store, offset, payload)?;
+            func.call(&mut self.store, (ptr, len))?;
+            if let Some(dealloc) = &self.dealloc {
+                dealloc.call(&mut self.store, (ptr, len))?;
+            }
+        }
+
+        Ok(None)
+    }
 }

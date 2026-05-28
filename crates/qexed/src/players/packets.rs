@@ -28,6 +28,10 @@ impl PlayerEvent {
                 packet_bytes(EntityPositionSync::from_position(*entity_id, *position))?,
                 packet_bytes(RotateHead::new(*entity_id, position.yaw))?,
             ]),
+            Self::Teleport {
+                profile_id: _,
+                position: _,
+            } => Ok(Vec::new()),
             Self::EquipmentChanged {
                 profile_id: _,
                 entity_id,

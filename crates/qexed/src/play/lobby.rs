@@ -18,7 +18,7 @@ use qexed_protocol::{
     },
     to_server::play::{
         container_click::ContainerClick,
-        interact::{Interact, InteractAction},
+        interact::Interact,
     },
     types::{ComponentsToAdd, Slot, minecraft},
 };
@@ -370,35 +370,19 @@ impl LobbyRuntime {
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         entities: &crate::entities::EntityManager,
-        plugins: &crate::plugins::PluginManager,
-        player: &crate::players::OnlinePlayer,
         interact: Interact,
         status: &LobbyStatusSnapshot,
     ) -> Result<LobbyInteractionOutcome>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        if !self.enabled() || !is_primary_interact(&interact.action) {
+        if !self.enabled() || !is_primary_interact(&interact) {
             return Ok(LobbyInteractionOutcome::default());
         }
 
         let Some(entity) = entities.entity_by_runtime_id(interact.entity_id.0) else {
             return Ok(LobbyInteractionOutcome::default());
         };
-        plugins.emit_npc_interact(
-            player,
-            crate::plugins::NpcEntityPayload {
-                key: entity.key.clone(),
-                entity_id: entity.entity_id,
-                dimension: entity.dimension.clone(),
-                x: entity.position.x,
-                y: entity.position.y,
-                z: entity.position.z,
-                yaw: entity.position.yaw,
-                pitch: entity.position.pitch,
-            },
-            interact_action_name(&interact.action),
-        );
         let Some(action) = self.npc_actions.get(&entity.key) else {
             return Ok(LobbyInteractionOutcome::default());
         };
@@ -859,23 +843,12 @@ fn menu_type_for_rows(rows: u8) -> i32 {
     (GENERIC_9X1_MENU_TYPE + i32::from(rows.saturating_sub(1))).min(GENERIC_9X6_MENU_TYPE)
 }
 
-fn is_primary_interact(action: &InteractAction) -> bool {
-    match action {
-        InteractAction::Interact { hand } | InteractAction::InteractAt { hand, .. } => hand.0 == 0,
-        InteractAction::Attack => false,
-    }
+pub(super) fn is_primary_interact(interact: &Interact) -> bool {
+    interact.hand.0 == 0
 }
 
 fn action_opens_menu(action: &LobbyAction) -> bool {
     action.kind == LobbyActionKind::OpenMenu
-}
-
-fn interact_action_name(action: &InteractAction) -> &'static str {
-    match action {
-        InteractAction::Interact { .. } => "interact",
-        InteractAction::InteractAt { .. } => "interact_at",
-        InteractAction::Attack => "attack",
-    }
 }
 
 fn display_server_name(server: &LobbyServer) -> Option<&str> {

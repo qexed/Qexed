@@ -1,7 +1,8 @@
 use anyhow::Result;
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::to_client::play::{
-    add_entity::EntityPosition, position::Position, system_chat::SystemChat, transfer::Transfer,
+    add_entity::EntityPosition, custom_payload::CustomPayload, position::Position,
+    system_chat::SystemChat, transfer::Transfer,
 };
 
 use crate::players::PlayerManager;
@@ -16,7 +17,7 @@ pub(super) struct CommandOutcome {
 
 pub(super) async fn handle_chat_command<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
-    config: &qexed_config::app::qexed::Qexed,
+    config: &crate::config::RuntimeConfig,
     world: &crate::world::WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
@@ -189,7 +190,7 @@ where
                 world_rules,
                 players,
                 plugins,
-                &config.server.world,
+                &config.world,
                 play_dimension,
                 profile.uuid,
                 chunk_sender,
@@ -203,9 +204,9 @@ where
                     "commands.teleport.success.location.single",
                     vec![
                         text_component(profile.username.clone()),
-                        text_component(config.server.world.spawn.x.floor().to_string()),
-                        text_component(config.server.world.spawn.y.floor().to_string()),
-                        text_component(config.server.world.spawn.z.floor().to_string()),
+                        text_component(config.world.spawn.x.floor().to_string()),
+                        text_component(config.world.spawn.y.floor().to_string()),
+                        text_component(config.world.spawn.z.floor().to_string()),
                     ],
                 ),
                 overlay: false,
@@ -213,6 +214,26 @@ where
             .await?;
             Ok(CommandOutcome {
                 teleported: true,
+                ..CommandOutcome::default()
+            })
+        }
+        "teleport" => {
+            let teleported = handle_teleport_command(
+                sink,
+                world,
+                players,
+                plugins,
+                profile,
+                actor_entity_id,
+                chunk_sender,
+                chunk_state,
+                position,
+                next_teleport_id,
+                argument.as_str(),
+            )
+            .await?;
+            Ok(CommandOutcome {
+                teleported,
                 ..CommandOutcome::default()
             })
         }
@@ -242,7 +263,7 @@ where
                 world,
                 world_rules,
                 players,
-                &config.server.world,
+                &config.world,
                 play_dimension,
                 profile.uuid,
                 *position,
@@ -294,6 +315,300 @@ where
     }
 }
 
+async fn handle_teleport_command<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &crate::world::WorldManager,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    profile: &qexed_packet::net_types::GameProfile,
+    actor_entity_id: i32,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<super::chunks::ChunkLoadResult>,
+    chunk_state: &mut super::ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    argument: &str,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let parts = argument.split_whitespace().collect::<Vec<_>>();
+    if parts.is_empty() {
+        send_unknown_or_incomplete_command(sink, "tp".to_string()).await?;
+        return Ok(false);
+    }
+
+    let source = command_source_player(profile, actor_entity_id, *position);
+    let mut executor_teleported = false;
+
+    match parts.len() {
+        1 => {
+            let Some(destination) = resolve_single_player(players, &source, parts[0]) else {
+                send_unknown_player(sink, parts[0]).await?;
+                return Ok(false);
+            };
+            teleport_command_target(
+                sink,
+                world,
+                players,
+                plugins,
+                source.clone(),
+                destination.position,
+                Some(destination.profile.username.clone()),
+                profile.uuid,
+                chunk_sender,
+                chunk_state,
+                position,
+                next_teleport_id,
+                &mut executor_teleported,
+            )
+            .await?;
+        }
+        2 => {
+            let Some(target) = resolve_single_player(players, &source, parts[0]) else {
+                send_unknown_player(sink, parts[0]).await?;
+                return Ok(false);
+            };
+            let Some(destination) = resolve_single_player(players, &source, parts[1]) else {
+                send_unknown_player(sink, parts[1]).await?;
+                return Ok(false);
+            };
+            teleport_command_target(
+                sink,
+                world,
+                players,
+                plugins,
+                target,
+                destination.position,
+                Some(destination.profile.username.clone()),
+                profile.uuid,
+                chunk_sender,
+                chunk_state,
+                position,
+                next_teleport_id,
+                &mut executor_teleported,
+            )
+            .await?;
+        }
+        3 | 5 => {
+            let Some(destination) = parse_teleport_position(&parts, 0, *position) else {
+                send_unknown_or_incomplete_command(sink, format!("tp {}", argument.trim())).await?;
+                return Ok(false);
+            };
+            teleport_command_target(
+                sink,
+                world,
+                players,
+                plugins,
+                source.clone(),
+                destination,
+                None,
+                profile.uuid,
+                chunk_sender,
+                chunk_state,
+                position,
+                next_teleport_id,
+                &mut executor_teleported,
+            )
+            .await?;
+        }
+        4 | 6 => {
+            let Some(target) = resolve_single_player(players, &source, parts[0]) else {
+                send_unknown_player(sink, parts[0]).await?;
+                return Ok(false);
+            };
+            let Some(destination) = parse_teleport_position(&parts, 1, source.position) else {
+                send_unknown_or_incomplete_command(sink, format!("tp {}", argument.trim())).await?;
+                return Ok(false);
+            };
+            teleport_command_target(
+                sink,
+                world,
+                players,
+                plugins,
+                target,
+                destination,
+                None,
+                profile.uuid,
+                chunk_sender,
+                chunk_state,
+                position,
+                next_teleport_id,
+                &mut executor_teleported,
+            )
+            .await?;
+        }
+        _ => {
+            send_unknown_or_incomplete_command(sink, format!("tp {}", argument.trim())).await?;
+            return Ok(false);
+        }
+    }
+
+    Ok(executor_teleported)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn teleport_command_target<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &crate::world::WorldManager,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    target: crate::players::OnlinePlayer,
+    destination: EntityPosition,
+    destination_name: Option<String>,
+    executor: uuid::Uuid,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<super::chunks::ChunkLoadResult>,
+    chunk_state: &mut super::ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    executor_teleported: &mut bool,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if target.profile.uuid == executor {
+        *executor_teleported |= apply_plugin_action(
+            sink,
+            world,
+            players,
+            plugins,
+            executor,
+            chunk_sender,
+            chunk_state,
+            position,
+            next_teleport_id,
+            crate::plugins::PlayerAction::Teleport {
+                x: destination.x,
+                y: destination.y,
+                z: destination.z,
+                yaw: Some(destination.yaw),
+                pitch: Some(destination.pitch),
+            },
+        )
+        .await?;
+    } else if !players.teleport_player(target.profile.uuid, destination) {
+        send_unknown_player(sink, &target.profile.username).await?;
+        return Ok(());
+    }
+
+    if let Some(destination_name) = destination_name {
+        send_translatable(
+            sink,
+            "commands.teleport.success.entity.single",
+            vec![
+                text_component(target.profile.username),
+                text_component(destination_name),
+            ],
+        )
+        .await
+    } else {
+        send_translatable(
+            sink,
+            "commands.teleport.success.location.single",
+            vec![
+                text_component(target.profile.username),
+                text_component(format_teleport_coord(destination.x)),
+                text_component(format_teleport_coord(destination.y)),
+                text_component(format_teleport_coord(destination.z)),
+            ],
+        )
+        .await
+    }
+}
+
+fn command_source_player(
+    profile: &qexed_packet::net_types::GameProfile,
+    actor_entity_id: i32,
+    position: EntityPosition,
+) -> crate::players::OnlinePlayer {
+    crate::players::OnlinePlayer {
+        profile: profile.clone(),
+        entity_id: actor_entity_id,
+        position,
+        equipment: Vec::new(),
+    }
+}
+
+fn resolve_single_player(
+    players: &PlayerManager,
+    source: &crate::players::OnlinePlayer,
+    value: &str,
+) -> Option<crate::players::OnlinePlayer> {
+    match value {
+        "@s" | "@p" => Some(source.clone()),
+        name => players.player_by_name(name),
+    }
+}
+
+fn parse_teleport_position(
+    parts: &[&str],
+    offset: usize,
+    base: EntityPosition,
+) -> Option<EntityPosition> {
+    let x = parse_command_coord_f64(parts.get(offset).copied()?, base.x)?;
+    let y = parse_command_coord_f64(parts.get(offset + 1).copied()?, base.y)?;
+    let z = parse_command_coord_f64(parts.get(offset + 2).copied()?, base.z)?;
+    let (yaw, pitch) = if parts.len() == offset + 5 {
+        (
+            parse_command_angle(parts.get(offset + 3).copied()?, base.yaw)?,
+            parse_command_angle(parts.get(offset + 4).copied()?, base.pitch)?,
+        )
+    } else if parts.len() == offset + 3 {
+        (base.yaw, base.pitch)
+    } else {
+        return None;
+    };
+    Some(EntityPosition {
+        x,
+        y,
+        z,
+        yaw,
+        pitch,
+        on_ground: false,
+    })
+}
+
+fn parse_command_coord_f64(value: &str, base: f64) -> Option<f64> {
+    if value == "~" {
+        return Some(base);
+    }
+    if let Some(offset) = value.strip_prefix('~') {
+        let offset = if offset.is_empty() {
+            0.0
+        } else {
+            offset.parse::<f64>().ok()?
+        };
+        return Some(base + offset);
+    }
+    value.parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+fn parse_command_angle(value: &str, base: f32) -> Option<f32> {
+    parse_command_coord_f64(value, f64::from(base)).map(|value| value as f32)
+}
+
+fn format_teleport_coord(value: f64) -> String {
+    if (value.fract()).abs() < f64::EPSILON {
+        format!("{value:.0}")
+    } else {
+        value.to_string()
+    }
+}
+
+async fn send_unknown_player<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    player: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    send_translatable(
+        sink,
+        "argument.player.unknown",
+        vec![text_component(player.to_string())],
+    )
+    .await
+}
+
 async fn handle_time_command<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world_rules: &crate::world::WorldRulesManager,
@@ -319,11 +634,8 @@ where
                 return Ok(());
             };
             let Some(value) = parse_time_value(value) else {
-                send_unknown_or_incomplete_command(
-                    sink,
-                    format!("time set {dimension} <value>"),
-                )
-                .await?;
+                send_unknown_or_incomplete_command(sink, format!("time set {dimension} <value>"))
+                    .await?;
                 return Ok(());
             };
             world_rules.set_time_value(dimension, value)?;
@@ -344,11 +656,8 @@ where
                 return Ok(());
             };
             let Some(delta) = parse_time_value(value) else {
-                send_unknown_or_incomplete_command(
-                    sink,
-                    format!("time add {dimension} <value>"),
-                )
-                .await?;
+                send_unknown_or_incomplete_command(sink, format!("time add {dimension} <value>"))
+                    .await?;
                 return Ok(());
             };
             let snapshot = world_rules.add_time_value(dimension, delta)?;
@@ -361,19 +670,13 @@ where
         }
         "query" => {
             let Some(dimension) = parts.next() else {
-                send_unknown_or_incomplete_command(
-                    sink,
-                    "time query <dimension>".to_string(),
-                )
-                .await?;
+                send_unknown_or_incomplete_command(sink, "time query <dimension>".to_string())
+                    .await?;
                 return Ok(());
             };
             if parts.next().is_some() {
-                send_unknown_or_incomplete_command(
-                    sink,
-                    "time query <dimension>".to_string(),
-                )
-                .await?;
+                send_unknown_or_incomplete_command(sink, "time query <dimension>".to_string())
+                    .await?;
                 return Ok(());
             }
             let value = world_rules.current_time(dimension);
@@ -402,19 +705,13 @@ where
 {
     let mut parts = argument.split_whitespace();
     let Some(dimension) = parts.next() else {
-        send_unknown_or_incomplete_command(
-            sink,
-            "gamerule <dimension> <rule> [value]".to_string(),
-        )
-        .await?;
+        send_unknown_or_incomplete_command(sink, "gamerule <dimension> <rule> [value]".to_string())
+            .await?;
         return Ok(());
     };
     let Some(rule_name) = parts.next() else {
-        send_unknown_or_incomplete_command(
-            sink,
-            format!("gamerule {dimension} <rule> [value]"),
-        )
-        .await?;
+        send_unknown_or_incomplete_command(sink, format!("gamerule {dimension} <rule> [value]"))
+            .await?;
         return Ok(());
     };
     let value = parts.next();
@@ -1282,7 +1579,10 @@ where
     send_translatable(
         sink,
         "commands.help.header",
-        vec![text_component(page.to_string()), text_component(total_pages.to_string())],
+        vec![
+            text_component(page.to_string()),
+            text_component(total_pages.to_string()),
+        ],
     )
     .await?;
 
@@ -1317,7 +1617,11 @@ fn parse_help_page(argument: &str) -> Option<usize> {
     argument.parse::<usize>().ok()
 }
 
-fn help_line(command: &str, description_key: Option<&str>, color: Option<&str>) -> qexed_protocol::types::TextComponent {
+fn help_line(
+    command: &str,
+    description_key: Option<&str>,
+    color: Option<&str>,
+) -> qexed_protocol::types::TextComponent {
     let mut root = std::collections::HashMap::new();
     root.insert(
         "text".to_string(),
@@ -1373,7 +1677,7 @@ fn help_line(command: &str, description_key: Option<&str>, color: Option<&str>) 
     qexed_nbt::Tag::Compound(std::sync::Arc::new(root))
 }
 
-async fn apply_plugin_action<W>(
+pub(super) async fn apply_plugin_action<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &crate::world::WorldManager,
     players: &crate::players::PlayerManager,
@@ -1438,14 +1742,7 @@ where
             })
             .await?;
             chunk_state
-                .reset_after_respawn(
-                    sink,
-                    chunk_sender,
-                    world,
-                    plugins,
-                    position.x,
-                    position.z,
-                )
+                .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
                 .await?;
             players.update_position(actor, *position);
             Ok(true)
@@ -1467,5 +1764,84 @@ where
             }
             Ok(false)
         }
+        crate::plugins::PlayerAction::ProxyConnect { server, message } => {
+            if !message.trim().is_empty() {
+                sink.send(SystemChat {
+                    content: text_component(message),
+                    overlay: false,
+                })
+                .await?;
+            }
+            let server = server.trim();
+            if !server.is_empty() {
+                sink.send(velocity_connect_payload(server)).await?;
+            }
+            Ok(false)
+        }
+    }
+}
+
+fn velocity_connect_payload(server: &str) -> CustomPayload {
+    CustomPayload {
+        channel: "bungeecord:main".to_string(),
+        data: qexed_packet::net_types::RestBuffer(bungee_connect_data(server)),
+    }
+}
+
+fn bungee_connect_data(server: &str) -> Vec<u8> {
+    let mut data = Vec::with_capacity("Connect".len() + server.len() + 4);
+    write_modified_utf8(&mut data, "Connect");
+    write_modified_utf8(&mut data, server);
+    data
+}
+
+fn write_modified_utf8(out: &mut Vec<u8>, value: &str) {
+    let bytes = value.as_bytes();
+    let len = u16::try_from(bytes.len()).unwrap_or(u16::MAX);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(&bytes[..usize::from(len)]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bungee_connect_data, velocity_connect_payload};
+
+    #[test]
+    fn velocity_connect_payload_uses_bungeecord_connect_channel() {
+        let payload = velocity_connect_payload("lobby-1");
+
+        assert_eq!(payload.channel, "bungeecord:main");
+        assert_eq!(
+            payload.data.0,
+            vec![
+                0, 7, b'C', b'o', b'n', b'n', b'e', b'c', b't', 0, 7, b'l', b'o', b'b', b'b',
+                b'y', b'-', b'1',
+            ]
+        );
+    }
+
+    #[test]
+    fn velocity_connect_payload_packet_uses_play_custom_payload_id() {
+        let packet = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(
+            velocity_connect_payload("lobby-1"),
+        )
+        .unwrap();
+
+        assert_eq!(packet[0], 0x18);
+        assert!(
+            packet
+                .windows("bungeecord:main".len())
+                .any(|window| window == "bungeecord:main".as_bytes())
+        );
+    }
+
+    #[test]
+    fn bungee_connect_data_truncates_oversized_server_names() {
+        let server = "a".repeat(usize::from(u16::MAX) + 1);
+        let data = bungee_connect_data(&server);
+
+        assert_eq!(&data[..9], &[0, 7, b'C', b'o', b'n', b'n', b'e', b'c', b't']);
+        assert_eq!(&data[9..11], &u16::MAX.to_be_bytes());
+        assert_eq!(data.len(), 9 + 2 + usize::from(u16::MAX));
     }
 }

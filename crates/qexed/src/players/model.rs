@@ -15,6 +15,10 @@ pub enum PlayerEvent {
         entity_id: i32,
         position: EntityPosition,
     },
+    Teleport {
+        profile_id: uuid::Uuid,
+        position: EntityPosition,
+    },
     EquipmentChanged {
         profile_id: uuid::Uuid,
         entity_id: i32,

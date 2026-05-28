@@ -36,7 +36,10 @@ impl PluginManager {
     pub fn load_from_dir(path: impl AsRef<Path>) -> Self {
         let path = path.as_ref();
         if let Err(err) = fs::create_dir_all(path) {
-            log::warn!("插件目录创建失败: path={}, error={err}", path.display());
+            log::warn!(
+                "plugin directory create failed: path={}, error={err}",
+                path.display()
+            );
             return Self::empty();
         }
 
@@ -46,7 +49,7 @@ impl PluginManager {
             .filter_map(|file| match PluginInstance::load(&engine, file) {
                 Ok(plugin) => Some(plugin),
                 Err(err) => {
-                    log::warn!("WASM 插件加载失败: {err:#}");
+                    log::warn!("WASM plugin load failed: {err:#}");
                     None
                 }
             })
@@ -65,7 +68,7 @@ impl PluginManager {
                 .map(|plugin| format!("{}({})", plugin.name, plugin.priority))
                 .collect::<Vec<_>>()
                 .join(", ");
-            log::info!("已加载 WASM 插件: {summary}");
+            log::info!("loaded WASM plugins: {summary}");
         }
 
         Self {
@@ -78,18 +81,18 @@ impl PluginManager {
     }
 
     pub fn emit_player_join(&self, player: &OnlinePlayer) {
-        self.emit_json(PluginEvent::PlayerJoin, &player_payload(player));
+        self.emit_encoded(PluginEvent::PlayerJoin, &player_payload(player));
     }
 
     pub fn emit_player_leave(&self, player: &OnlinePlayer) {
-        self.emit_json(PluginEvent::PlayerLeave, &player_payload(player));
+        self.emit_encoded(PluginEvent::PlayerLeave, &player_payload(player));
     }
 
     pub fn emit_chunk_load(&self, dimension: &str, chunk_x: i32, chunk_z: i32) {
-        self.emit_json(
+        self.emit_encoded(
             PluginEvent::ChunkLoad,
             &ChunkPayload {
-                dimension,
+                dimension: dimension.to_string(),
                 chunk_x,
                 chunk_z,
             },
@@ -97,10 +100,10 @@ impl PluginManager {
     }
 
     pub fn emit_chunk_unload(&self, dimension: &str, chunk_x: i32, chunk_z: i32) {
-        self.emit_json(
+        self.emit_encoded(
             PluginEvent::ChunkUnload,
             &ChunkPayload {
-                dimension,
+                dimension: dimension.to_string(),
                 chunk_x,
                 chunk_z,
             },
@@ -108,16 +111,27 @@ impl PluginManager {
     }
 
     pub fn emit_config_reload(&self, path: &str) {
-        self.emit_json(PluginEvent::ConfigReload, &ConfigReloadPayload { path });
+        self.emit_encoded(
+            PluginEvent::ConfigReload,
+            &ConfigReloadPayload {
+                path: path.to_string(),
+            },
+        );
     }
 
     pub fn emit_language_change(&self, language: &str) {
-        self.emit_json(PluginEvent::LanguageChange, &LanguagePayload { language });
+        self.emit_encoded(
+            PluginEvent::LanguageChange,
+            &LanguagePayload {
+                language: language.to_string(),
+            },
+        );
     }
 
     pub fn apply_mining_speed(&self, query: MiningSpeedQuery) -> f32 {
         let mut speed = query.speed;
-        for response in self.query_json::<_, MiningSpeedResponse>(PluginEvent::MiningSpeed, &query)
+        for response in
+            self.query_encoded::<_, MiningSpeedResponse>(PluginEvent::MiningSpeed, &query)
         {
             if let Some(value) = response
                 .speed
@@ -141,7 +155,8 @@ impl PluginManager {
 
     pub fn apply_block_drops(&self, query: BlockDropQuery) -> Option<BlockDropResponse> {
         let mut result = None;
-        for response in self.query_json::<_, BlockDropResponse>(PluginEvent::BlockDrops, &query) {
+        for response in self.query_encoded::<_, BlockDropResponse>(PluginEvent::BlockDrops, &query)
+        {
             let current = result.get_or_insert_with(|| BlockDropResponse {
                 replace: false,
                 items: Vec::new(),
@@ -156,7 +171,8 @@ impl PluginManager {
     }
 
     pub fn plugin_commands(&self) -> Vec<PluginCommandDefinition> {
-        let mut commands = self.query_empty_json::<PluginCommandDefinition>(PluginEvent::Commands);
+        let mut commands =
+            self.query_empty_encoded::<PluginCommandDefinition>(PluginEvent::Commands);
         commands.retain(|command| {
             let name = command.name.trim();
             !name.is_empty() && !name.chars().any(char::is_whitespace)
@@ -181,7 +197,8 @@ impl PluginManager {
             handled: false,
             actions: Vec::new(),
         };
-        for response in self.query_json::<_, PluginCommandResponse>(PluginEvent::CommandExecute, &query)
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::CommandExecute, &query)
         {
             result.handled |= response.handled;
             result.actions.extend(response.actions);
@@ -194,27 +211,64 @@ impl PluginManager {
             reason: reason.to_string(),
         };
         let mut operations = Vec::new();
-        for response in self.query_json::<_, NpcMutationResponse>(PluginEvent::NpcMutations, &query)
+        for response in
+            self.query_encoded::<_, NpcMutationResponse>(PluginEvent::NpcMutations, &query)
         {
             operations.extend(response.operations);
         }
         operations
     }
 
-    pub fn emit_npc_interact(
+    pub fn handle_npc_interact(
         &self,
         player: &OnlinePlayer,
         entity: NpcEntityPayload,
         action: &str,
-    ) {
-        self.emit_json(
-            PluginEvent::NpcInteract,
-            &NpcInteractPayload {
-                player: player_payload_owned(player),
-                entity,
-                action: action.to_string(),
-            },
-        );
+    ) -> PluginCommandResponse {
+        let payload = match encode_plugin_payload(&NpcInteractPayload {
+            player: player_payload_owned(player),
+            entity,
+            action: action.to_string(),
+        }) {
+            Ok(payload) => payload,
+            Err(err) => {
+                log::warn!("plugin NPC interact payload encode failed: error={err}");
+                return PluginCommandResponse {
+                    handled: false,
+                    actions: Vec::new(),
+                };
+            }
+        };
+
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        let mut plugins = self.plugins.lock().expect("plugin manager poisoned");
+        for plugin in plugins.iter_mut() {
+            let response = match plugin.call_event_or_query(PluginEvent::NpcInteract, &payload) {
+                Ok(Some(response)) => response,
+                Ok(None) => continue,
+                Err(err) => {
+                    log::warn!(
+                        "WASM plugin NPC interact failed: plugin={}, error={err:#}",
+                        plugin.name
+                    );
+                    continue;
+                }
+            };
+            match decode_plugin_response::<PluginCommandResponse>(&response) {
+                Ok(response) => {
+                    result.handled |= response.handled;
+                    result.actions.extend(response.actions);
+                }
+                Err(err) => log::warn!(
+                    "WASM plugin NPC interact response decode failed: plugin={}, error={err}",
+                    plugin.name
+                ),
+            }
+        }
+        result
     }
 
     #[cfg(test)]
@@ -232,11 +286,11 @@ impl PluginManager {
         self.emit(event, &[]);
     }
 
-    fn emit_json<T: Serialize>(&self, event: PluginEvent, payload: &T) {
-        let payload = match serde_json::to_vec(payload) {
+    fn emit_encoded<T: Serialize>(&self, event: PluginEvent, payload: &T) {
+        let payload = match encode_plugin_payload(payload) {
             Ok(payload) => payload,
             Err(err) => {
-                log::warn!("插件事件序列化失败: event={event:?}, error={err}");
+                log::warn!("plugin event payload encode failed: event={event:?}, error={err}");
                 return;
             }
         };
@@ -248,22 +302,22 @@ impl PluginManager {
         for plugin in plugins.iter_mut() {
             if let Err(err) = plugin.call_event(event, payload) {
                 log::warn!(
-                    "WASM 插件事件执行失败: plugin={}, event={event:?}, error={err:#}",
+                    "WASM plugin event failed: plugin={}, event={event:?}, error={err:#}",
                     plugin.name
                 );
             }
         }
     }
 
-    fn query_json<T, R>(&self, event: PluginEvent, payload: &T) -> Vec<R>
+    fn query_encoded<T, R>(&self, event: PluginEvent, payload: &T) -> Vec<R>
     where
         T: Serialize,
         R: DeserializeOwned,
     {
-        let payload = match serde_json::to_vec(payload) {
+        let payload = match encode_plugin_payload(payload) {
             Ok(payload) => payload,
             Err(err) => {
-                log::warn!("鎻掍欢鏌ヨ搴忓垪鍖栧け璐? event={event:?}, error={err}");
+                log::warn!("plugin query payload encode failed: event={event:?}, error={err}");
                 return Vec::new();
             }
         };
@@ -275,16 +329,16 @@ impl PluginManager {
                 Ok(None) => continue,
                 Err(err) => {
                     log::warn!(
-                        "WASM 鎻掍欢鏌ヨ鎵ц澶辫触: plugin={}, event={event:?}, error={err:#}",
+                        "WASM plugin query failed: plugin={}, event={event:?}, error={err:#}",
                         plugin.name
                     );
                     continue;
                 }
             };
-            match serde_json::from_slice(&response) {
+            match decode_plugin_response(&response) {
                 Ok(response) => responses.push(response),
                 Err(err) => log::warn!(
-                    "WASM 鎻掍欢鏌ヨ response JSON 鏃犳晥: plugin={}, event={event:?}, error={err}",
+                    "WASM plugin query response decode failed: plugin={}, event={event:?}, error={err}",
                     plugin.name
                 ),
             }
@@ -292,12 +346,20 @@ impl PluginManager {
         responses
     }
 
-    fn query_empty_json<R>(&self, event: PluginEvent) -> Vec<R>
+    fn query_empty_encoded<R>(&self, event: PluginEvent) -> Vec<R>
     where
         R: DeserializeOwned,
     {
-        self.query_json(event, &serde_json::json!({}))
+        self.query_encoded(event, &())
     }
+}
+
+fn encode_plugin_payload<T: Serialize>(payload: &T) -> Result<Vec<u8>, postcard::Error> {
+    postcard::to_allocvec(payload)
+}
+
+fn decode_plugin_response<R: DeserializeOwned>(response: &[u8]) -> Result<R, postcard::Error> {
+    postcard::from_bytes(response)
 }
 
 pub(super) struct PluginState {

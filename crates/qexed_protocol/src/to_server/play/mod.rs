@@ -1,4 +1,5 @@
 pub mod accept_teleportation;
+pub mod attack;
 pub mod chat_ack;
 pub mod chat_command;
 pub mod chat_message;

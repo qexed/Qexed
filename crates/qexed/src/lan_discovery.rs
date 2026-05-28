@@ -1,7 +1,7 @@
 const MULTICAST_ADDR: &str = "224.0.2.60:4445";
 const MIN_INTERVAL_MS: u64 = 500;
 
-pub fn spawn(config: std::sync::Arc<qexed_config::app::qexed::Qexed>, server_port: u16) {
+pub fn spawn(config: std::sync::Arc<crate::config::RuntimeConfig>, server_port: u16) {
     if !config.server.lan_discovery.enable {
         return;
     }

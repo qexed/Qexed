@@ -74,6 +74,10 @@ pub trait AppConfigTrait:
         Ok(Vec::new())
     }
 
+    fn load_legacy_config(_base_dir: &std::path::Path) -> Result<Option<Self>> {
+        Ok(None)
+    }
+
     fn load_or_create_default(
         lang: Option<String>,
         enable_auto_doc: Option<bool>,
@@ -103,6 +107,10 @@ pub trait AppConfigTrait:
 
         // ----- 文件不存在：创建全新配置 -----
         if !path.exists() {
+            if let Some(config) = Self::load_legacy_config(&base_dir)? {
+                config.save_to_config(lang, enable_auto_doc, Some(base_dir))?;
+                return Ok(config);
+            }
             return Self::create_new_config(
                 &path,
                 &secrets_path,
@@ -240,6 +248,127 @@ pub trait AppConfigTrait:
     }
 
     // 创建全新配置文件
+    fn save_to_config(
+        &self,
+        lang: Option<String>,
+        enable_auto_doc: Option<bool>,
+        config_path: Option<std::path::PathBuf>,
+    ) -> Result<()> {
+        let base_dir = config_path
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("./config"));
+        let final_path = build_safe_path(&base_dir, Self::PATH)?;
+        let path = final_path.join(Self::NAME).with_extension("toml");
+        let secrets_path = secrets_path_for(&path)?;
+        let split_dir = split_dir_for(&path)?;
+
+        let mut doc = if path.exists() {
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("鏃犳硶璇诲彇鏂囦欢 {}", path.display()))?;
+            let mut doc = content
+                .parse::<DocumentMut>()
+                .with_context(|| "TOML 鏍煎紡閿欒")?;
+            overlay_split_config_files::<Self>(&mut doc, &split_dir)?;
+            doc
+        } else {
+            DocumentMut::new()
+        };
+
+        let mut auto_doc = extract_auto_doc(&doc);
+        if let Some(lang) = lang {
+            auto_doc.system_lang = lang;
+        }
+        if let Some(enable) = enable_auto_doc {
+            auto_doc.setting_enable = enable;
+        }
+
+        doc = DocumentMut::new();
+        insert_auto_doc_fields(&mut doc, &auto_doc);
+
+        let user_toml = toml::to_string_pretty(self).with_context(|| "serialize config failed")?;
+        let user_doc = user_toml
+            .parse::<DocumentMut>()
+            .expect("serialized TOML must be valid");
+        for (k, v) in user_doc.iter() {
+            if !k.starts_with("auto_doc_") {
+                doc.insert(k, v.clone());
+            }
+        }
+
+        let sensitive_fields = Self::sensitive_fields();
+        let mut secrets_doc = read_secrets_doc(&secrets_path)?;
+        move_sensitive_fields_to_secrets(&mut doc, &mut secrets_doc, &sensitive_fields);
+        apply_sensitive_display_values(&mut doc, &secrets_doc, &sensitive_fields);
+
+        let effective_lang = if !auto_doc.setting_lang.is_empty() {
+            auto_doc.setting_lang.clone()
+        } else {
+            auto_doc.system_lang.clone()
+        };
+
+        if auto_doc.setting_enable {
+            let doc_fields = Self::doc_fields(&effective_lang);
+            let deprecation_fields = Self::deprecation_fields(&effective_lang);
+            let pending_fields = Self::pending_deprecated_fields(&effective_lang);
+            let warning_fields = Self::warning_fields(&effective_lang);
+            let migration_fields = Self::migration_notice_fields(&effective_lang);
+            let danger_fields = Self::danger_fields(&effective_lang);
+
+            for (key, base_comment) in doc_fields {
+                if !item_exists_in_doc(&doc, &key) {
+                    continue;
+                }
+
+                let mut comment_parts = vec![base_comment];
+                let find_text = |list: &[(String, String)]| {
+                    list.iter().find(|(k, _)| k == &key).map(|(_, v)| v.clone())
+                };
+
+                if let Some(text) = find_text(&danger_fields) {
+                    comment_parts.push(
+                        rust_i18n::t!("autodoc.danger", locale = effective_lang, text = text)
+                            .to_string(),
+                    );
+                }
+                if let Some(text) = find_text(&warning_fields) {
+                    comment_parts.push(
+                        rust_i18n::t!("autodoc.warning", locale = effective_lang, text = text)
+                            .to_string(),
+                    );
+                }
+                if let Some(text) = find_text(&pending_fields) {
+                    comment_parts.push(
+                        rust_i18n::t!(
+                            "autodoc.pending_deprecated",
+                            locale = effective_lang,
+                            text = text
+                        )
+                        .to_string(),
+                    );
+                }
+                if let Some(text) = find_text(&deprecation_fields) {
+                    comment_parts.push(
+                        rust_i18n::t!("autodoc.deprecated", locale = effective_lang, text = text)
+                            .to_string(),
+                    );
+                }
+                if let Some(text) = find_text(&migration_fields) {
+                    comment_parts.push(
+                        rust_i18n::t!("autodoc.migration", locale = effective_lang, text = text)
+                            .to_string(),
+                    );
+                }
+
+                update_autodoc_for_key(&mut doc, &key, &comment_parts.join("\n\n"));
+            }
+            ensure_or_update_doc_header(&mut doc, &effective_lang);
+        }
+
+        write_config_documents::<Self>(&doc, &path, &split_dir)?;
+        write_secrets_doc(&secrets_path, &secrets_doc)?;
+        Ok(())
+    }
+
     fn create_new_config(
         path: &std::path::Path,
         secrets_path: &std::path::Path,
@@ -419,8 +548,16 @@ fn sync_split_config_files<T: AppConfigTrait>(
         };
 
         let mut split_doc = DocumentMut::new();
-        set_item_by_dotted_path(&mut split_doc, &split_file.root_path, item.clone())?;
-        prune_nested_split_config_items(&mut split_doc, &split_file.root_path, &split_files);
+        set_item_by_dotted_path(
+            &mut split_doc,
+            split_file_local_root_path(&split_file.root_path),
+            item.clone(),
+        )?;
+        prune_nested_split_config_items(
+            &mut split_doc,
+            split_file_local_root_path(&split_file.root_path),
+            &split_files,
+        );
         std::fs::write(&file_path, split_doc.to_string())
             .with_context(|| format!("无法写入拆分配置文件 {}", file_path.display()))?;
     }
@@ -461,6 +598,18 @@ fn overlay_split_config_files<T: AppConfigTrait>(
         let split_doc = content
             .parse::<DocumentMut>()
             .with_context(|| format!("拆分配置文件 TOML 格式错误: {}", file_path.display()))?;
+        let mut mapped_doc = DocumentMut::new();
+        if let Some(item) = get_item_by_dotted_path(&split_doc, &split_file.root_path) {
+            set_item_by_dotted_path(&mut mapped_doc, &split_file.root_path, item.clone())?;
+            overlay_config_items(doc.as_item_mut(), mapped_doc.as_item());
+            continue;
+        }
+        let local_root_path = split_file_local_root_path(&split_file.root_path);
+        if let Some(item) = get_item_by_dotted_path(&split_doc, local_root_path) {
+            set_item_by_dotted_path(&mut mapped_doc, &split_file.root_path, item.clone())?;
+            overlay_config_items(doc.as_item_mut(), mapped_doc.as_item());
+            continue;
+        }
         overlay_config_items(doc.as_item_mut(), split_doc.as_item());
     }
 
@@ -501,6 +650,10 @@ fn resolved_split_config_files<T: AppConfigTrait>(
     split_files.sort_by(|left, right| left.root_path.cmp(&right.root_path));
     split_files.dedup_by(|left, right| left.root_path == right.root_path);
     Ok(split_files)
+}
+
+fn split_file_local_root_path(root_path: &str) -> &str {
+    root_path.strip_prefix("server.").unwrap_or(root_path)
 }
 
 fn safe_split_file_path(

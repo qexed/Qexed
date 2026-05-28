@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::players::OnlinePlayer;
 
-#[derive(Serialize)]
-pub(super) struct PlayerPayload<'a> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct PlayerPayload {
     pub(super) uuid: String,
-    pub(super) username: &'a str,
+    pub(super) username: String,
     pub(super) entity_id: i32,
 }
 
@@ -16,21 +16,21 @@ pub struct PlayerPayloadOwned {
     pub entity_id: i32,
 }
 
-#[derive(Serialize)]
-pub(super) struct ChunkPayload<'a> {
-    pub(super) dimension: &'a str,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ChunkPayload {
+    pub(super) dimension: String,
     pub(super) chunk_x: i32,
     pub(super) chunk_z: i32,
 }
 
-#[derive(Serialize)]
-pub(super) struct ConfigReloadPayload<'a> {
-    pub(super) path: &'a str,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ConfigReloadPayload {
+    pub(super) path: String,
 }
 
-#[derive(Serialize)]
-pub(super) struct LanguagePayload<'a> {
-    pub(super) language: &'a str,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct LanguagePayload {
+    pub(super) language: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -148,7 +148,6 @@ pub struct NpcMutationResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
 pub enum NpcMutationOp {
     Upsert { npc: NpcUpsert },
     Remove { key: String },
@@ -177,7 +176,6 @@ pub struct NpcUpsert {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
 pub enum PlayerAction {
     SystemMessage {
         #[serde(default)]
@@ -204,12 +202,17 @@ pub enum PlayerAction {
         #[serde(default)]
         message: String,
     },
+    ProxyConnect {
+        server: String,
+        #[serde(default)]
+        message: String,
+    },
 }
 
-pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload<'_> {
+pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload {
     PlayerPayload {
         uuid: player.profile.uuid.to_string(),
-        username: &player.profile.username,
+        username: player.profile.username.clone(),
         entity_id: player.entity_id,
     }
 }

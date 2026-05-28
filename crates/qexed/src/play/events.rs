@@ -13,6 +13,10 @@ pub(super) fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool
             entity_id: _,
             position: _,
         } => *moved_id == profile_id,
+        PlayerEvent::Teleport {
+            profile_id: target_id,
+            position: _,
+        } => *target_id == profile_id,
         PlayerEvent::EquipmentChanged {
             profile_id: changed_id,
             entity_id: _,

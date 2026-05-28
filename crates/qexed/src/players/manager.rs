@@ -79,6 +79,48 @@ impl PlayerManager {
         );
     }
 
+    pub fn teleport_player(&self, profile_id: uuid::Uuid, position: EntityPosition) -> bool {
+        let mut players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get_mut(&profile_id) else {
+            return false;
+        };
+        handle.player.position = position;
+        let entity_id = handle.player.entity_id;
+        let _ = handle.sender.send(PlayerEvent::Teleport {
+            profile_id,
+            position,
+        });
+        broadcast_locked(
+            &players,
+            profile_id,
+            PlayerEvent::Moved {
+                profile_id,
+                entity_id,
+                position,
+            },
+        );
+        true
+    }
+
+    pub fn player_by_name(&self, username: &str) -> Option<OnlinePlayer> {
+        let username = username.trim();
+        if username.is_empty() {
+            return None;
+        }
+        self.players
+            .lock()
+            .expect("player manager poisoned")
+            .values()
+            .find(|handle| {
+                handle
+                    .player
+                    .profile
+                    .username
+                    .eq_ignore_ascii_case(username)
+            })
+            .map(|handle| handle.player.clone())
+    }
+
     pub fn update_equipment(&self, profile_id: uuid::Uuid, slots: Vec<Equipment>) {
         let mut players = self.players.lock().expect("player manager poisoned");
         let Some(handle) = players.get_mut(&profile_id) else {

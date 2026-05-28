@@ -40,13 +40,23 @@ impl ManagedEntity {
             })?);
         }
 
-        packets.push(crate::players::packet_bytes(AddEntity::new(
-            self.entity_id,
-            self.uuid,
-            self.entity_type_id,
-            self.position,
-            self.data,
-        ))?);
+        let add_entity = if self.kind == ManagedEntityKind::Npc {
+            AddEntity::player(
+                self.entity_id,
+                self.uuid,
+                self.entity_type_id,
+                self.position,
+            )
+        } else {
+            AddEntity::new(
+                self.entity_id,
+                self.uuid,
+                self.entity_type_id,
+                self.position,
+                self.data,
+            )
+        };
+        packets.push(crate::players::packet_bytes(add_entity)?);
         packets.push(crate::players::packet_bytes(RotateHead::new(
             self.entity_id,
             self.position.yaw,

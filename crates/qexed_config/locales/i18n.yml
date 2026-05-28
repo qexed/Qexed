@@ -109,6 +109,9 @@ config:
       online_mode:
         en: "Enable Mojang online authentication"
         zh-CN: "启用 Mojang 正版验证"
+      log_level:
+        en: "Server log level: trace, debug, info, warn, error, or off. Defaults to info; use debug/trace only when diagnosing issues."
+        zh-CN: "服务端日志级别：trace、debug、info、warn、error 或 off。默认 info；仅在排查问题时使用 debug/trace。"
       lan_discovery:
         en: "LAN discovery settings"
         zh-CN: "局域网发现设置"

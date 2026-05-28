@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use qexed_config::app::qexed::server::{LightAlgorithm, LightMode, World};
-use serde::{Deserialize, Serialize};
+use qexed_config::tool::AppConfigTrait;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -9,60 +9,7 @@ use std::{
 
 const DEFAULT_RULES_DIR: &str = "config/qexed.d/worlds";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DimensionRuleFile {
-    #[serde(default)]
-    pub dimension: String,
-    #[serde(default)]
-    pub dimension_type: String,
-    #[serde(default)]
-    pub read_only: bool,
-    #[serde(default = "default_block_updates")]
-    pub block_updates: bool,
-    #[serde(default)]
-    pub light: LightMode,
-    #[serde(default)]
-    pub light_algorithm: LightAlgorithm,
-    #[serde(default)]
-    pub time: DimensionTimeRule,
-}
-
-impl DimensionRuleFile {
-    fn from_world_defaults(world: &World, dimension: &str) -> Self {
-        Self {
-            dimension: dimension.to_string(),
-            dimension_type: default_dimension_type(dimension),
-            read_only: world.read_only,
-            block_updates: true,
-            light: world.light.clone(),
-            light_algorithm: world.light_algorithm,
-            time: DimensionTimeRule::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DimensionTimeRule {
-    #[serde(default = "default_time_value")]
-    pub value: i64,
-    #[serde(default)]
-    pub fixed: Option<i64>,
-    #[serde(default = "default_daylight_cycle")]
-    pub daylight_cycle: bool,
-    #[serde(default = "default_tick_step")]
-    pub tick_step: i64,
-}
-
-impl Default for DimensionTimeRule {
-    fn default() -> Self {
-        Self {
-            value: default_time_value(),
-            fixed: None,
-            daylight_cycle: default_daylight_cycle(),
-            tick_step: default_tick_step(),
-        }
-    }
-}
+type DimensionRuleFile = qexed_config::app::qexed::world_rules::DimensionWorldRules;
 
 #[derive(Debug, Clone)]
 pub struct DimensionRuleSnapshot {
@@ -120,7 +67,8 @@ impl WorldRulesManager {
             log::warn!(
                 "failed to load world rule for dimension {dimension}, using defaults: {err:#}"
             );
-            let default = DimensionRuleFile::from_world_defaults(&self.inner.default_world, dimension);
+            let default =
+                DimensionRuleFile::from_world_defaults(&self.inner.default_world, dimension);
             return DimensionRuleSnapshot {
                 dimension: default.dimension,
                 dimension_type: default.dimension_type,
@@ -134,11 +82,7 @@ impl WorldRulesManager {
                 tick_step: default.time.tick_step,
             };
         }
-        let states = self
-            .inner
-            .states
-            .read()
-            .expect("world rules lock poisoned");
+        let states = self.inner.states.read().expect("world rules lock poisoned");
         let state = states.get(dimension).expect("dimension rule state missing");
         DimensionRuleSnapshot {
             dimension: state.rule.dimension.clone(),
@@ -242,11 +186,7 @@ impl WorldRulesManager {
         })
     }
 
-    pub fn set_read_only(
-        &self,
-        dimension: &str,
-        read_only: bool,
-    ) -> Result<DimensionRuleSnapshot> {
+    pub fn set_read_only(&self, dimension: &str, read_only: bool) -> Result<DimensionRuleSnapshot> {
         self.update_rule(dimension, |state| {
             state.rule.read_only = read_only;
         })
@@ -306,23 +246,21 @@ impl WorldRulesManager {
     }
 
     fn load_or_create_state(&self, dimension: &str) -> Result<DimensionRuleState> {
-        let path = self.dimension_rules_file_path(dimension)?;
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("read {}", path.display()))?;
-            let mut rule: DimensionRuleFile = toml::from_str(&content)
-                .with_context(|| format!("parse {}", path.display()))?;
-            if rule.dimension.trim().is_empty() {
-                rule.dimension = dimension.to_string();
-            }
-            if rule.dimension_type.trim().is_empty() {
-                rule.dimension_type = default_dimension_type(dimension);
-            }
-            let current_time = rule.time.fixed.unwrap_or(rule.time.value);
-            return Ok(DimensionRuleState { rule, current_time });
+        let rule_dir = self.dimension_rules_dir_path(dimension)?;
+        let mut rule =
+            DimensionRuleFile::load_or_create_default(None, Some(false), Some(rule_dir))?;
+        if rule.dimension.trim().is_empty() {
+            rule.dimension = dimension.to_string();
         }
-
-        let rule = DimensionRuleFile::from_world_defaults(&self.inner.default_world, dimension);
+        if rule.dimension_type.trim().is_empty() {
+            rule.dimension_type = default_dimension_type(dimension);
+        }
+        if rule.tick_step_invalid() {
+            rule.time.tick_step = 1;
+        }
+        if rule.time.daylight_cycle && rule.time.tick_step < 0 {
+            rule.time.tick_step = 0;
+        }
         self.write_rule_file(dimension, &rule)?;
         Ok(DimensionRuleState {
             current_time: rule.time.value,
@@ -331,36 +269,14 @@ impl WorldRulesManager {
     }
 
     fn write_rule_file(&self, dimension: &str, rule: &DimensionRuleFile) -> Result<()> {
-        let path = self.dimension_rules_file_path(dimension)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create {}", parent.display()))?;
-        }
-        let content = toml::to_string_pretty(rule).context("serialize dimension rules")?;
-        std::fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
-        Ok(())
+        let rule_dir = self.dimension_rules_dir_path(dimension)?;
+        rule.save_to_config(None, Some(false), Some(rule_dir))
     }
 
-    fn dimension_rules_file_path(&self, dimension: &str) -> Result<PathBuf> {
+    fn dimension_rules_dir_path(&self, dimension: &str) -> Result<PathBuf> {
         let folder = sanitize_dimension_folder(dimension)?;
-        Ok(self.inner.base_dir.join(folder).join("rules.toml"))
+        Ok(self.inner.base_dir.join(folder))
     }
-}
-
-fn default_block_updates() -> bool {
-    true
-}
-
-fn default_time_value() -> i64 {
-    0
-}
-
-fn default_daylight_cycle() -> bool {
-    true
-}
-
-fn default_tick_step() -> i64 {
-    1
 }
 
 fn default_dimension_type(dimension: &str) -> String {
@@ -368,6 +284,29 @@ fn default_dimension_type(dimension: &str) -> String {
         "minecraft:the_nether" => "minecraft:the_nether".to_string(),
         "minecraft:the_end" => "minecraft:the_end".to_string(),
         _ => "minecraft:overworld".to_string(),
+    }
+}
+
+trait DimensionRuleExt {
+    fn from_world_defaults(world: &World, dimension: &str) -> Self;
+    fn tick_step_invalid(&self) -> bool;
+}
+
+impl DimensionRuleExt for DimensionRuleFile {
+    fn from_world_defaults(world: &World, dimension: &str) -> Self {
+        Self {
+            dimension: dimension.to_string(),
+            dimension_type: default_dimension_type(dimension),
+            read_only: world.read_only,
+            block_updates: true,
+            light: world.light.clone(),
+            light_algorithm: world.light_algorithm,
+            time: qexed_config::app::qexed::world_rules::DimensionTimeRule::default(),
+        }
+    }
+
+    fn tick_step_invalid(&self) -> bool {
+        self.time.tick_step < 0
     }
 }
 
@@ -438,9 +377,7 @@ mod tests {
             .unwrap();
         assert_eq!(manager.tick_dimension_time("minecraft:overworld"), 4000);
 
-        manager
-            .set_fixed_time("minecraft:overworld", None)
-            .unwrap();
+        manager.set_fixed_time("minecraft:overworld", None).unwrap();
         manager
             .set_daylight_cycle("minecraft:overworld", false)
             .unwrap();

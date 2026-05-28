@@ -32,8 +32,8 @@ use qexed_protocol::to_client::play::{
     system_chat::SystemChat,
 };
 use qexed_protocol::to_server::play::{
-    accept_teleportation::AcceptTeleportation, chat_ack::ChatAck, chat_command::ChatCommand,
-    chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
+    accept_teleportation::AcceptTeleportation, attack::Attack, chat_ack::ChatAck,
+    chat_command::ChatCommand, chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
     chunk_batch_received::ChunkBatchReceived, client_command::ClientCommand,
     container_click::ContainerClick, container_close::ContainerClose, interact::Interact,
     keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
@@ -84,7 +84,7 @@ const PLAYER_HEIGHT_BLOCKS: f64 = 1.8;
 pub async fn initialize<R, W>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
     sink: &mut qexed_tcp_connect::PacketSink<W>,
-    config: &qexed_config::app::qexed::Qexed,
+    config: &crate::config::RuntimeConfig,
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
@@ -101,7 +101,7 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let world_config = &config.server.world;
+    let world_config = &config.world;
     let mut saved_player = player_data
         .load_or_default(profile, &world_config.dimension, &world_config.spawn)
         .await;
@@ -252,7 +252,7 @@ where
 async fn wait_for_play_packets<R, W>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
     sink: &mut qexed_tcp_connect::PacketSink<W>,
-    config: &qexed_config::app::qexed::Qexed,
+    config: &crate::config::RuntimeConfig,
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
@@ -296,7 +296,7 @@ where
     let mut chat_session: Option<crate::secure_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0;
     let enforce_secure_chat = config.server.online_mode;
-    let world_config = &config.server.world;
+    let world_config = &config.world;
     let mut position = session.player.position;
     let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
@@ -401,6 +401,43 @@ where
                 let Some(event) = event else {
                     continue;
                 };
+                if let crate::players::PlayerEvent::Teleport {
+                    profile_id: target_id,
+                    position: target_position,
+                } = event
+                {
+                    if target_id == profile.uuid {
+                        pending_dig = None;
+                        position = target_position;
+                        let teleport_id = next_teleport_id;
+                        next_teleport_id = next_teleport_id.saturating_add(1);
+                        sink.send(Position {
+                            teleport_id: VarInt(teleport_id),
+                            x: position.x,
+                            y: position.y,
+                            z: position.z,
+                            dx: 0.0,
+                            dy: 0.0,
+                            dz: 0.0,
+                            yaw: position.yaw,
+                            pitch: position.pitch,
+                            flags: 0,
+                        })
+                        .await?;
+                        chunk_state
+                            .reset_after_respawn(
+                                sink,
+                                &chunk_sender,
+                                world,
+                                plugins,
+                                position.x,
+                                position.z,
+                            )
+                            .await?;
+                        sink.flush().await?;
+                    }
+                    continue;
+                }
                 if event_is_self(&event, profile.uuid) {
                     continue;
                 }
@@ -797,20 +834,65 @@ where
                 if packet_id == Interact::ID {
                     let interact = crate::connection::decode_payload::<Interact>(&mut payload)?;
                     if !survival.is_dead() {
-                        let outcome = lobby
-                            .handle_entity_interact(
+                        let plugin_outcome = if is_primary_interact(&interact) {
+                            handle_plugin_npc_interact(
                                 sink,
-                                entities,
+                                world,
+                                players,
                                 plugins,
+                                entities,
                                 &session.player,
-                                interact,
-                                &lobby_status,
+                                interact.entity_id.0,
+                                "interact",
+                                &chunk_sender,
+                                &mut chunk_state,
+                                &mut position,
+                                &mut next_teleport_id,
                             )
-                            .await?;
+                            .await?
+                        } else {
+                            PluginNpcInteractOutcome::default()
+                        };
+                        let outcome = if plugin_outcome.handled {
+                            lobby::LobbyInteractionOutcome::default()
+                        } else {
+                            lobby
+                                .handle_entity_interact(sink, entities, interact, &lobby_status)
+                                .await?
+                        };
                         if outcome.opened_menu {
                             lobby_menu_open = true;
                         }
-                        if outcome.handled {
+                        if plugin_outcome.handled || outcome.handled {
+                            pending_dig = None;
+                            sink.flush().await?;
+                        }
+                    }
+                    if survival.is_dead() {
+                        pending_dig = None;
+                    }
+                    continue;
+                }
+
+                if packet_id == Attack::ID {
+                    let attack = crate::connection::decode_payload::<Attack>(&mut payload)?;
+                    if !survival.is_dead() {
+                        let plugin_outcome = handle_plugin_npc_interact(
+                            sink,
+                            world,
+                            players,
+                            plugins,
+                            entities,
+                            &session.player,
+                            attack.entity_id.0,
+                            "attack",
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                        )
+                        .await?;
+                        if plugin_outcome.handled {
                             pending_dig = None;
                             sink.flush().await?;
                         }
@@ -1666,6 +1748,86 @@ where
     Ok(())
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct PluginNpcInteractOutcome {
+    handled: bool,
+}
+
+async fn handle_plugin_npc_interact<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    entities: &crate::entities::EntityManager,
+    player: &crate::players::OnlinePlayer,
+    entity_id: i32,
+    action_name: &'static str,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+) -> Result<PluginNpcInteractOutcome>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Some(entity) = entities.entity_by_runtime_id(entity_id) else {
+        log::debug!(
+            "ignored entity interact for unmanaged entity: entity_id={}, action={}",
+            entity_id,
+            action_name
+        );
+        return Ok(PluginNpcInteractOutcome::default());
+    };
+    if entity.kind != crate::entities::ManagedEntityKind::Npc {
+        return Ok(PluginNpcInteractOutcome::default());
+    }
+
+    log::debug!(
+        "dispatching plugin npc interact: player={}, entity_key={}, entity_id={}, action={}",
+        player.profile.username,
+        entity.key,
+        entity.entity_id,
+        action_name
+    );
+
+    let response = plugins.handle_npc_interact(
+        player,
+        crate::plugins::NpcEntityPayload {
+            key: entity.key,
+            entity_id: entity.entity_id,
+            dimension: entity.dimension,
+            x: entity.position.x,
+            y: entity.position.y,
+            z: entity.position.z,
+            yaw: entity.position.yaw,
+            pitch: entity.position.pitch,
+        },
+        action_name,
+    );
+    let mut handled = response.handled || !response.actions.is_empty();
+    for action in response.actions {
+        handled |= chat::apply_plugin_action(
+            sink,
+            world,
+            players,
+            plugins,
+            player.profile.uuid,
+            chunk_sender,
+            chunk_state,
+            position,
+            next_teleport_id,
+            action,
+        )
+        .await?;
+    }
+
+    Ok(PluginNpcInteractOutcome { handled })
+}
+
+fn is_primary_interact(interact: &Interact) -> bool {
+    interact.hand.0 == 0
+}
+
 async fn place_held_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -2124,8 +2286,7 @@ where
         && matches!(
             dimension_rule.light,
             qexed_config::app::qexed::server::LightMode::Dynamic
-        )
-    {
+        ) {
         let update = world.light_update(
             dimension,
             position.x.div_euclid(16),

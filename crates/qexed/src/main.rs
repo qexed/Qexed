@@ -1,8 +1,9 @@
-mod auth;
 mod audit;
+mod auth;
 mod bootstrap;
 mod code_of_conduct;
 mod commands;
+mod config;
 mod connection;
 mod content_filter;
 mod entities;

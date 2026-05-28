@@ -24,6 +24,7 @@ os_info = { workspace = true }
 clap.workspace = true
 openssl.workspace = true
 pollster.workspace = true
+postcard.workspace = true
 rand.workspace = true
 rayon.workspace = true
 reqwest.workspace = true

@@ -1,11 +1,9 @@
 use clap::Parser;
-use qexed_config::tool::AppConfigTrait;
 use rust_i18n::t;
 
-pub async fn load() -> anyhow::Result<Option<qexed_config::app::qexed::Qexed>> {
+pub async fn load() -> anyhow::Result<Option<crate::config::RuntimeConfig>> {
     let args = qexed_config::app::qexed::qexed_args::ServerArgs::parse();
-    let config =
-        qexed_config::app::qexed::Qexed::load_or_create_default(args.language.clone(), None, None)?;
+    let config = crate::config::RuntimeConfig::load(args.language.clone())?;
 
     rust_i18n::set_locale(&args.language.unwrap_or_else(|| config.language.clone()));
     if args.init_settings {
@@ -13,11 +11,22 @@ pub async fn load() -> anyhow::Result<Option<qexed_config::app::qexed::Qexed>> {
     }
     #[cfg(windows)]
     set_windows_console_title("Qexed Server");
-    qexed_log::log_init().await;
+    qexed_log::log_init(log_level_from_config(config.server.log_level)).await;
     log_runtime_info();
     log_online_warnings(&config);
 
     Ok(Some(config))
+}
+
+fn log_level_from_config(level: qexed_config::app::qexed::server::ServerLogLevel) -> qexed_log::LogLevel {
+    match level {
+        qexed_config::app::qexed::server::ServerLogLevel::Trace => qexed_log::LogLevel::Trace,
+        qexed_config::app::qexed::server::ServerLogLevel::Debug => qexed_log::LogLevel::Debug,
+        qexed_config::app::qexed::server::ServerLogLevel::Info => qexed_log::LogLevel::Info,
+        qexed_config::app::qexed::server::ServerLogLevel::Warn => qexed_log::LogLevel::Warn,
+        qexed_config::app::qexed::server::ServerLogLevel::Error => qexed_log::LogLevel::Error,
+        qexed_config::app::qexed::server::ServerLogLevel::Off => qexed_log::LogLevel::Off,
+    }
 }
 
 fn log_runtime_info() {
@@ -52,7 +61,7 @@ fn log_runtime_info() {
     log::info!("{}", t!("qexed.log_init_finish"));
 }
 
-fn log_online_warnings(config: &qexed_config::app::qexed::Qexed) {
+fn log_online_warnings(config: &crate::config::RuntimeConfig) {
     if !config.server.online_mode {
         log::warn!("{}", t!("qexed.minecraft_warning.offline_mode"));
         log::warn!("{}", t!("qexed.minecraft_warning.no_authentication"));

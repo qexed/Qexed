@@ -10,6 +10,7 @@ pub mod commands;
 pub mod container_set_content;
 pub mod container_set_data;
 pub mod container_set_slot;
+pub mod custom_payload;
 pub mod forget_level_chunk;
 pub mod game_state_change;
 pub mod initialize_border;

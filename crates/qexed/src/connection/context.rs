@@ -4,7 +4,7 @@ use crate::auth::Authenticator;
 
 #[derive(Clone)]
 pub struct ServerContext {
-    pub config: Arc<qexed_config::app::qexed::Qexed>,
+    pub config: Arc<crate::config::RuntimeConfig>,
     pub authenticator: Arc<Authenticator>,
     pub world: Arc<crate::world::WorldManager>,
     pub world_rules: Arc<crate::world::WorldRulesManager>,
@@ -20,7 +20,7 @@ pub struct ServerContext {
 }
 
 impl ServerContext {
-    pub async fn new(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<Self> {
+    pub async fn new(config: impl Into<crate::config::RuntimeConfig>) -> anyhow::Result<Self> {
         Self::new_with_code_of_conduct_dir(
             config,
             crate::code_of_conduct::DEFAULT_CODE_OF_CONDUCT_DIR,
@@ -29,27 +29,28 @@ impl ServerContext {
     }
 
     pub async fn new_with_code_of_conduct_dir(
-        config: qexed_config::app::qexed::Qexed,
+        config: impl Into<crate::config::RuntimeConfig>,
         code_of_conduct_dir: impl AsRef<std::path::Path>,
     ) -> anyhow::Result<Self> {
+        let config = config.into();
         let plugins = Arc::new(crate::plugins::PluginManager::load_default());
         plugins.emit_init();
         plugins.emit_config_reload("config/qexed.toml");
         plugins.emit_language_change(&config.language);
 
-        let world_generator = crate::world::generator::from_config(&config.server.world);
-        let world_rules = crate::world::WorldRulesManager::from_world_config(&config.server.world)?;
+        let world_generator = crate::world::generator::from_config(&config.world);
+        let world_rules = crate::world::WorldRulesManager::from_world_config(&config.world)?;
         let world = crate::world::WorldManager::with_generator(
-            config.server.world.path.clone(),
-            crate::world::WorldLightMode::from(&config.server.world.light),
-            crate::world::WorldLightAlgorithm::from(&config.server.world.light_algorithm),
-            crate::world::light_gpu_from_config(&config.server.world.gpu),
-            config.server.world.read_only,
+            config.world.path.clone(),
+            crate::world::WorldLightMode::from(&config.world.light),
+            crate::world::WorldLightAlgorithm::from(&config.world.light_algorithm),
+            crate::world::light_gpu_from_config(&config.world.gpu),
+            config.world.read_only,
             world_generator,
         );
-        world.ensure_storage(&config.server.world.dimension)?;
+        world.ensure_storage(&config.world.dimension)?;
         let player_data = crate::player_data::PlayerDataManager::from_config(
-            config.server.world.path.clone(),
+            config.world.path.clone(),
             &config.server.player_data,
         )
         .await?;
@@ -142,6 +143,14 @@ fn apply_plugin_npc_mutations(
                     },
                 ) {
                     log::warn!("plugin npc upsert failed: key={key}, error={err:#}");
+                } else {
+                    log::info!(
+                        "plugin npc upserted: key={key}, dimension={}, x={}, y={}, z={}",
+                        npc.dimension,
+                        npc.x,
+                        npc.y,
+                        npc.z
+                    );
                 }
             }
             crate::plugins::NpcMutationOp::Remove { key } => {

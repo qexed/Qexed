@@ -20,6 +20,7 @@ struct DefaultConfig {
 
 // 模块配置结构体（对应 [package.metadata.log_modules.xxx]）
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ModuleConfig {
     original_name: String, // 配置中的键名（如 "tcp_connect"）
     display_name: String,  // 显示名称（rename 或 original_name）
@@ -184,8 +185,7 @@ fn generate_module_code(defaults: &DefaultConfig, modules: &[ModuleConfig]) -> S
 
     // 生成 module 异步函数
     code.push_str("/// 初始化所有日志模块\n");
-    code.push_str("/// 参数 level 为全局默认级别（当前未使用，保留扩展）\n");
-    code.push_str("pub async fn module() {\n");
+    code.push_str("pub async fn module(level: ::tklog::LEVEL) {\n");
 
     // 为每个模块生成 set_mod_option 调用
     for module in modules {
@@ -229,19 +229,7 @@ fn generate_module_code(defaults: &DefaultConfig, modules: &[ModuleConfig]) -> S
             "    ::tklog::ASYNC_LOG.set_mod_option(\n        \"{}\",\n        ::tklog::LogOption {{\n",
             module.original_name  // 用原始名作为模块标识
         ));
-        code.push_str(&format!(
-            "            level: Some(::tklog::LEVEL::{}),\n",
-            match module.level.to_uppercase().as_str() {
-                "TRACE" => "Trace",
-                "INFO" => "Info",
-                "DEBUG" => "Debug",
-                "WARN" => "Warn",
-                "ERROR" => "Error",
-                "FATAL" => "Fatal",
-                "OFF" => "Off",
-                _ => "Info",
-            }
-        ));
+        code.push_str("            level: Some(level),\n");
 
         code.push_str("            console: Some(false),\n");
         code.push_str("            format: None,\n");

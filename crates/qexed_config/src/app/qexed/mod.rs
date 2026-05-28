@@ -81,17 +81,58 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
 
     fn dynamic_split_config_files(
         doc: &toml_edit::DocumentMut,
-        _split_dir: &std::path::Path,
+        split_dir: &std::path::Path,
     ) -> anyhow::Result<Vec<qexed_config::tool::OwnedSplitConfigFile>> {
         let mut split_files = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         if let Some(server_item) = doc.get("server").and_then(|item| item.as_table()) {
             for (key, value) in server_item.iter() {
                 if key.is_empty() || !value.is_table_like() {
                     continue;
                 }
+                if key == "world" {
+                    continue;
+                }
+                let file_name = format!("{key}.toml");
+                let root_path = format!("server.{key}");
+                seen.insert(root_path.clone());
                 split_files.push(qexed_config::tool::OwnedSplitConfigFile {
-                    file_name: format!("{key}.toml"),
-                    root_path: format!("server.{key}"),
+                    file_name,
+                    root_path,
+                });
+            }
+        }
+        if split_dir.exists() {
+            for entry in std::fs::read_dir(split_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                    continue;
+                };
+                if stem.eq_ignore_ascii_case("server")
+                    || stem.eq_ignore_ascii_case("plugin_download")
+                {
+                    continue;
+                }
+                if stem.eq_ignore_ascii_case("world") {
+                    continue;
+                }
+                if stem.trim().is_empty() {
+                    continue;
+                }
+                let root_path = format!("server.{stem}");
+                if !seen.insert(root_path.clone()) {
+                    continue;
+                }
+                split_files.push(qexed_config::tool::OwnedSplitConfigFile {
+                    file_name: format!("{stem}.toml"),
+                    root_path,
                 });
             }
         }
@@ -102,6 +143,7 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
 #[cfg(test)]
 mod tests {
     use super::Qexed;
+    use qexed_config::tool::AppConfigTrait;
 
     #[test]
     fn normalize_system_language_filters_invalid_locale() {
@@ -116,5 +158,33 @@ mod tests {
         assert_eq!(Qexed::normalize_system_language("C"), None);
         assert_eq!(Qexed::normalize_system_language("POSIX"), None);
         assert_eq!(Qexed::normalize_system_language("  "), None);
+    }
+
+    #[test]
+    fn dynamic_split_files_can_be_discovered_from_split_directory() {
+        let temp = std::env::temp_dir().join(format!(
+            "qexed-config-split-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::write(temp.join("world.toml"), "path=\"world\"\n").unwrap();
+        std::fs::write(
+            temp.join("player_data.toml"),
+            "[server.player_data]\nenable=true\n",
+        )
+        .unwrap();
+
+        let doc = toml_edit::DocumentMut::new();
+        let files = Qexed::dynamic_split_config_files(&doc, &temp).unwrap();
+        let roots = files
+            .into_iter()
+            .map(|file| file.root_path)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(!roots.contains("server.world"));
+        assert!(roots.contains("server.player_data"));
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

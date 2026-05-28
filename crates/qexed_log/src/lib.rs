@@ -7,10 +7,40 @@ use tklog::{ASYNC_LOG, LEVEL, MODE};
 
 rust_i18n::i18n!("locales");
 
-pub async fn log_init() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl Default for LogLevel {
+    fn default() -> Self {
+        Self::Info
+    }
+}
+
+impl LogLevel {
+    fn as_tklog(self) -> LEVEL {
+        match self {
+            Self::Trace => LEVEL::Trace,
+            Self::Debug => LEVEL::Debug,
+            Self::Info => LEVEL::Info,
+            Self::Warn => LEVEL::Warn,
+            Self::Error => LEVEL::Error,
+            Self::Off => LEVEL::Off,
+        }
+    }
+}
+
+pub async fn log_init(level: LogLevel) {
+    let level = level.as_tklog();
     ASYNC_LOG
         .set_console(false)
-        .set_level(LEVEL::Info)
+        .set_level(level)
         .set_cutmode_by_time(
             &format!("./logs/{}.log", t!("qexed_log.modern.global")),
             MODE::DAY,
@@ -23,7 +53,7 @@ pub async fn log_init() {
             t!("qexed_log.modern.global")
         ))
         .set_custom_handler(log_handler);
-    module().await;
+    module(level).await;
     ASYNC_LOG.uselog();
 }
 

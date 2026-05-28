@@ -2,7 +2,7 @@ use qexed_config::{
     app::{
         qexed::{
             Qexed,
-            server::{ContentFilterEngine, GpuDeviceSelector},
+            server::{ContentFilterEngine, GpuDeviceSelector, World},
         },
         qexed_ip_connection_speed_test::QexedIpConnectionSpeedTest,
         qexed_warden::QexedWarden,
@@ -89,6 +89,7 @@ fn generated_configs_include_autodoc_comments() -> anyhow::Result<()> {
     let dir = temp_config_dir("autodoc");
 
     Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    World::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     QexedWarden::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     QexedIpConnectionSpeedTest::load_or_create_default(
         Some("zh-CN".to_string()),
@@ -107,9 +108,10 @@ fn generated_configs_include_autodoc_comments() -> anyhow::Result<()> {
     let server = std::fs::read_to_string(dir.join("qexed.d").join("server.toml"))?;
     assert!(server.contains("[server]"));
     assert!(server.contains("ip = \"0.0.0.0:25565\""));
+    assert!(!server.contains("[server.world]"));
 
-    let world = std::fs::read_to_string(dir.join("qexed.d").join("world.toml"))?;
-    assert!(world.contains("[server.world]"));
+    let world = std::fs::read_to_string(dir.join("world.toml"))?;
+    assert!(!world.contains("[server.world]"));
     assert!(world.contains("generator = \"empty\""));
 
     let warden = std::fs::read_to_string(dir.join("qexed_warden.toml"))?;
@@ -315,28 +317,29 @@ pitch = 0.0
 "#,
     )?;
 
-    let config =
-        Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let world_config =
+        World::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     let qexed = std::fs::read_to_string(&qexed_path)?;
-    let world = std::fs::read_to_string(dir.join("qexed.d").join("world.toml"))?;
+    let world = std::fs::read_to_string(dir.join("world.toml"))?;
     let player_data = std::fs::read_to_string(dir.join("qexed.d").join("player_data.toml"))?;
     let player_messages =
         std::fs::read_to_string(dir.join("qexed.d").join("player_messages.toml"))?;
     let content_filter = std::fs::read_to_string(dir.join("qexed.d").join("content_filter.toml"))?;
     let permissions = std::fs::read_to_string(dir.join("qexed.d").join("permissions.toml"))?;
 
-    assert!(!config.server.world.read_only);
+    assert!(!world_config.read_only);
     assert!(qexed.contains("# ==== AutoDocHeader ===="));
     assert!(world.contains("generator = \"empty\""));
     assert!(world.contains("generator_preset = \"minecraft:classic_flat\""));
     assert!(world.contains("seed = 0"));
     assert!(world.contains("game_mode = \"survival\""));
     assert!(world.contains("spawn_protection_radius = 16"));
-    assert!(player_data.contains("[server.player_data]"));
-    assert!(player_messages.contains("[server.player_messages]"));
+    assert!(player_data.contains("[player_data]"));
+    assert!(player_messages.contains("[player_messages]"));
     assert!(player_messages.contains("join = \"{player} joined the server\""));
-    assert!(content_filter.contains("[server.content_filter]"));
-    assert!(permissions.contains("[server.permissions]"));
+    assert!(content_filter.contains("[content_filter]"));
+    assert!(permissions.contains("[permissions]"));
     assert!(permissions.contains("engine = \"local\""));
     assert!(permissions.contains("local_path = \"config/qexed_permissions.toml\""));
     assert!(permissions.contains("table_prefix = \"luckperms_\""));
@@ -411,9 +414,11 @@ enable = true
 
     let config =
         Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let world_config =
+        World::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     let qexed = std::fs::read_to_string(&qexed_path)?;
     let saved_config = load_split_qexed_config(&dir)?;
-    let world = std::fs::read_to_string(dir.join("qexed.d").join("world.toml"))?;
+    let world = std::fs::read_to_string(dir.join("world.toml"))?;
     let entities = std::fs::read_to_string(dir.join("qexed.d").join("entities.toml"))?;
     let player_messages =
         std::fs::read_to_string(dir.join("qexed.d").join("player_messages.toml"))?;
@@ -422,16 +427,13 @@ enable = true
 
     assert!(!config.server.player_messages.enable);
     assert!(config.server.content_filter.enable);
-    assert!(saved_config.server.world.gpu.enable);
-    assert_eq!(
-        saved_config.server.world.gpu.device,
-        GpuDeviceSelector::Discrete
-    );
+    assert!(world_config.gpu.enable);
+    assert_eq!(world_config.gpu.device, GpuDeviceSelector::Discrete);
     assert!(qexed.contains("# ==== AutoDocHeader ===="));
     assert!(world.contains("generator = \"empty\""));
     assert!(world.contains("generator_preset = \"minecraft:classic_flat\""));
     assert!(world.contains("seed = 0"));
-    assert!(entities.contains("[server.entities]"));
+    assert!(entities.contains("[entities]"));
     assert!(entities.contains("dimension = \"minecraft:overworld\""));
     assert!(!entities.contains("list = []"));
     assert_eq!(
@@ -447,7 +449,7 @@ enable = true
         content_filter
             .contains("block_message = \"Your message was blocked by the server content filter.\"")
     );
-    assert!(permissions.contains("[server.permissions]"));
+    assert!(permissions.contains("[permissions]"));
     assert!(permissions.contains("engine = \"local\""));
     assert!(permissions.contains("allow_by_default = true"));
     assert!(world.contains("device = \"discrete\""));
@@ -560,8 +562,9 @@ options = []
     assert!(!original.contains("generator ="));
 
     Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    World::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     let qexed = std::fs::read_to_string(&qexed_path)?;
-    let world = std::fs::read_to_string(dir.join("qexed.d").join("world.toml"))?;
+    let world = std::fs::read_to_string(dir.join("world.toml"))?;
     let player_messages =
         std::fs::read_to_string(dir.join("qexed.d").join("player_messages.toml"))?;
     let content_filter = std::fs::read_to_string(dir.join("qexed.d").join("content_filter.toml"))?;
@@ -570,13 +573,13 @@ options = []
     let secrets = std::fs::read_to_string(dir.join(".secrets").join("qexed.toml"))?;
 
     assert!(qexed.contains("# ==== AutoDocHeader ===="));
-    assert!(player_messages.contains("[server.player_messages]"));
+    assert!(player_messages.contains("[player_messages]"));
     assert!(world.contains("generator = \"empty\""));
     assert!(world.contains("generator_preset = \"minecraft:classic_flat\""));
     assert!(world.contains("seed = 0"));
     assert!(player_messages.contains("join = \"{player} joined the server\""));
-    assert!(content_filter.contains("[server.content_filter]"));
-    assert!(permissions.contains("[server.permissions]"));
+    assert!(content_filter.contains("[content_filter]"));
+    assert!(permissions.contains("[permissions]"));
     assert!(content_filter.contains("engine = \"fixed\""));
     assert!(permissions.contains("engine = \"local\""));
     assert!(!qexed.contains("existing-mongo-password"));
@@ -590,7 +593,7 @@ options = []
 }
 
 #[test]
-fn split_qexed_config_files_override_main_config() -> anyhow::Result<()> {
+fn legacy_world_split_file_migrates_to_root_world_config() -> anyhow::Result<()> {
     let dir = temp_config_dir("split_override");
     Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
 
@@ -636,16 +639,15 @@ pitch = 0.0
     )?;
 
     let config =
-        Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(false), Some(dir.clone()))?;
+        World::load_or_create_default(Some("zh-CN".to_string()), Some(false), Some(dir.clone()))?;
 
-    assert_eq!(config.server.world.path, "split-world");
-    assert!(config.server.world.read_only);
-    assert_eq!(config.server.world.view_distance, 12);
-    assert_eq!(config.server.world.seed, 42);
+    assert_eq!(config.path, "split-world");
+    assert!(config.read_only);
+    assert_eq!(config.view_distance, 12);
+    assert_eq!(config.seed, 42);
 
-    let qexed = std::fs::read_to_string(&qexed_path)?;
-    let world = std::fs::read_to_string(split_dir.join("world.toml"))?;
-    assert!(!qexed.contains("[server.world]"));
+    let world = std::fs::read_to_string(dir.join("world.toml"))?;
+    assert!(!world.contains("[server.world]"));
     assert!(world.contains("path = \"split-world\""));
 
     let _ = std::fs::remove_dir_all(dir);
