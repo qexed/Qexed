@@ -4,7 +4,7 @@ use qexed_protocol::to_client::play::system_chat::SystemChat;
 
 use crate::players::PlayerManager;
 
-use super::util::text_component;
+use super::util::{text_component, translatable_component};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CommandOutcome {
@@ -36,21 +36,20 @@ where
     let command = command.trim();
     if !permissions.can_run_command(profile, command).await? {
         sink.send(SystemChat {
-            content: text_component(permissions.denied_message()),
+            content: translatable_component("commands.help.failed", Vec::new()),
             overlay: false,
         })
         .await?;
         return Ok(CommandOutcome::default());
     }
 
-    let messages = crate::commands::messages();
     let mut parts = command.split_whitespace();
     let name = parts.next().unwrap_or_default();
     let argument = parts.collect::<Vec<_>>().join(" ");
     match name {
         "help" => {
             sink.send(SystemChat {
-                content: messages.render_help(),
+                content: translatable_component("commands.help.failed", Vec::new()),
                 overlay: false,
             })
             .await?;
@@ -59,11 +58,19 @@ where
         "list" => {
             let mut names = players.online_names();
             names.sort();
+            let joined = names.join(", ");
             sink.send(SystemChat {
-                content: messages.render_list(
-                    players.online_count(),
-                    config.server.max_player,
-                    &names,
+                content: translatable_component(
+                    "commands.list.players",
+                    vec![
+                        text_component(players.online_count().to_string()),
+                        text_component(if config.server.max_player < 0 {
+                            "unlimited".to_string()
+                        } else {
+                            config.server.max_player.to_string()
+                        }),
+                        text_component(joined),
+                    ],
                 ),
                 overlay: false,
             })
@@ -72,17 +79,26 @@ where
         }
         "lobby" | "server" if !lobby.enabled() => {
             sink.send(SystemChat {
-                content: messages.render_lobby_unavailable(),
+                content: translatable_component("commands.help.failed", Vec::new()),
                 overlay: false,
             })
             .await?;
             Ok(CommandOutcome::default())
         }
         "lobby" if argument.trim() == "status" => {
+            let labels = lobby.server_labels(lobby_status);
+            let servers = if labels.is_empty() {
+                "none".to_string()
+            } else {
+                labels.join(", ")
+            };
             sink.send(SystemChat {
-                content: messages.render_lobby_status(
-                    &lobby.status_summary(lobby_status),
-                    &lobby.server_labels(lobby_status),
+                content: translatable_component(
+                    "commands.datapack.list.enabled.success",
+                    vec![
+                        text_component(labels.len().to_string()),
+                        text_component(servers),
+                    ],
                 ),
                 overlay: false,
             })
@@ -92,10 +108,19 @@ where
         "lobby" if argument.trim() == "refresh" => {
             *lobby_status = lobby.refresh_status().await;
             lobby.update_boss_bar_status(sink, lobby_status).await?;
+            let labels = lobby.server_labels(lobby_status);
+            let servers = if labels.is_empty() {
+                "none".to_string()
+            } else {
+                labels.join(", ")
+            };
             sink.send(SystemChat {
-                content: messages.render_lobby_status(
-                    &lobby.status_summary(lobby_status),
-                    &lobby.server_labels(lobby_status),
+                content: translatable_component(
+                    "commands.datapack.list.enabled.success",
+                    vec![
+                        text_component(labels.len().to_string()),
+                        text_component(servers),
+                    ],
                 ),
                 overlay: false,
             })
@@ -105,7 +130,10 @@ where
         "lobby" => {
             lobby.open_menu(sink, lobby_status).await?;
             sink.send(SystemChat {
-                content: messages.render_lobby(),
+                content: translatable_component(
+                    "commands.trigger.simple.success",
+                    vec![text_component("lobby")],
+                ),
                 overlay: false,
             })
             .await?;
@@ -115,8 +143,20 @@ where
             })
         }
         "server" if argument.trim().is_empty() => {
+            let entries = lobby.server_command_entries(lobby_status);
+            let servers = if entries.is_empty() {
+                "none".to_string()
+            } else {
+                entries.join(", ")
+            };
             sink.send(SystemChat {
-                content: messages.render_server_list(&lobby.server_command_entries(lobby_status)),
+                content: translatable_component(
+                    "commands.datapack.list.available.success",
+                    vec![
+                        text_component(entries.len().to_string()),
+                        text_component(servers),
+                    ],
+                ),
                 overlay: false,
             })
             .await?;
@@ -125,7 +165,10 @@ where
         "server" => {
             let Some(server_id) = lobby.resolve_server_id(&argument) else {
                 sink.send(SystemChat {
-                    content: messages.render_server_missing(&argument),
+                    content: translatable_component(
+                        "commands.datapack.unknown",
+                        vec![text_component(argument.clone())],
+                    ),
                     overlay: false,
                 })
                 .await?;
@@ -152,7 +195,15 @@ where
             )
             .await?;
             sink.send(SystemChat {
-                content: messages.render_spawn(),
+                content: translatable_component(
+                    "commands.teleport.success.location.single",
+                    vec![
+                        text_component(profile.username.clone()),
+                        text_component(config.server.world.spawn.x.floor().to_string()),
+                        text_component(config.server.world.spawn.y.floor().to_string()),
+                        text_component(config.server.world.spawn.z.floor().to_string()),
+                    ],
+                ),
                 overlay: false,
             })
             .await?;
@@ -189,7 +240,7 @@ where
         }
         _ => {
             sink.send(SystemChat {
-                content: messages.render_unknown(command),
+                content: translatable_component("command.unknown.command", Vec::new()),
                 overlay: false,
             })
             .await?;
@@ -233,11 +284,21 @@ where
                 .collect::<Vec<_>>();
             labels.sort();
             let message = if labels.is_empty() {
-                "Runtime entities: none".to_string()
+                send_translatable(sink, "commands.datapack.list.available.none", Vec::new())
+                    .await?;
+                return Ok(());
             } else {
-                format!("Runtime entities: {}", labels.join(", "))
+                labels.join(", ")
             };
-            send_text(sink, message).await?;
+            send_translatable(
+                sink,
+                "commands.datapack.list.available.success",
+                vec![
+                    text_component(labels.len().to_string()),
+                    text_component(message),
+                ],
+            )
+            .await?;
         }
         "spawn" => {
             let Some(kind) = parts.next().and_then(parse_entity_kind) else {
@@ -275,20 +336,19 @@ where
             ) {
                 Ok(entity) => entity,
                 Err(err) => {
-                    send_text(sink, format!("Entity command failed: {err:#}")).await?;
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
                     return Ok(());
                 }
             };
-            send_text(
+            send_translatable(
                 sink,
-                format!(
-                    "Spawned entity {}({:?}) at {:.1} {:.1} {:.1}",
-                    entity.key,
-                    entity.kind,
-                    entity.position.x,
-                    entity.position.y,
-                    entity.position.z
-                ),
+                "commands.summon.success",
+                vec![text_component(entity.key)],
             )
             .await?;
         }
@@ -298,15 +358,23 @@ where
                 return Ok(());
             };
             if let Err(err) = entities.move_entity(players, key, player_position) {
-                send_text(sink, format!("Entity command failed: {err:#}")).await?;
+                send_translatable(
+                    sink,
+                    "command.exception",
+                    vec![text_component(format!("{err:#}"))],
+                )
+                .await?;
                 return Ok(());
             }
-            send_text(
+            send_translatable(
                 sink,
-                format!(
-                    "Moved entity {key} to {:.1} {:.1} {:.1}",
-                    player_position.x, player_position.y, player_position.z
-                ),
+                "commands.teleport.success.location.single",
+                vec![
+                    text_component(key.to_string()),
+                    text_component(player_position.x.floor().to_string()),
+                    text_component(player_position.y.floor().to_string()),
+                    text_component(player_position.z.floor().to_string()),
+                ],
             )
             .await?;
         }
@@ -316,10 +384,20 @@ where
                 return Ok(());
             };
             if let Err(err) = entities.remove(players, key) {
-                send_text(sink, format!("Entity command failed: {err:#}")).await?;
+                send_translatable(
+                    sink,
+                    "command.exception",
+                    vec![text_component(format!("{err:#}"))],
+                )
+                .await?;
                 return Ok(());
             }
-            send_text(sink, format!("Removed entity {key}")).await?;
+            send_translatable(
+                sink,
+                "commands.bossbar.remove.success",
+                vec![text_component(key.to_string())],
+            )
+            .await?;
         }
         _ => {
             send_entity_usage(sink).await?;
@@ -349,12 +427,24 @@ where
 
     match action {
         "list" => {
-            let ids = crate::structures::list_templates()
+            let templates = crate::structures::list_templates()
                 .iter()
                 .map(|template| template.id)
-                .collect::<Vec<_>>()
-                .join(", ");
-            send_text(sink, format!("Structures: {ids}")).await?;
+                .collect::<Vec<_>>();
+            if templates.is_empty() {
+                send_translatable(sink, "commands.datapack.list.available.none", Vec::new())
+                    .await?;
+            } else {
+                send_translatable(
+                    sink,
+                    "commands.datapack.list.available.success",
+                    vec![
+                        text_component(templates.len().to_string()),
+                        text_component(templates.join(", ")),
+                    ],
+                )
+                .await?;
+            }
         }
         "place" => {
             let Some(id) = parts.next() else {
@@ -368,7 +458,12 @@ where
             let blocks = match crate::structures::instantiate(id, origin.clone()) {
                 Ok(blocks) => blocks,
                 Err(err) => {
-                    send_text(sink, format!("Structure command failed: {err:#}")).await?;
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
                     return Ok(());
                 }
             };
@@ -377,14 +472,19 @@ where
                 .filter(|(position, _)| super::util::can_modify_world(world_config, position))
                 .collect::<Vec<_>>();
             if blocks.is_empty() {
-                send_text(sink, "No structure blocks can be placed here.").await?;
+                send_translatable(sink, "commands.place.structure.failed", Vec::new()).await?;
                 return Ok(());
             }
 
             let updates = match world.place_blocks(dimension, blocks) {
                 Ok(updates) => updates,
                 Err(err) => {
-                    send_text(sink, format!("Structure command failed: {err:#}")).await?;
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
                     return Ok(());
                 }
             };
@@ -413,15 +513,15 @@ where
                     players.broadcast_packets_except(actor, vec![packet]);
                 }
             }
-            send_text(
+            send_translatable(
                 sink,
-                format!(
-                    "Placed structure {id} at {} {} {} ({} blocks)",
-                    origin.x,
-                    origin.y,
-                    origin.z,
-                    updates.len()
-                ),
+                "commands.place.structure.success",
+                vec![
+                    text_component(id.to_string()),
+                    text_component(origin.x.to_string()),
+                    text_component(origin.y.to_string()),
+                    text_component(origin.z.to_string()),
+                ],
             )
             .await?;
         }
@@ -431,16 +531,26 @@ where
                 return Ok(());
             };
             let Some(template) = crate::structures::get_template(id) else {
-                send_text(sink, format!("Unknown structure: {id}")).await?;
+                send_translatable(
+                    sink,
+                    "commands.locate.structure.invalid",
+                    vec![text_component(id.to_string())],
+                )
+                .await?;
                 return Ok(());
             };
             let position = nearest_structure_candidate(template.id, player_position);
-            send_text(
+            let dx = position.x - player_position.x.floor() as i32;
+            let dz = position.z - player_position.z.floor() as i32;
+            let distance = ((dx * dx + dz * dz) as f64).sqrt().round() as i32;
+            send_translatable(
                 sink,
-                format!(
-                    "Nearest {} candidate is at {} {} {}",
-                    template.id, position.x, position.y, position.z
-                ),
+                "commands.locate.structure.success",
+                vec![
+                    text_component(template.id.to_string()),
+                    text_component(format!("{}, {}", position.x, position.z)),
+                    text_component(distance.to_string()),
+                ],
             )
             .await?;
         }
@@ -531,33 +641,26 @@ async fn send_entity_usage<W>(sink: &mut qexed_tcp_connect::PacketSink<W>) -> Re
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    send_text(
-        sink,
-        "Usage: /entity list | /entity spawn <entity|npc|hologram> <id> [entity_type] [name] | /entity move <id> | /entity remove <id>",
-    )
-    .await
+    send_translatable(sink, "command.unknown.argument", Vec::new()).await
 }
 
 async fn send_structure_usage<W>(sink: &mut qexed_tcp_connect::PacketSink<W>) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    send_text(
-        sink,
-        "Usage: /structure list | /structure place <id> [x y z] | /structure locate <id>",
-    )
-    .await
+    send_translatable(sink, "command.unknown.argument", Vec::new()).await
 }
 
-async fn send_text<W>(
+async fn send_translatable<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
-    message: impl Into<String>,
+    key: impl Into<String>,
+    with: Vec<qexed_protocol::types::TextComponent>,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     sink.send(SystemChat {
-        content: text_component(message.into()),
+        content: translatable_component(key, with),
         overlay: false,
     })
     .await?;
