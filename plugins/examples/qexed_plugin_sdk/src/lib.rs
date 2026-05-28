@@ -33,6 +33,8 @@ pub mod payload {
         pub uuid: String,
         pub username: String,
         pub entity_id: i32,
+        pub language: String,
+        pub dimension: String,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +42,8 @@ pub mod payload {
         pub uuid: String,
         pub username: String,
         pub entity_id: i32,
+        pub language: String,
+        pub dimension: String,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +142,42 @@ pub mod payload {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ProxyConnectResultPayload {
+        pub player: PlayerPayloadOwned,
+        pub target_server: String,
+        pub current_server: String,
+        pub proxy_protocol: String,
+        pub status_code: i32,
+        pub status: String,
+        pub success: bool,
+        pub message: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PlaceholderQuery {
+        pub player: Option<PlayerPayloadOwned>,
+        pub text: String,
+        pub context: Vec<PlaceholderContext>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PlaceholderContext {
+        pub key: String,
+        pub value: String,
+    }
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    pub struct PlaceholderResponse {
+        pub replacements: Vec<PlaceholderReplacement>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PlaceholderReplacement {
+        pub key: String,
+        pub value: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct NpcInteractPayload {
         pub player: PlayerPayloadOwned,
         pub entity: NpcEntityPayload,
@@ -196,6 +236,7 @@ pub mod payload {
             overlay: bool,
         },
         Teleport {
+            dimension: String,
             x: f64,
             y: f64,
             z: f64,

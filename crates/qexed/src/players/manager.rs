@@ -24,14 +24,18 @@ impl PlayerManager {
         &self,
         profile: qexed_packet::net_types::GameProfile,
         position: EntityPosition,
+        dimension: String,
         equipment: Vec<Equipment>,
+        language: String,
     ) -> PlayerSession {
         let entity_id = self.entity_ids.next();
         let player = OnlinePlayer {
             profile,
             entity_id,
             position,
+            dimension,
             equipment,
+            language,
         };
         let (sender, receiver) = mpsc::unbounded_channel();
 
@@ -67,6 +71,7 @@ impl PlayerManager {
             return;
         };
         handle.player.position = position;
+        let dimension = handle.player.dimension.clone();
         let entity_id = handle.player.entity_id;
         broadcast_locked(
             &players,
@@ -74,31 +79,81 @@ impl PlayerManager {
             PlayerEvent::Moved {
                 profile_id,
                 entity_id,
+                dimension,
                 position,
             },
         );
     }
 
-    pub fn teleport_player(&self, profile_id: uuid::Uuid, position: EntityPosition) -> bool {
+    pub fn update_position_and_dimension(
+        &self,
+        profile_id: uuid::Uuid,
+        dimension: String,
+        position: EntityPosition,
+    ) {
+        let mut players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get_mut(&profile_id) else {
+            return;
+        };
+        let old_dimension = std::mem::replace(&mut handle.player.dimension, dimension.clone());
+        handle.player.position = position;
+        let changed_dimension = old_dimension != dimension;
+        let entity_id = handle.player.entity_id;
+        let player = handle.player.clone();
+        let event = if changed_dimension {
+            PlayerEvent::DimensionChanged {
+                profile_id,
+                entity_id,
+                old_dimension,
+                player,
+            }
+        } else {
+            PlayerEvent::Moved {
+                profile_id,
+                entity_id,
+                dimension,
+                position,
+            }
+        };
+        broadcast_locked(&players, profile_id, event);
+    }
+
+    pub fn teleport_player(
+        &self,
+        profile_id: uuid::Uuid,
+        dimension: String,
+        position: EntityPosition,
+    ) -> bool {
         let mut players = self.players.lock().expect("player manager poisoned");
         let Some(handle) = players.get_mut(&profile_id) else {
             return false;
         };
+        let old_dimension = std::mem::replace(&mut handle.player.dimension, dimension.clone());
         handle.player.position = position;
+        let changed_dimension = old_dimension != dimension;
+        let player = handle.player.clone();
         let entity_id = handle.player.entity_id;
         let _ = handle.sender.send(PlayerEvent::Teleport {
             profile_id,
+            dimension: dimension.clone(),
             position,
         });
-        broadcast_locked(
-            &players,
-            profile_id,
+        let event = if changed_dimension {
+            PlayerEvent::DimensionChanged {
+                profile_id,
+                entity_id,
+                old_dimension,
+                player,
+            }
+        } else {
             PlayerEvent::Moved {
                 profile_id,
                 entity_id,
+                dimension,
                 position,
-            },
-        );
+            }
+        };
+        broadcast_locked(&players, profile_id, event);
         true
     }
 
@@ -121,6 +176,14 @@ impl PlayerManager {
             .map(|handle| handle.player.clone())
     }
 
+    pub fn player_by_uuid(&self, profile_id: uuid::Uuid) -> Option<OnlinePlayer> {
+        self.players
+            .lock()
+            .expect("player manager poisoned")
+            .get(&profile_id)
+            .map(|handle| handle.player.clone())
+    }
+
     pub fn update_equipment(&self, profile_id: uuid::Uuid, slots: Vec<Equipment>) {
         let mut players = self.players.lock().expect("player manager poisoned");
         let Some(handle) = players.get_mut(&profile_id) else {
@@ -139,12 +202,14 @@ impl PlayerManager {
             }
         }
         let entity_id = handle.player.entity_id;
+        let dimension = handle.player.dimension.clone();
         broadcast_locked(
             &players,
             profile_id,
             PlayerEvent::EquipmentChanged {
                 profile_id,
                 entity_id,
+                dimension,
                 slots,
             },
         );
@@ -153,6 +218,7 @@ impl PlayerManager {
     pub fn broadcast_block_changed(
         &self,
         profile_id: uuid::Uuid,
+        dimension: &str,
         position: qexed_packet::net_types::Position,
         block_state: i32,
         light_update: Option<Bytes>,
@@ -163,6 +229,7 @@ impl PlayerManager {
             profile_id,
             PlayerEvent::BlockChanged {
                 profile_id,
+                dimension: dimension.to_string(),
                 position,
                 block_state,
                 light_update,
@@ -218,6 +285,7 @@ impl PlayerManager {
                 profile_id,
                 entity_id: handle.player.entity_id,
                 username: handle.player.profile.username,
+                dimension: handle.player.dimension,
             },
         );
     }

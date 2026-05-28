@@ -131,7 +131,10 @@ mod tests {
 
         assert_eq!(decoded.entity_id, packet.entity_id);
         assert_eq!(decoded.hand, packet.hand);
-        assert_eq!(decoded.using_secondary_action, packet.using_secondary_action);
+        assert_eq!(
+            decoded.using_secondary_action,
+            packet.using_secondary_action
+        );
         assert!((decoded.location.x - packet.location.x).abs() < 0.001);
         assert!((decoded.location.y - packet.location.y).abs() < 0.001);
         assert!((decoded.location.z - packet.location.z).abs() < 0.001);

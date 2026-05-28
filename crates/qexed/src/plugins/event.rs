@@ -13,6 +13,8 @@ pub enum PluginEvent {
     CommandExecute,
     NpcMutations,
     NpcInteract,
+    ProxyConnectResult,
+    Placeholders,
 }
 
 impl PluginEvent {
@@ -31,6 +33,8 @@ impl PluginEvent {
             Self::CommandExecute => "qexed_plugin_command_execute",
             Self::NpcMutations => "qexed_plugin_npc_mutations",
             Self::NpcInteract => "qexed_plugin_npc_interact",
+            Self::ProxyConnectResult => "qexed_plugin_proxy_connect_result",
+            Self::Placeholders => "qexed_plugin_placeholders",
         }
     }
 }

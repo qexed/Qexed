@@ -15,8 +15,9 @@ use instance::PluginInstance;
 pub use payload::{
     BlockDropPosition, BlockDropQuery, BlockDropResponse, ItemEnchantment, MiningSpeedQuery,
     MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp, NpcMutationQuery,
-    NpcMutationResponse, PlayerAction, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, PluginEnchantment,
+    NpcMutationResponse, PlaceholderContext, PlaceholderQuery, PlaceholderReplacement,
+    PlaceholderResponse, PlayerAction, PlayerPayloadOwned, PluginCommandDefinition,
+    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
 };
 use payload::{
     ChunkPayload, ConfigReloadPayload, LanguagePayload, player_payload, player_payload_owned,
@@ -217,6 +218,20 @@ impl PluginManager {
             operations.extend(response.operations);
         }
         operations
+    }
+
+    pub fn emit_proxy_connect_result(&self, payload: &ProxyConnectResultPayload) {
+        self.emit_encoded(PluginEvent::ProxyConnectResult, payload);
+    }
+
+    pub fn placeholder_replacements(&self, query: PlaceholderQuery) -> Vec<PlaceholderReplacement> {
+        let mut replacements = Vec::new();
+        for response in
+            self.query_encoded::<_, PlaceholderResponse>(PluginEvent::Placeholders, &query)
+        {
+            replacements.extend(response.replacements);
+        }
+        replacements
     }
 
     pub fn handle_npc_interact(

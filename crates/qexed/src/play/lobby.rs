@@ -16,10 +16,7 @@ use qexed_protocol::{
         system_chat::SystemChat,
         transfer::Transfer,
     },
-    to_server::play::{
-        container_click::ContainerClick,
-        interact::Interact,
-    },
+    to_server::play::{container_click::ContainerClick, interact::Interact},
     types::{ComponentsToAdd, Slot, minecraft},
 };
 
@@ -463,6 +460,10 @@ impl LobbyRuntime {
             .collect::<Vec<_>>();
         servers.sort();
         servers
+    }
+
+    pub(super) fn server_count(&self) -> usize {
+        self.config.servers.len()
     }
 
     pub(super) fn server_command_entries(&self, status: &LobbyStatusSnapshot) -> Vec<String> {

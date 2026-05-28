@@ -21,6 +21,7 @@ use qexed_packet::{
 };
 use qexed_protocol::to_client::play::{
     add_entity::EntityPosition,
+    command_suggestions::{CommandSuggestions, Matches},
     keep_alive::KeepAlive as ClientboundKeepAlive,
     login::Login,
     player_chat::{PackedMessageSignature, PlayerChat},
@@ -35,7 +36,8 @@ use qexed_protocol::to_server::play::{
     accept_teleportation::AcceptTeleportation, attack::Attack, chat_ack::ChatAck,
     chat_command::ChatCommand, chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
     chunk_batch_received::ChunkBatchReceived, client_command::ClientCommand,
-    container_click::ContainerClick, container_close::ContainerClose, interact::Interact,
+    command_suggestion::CommandSuggestion, container_click::ContainerClick,
+    container_close::ContainerClose, interact::Interact,
     keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
     move_player_pos_rot::MovePlayerPosRot, move_player_rot::MovePlayerRot,
     move_player_status_only::MovePlayerStatusOnly, pick_item_from_block::PickItemFromBlock,
@@ -96,6 +98,7 @@ pub async fn initialize<R, W>(
     player_audit: &crate::audit::PlayerAuditLogger,
     content_filter: &crate::content_filter::ContentFilter,
     profile: &qexed_packet::net_types::GameProfile,
+    client_language: Option<String>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -130,7 +133,9 @@ where
     let session = players.join(
         profile.clone(),
         player_position,
+        play_dimension.clone(),
         inventory.visible_equipment(),
+        client_language.unwrap_or_else(|| config.language.clone()),
     );
     let world_session = world.begin_session();
     plugins.emit_player_join(&session.player);
@@ -150,7 +155,7 @@ where
     sink.send(Login {
         entity_id: session.player.entity_id,
         is_hardcore: false,
-        dimension_names: vec![play_dimension.clone()],
+        dimension_names: login_dimension_names(&play_dimension),
         max_player: VarInt(config.server.max_player.max(0)),
         view_distance: VarInt(view_distance),
         simulation_distance: VarInt(simulation_distance),
@@ -186,7 +191,14 @@ where
         plugins,
     )
     .await?;
-    send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
+    send_existing_players(
+        sink,
+        players,
+        profile.uuid,
+        player_entity_type,
+        &play_dimension,
+    )
+    .await?;
     send_existing_entities(sink, entities, &play_dimension).await?;
 
     let mut next_teleport_id = 1;
@@ -267,7 +279,7 @@ async fn wait_for_play_packets<R, W>(
     player_entity_type: i32,
     profile: &qexed_packet::net_types::GameProfile,
     saved_player: &mut PlayerData,
-    play_dimension: String,
+    mut play_dimension: String,
     mut chunk_state: ChunkSendState,
     mut inventory: crate::inventory::PlayerInventory,
     mut next_teleport_id: i32,
@@ -321,9 +333,16 @@ where
     let navigator_changes = lobby::sync_navigator_item(&mut inventory, &lobby);
     lobby.show_boss_bar(sink).await?;
     lobby.update_boss_bar_status(sink, &lobby_status).await?;
-    for packet in
-        scoreboard::lobby_sidebar_packets(&config.server.scoreboard, &lobby, &lobby_status)?
-    {
+    for packet in scoreboard::lobby_sidebar_packets(
+        &config.server.scoreboard,
+        &lobby,
+        &lobby_status,
+        config.server.placeholders.enable,
+        plugins,
+        &session.player,
+        players.online_count(),
+        config.server.max_player,
+    )? {
         sink.send_raw(packet).await?;
     }
     if !navigator_changes.is_empty() {
@@ -403,12 +422,45 @@ where
                 };
                 if let crate::players::PlayerEvent::Teleport {
                     profile_id: target_id,
+                    dimension: target_dimension,
                     position: target_position,
                 } = event
                 {
                     if target_id == profile.uuid {
                         pending_dig = None;
+                        let changed_dimension = play_dimension != target_dimension;
                         position = target_position;
+                        if changed_dimension {
+                            world_rules.ensure_loaded(&target_dimension)?;
+                            let dimension_rule = world_rules.snapshot(&target_dimension);
+                            sink.send(Respawn {
+                                dimension_type: VarInt(dimension_type_holder_id(
+                                    &dimension_rule.dimension_type,
+                                )),
+                                dimension_name: target_dimension.clone(),
+                                hashed_seed: 0,
+                                game_mode: world_config.game_mode.protocol_id(),
+                                previous_game_mode: -1,
+                                is_debug: false,
+                                is_flat: true,
+                                has_death_location: false,
+                                death_dimension_name: None,
+                                death_position: None,
+                                portal_cooldown: VarInt(0),
+                                sea_level: VarInt(63),
+                                data_to_keep: KEEP_NO_DATA,
+                            })
+                            .await?;
+                            play_dimension = target_dimension.clone();
+                            send_respawn_player_state(
+                                sink,
+                                world_config,
+                                world_rules,
+                                &play_dimension,
+                                position,
+                            )
+                            .await?;
+                        }
                         let teleport_id = next_teleport_id;
                         next_teleport_id = next_teleport_id.saturating_add(1);
                         sink.send(Position {
@@ -424,16 +476,32 @@ where
                             flags: 0,
                         })
                         .await?;
-                        chunk_state
-                            .reset_after_respawn(
+                        if changed_dimension {
+                            chunk_state
+                            .reset_dimension_after_respawn(
                                 sink,
                                 &chunk_sender,
                                 world,
                                 plugins,
+                                play_dimension.clone(),
                                 position.x,
                                 position.z,
                             )
                             .await?;
+                        } else {
+                            chunk_state
+                                .reset_after_respawn(
+                                    sink,
+                                    &chunk_sender,
+                                    world,
+                                    plugins,
+                                    position.x,
+                                    position.z,
+                                )
+                                .await?;
+                        }
+                        session.player.position = position;
+                        session.player.dimension = play_dimension.clone();
                         sink.flush().await?;
                     }
                     continue;
@@ -441,7 +509,7 @@ where
                 if event_is_self(&event, profile.uuid) {
                     continue;
                 }
-                for packet in event.packets(player_entity_type)? {
+                for packet in event.packets(player_entity_type, &play_dimension)? {
                     sink.send_raw(packet).await?;
                 }
                 if let Some(message) = player_event_message(config, &event) {
@@ -496,6 +564,31 @@ where
                         "client acknowledged chunk batch, desired rate: {} chunks/tick",
                         batch.desired_chunks_per_tick
                     );
+                    continue;
+                }
+
+                if packet_id == CommandSuggestion::ID {
+                    let suggestion = crate::connection::decode_payload::<CommandSuggestion>(&mut payload)?;
+                    let matches = command_suggestion_matches(
+                        &suggestion.text,
+                        players,
+                        &config.server.lobby,
+                    );
+                    sink.send(CommandSuggestions {
+                        id: suggestion.id,
+                        start: VarInt(matches.start as i32),
+                        length: VarInt(matches.length as i32),
+                        matches: matches
+                            .values
+                            .into_iter()
+                            .map(|value| Matches {
+                                r#match: value,
+                                tooltip: None,
+                            })
+                            .collect(),
+                    })
+                    .await?;
+                    sink.flush().await?;
                     continue;
                 }
 
@@ -838,6 +931,9 @@ where
                             handle_plugin_npc_interact(
                                 sink,
                                 world,
+                                world_rules,
+                                &config.server,
+                                world_config,
                                 players,
                                 plugins,
                                 entities,
@@ -848,6 +944,7 @@ where
                                 &mut chunk_state,
                                 &mut position,
                                 &mut next_teleport_id,
+                                &mut play_dimension,
                             )
                             .await?
                         } else {
@@ -880,6 +977,9 @@ where
                         let plugin_outcome = handle_plugin_npc_interact(
                             sink,
                             world,
+                            world_rules,
+                            &config.server,
+                            world_config,
                             players,
                             plugins,
                             entities,
@@ -890,6 +990,7 @@ where
                             &mut chunk_state,
                             &mut position,
                             &mut next_teleport_id,
+                            &mut play_dimension,
                         )
                         .await?;
                         if plugin_outcome.handled {
@@ -987,6 +1088,7 @@ where
                         .update_center(sink, &chunk_sender, world, movement.x, movement.z)
                         .await?;
                     players.update_position(profile.uuid, position);
+                    session.player.position = position;
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1034,6 +1136,7 @@ where
                         .update_center(sink, &chunk_sender, world, movement.x, movement.z)
                         .await?;
                     players.update_position(profile.uuid, position);
+                    session.player.position = position;
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1075,6 +1178,7 @@ where
                         pending_dig = None;
                     }
                     players.update_position(profile.uuid, position);
+                    session.player.position = position;
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1114,6 +1218,7 @@ where
                         pending_dig = None;
                     }
                     players.update_position(profile.uuid, position);
+                    session.player.position = position;
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1234,7 +1339,7 @@ where
                         &mut chunk_state,
                         &mut position,
                         &mut next_teleport_id,
-                        &play_dimension,
+                        &mut play_dimension,
                     ).await?;
                     if outcome.opened_lobby_menu {
                         lobby_menu_open = true;
@@ -1242,6 +1347,8 @@ where
                     if outcome.teleported {
                         lobby_menu_open = false;
                         pending_dig = None;
+                        session.player.position = position;
+                        session.player.dimension = play_dimension.clone();
                     }
                     sink.flush().await?;
                     continue;
@@ -1275,6 +1382,11 @@ where
                     &config.server.scoreboard,
                     &lobby,
                     &lobby_status,
+                    config.server.placeholders.enable,
+                    plugins,
+                    &session.player,
+                    players.online_count(),
+                    config.server.max_player,
                 )? {
                     sink.send_raw(packet).await?;
                 }
@@ -1326,6 +1438,122 @@ fn lobby_broadcast_progress(index: usize, message_count: usize) -> f32 {
         return 1.0;
     }
     ((index % message_count) + 1) as f32 / message_count as f32
+}
+
+struct CommandSuggestionMatches {
+    start: usize,
+    length: usize,
+    values: Vec<String>,
+}
+
+fn command_suggestion_matches(
+    text: &str,
+    players: &PlayerManager,
+    lobby: &qexed_config::app::qexed::server::Lobby,
+) -> CommandSuggestionMatches {
+    let raw_token_start = text
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index + ch.len_utf8()))
+        .unwrap_or(0);
+    let token_start = if raw_token_start == 0 && text.starts_with('/') {
+        1
+    } else {
+        raw_token_start
+    };
+    let prefix = &text[token_start..];
+    let lower_prefix = prefix.trim_start_matches('/').to_ascii_lowercase();
+    let mut values = command_suggestion_candidates(text, players, lobby)
+        .into_iter()
+        .filter(|candidate| {
+            candidate
+                .trim_start_matches('/')
+                .to_ascii_lowercase()
+                .starts_with(&lower_prefix)
+        })
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    CommandSuggestionMatches {
+        start: token_start,
+        length: text.len().saturating_sub(token_start),
+        values,
+    }
+}
+
+fn command_suggestion_candidates(
+    text: &str,
+    players: &PlayerManager,
+    lobby: &qexed_config::app::qexed::server::Lobby,
+) -> Vec<String> {
+    let trimmed = text.trim_start_matches('/').trim_start();
+    let mut parts = trimmed.split_whitespace();
+    match parts
+        .next()
+        .map(crate::commands::normalize_command_name)
+        .as_deref()
+    {
+        None | Some("") => crate::commands::command_names_for_suggestions()
+            .into_iter()
+            .map(ToString::to_string)
+            .collect(),
+        Some("teleport") => {
+            let mut values = default_dimension_suggestions();
+            values.extend(players.online_names());
+            values
+        }
+        Some("server") => lobby
+            .servers
+            .iter()
+            .filter_map(|server| {
+                let id = server.id.trim();
+                (!id.is_empty()).then_some(id.to_string())
+            })
+            .collect(),
+        Some("entity") => ["list", "spawn", "move", "remove", "npc", "hologram"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect(),
+        Some("scoreboard") => [
+            "objectives",
+            "players",
+            "sidebar",
+            "list",
+            "add",
+            "remove",
+            "setdisplay",
+            "set",
+            "reset",
+            "on",
+            "off",
+            "reload",
+        ]
+        .into_iter()
+        .map(ToString::to_string)
+        .collect(),
+        Some("time") | Some("gamerule") => default_dimension_suggestions(),
+        _ => Vec::new(),
+    }
+}
+
+fn default_dimension_suggestions() -> Vec<String> {
+    vec![
+        "minecraft:overworld".to_string(),
+        "minecraft:the_nether".to_string(),
+        "minecraft:the_end".to_string(),
+    ]
+}
+
+fn login_dimension_names(primary: &str) -> Vec<String> {
+    let mut dimensions = vec![
+        primary.to_string(),
+        "minecraft:overworld".to_string(),
+        "minecraft:the_nether".to_string(),
+        "minecraft:the_end".to_string(),
+    ];
+    dimensions.sort();
+    dimensions.dedup();
+    dimensions
 }
 
 async fn apply_survival_movement<W>(
@@ -1544,7 +1772,7 @@ where
         dirt,
     ))
     .await?;
-    players.broadcast_block_changed(actor, landing_position, dirt, None);
+    players.broadcast_block_changed(actor, dimension, landing_position, dirt, None);
     Ok(())
 }
 
@@ -1756,6 +1984,9 @@ struct PluginNpcInteractOutcome {
 async fn handle_plugin_npc_interact<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
     entities: &crate::entities::EntityManager,
@@ -1766,6 +1997,7 @@ async fn handle_plugin_npc_interact<W>(
     chunk_state: &mut ChunkSendState,
     position: &mut EntityPosition,
     next_teleport_id: &mut i32,
+    play_dimension: &mut String,
 ) -> Result<PluginNpcInteractOutcome>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -1808,7 +2040,10 @@ where
     for action in response.actions {
         handled |= chat::apply_plugin_action(
             sink,
+            Some(server_config),
             world,
+            world_rules,
+            world_config,
             players,
             plugins,
             player.profile.uuid,
@@ -1816,6 +2051,7 @@ where
             chunk_state,
             position,
             next_teleport_id,
+            play_dimension,
             action,
         )
         .await?;
@@ -2297,7 +2533,7 @@ where
     } else {
         None
     };
-    players.broadcast_block_changed(actor, position, block_state, light_update);
+    players.broadcast_block_changed(actor, dimension, position, block_state, light_update);
     Ok(true)
 }
 

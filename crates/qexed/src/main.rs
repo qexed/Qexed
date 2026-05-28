@@ -10,6 +10,7 @@ mod entities;
 mod inventory;
 mod lan_discovery;
 mod permissions;
+mod placeholders;
 mod play;
 mod player_data;
 mod players;

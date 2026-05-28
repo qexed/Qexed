@@ -7,6 +7,10 @@ pub(super) struct PlayerPayload {
     pub(super) uuid: String,
     pub(super) username: String,
     pub(super) entity_id: i32,
+    #[serde(default)]
+    pub(super) language: String,
+    #[serde(default = "default_dimension")]
+    pub(super) dimension: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +18,10 @@ pub struct PlayerPayloadOwned {
     pub uuid: String,
     pub username: String,
     pub entity_id: i32,
+    #[serde(default)]
+    pub language: String,
+    #[serde(default = "default_dimension")]
+    pub dimension: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +126,47 @@ pub struct PluginCommandResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyConnectResultPayload {
+    pub player: PlayerPayloadOwned,
+    pub target_server: String,
+    #[serde(default)]
+    pub current_server: String,
+    #[serde(default)]
+    pub proxy_protocol: String,
+    pub status_code: i32,
+    pub status: String,
+    pub success: bool,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaceholderQuery {
+    pub player: Option<PlayerPayloadOwned>,
+    pub text: String,
+    #[serde(default)]
+    pub context: Vec<PlaceholderContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaceholderContext {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaceholderResponse {
+    #[serde(default)]
+    pub replacements: Vec<PlaceholderReplacement>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaceholderReplacement {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NpcInteractPayload {
     pub player: PlayerPayloadOwned,
     pub entity: NpcEntityPayload,
@@ -188,6 +237,8 @@ pub enum PlayerAction {
         overlay: bool,
     },
     Teleport {
+        #[serde(default)]
+        dimension: String,
         x: f64,
         y: f64,
         z: f64,
@@ -214,6 +265,8 @@ pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload {
         uuid: player.profile.uuid.to_string(),
         username: player.profile.username.clone(),
         entity_id: player.entity_id,
+        language: player.language.clone(),
+        dimension: player.dimension.clone(),
     }
 }
 
@@ -222,6 +275,8 @@ pub(super) fn player_payload_owned(player: &OnlinePlayer) -> PlayerPayloadOwned 
         uuid: player.profile.uuid.to_string(),
         username: player.profile.username.clone(),
         entity_id: player.entity_id,
+        language: player.language.clone(),
+        dimension: player.dimension.clone(),
     }
 }
 

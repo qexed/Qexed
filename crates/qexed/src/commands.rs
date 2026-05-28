@@ -186,6 +186,12 @@ pub fn command_tree_for_lobby_with_extra(
                 nodes.push(executable_literal(server_id));
             }
             index
+        } else if *command == "teleport" {
+            append_teleport_command_nodes(&mut nodes)
+        } else if *command == "tp" {
+            append_teleport_alias_command_nodes(&mut nodes)
+        } else if *command == "scoreboard" {
+            append_scoreboard_command_nodes(&mut nodes)
         } else if *command == "entity" {
             append_entity_command_nodes(&mut nodes)
         } else if *command == "structure" {
@@ -265,7 +271,12 @@ pub fn is_known_vanilla_command(command: &str) -> bool {
 }
 
 pub fn normalize_command_name(command: &str) -> String {
-    match command.trim().trim_start_matches('/').to_ascii_lowercase().as_str() {
+    match command
+        .trim()
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "tp" => "teleport".to_string(),
         "w" | "tell" => "msg".to_string(),
         "xp" => "experience".to_string(),
@@ -283,6 +294,17 @@ pub fn permission_node(command: &str) -> Option<String> {
         .to_ascii_lowercase();
     let name = normalize_command_name(&name);
     (!name.is_empty()).then(|| format!("qexed.command.{name}"))
+}
+
+pub fn command_names_for_suggestions() -> Vec<&'static str> {
+    let mut commands = builtin_command_literals()
+        .iter()
+        .chain(vanilla_command_literals().iter())
+        .copied()
+        .collect::<Vec<_>>();
+    commands.sort_unstable();
+    commands.dedup();
+    commands
 }
 
 pub fn messages() -> &'static CommandMessages {
@@ -329,6 +351,74 @@ fn server_literal(argument_index: i32, literal_start_index: i32, literal_count: 
         name: Some("server".to_string()),
         ..Node::default()
     }
+}
+
+fn append_teleport_alias_command_nodes(nodes: &mut Vec<Node>) -> i32 {
+    let teleport_index = append_teleport_command_nodes(nodes);
+    nodes[teleport_index as usize].name = Some("tp".to_string());
+    teleport_index
+}
+
+fn append_teleport_command_nodes(nodes: &mut Vec<Node>) -> i32 {
+    let root = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("teleport".to_string()),
+        ..Node::default()
+    });
+
+    let destination_player = nodes.len() as i32;
+    nodes.push(game_profile_argument("destination", true));
+    let target = nodes.len() as i32;
+    nodes.push(game_profile_argument("target", false));
+    let destination_dimension = nodes.len() as i32;
+    nodes.push(dimension_argument("dimension", false));
+
+    let target_destination_player = nodes.len() as i32;
+    nodes.push(game_profile_argument("destination", true));
+    let target_dimension = nodes.len() as i32;
+    nodes.push(dimension_argument("dimension", false));
+
+    let pos = nodes.len() as i32;
+    nodes.push(vec3_argument("location", true));
+    let pos_rotation = nodes.len() as i32;
+    nodes.push(rotation_argument("rotation", true));
+
+    let target_pos = nodes.len() as i32;
+    nodes.push(vec3_argument("location", true));
+    let target_pos_rotation = nodes.len() as i32;
+    nodes.push(rotation_argument("rotation", true));
+
+    let dimension_pos = nodes.len() as i32;
+    nodes.push(vec3_argument("location", true));
+    let dimension_pos_rotation = nodes.len() as i32;
+    nodes.push(rotation_argument("rotation", true));
+
+    let target_dimension_pos = nodes.len() as i32;
+    nodes.push(vec3_argument("location", true));
+    let target_dimension_pos_rotation = nodes.len() as i32;
+    nodes.push(rotation_argument("rotation", true));
+
+    nodes[root as usize].children = vec![
+        VarInt(destination_player),
+        VarInt(target),
+        VarInt(destination_dimension),
+        VarInt(pos),
+    ];
+    nodes[target as usize].children = vec![
+        VarInt(target_destination_player),
+        VarInt(target_dimension),
+        VarInt(target_pos),
+    ];
+    nodes[pos as usize].children = vec![VarInt(pos_rotation)];
+    nodes[target_pos as usize].children = vec![VarInt(target_pos_rotation)];
+    nodes[destination_dimension as usize].children = vec![VarInt(dimension_pos)];
+    nodes[dimension_pos as usize].children = vec![VarInt(dimension_pos_rotation)];
+    nodes[target_dimension as usize].children = vec![VarInt(target_dimension_pos)];
+    nodes[target_dimension_pos as usize].children = vec![VarInt(target_dimension_pos_rotation)];
+
+    root
 }
 
 fn append_entity_command_nodes(nodes: &mut Vec<Node>) -> i32 {
@@ -488,6 +578,243 @@ fn word_string_argument(name: &str, executable: bool) -> Node {
     }
 }
 
+fn game_profile_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 } | 0x10,
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(7)),
+        suggestions_type: Some("minecraft:ask_server".to_string()),
+        ..Node::default()
+    }
+}
+
+fn vec3_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 },
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(10)),
+        ..Node::default()
+    }
+}
+
+fn rotation_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 },
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(29)),
+        ..Node::default()
+    }
+}
+
+fn dimension_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 } | 0x10,
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(41)),
+        suggestions_type: Some("minecraft:ask_server".to_string()),
+        ..Node::default()
+    }
+}
+
+fn integer_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 },
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(3)),
+        ..Node::default()
+    }
+}
+
+fn component_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 },
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(18)),
+        ..Node::default()
+    }
+}
+
+fn append_scoreboard_command_nodes(nodes: &mut Vec<Node>) -> i32 {
+    let root = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("scoreboard".to_string()),
+        ..Node::default()
+    });
+
+    let objectives = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("objectives".to_string()),
+        ..Node::default()
+    });
+    let players = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("players".to_string()),
+        ..Node::default()
+    });
+    let sidebar = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("sidebar".to_string()),
+        ..Node::default()
+    });
+
+    let objectives_list = nodes.len() as i32;
+    nodes.push(executable_literal("list"));
+    let objectives_add = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("add".to_string()),
+        ..Node::default()
+    });
+    let objectives_remove = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("remove".to_string()),
+        ..Node::default()
+    });
+    let objectives_setdisplay = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("setdisplay".to_string()),
+        ..Node::default()
+    });
+
+    let add_objective = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", false));
+    let add_criteria = nodes.len() as i32;
+    nodes.push(word_string_argument("criteria", true));
+    let add_display = nodes.len() as i32;
+    nodes.push(component_argument("displayName", true));
+    let remove_objective = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", true));
+    let display_slot = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("sidebar".to_string()),
+        ..Node::default()
+    });
+    let display_objective = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", true));
+
+    let players_list = nodes.len() as i32;
+    nodes.push(executable_literal("list"));
+    let players_set = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("set".to_string()),
+        ..Node::default()
+    });
+    let players_add = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("add".to_string()),
+        ..Node::default()
+    });
+    let players_remove = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("remove".to_string()),
+        ..Node::default()
+    });
+    let players_reset = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01,
+        children: Vec::new(),
+        name: Some("reset".to_string()),
+        ..Node::default()
+    });
+
+    let set_target = nodes.len() as i32;
+    nodes.push(word_string_argument("targets", false));
+    let set_objective = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", false));
+    let set_score = nodes.len() as i32;
+    nodes.push(integer_argument("score", true));
+    let add_target = nodes.len() as i32;
+    nodes.push(word_string_argument("targets", false));
+    let add_objective_name = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", false));
+    let add_score = nodes.len() as i32;
+    nodes.push(integer_argument("score", true));
+    let remove_target = nodes.len() as i32;
+    nodes.push(word_string_argument("targets", false));
+    let remove_objective_name = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", false));
+    let remove_score = nodes.len() as i32;
+    nodes.push(integer_argument("score", true));
+    let reset_target = nodes.len() as i32;
+    nodes.push(word_string_argument("targets", true));
+    let reset_objective = nodes.len() as i32;
+    nodes.push(word_string_argument("objective", true));
+
+    let sidebar_on = nodes.len() as i32;
+    nodes.push(executable_literal("on"));
+    let sidebar_off = nodes.len() as i32;
+    nodes.push(executable_literal("off"));
+    let sidebar_reload = nodes.len() as i32;
+    nodes.push(executable_literal("reload"));
+
+    nodes[root as usize].children = vec![VarInt(objectives), VarInt(players), VarInt(sidebar)];
+    nodes[objectives as usize].children = vec![
+        VarInt(objectives_list),
+        VarInt(objectives_add),
+        VarInt(objectives_remove),
+        VarInt(objectives_setdisplay),
+    ];
+    nodes[objectives_add as usize].children = vec![VarInt(add_objective)];
+    nodes[add_objective as usize].children = vec![VarInt(add_criteria)];
+    nodes[add_criteria as usize].children = vec![VarInt(add_display)];
+    nodes[objectives_remove as usize].children = vec![VarInt(remove_objective)];
+    nodes[objectives_setdisplay as usize].children = vec![VarInt(display_slot)];
+    nodes[display_slot as usize].children = vec![VarInt(display_objective)];
+
+    nodes[players as usize].children = vec![
+        VarInt(players_list),
+        VarInt(players_set),
+        VarInt(players_add),
+        VarInt(players_remove),
+        VarInt(players_reset),
+    ];
+    nodes[players_set as usize].children = vec![VarInt(set_target)];
+    nodes[set_target as usize].children = vec![VarInt(set_objective)];
+    nodes[set_objective as usize].children = vec![VarInt(set_score)];
+    nodes[players_add as usize].children = vec![VarInt(add_target)];
+    nodes[add_target as usize].children = vec![VarInt(add_objective_name)];
+    nodes[add_objective_name as usize].children = vec![VarInt(add_score)];
+    nodes[players_remove as usize].children = vec![VarInt(remove_target)];
+    nodes[remove_target as usize].children = vec![VarInt(remove_objective_name)];
+    nodes[remove_objective_name as usize].children = vec![VarInt(remove_score)];
+    nodes[players_reset as usize].children = vec![VarInt(reset_target)];
+    nodes[reset_target as usize].children = vec![VarInt(reset_objective)];
+
+    nodes[sidebar as usize].children = vec![
+        VarInt(sidebar_on),
+        VarInt(sidebar_off),
+        VarInt(sidebar_reload),
+    ];
+    root
+}
+
 fn default_help() -> String {
     "---- Minecraft Help ----\n/list - Lists players on the server.\n/lobby - Opens the lobby menu.\n/lobby status - Shows lobby backend status.\n/lobby refresh - Refreshes lobby backend status.\n/server [id] - Lists or joins a backend server.\n/spawn - Returns to spawn.\n/entity list|spawn|move|remove - Manages runtime lobby entities.\n/structure list|place|locate - Manages built-in structures.".to_string()
 }
@@ -550,7 +877,18 @@ fn workspace_root() -> PathBuf {
 }
 
 fn builtin_command_literals() -> &'static [&'static str] {
-    &["help", "list", "lobby", "server", "spawn", "entity", "structure"]
+    &[
+        "help",
+        "list",
+        "lobby",
+        "server",
+        "spawn",
+        "entity",
+        "structure",
+        "teleport",
+        "tp",
+        "scoreboard",
+    ]
 }
 
 fn vanilla_command_literals() -> &'static [&'static str] {

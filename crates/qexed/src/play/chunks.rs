@@ -358,6 +358,24 @@ impl ChunkSendState {
         Ok(())
     }
 
+    pub(super) async fn reset_dimension_after_respawn<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        chunk_sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
+        world: &WorldManager,
+        plugins: &crate::plugins::PluginManager,
+        dimension: impl Into<String>,
+        x: f64,
+        z: f64,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        self.dimension = dimension.into();
+        self.reset_after_respawn(sink, chunk_sender, world, plugins, x, z)
+            .await
+    }
+
     pub(super) fn reset_view(&mut self, center_x: i32, center_z: i32) {
         self.center_x = center_x;
         self.center_z = center_z;

@@ -712,6 +712,8 @@ impl PacketCodec for Node {
                 // 如果 parser_id 对应的类型有属性，写入 properties
                 if let Some(properties) = &self.properties {
                     properties.serialize(w)?;
+                } else {
+                    serialize_default_argument_properties(parser_id.0, w)?;
                 }
             } else {
                 w.serialize(&VarInt(0))?;
@@ -777,5 +779,22 @@ impl PacketCodec for Node {
         }
 
         Ok(())
+    }
+}
+
+fn serialize_default_argument_properties(
+    parser_id: i32,
+    w: &mut qexed_packet::PacketWriter,
+) -> anyhow::Result<()> {
+    match parser_id {
+        1..=4 => 0_u8.serialize(w),
+        5 => VarInt(0).serialize(w),
+        6 | 31 => 0_u8.serialize(w),
+        43 => 0_i32.serialize(w),
+        44..=48 => anyhow::bail!(
+            "missing registry argument properties for command parser id {}",
+            parser_id
+        ),
+        _ => Ok(()),
     }
 }

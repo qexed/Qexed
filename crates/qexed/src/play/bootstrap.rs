@@ -232,12 +232,14 @@ pub(super) async fn send_existing_players<W>(
     players: &PlayerManager,
     profile_id: uuid::Uuid,
     player_entity_type: i32,
+    play_dimension: &str,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     for player in players.list_except(profile_id) {
-        for packet in crate::players::spawn_player_packets(&player, player_entity_type)? {
+        let event = crate::players::PlayerEvent::Joined(player);
+        for packet in event.packets(player_entity_type, play_dimension)? {
             sink.send_raw(packet).await?;
         }
     }

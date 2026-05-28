@@ -18,7 +18,9 @@ pub async fn load() -> anyhow::Result<Option<crate::config::RuntimeConfig>> {
     Ok(Some(config))
 }
 
-fn log_level_from_config(level: qexed_config::app::qexed::server::ServerLogLevel) -> qexed_log::LogLevel {
+fn log_level_from_config(
+    level: qexed_config::app::qexed::server::ServerLogLevel,
+) -> qexed_log::LogLevel {
     match level {
         qexed_config::app::qexed::server::ServerLogLevel::Trace => qexed_log::LogLevel::Trace,
         qexed_config::app::qexed::server::ServerLogLevel::Debug => qexed_log::LogLevel::Debug,

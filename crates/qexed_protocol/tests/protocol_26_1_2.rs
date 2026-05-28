@@ -301,6 +301,49 @@ fn scoreboard_packets_round_trip_minimal_sidebar_state() {
 }
 
 #[test]
+fn command_integer_argument_without_properties_writes_default_flags() {
+    let commands = qexed_protocol::to_client::play::commands::Commands {
+        nodes: vec![
+            qexed_protocol::to_client::play::commands::Node {
+                flags: 0,
+                children: vec![qexed_packet::net_types::VarInt(1)],
+                ..Default::default()
+            },
+            qexed_protocol::to_client::play::commands::Node {
+                flags: 1,
+                children: vec![qexed_packet::net_types::VarInt(2)],
+                name: Some("test".to_string()),
+                ..Default::default()
+            },
+            qexed_protocol::to_client::play::commands::Node {
+                flags: 2,
+                name: Some("amount".to_string()),
+                parser_id: Some(qexed_packet::net_types::VarInt(3)),
+                properties: None,
+                ..Default::default()
+            },
+        ],
+        root_index: qexed_packet::net_types::VarInt(0),
+    };
+
+    let decoded = round_trip(commands);
+    assert_eq!(decoded.root_index.0, 0);
+    assert_eq!(decoded.nodes[2].parser_id.as_ref().map(|id| id.0), Some(3));
+    assert_eq!(
+        decoded.nodes[2].properties,
+        Some(
+            qexed_protocol::to_client::play::commands::Varies::BrigadierInteger(
+                qexed_protocol::to_client::play::commands::Brigadier {
+                    flags: 0,
+                    min: None,
+                    max: None,
+                },
+            ),
+        )
+    );
+}
+
+#[test]
 fn respawn_and_client_command_packets_round_trip() {
     let respawn = round_trip(qexed_protocol::to_client::play::respawn::Respawn {
         dimension_type: qexed_packet::net_types::VarInt(1),

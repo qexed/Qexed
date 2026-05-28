@@ -9,43 +9,89 @@ use qexed_protocol::to_client::play::{
 use super::{OnlinePlayer, PlayerEvent};
 
 impl PlayerEvent {
-    pub fn packets(&self, player_entity_type: i32) -> anyhow::Result<Vec<bytes::Bytes>> {
+    pub fn packets(
+        &self,
+        player_entity_type: i32,
+        viewer_dimension: &str,
+    ) -> anyhow::Result<Vec<bytes::Bytes>> {
         match self {
-            Self::Joined(player) => spawn_player_packets(player, player_entity_type),
+            Self::Joined(player) => {
+                if player.dimension == viewer_dimension {
+                    spawn_player_packets(player, player_entity_type)
+                } else {
+                    Ok(vec![player_info_packet(player)?])
+                }
+            }
             Self::Left {
                 profile_id,
                 entity_id,
                 username: _,
-            } => Ok(vec![
-                packet_bytes(RemoveEntities::one(*entity_id))?,
-                packet_bytes(PlayerInfoRemove::one(*profile_id))?,
-            ]),
+                dimension,
+            } => {
+                let mut packets = Vec::new();
+                if dimension == viewer_dimension {
+                    packets.push(packet_bytes(RemoveEntities::one(*entity_id))?);
+                }
+                packets.push(packet_bytes(PlayerInfoRemove::one(*profile_id))?);
+                Ok(packets)
+            }
             Self::Moved {
                 profile_id: _,
                 entity_id,
+                dimension,
                 position,
-            } => Ok(vec![
-                packet_bytes(EntityPositionSync::from_position(*entity_id, *position))?,
-                packet_bytes(RotateHead::new(*entity_id, position.yaw))?,
-            ]),
+            } => {
+                if dimension != viewer_dimension {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![
+                    packet_bytes(EntityPositionSync::from_position(*entity_id, *position))?,
+                    packet_bytes(RotateHead::new(*entity_id, position.yaw))?,
+                ])
+            }
             Self::Teleport {
                 profile_id: _,
+                dimension: _,
                 position: _,
             } => Ok(Vec::new()),
+            Self::DimensionChanged {
+                profile_id: _,
+                entity_id,
+                old_dimension,
+                player,
+            } => {
+                if old_dimension == viewer_dimension {
+                    return Ok(vec![packet_bytes(RemoveEntities::one(*entity_id))?]);
+                }
+                if player.dimension == viewer_dimension {
+                    return spawn_player_packets(player, player_entity_type);
+                }
+                Ok(Vec::new())
+            }
             Self::EquipmentChanged {
                 profile_id: _,
                 entity_id,
+                dimension,
                 slots,
-            } => Ok(vec![packet_bytes(SetEquipment {
-                entity_id: qexed_packet::net_types::VarInt(*entity_id),
-                slots: slots.clone(),
-            })?]),
+            } => {
+                if dimension != viewer_dimension {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![packet_bytes(SetEquipment {
+                    entity_id: qexed_packet::net_types::VarInt(*entity_id),
+                    slots: slots.clone(),
+                })?])
+            }
             Self::BlockChanged {
                 profile_id: _,
+                dimension,
                 position,
                 block_state,
                 light_update,
             } => {
+                if dimension != viewer_dimension {
+                    return Ok(Vec::new());
+                }
                 let mut packets = vec![packet_bytes(
                     qexed_protocol::to_client::play::block_update::BlockUpdate {
                         location: position.clone(),
@@ -67,10 +113,7 @@ pub fn spawn_player_packets(
     player_entity_type: i32,
 ) -> anyhow::Result<Vec<Bytes>> {
     Ok(vec![
-        packet_bytes(PlayerInfoUpdate {
-            actions: PlayerInfoActions::player_initializing(),
-            entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
-        })?,
+        player_info_packet(player)?,
         packet_bytes(
             qexed_protocol::to_client::play::add_entity::AddEntity::player(
                 player.entity_id,
@@ -85,6 +128,13 @@ pub fn spawn_player_packets(
             slots: player.equipment.clone(),
         })?,
     ])
+}
+
+fn player_info_packet(player: &OnlinePlayer) -> anyhow::Result<Bytes> {
+    packet_bytes(PlayerInfoUpdate {
+        actions: PlayerInfoActions::player_initializing(),
+        entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
+    })
 }
 
 pub(crate) fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {

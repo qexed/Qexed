@@ -130,6 +130,9 @@ config:
       proxy_protocol:
         en: "Proxy forwarding protocol"
         zh-CN: "代理端协议"
+      proxy_server_id:
+        en: "Current proxy backend server ID"
+        zh-CN: "当前代理后端子服 ID"
       proxy_token:
         en: "Proxy authentication token"
         zh-CN: "代理认证密钥"
@@ -466,6 +469,12 @@ config:
         lines:
           en: "Sidebar scoreboard lines displayed from top to bottom"
           zh-CN: "侧边栏计分板从上到下显示的行"
+      placeholders:
+        en: "Placeholder formatting settings"
+        zh-CN: "占位符格式化设置"
+        enable:
+          en: "Enable native and plugin-provided placeholders in supported server text"
+          zh-CN: "在支持的服务端文本中启用原生和插件提供的占位符"
       lobby:
         en: "Lobby server feature settings"
         zh-CN: "大厅服功能设置"
@@ -629,6 +638,9 @@ config:
         proxy_token:
           en: "Keep this token private and rotate it if it is exposed."
           zh-CN: "请妥善保管该密钥；一旦泄露请立即更换。"
+        proxy_server_id:
+          en: "Set this to the Velocity/Bungee backend server name for this Qexed instance. It lets Qexed reject no-op proxy transfers to the current backend."
+          zh-CN: "设置为当前 Qexed 实例在 Velocity/Bungee 中的后端子服名，用于拒绝切换到当前子服的无效跨服请求。"
   qexed_warden:
     version:
       en: "Warden configuration version"

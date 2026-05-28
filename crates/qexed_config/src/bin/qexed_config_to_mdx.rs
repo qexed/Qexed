@@ -2194,7 +2194,12 @@ where
 
     let parent_paths = fields
         .iter()
-        .filter_map(|field| field.path.rsplit_once('.').map(|(parent, _)| parent.to_string()))
+        .filter_map(|field| {
+            field
+                .path
+                .rsplit_once('.')
+                .map(|(parent, _)| parent.to_string())
+        })
         .collect::<BTreeSet<_>>();
     for field in &mut fields {
         if field.value_type == "unknown" && parent_paths.contains(&field.path) {

@@ -63,7 +63,7 @@ where
     .await?;
 
     read_expected_packet::<LoginAcknowledged, _>(packets).await?;
-    handle_configuration(packets, sink, context, &login.login_host).await?;
+    let client_locale = handle_configuration(packets, sink, context, &login.login_host).await?;
     crate::play::initialize(
         packets,
         sink,
@@ -79,6 +79,7 @@ where
         &context.player_audit,
         &context.content_filter,
         &login.profile,
+        client_locale,
     )
     .await?;
 

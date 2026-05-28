@@ -21,7 +21,7 @@ pub(super) async fn handle_configuration<R, W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     context: &ServerContext,
     login_host: &str,
-) -> anyhow::Result<()>
+) -> anyhow::Result<Option<String>>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -91,7 +91,7 @@ where
     wait_for_finish_configuration(packets).await?;
     log::debug!("client finished configuration");
 
-    Ok(())
+    Ok(configuration_start.client_locale)
 }
 
 async fn send_configured_resource_pack<R, W>(

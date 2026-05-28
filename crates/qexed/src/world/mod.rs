@@ -4,8 +4,8 @@ mod gpu_light;
 mod gpu_worldgen;
 mod light;
 mod manager;
-mod rules;
 pub mod region;
+mod rules;
 mod vanilla_noise;
 
 #[cfg(test)]

@@ -13,15 +13,34 @@ pub(super) fn lobby_sidebar_packets(
     config: &Scoreboard,
     lobby: &super::lobby::LobbyRuntime,
     status: &super::lobby::LobbyStatusSnapshot,
+    placeholders_enabled: bool,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    online_players: usize,
+    max_players: i32,
 ) -> anyhow::Result<Vec<Bytes>> {
-    let lines = render_lobby_lines(config, lobby, status);
-    sidebar_packets_with_lines(config, &lines)
+    let lines = render_lobby_lines(
+        config,
+        lobby,
+        status,
+        placeholders_enabled,
+        plugins,
+        player,
+        online_players,
+        max_players,
+    );
+    sidebar_packets_with_lines(config, &lines, Some(&config.title))
 }
 
 pub(super) fn refresh_lobby_sidebar_packets(
     config: &Scoreboard,
     lobby: &super::lobby::LobbyRuntime,
     status: &super::lobby::LobbyStatusSnapshot,
+    placeholders_enabled: bool,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    online_players: usize,
+    max_players: i32,
 ) -> anyhow::Result<Vec<Bytes>> {
     if !config.enable {
         return Ok(Vec::new());
@@ -29,7 +48,16 @@ pub(super) fn refresh_lobby_sidebar_packets(
 
     let objective_name = objective_name(&config.objective);
     let mut packets = Vec::new();
-    let lines = render_lobby_lines(config, lobby, status);
+    let lines = render_lobby_lines(
+        config,
+        lobby,
+        status,
+        placeholders_enabled,
+        plugins,
+        player,
+        online_players,
+        max_players,
+    );
     for (index, line) in lines.iter().take(MAX_SIDEBAR_LINES).enumerate() {
         packets.push(packet_bytes(SetScore::new(
             line_owner(index),
@@ -42,7 +70,32 @@ pub(super) fn refresh_lobby_sidebar_packets(
     Ok(packets)
 }
 
-fn sidebar_packets_with_lines(config: &Scoreboard, lines: &[String]) -> anyhow::Result<Vec<Bytes>> {
+pub(super) fn custom_sidebar_packets(
+    objective: &str,
+    title: &str,
+    lines: &[String],
+) -> anyhow::Result<Vec<Bytes>> {
+    let config = Scoreboard {
+        enable: true,
+        objective: objective.to_string(),
+        title: title.to_string(),
+        lines: lines.to_vec(),
+    };
+    sidebar_packets_with_lines(&config, lines, Some(title))
+}
+
+pub(super) fn clear_sidebar_packet(objective: &str) -> anyhow::Result<Vec<Bytes>> {
+    Ok(vec![
+        packet_bytes(SetDisplayObjective::clear_sidebar())?,
+        packet_bytes(SetObjective::remove(objective_name(objective)))?,
+    ])
+}
+
+fn sidebar_packets_with_lines(
+    config: &Scoreboard,
+    lines: &[String],
+    title: Option<&str>,
+) -> anyhow::Result<Vec<Bytes>> {
     if !config.enable {
         return Ok(Vec::new());
     }
@@ -51,7 +104,7 @@ fn sidebar_packets_with_lines(config: &Scoreboard, lines: &[String]) -> anyhow::
     let mut packets = vec![
         packet_bytes(SetObjective::create(
             objective_name.clone(),
-            text_component(&config.title),
+            text_component(title.unwrap_or(&config.title)),
         ))?,
         packet_bytes(SetDisplayObjective::sidebar(objective_name.clone()))?,
     ];
@@ -72,11 +125,36 @@ fn render_lobby_lines(
     config: &Scoreboard,
     lobby: &super::lobby::LobbyRuntime,
     status: &super::lobby::LobbyStatusSnapshot,
+    placeholders_enabled: bool,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    online_players: usize,
+    max_players: i32,
 ) -> Vec<String> {
+    let labels = lobby.server_labels(status);
+    let context = crate::placeholders::PlaceholderContext {
+        online_players,
+        max_players,
+        lobby_online_servers: labels.len(),
+        lobby_total_servers: lobby.server_count(),
+        lobby_servers: if labels.is_empty() {
+            "none".to_string()
+        } else {
+            labels.join(", ")
+        },
+    };
     config
         .lines
         .iter()
-        .map(|line| lobby.render_status_placeholders(line, status))
+        .map(|line| {
+            crate::placeholders::format_placeholders(
+                placeholders_enabled,
+                plugins,
+                Some(player),
+                line,
+                &context,
+            )
+        })
         .collect()
 }
 
@@ -112,7 +190,7 @@ mod tests {
     #[test]
     fn disabled_scoreboard_sends_no_packets() {
         let config = Scoreboard::default();
-        let packets = super::sidebar_packets_with_lines(&config, &config.lines).unwrap();
+        let packets = super::sidebar_packets_with_lines(&config, &config.lines, None).unwrap();
         assert!(packets.is_empty());
     }
 
@@ -125,7 +203,7 @@ mod tests {
             lines: vec!["first".to_string(), "second".to_string()],
         };
 
-        let packets = super::sidebar_packets_with_lines(&config, &config.lines).unwrap();
+        let packets = super::sidebar_packets_with_lines(&config, &config.lines, None).unwrap();
         assert_eq!(packets.len(), 4);
         assert_packet_id::<SetObjective>(&packets[0]);
         assert_packet_id::<SetDisplayObjective>(&packets[1]);
@@ -178,13 +256,20 @@ mod tests {
         );
         let status = super::super::lobby::LobbyStatusSnapshot::from_servers_for_tests(servers);
 
-        let packets = super::lobby_sidebar_packets(&config, &lobby, &status).unwrap();
+        let plugins = crate::plugins::PluginManager::empty_for_tests();
+        let player = test_player();
+        let packets =
+            super::lobby_sidebar_packets(&config, &lobby, &status, true, &plugins, &player, 1, 20)
+                .unwrap();
         assert_eq!(packets.len(), 4);
 
         let first_score = decode_packet::<SetScore>(&packets[2]);
         assert_text_component(first_score.display.as_ref().unwrap(), "Backends: 1/1");
 
-        let refreshed = super::refresh_lobby_sidebar_packets(&config, &lobby, &status).unwrap();
+        let refreshed = super::refresh_lobby_sidebar_packets(
+            &config, &lobby, &status, true, &plugins, &player, 1, 20,
+        )
+        .unwrap();
         assert_eq!(refreshed.len(), 2);
         let refreshed_first = decode_packet::<SetScore>(&refreshed[0]);
         assert_text_component(refreshed_first.display.as_ref().unwrap(), "Backends: 1/1");
@@ -218,5 +303,20 @@ mod tests {
             map.get("text"),
             Some(&qexed_nbt::Tag::String(std::sync::Arc::from(expected)))
         );
+    }
+
+    fn test_player() -> crate::players::OnlinePlayer {
+        crate::players::OnlinePlayer {
+            profile: qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: "Tester".to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 1,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition::default(),
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: "en_us".to_string(),
+        }
     }
 }
