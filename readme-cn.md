@@ -56,3 +56,24 @@ Qexed 虽然不支持nms,但是你依然可以使用别的方式编写插件。Q
 cargo build --bin qexed
 cargo run
 ```
+
+### Cross Compile (cross)
+Qexed 依赖 GPU (`wgpu` / Vulkan) 与 OpenSSL。仓库已提供 `Cross.toml`，可用于常见 Linux 目标的交叉编译。
+
+```sh
+cargo install cross --git https://github.com/cross-rs/cross
+cross build -p qexed --target x86_64-unknown-linux-gnu
+cross build -p qexed --target aarch64-unknown-linux-gnu
+```
+
+如果目标机器可能没有 GPU，建议使用默认 CPU-only 构建（默认不启用 GPU feature）：
+
+```sh
+cross build -p qexed --target x86_64-unknown-linux-musl
+```
+
+仅在确认目标环境有可用 GPU/Vulkan 时再启用 GPU 加速：
+
+```sh
+cross build -p qexed --target x86_64-unknown-linux-gnu --features gpu
+```

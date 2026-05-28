@@ -1,7 +1,47 @@
 pub mod chunk_nbt;
 pub mod generator;
+#[cfg(feature = "gpu")]
 mod gpu_light;
+#[cfg(not(feature = "gpu"))]
+mod gpu_light {
+    use anyhow::{Result, bail};
+    use qexed_config::app::qexed::server::GpuDeviceSelector;
+
+    use super::LightDampeningNeighborhood;
+
+    #[derive(Debug)]
+    pub struct GpuLightEngine;
+
+    impl GpuLightEngine {
+        pub fn new(_selector: &GpuDeviceSelector) -> Result<Self> {
+            bail!("gpu feature is disabled at compile time")
+        }
+
+        pub fn fast_sky_light(&self, _neighbourhood: &LightDampeningNeighborhood) -> Result<Vec<u8>> {
+            bail!("gpu feature is disabled at compile time")
+        }
+    }
+}
+#[cfg(feature = "gpu")]
 mod gpu_worldgen;
+#[cfg(not(feature = "gpu"))]
+mod gpu_worldgen {
+    use anyhow::{Result, bail};
+    use qexed_config::app::qexed::server::GpuDeviceSelector;
+
+    #[derive(Debug)]
+    pub(crate) struct GpuWorldgenEngine;
+
+    impl GpuWorldgenEngine {
+        pub(crate) fn new(_selector: &GpuDeviceSelector, _height: i32) -> Result<Self> {
+            bail!("gpu feature is disabled at compile time")
+        }
+
+        pub(crate) fn first_available_heights(&self, _solid_mask: &[u32]) -> Result<Vec<i32>> {
+            bail!("gpu feature is disabled at compile time")
+        }
+    }
+}
 mod light;
 mod manager;
 pub mod region;
