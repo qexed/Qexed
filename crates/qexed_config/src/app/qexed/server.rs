@@ -76,6 +76,10 @@ pub struct Server {
     pub player_messages: PlayerMessages,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_audit", sub)]
+    pub player_audit: PlayerAudit,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.content_filter", sub)]
     pub content_filter: ContentFilter,
 
@@ -126,6 +130,7 @@ impl Default for Server {
             world: World::default(),
             player_data: PlayerData::default(),
             player_messages: PlayerMessages::default(),
+            player_audit: PlayerAudit::default(),
             content_filter: ContentFilter::default(),
             permissions: Permissions::default(),
             resource_pack: ResourcePack::default(),
@@ -161,15 +166,15 @@ pub struct Lobby {
     pub navigator: LobbyNavigator,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers")]
+    #[AutoDoc(key = "config.qexed.server.lobby.servers", sub)]
     pub servers: Vec<LobbyServer>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items", sub)]
     pub menu_items: Vec<LobbyMenuItem>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions")]
+    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions", sub)]
     pub npc_actions: Vec<LobbyNpcAction>,
 
     #[serde(default)]
@@ -618,7 +623,7 @@ pub struct Entities {
     pub dimension: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.entities.list")]
+    #[AutoDoc(key = "config.qexed.server.entities.list", sub)]
     pub list: Vec<Entity>,
 }
 
@@ -921,6 +926,95 @@ fn default_player_join_message() -> String {
 
 fn default_player_leave_message() -> String {
     "{player} left the server".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct PlayerAudit {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_audit.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_audit.storage")]
+    pub storage: PlayerAuditStorage,
+
+    #[serde(default = "default_player_audit_file_path")]
+    #[AutoDoc(key = "config.qexed.server.player_audit.file_path")]
+    pub file_path: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.player_audit.events", sub)]
+    pub events: PlayerAuditEvents,
+}
+
+impl Default for PlayerAudit {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            storage: PlayerAuditStorage::default(),
+            file_path: default_player_audit_file_path(),
+            events: PlayerAuditEvents::default(),
+        }
+    }
+}
+
+fn default_player_audit_file_path() -> String {
+    "logs/player_audit.log".to_string()
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerAuditStorage {
+    #[default]
+    File,
+    Stdout,
+    FileAndStdout,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct PlayerAuditEvents {
+    #[serde(default = "default_player_audit_track_block_place")]
+    #[AutoDoc(key = "config.qexed.server.player_audit.events.block_place")]
+    pub block_place: bool,
+
+    #[serde(default = "default_player_audit_track_block_break")]
+    #[AutoDoc(key = "config.qexed.server.player_audit.events.block_break")]
+    pub block_break: bool,
+
+    #[serde(default = "default_player_audit_track_item_switch")]
+    #[AutoDoc(key = "config.qexed.server.player_audit.events.item_switch")]
+    pub item_switch: bool,
+
+    #[serde(default = "default_player_audit_track_command")]
+    #[AutoDoc(key = "config.qexed.server.player_audit.events.command")]
+    pub command: bool,
+}
+
+impl Default for PlayerAuditEvents {
+    fn default() -> Self {
+        Self {
+            block_place: default_player_audit_track_block_place(),
+            block_break: default_player_audit_track_block_break(),
+            item_switch: default_player_audit_track_item_switch(),
+            command: default_player_audit_track_command(),
+        }
+    }
+}
+
+fn default_player_audit_track_block_place() -> bool {
+    true
+}
+
+fn default_player_audit_track_block_break() -> bool {
+    true
+}
+
+fn default_player_audit_track_item_switch() -> bool {
+    true
+}
+
+fn default_player_audit_track_command() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -1592,8 +1686,9 @@ mod tests {
     use super::{
         ContentFilter, ContentFilterEngine, EntityKind, ForwardingMode, GameMode,
         GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
-        LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerData, PlayerDataEngine,
-        PlayerMessages, ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource,
+        LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerAudit, PlayerAuditStorage,
+        PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
+        ResourcePackObjectStorageProvider, ResourcePackSource,
         Server, World, WorldGenerator,
     };
 
@@ -1851,6 +1946,32 @@ leave = "{player} left"
         assert!(player_messages.enable);
         assert_eq!(player_messages.join, "{player} joined");
         assert_eq!(player_messages.leave, "{player} left");
+    }
+
+    #[test]
+    fn parses_player_audit_settings() {
+        let audit: PlayerAudit = toml::from_str(
+            r#"
+enable = true
+storage = "file_and_stdout"
+file_path = "logs/audit/player-events.log"
+
+[events]
+block_place = true
+block_break = true
+item_switch = true
+command = false
+"#,
+        )
+        .unwrap();
+
+        assert!(audit.enable);
+        assert_eq!(audit.storage, PlayerAuditStorage::FileAndStdout);
+        assert_eq!(audit.file_path, "logs/audit/player-events.log");
+        assert!(audit.events.block_place);
+        assert!(audit.events.block_break);
+        assert!(audit.events.item_switch);
+        assert!(!audit.events.command);
     }
 
     #[test]

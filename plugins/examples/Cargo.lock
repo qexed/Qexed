@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "command_npc_demo"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+]
+
+[[package]]
 name = "hello_world"
 version = "0.1.0"
 dependencies = [

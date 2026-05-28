@@ -370,6 +370,8 @@ impl LobbyRuntime {
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         entities: &crate::entities::EntityManager,
+        plugins: &crate::plugins::PluginManager,
+        player: &crate::players::OnlinePlayer,
         interact: Interact,
         status: &LobbyStatusSnapshot,
     ) -> Result<LobbyInteractionOutcome>
@@ -383,6 +385,20 @@ impl LobbyRuntime {
         let Some(entity) = entities.entity_by_runtime_id(interact.entity_id.0) else {
             return Ok(LobbyInteractionOutcome::default());
         };
+        plugins.emit_npc_interact(
+            player,
+            crate::plugins::NpcEntityPayload {
+                key: entity.key.clone(),
+                entity_id: entity.entity_id,
+                dimension: entity.dimension.clone(),
+                x: entity.position.x,
+                y: entity.position.y,
+                z: entity.position.z,
+                yaw: entity.position.yaw,
+                pitch: entity.position.pitch,
+            },
+            interact_action_name(&interact.action),
+        );
         let Some(action) = self.npc_actions.get(&entity.key) else {
             return Ok(LobbyInteractionOutcome::default());
         };
@@ -852,6 +868,14 @@ fn is_primary_interact(action: &InteractAction) -> bool {
 
 fn action_opens_menu(action: &LobbyAction) -> bool {
     action.kind == LobbyActionKind::OpenMenu
+}
+
+fn interact_action_name(action: &InteractAction) -> &'static str {
+    match action {
+        InteractAction::Interact { .. } => "interact",
+        InteractAction::InteractAt { .. } => "interact_at",
+        InteractAction::Attack => "attack",
+    }
 }
 
 fn display_server_name(server: &LobbyServer) -> Option<&str> {

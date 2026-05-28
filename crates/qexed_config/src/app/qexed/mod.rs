@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub mod plugin_download;
 pub mod qexed_args;
 pub mod server;
+pub mod world_rules;
 
 #[derive(Debug, Serialize, Deserialize, AutoDoc)]
 pub struct Qexed {
@@ -24,16 +25,28 @@ pub struct Qexed {
 }
 
 impl Qexed {
-    fn get_system_language() -> String {
-        match sys_locale::get_locale() {
-            Some(v) => v,
-            None => {
-                log::warn!(
-                    "检测当前系统语言失败,使用默认语言 zh-CN,您可以手动修改配置文件 config/qexed.toml中的 language 来设置语言"
-                );
-                "zh-CN".to_string()
-            }
+    fn normalize_system_language(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
         }
+        let lowered = trimmed.to_ascii_lowercase();
+        if lowered == "c" || lowered == "posix" {
+            return None;
+        }
+        Some(trimmed.replace('_', "-"))
+    }
+
+    fn get_system_language() -> String {
+        if let Some(locale) =
+            sys_locale::get_locale().and_then(|value| Self::normalize_system_language(&value))
+        {
+            return locale;
+        }
+        log::warn!(
+            "检测当前系统语言失败，使用默认语言 zh-CN。您可以手动修改配置文件 config/qexed.toml 中的 language 来设置语言。"
+        );
+        "zh-CN".to_string()
     }
 }
 
@@ -63,46 +76,45 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
                 file_name: "server.toml",
                 root_path: "server",
             },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "world.toml",
-                root_path: "server.world",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "lan_discovery.toml",
-                root_path: "server.lan_discovery",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "player_data.toml",
-                root_path: "server.player_data",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "player_messages.toml",
-                root_path: "server.player_messages",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "content_filter.toml",
-                root_path: "server.content_filter",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "permissions.toml",
-                root_path: "server.permissions",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "resource_pack.toml",
-                root_path: "server.resource_pack",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "entities.toml",
-                root_path: "server.entities",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "scoreboard.toml",
-                root_path: "server.scoreboard",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "lobby.toml",
-                root_path: "server.lobby",
-            },
         ]
+    }
+
+    fn dynamic_split_config_files(
+        doc: &toml_edit::DocumentMut,
+        _split_dir: &std::path::Path,
+    ) -> anyhow::Result<Vec<qexed_config::tool::OwnedSplitConfigFile>> {
+        let mut split_files = Vec::new();
+        if let Some(server_item) = doc.get("server").and_then(|item| item.as_table()) {
+            for (key, value) in server_item.iter() {
+                if key.is_empty() || !value.is_table_like() {
+                    continue;
+                }
+                split_files.push(qexed_config::tool::OwnedSplitConfigFile {
+                    file_name: format!("{key}.toml"),
+                    root_path: format!("server.{key}"),
+                });
+            }
+        }
+        Ok(split_files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Qexed;
+
+    #[test]
+    fn normalize_system_language_filters_invalid_locale() {
+        assert_eq!(
+            Qexed::normalize_system_language("zh_CN"),
+            Some("zh-CN".to_string())
+        );
+        assert_eq!(
+            Qexed::normalize_system_language("en-US"),
+            Some("en-US".to_string())
+        );
+        assert_eq!(Qexed::normalize_system_language("C"), None);
+        assert_eq!(Qexed::normalize_system_language("POSIX"), None);
+        assert_eq!(Qexed::normalize_system_language("  "), None);
     }
 }

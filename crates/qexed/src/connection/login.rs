@@ -70,11 +70,13 @@ where
         &context.config,
         &context.authenticator,
         &context.world,
+        &context.world_rules,
         &context.players,
         &context.entities,
         &context.player_data,
         &context.permissions,
         &context.plugins,
+        &context.player_audit,
         &context.content_filter,
         &login.profile,
     )

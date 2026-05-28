@@ -4,9 +4,16 @@ use crate::players::OnlinePlayer;
 
 #[derive(Serialize)]
 pub(super) struct PlayerPayload<'a> {
-    uuid: String,
-    username: &'a str,
-    entity_id: i32,
+    pub(super) uuid: String,
+    pub(super) username: &'a str,
+    pub(super) entity_id: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerPayloadOwned {
+    pub uuid: String,
+    pub username: String,
+    pub entity_id: i32,
 }
 
 #[derive(Serialize)]
@@ -88,6 +95,117 @@ pub struct BlockDropItem {
     pub count: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCommandDefinition {
+    pub name: String,
+    #[serde(default)]
+    pub description_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCommandQuery {
+    pub command: String,
+    pub argument: String,
+    pub player: PlayerPayloadOwned,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCommandResponse {
+    #[serde(default)]
+    pub handled: bool,
+    #[serde(default)]
+    pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NpcInteractPayload {
+    pub player: PlayerPayloadOwned,
+    pub entity: NpcEntityPayload,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NpcEntityPayload {
+    pub key: String,
+    pub entity_id: i32,
+    pub dimension: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NpcMutationQuery {
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NpcMutationResponse {
+    #[serde(default)]
+    pub operations: Vec<NpcMutationOp>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum NpcMutationOp {
+    Upsert { npc: NpcUpsert },
+    Remove { key: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NpcUpsert {
+    pub key: String,
+    #[serde(default = "default_dimension")]
+    pub dimension: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    #[serde(default)]
+    pub yaw: f32,
+    #[serde(default)]
+    pub pitch: f32,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub skin_textures: String,
+    #[serde(default)]
+    pub skin_signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PlayerAction {
+    SystemMessage {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        translate: String,
+        #[serde(default)]
+        with: Vec<String>,
+        #[serde(default)]
+        overlay: bool,
+    },
+    Teleport {
+        x: f64,
+        y: f64,
+        z: f64,
+        #[serde(default)]
+        yaw: Option<f32>,
+        #[serde(default)]
+        pitch: Option<f32>,
+    },
+    Transfer {
+        host: String,
+        port: u16,
+        #[serde(default)]
+        message: String,
+    },
+}
+
 pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload<'_> {
     PlayerPayload {
         uuid: player.profile.uuid.to_string(),
@@ -96,6 +214,18 @@ pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload<'_> {
     }
 }
 
+pub(super) fn player_payload_owned(player: &OnlinePlayer) -> PlayerPayloadOwned {
+    PlayerPayloadOwned {
+        uuid: player.profile.uuid.to_string(),
+        username: player.profile.username.clone(),
+        entity_id: player.entity_id,
+    }
+}
+
 fn one() -> i32 {
     1
+}
+
+fn default_dimension() -> String {
+    "minecraft:overworld".to_string()
 }

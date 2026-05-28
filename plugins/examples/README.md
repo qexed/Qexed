@@ -8,6 +8,7 @@ cargo build --manifest-path plugins/examples/Cargo.toml --target wasm32-unknown-
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/hello_world.wasm" "plugins/"
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/player_audit.wasm" "plugins/"
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/chunk_trace.wasm" "plugins/"
+Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/command_npc_demo.wasm" "plugins/"
 ```
 
 运行时 ABI：

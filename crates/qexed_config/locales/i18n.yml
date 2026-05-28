@@ -66,8 +66,8 @@ config:
       en: "Enable update checks"
       zh-CN: "启用更新检查"
     language:
-      en: "Runtime language"
-      zh-CN: "运行时语言"
+      en: "Runtime language. Defaults to detected system locale; falls back to zh-CN when locale is unavailable or invalid (for example C/POSIX)."
+      zh-CN: "运行时语言。默认使用系统语言；当系统语言不可用或无效（例如 C/POSIX）时回退到 zh-CN。"
     plugin_download:
       en: "Plugin download settings"
       zh-CN: "插件下载设置"
@@ -224,8 +224,8 @@ config:
           en: "Enable player data saving and loading"
           zh-CN: "启用玩家数据保存与加载"
         engine:
-          en: "Player data storage engine: vanilla, mongodb, or mysql"
-          zh-CN: "玩家数据存储引擎：vanilla、mongodb 或 mysql"
+          en: "Player data storage engine. vanilla uses local playerdata files in the world folder; mongodb stores player data in MongoDB; mysql stores player data in a MySQL table."
+          zh-CN: "玩家数据存储引擎。vanilla 使用世界目录下的本地 playerdata 文件；mongodb 使用 MongoDB 集合存储；mysql 使用 MySQL 数据表存储。"
         collection:
           en: "MongoDB collection name for player data"
           zh-CN: "MongoDB 玩家数据集合名"
@@ -250,6 +250,33 @@ config:
         leave:
           en: "Leave announcement template. Use {player} as the player name placeholder."
           zh-CN: "玩家退服提示模板，使用 {player} 作为玩家名占位符"
+      player_audit:
+        en: "Player audit settings"
+        zh-CN: "玩家审计设置"
+        enable:
+          en: "Enable player action auditing"
+          zh-CN: "启用玩家行为审计"
+        storage:
+          en: "Audit storage target: file, stdout, or file_and_stdout"
+          zh-CN: "审计存储目标：file、stdout 或 file_and_stdout"
+        file_path:
+          en: "Audit log file path used by file/file_and_stdout storage"
+          zh-CN: "file/file_and_stdout 存储下使用的审计日志文件路径"
+        events:
+          en: "Per-event audit switches"
+          zh-CN: "按事件维度的审计开关"
+          block_place:
+            en: "Audit block placement events"
+            zh-CN: "审计方块放置事件"
+          block_break:
+            en: "Audit block break events"
+            zh-CN: "审计方块破坏事件"
+          item_switch:
+            en: "Audit held-item switch events"
+            zh-CN: "审计手持物品切换事件"
+          command:
+            en: "Audit player command events"
+            zh-CN: "审计玩家指令事件"
       content_filter:
         en: "Chat content filter settings"
         zh-CN: "聊天内容审核设置"
@@ -381,7 +408,7 @@ config:
             zh-CN: "Qexed 使用的稳定实体标识"
           kind:
             en: "Entity kind: entity, npc, or hologram. NPCs are spawned as player entities; holograms use text display entities."
-            zh-CN: "实体类型：entity 或 npc。NPC 会以玩家实体生成。"
+            zh-CN: "实体类型：entity、npc 或 hologram。NPC 会以玩家实体生成，hologram 使用文本展示实体。"
           entity_type:
             en: "Minecraft entity type resource key, for example minecraft:armor_stand or minecraft:villager"
             zh-CN: "Minecraft 实体类型资源键，例如 minecraft:armor_stand 或 minecraft:villager"
@@ -391,6 +418,15 @@ config:
           display_name:
             en: "Custom display name shown above the entity. Supports JSON text and Unicode. Falls back to name when empty."
             zh-CN: "实体上方显示的自定义名称，支持 JSON 文本和 Unicode。为空时回退到 name。"
+          skin_textures:
+            en: "Base64 skin texture payload from the Mojang texture property"
+            zh-CN: "来自 Mojang texture 属性的 Base64 皮肤纹理数据"
+          skin_signature:
+            en: "Mojang signature paired with skin_textures"
+            zh-CN: "与 skin_textures 配套的 Mojang 签名"
+          skin_player_id:
+            en: "Player name or UUID used to resolve skin automatically when explicit texture fields are empty"
+            zh-CN: "当显式纹理字段为空时，用于自动解析皮肤的玩家名或 UUID"
           x:
             en: "Entity X coordinate"
             zh-CN: "实体 X 坐标"
@@ -427,6 +463,156 @@ config:
         lines:
           en: "Sidebar scoreboard lines displayed from top to bottom"
           zh-CN: "侧边栏计分板从上到下显示的行"
+      lobby:
+        en: "Lobby server feature settings"
+        zh-CN: "大厅服功能设置"
+        enable:
+          en: "Enable lobby mode"
+          zh-CN: "启用大厅模式"
+        protect_world:
+          en: "Protect world from player modifications while in lobby mode"
+          zh-CN: "大厅模式下阻止玩家修改世界"
+        menu_title:
+          en: "Lobby server selector menu title"
+          zh-CN: "大厅服务器选择菜单标题"
+        menu_rows:
+          en: "Lobby server selector row count (1-6)"
+          zh-CN: "大厅服务器选择菜单行数（1-6）"
+        navigator:
+          en: "Navigator item settings"
+          zh-CN: "导航器物品设置"
+          enable:
+            en: "Enable navigator item in inventory"
+            zh-CN: "启用背包中的导航器物品"
+          slot:
+            en: "Navigator hotbar slot index"
+            zh-CN: "导航器快捷栏槽位索引"
+          item:
+            en: "Navigator item resource key"
+            zh-CN: "导航器物品资源键"
+          name:
+            en: "Navigator display name"
+            zh-CN: "导航器显示名称"
+        servers:
+          en: "Lobby backend server entries"
+          zh-CN: "大厅后端服务器条目列表"
+          id:
+            en: "Unique backend server identifier"
+            zh-CN: "后端服务器唯一标识"
+          enable:
+            en: "Whether this backend server is enabled"
+            zh-CN: "是否启用该后端服务器"
+          maintenance:
+            en: "Whether this backend server is in maintenance mode"
+            zh-CN: "该后端服务器是否处于维护模式"
+          maintenance_message:
+            en: "Message shown when backend server is in maintenance mode"
+            zh-CN: "后端服务器维护模式下显示的提示消息"
+          name:
+            en: "Display name of the backend server"
+            zh-CN: "后端服务器显示名称"
+          host:
+            en: "Backend server host"
+            zh-CN: "后端服务器主机地址"
+          port:
+            en: "Backend server port"
+            zh-CN: "后端服务器端口"
+        menu_items:
+          en: "Menu item templates used in the lobby selector"
+          zh-CN: "大厅选择菜单中的物品模板"
+          slot:
+            en: "Target slot index in menu"
+            zh-CN: "菜单中的目标槽位索引"
+          item:
+            en: "Default item resource key"
+            zh-CN: "默认物品资源键"
+          unknown_item:
+            en: "Item used when backend status is unknown"
+            zh-CN: "后端状态未知时使用的物品"
+          offline_item:
+            en: "Item used when backend is offline"
+            zh-CN: "后端离线时使用的物品"
+          disabled_item:
+            en: "Item used when backend entry is disabled"
+            zh-CN: "后端条目被禁用时使用的物品"
+          maintenance_item:
+            en: "Item used when backend is under maintenance"
+            zh-CN: "后端维护中时使用的物品"
+          name:
+            en: "Custom menu item name"
+            zh-CN: "自定义菜单物品名称"
+          lore:
+            en: "Custom menu item lore lines"
+            zh-CN: "自定义菜单物品 lore 行"
+          action:
+            en: "Action executed when this menu item is clicked"
+            zh-CN: "点击该菜单物品时执行的动作"
+        npc_actions:
+          en: "NPC interaction action bindings"
+          zh-CN: "NPC 交互动作绑定"
+          entity:
+            en: "Target NPC entity id"
+            zh-CN: "目标 NPC 实体 id"
+          action:
+            en: "Action executed when interacting with this NPC"
+            zh-CN: "与该 NPC 交互时执行的动作"
+        action:
+          en: "Lobby action payload"
+          zh-CN: "大厅动作载荷"
+          kind:
+            en: "Action kind: none, open_menu, transfer, or message"
+            zh-CN: "动作类型：none、open_menu、transfer 或 message"
+          target:
+            en: "Action target value, such as server id"
+            zh-CN: "动作目标值，例如服务器 id"
+          message:
+            en: "Action message content"
+            zh-CN: "动作消息内容"
+        broadcast:
+          en: "Lobby broadcast and rotating message settings"
+          zh-CN: "大厅广播与轮播消息设置"
+          enable:
+            en: "Enable periodic lobby broadcasts"
+            zh-CN: "启用周期性大厅广播"
+          interval_secs:
+            en: "Broadcast interval in seconds"
+            zh-CN: "广播间隔（秒）"
+          messages:
+            en: "Broadcast message list"
+            zh-CN: "广播消息列表"
+        boss_bar:
+          en: "Lobby boss bar settings"
+          zh-CN: "大厅 BossBar 设置"
+          enable:
+            en: "Enable lobby boss bar"
+            zh-CN: "启用大厅 BossBar"
+          title:
+            en: "Boss bar title text"
+            zh-CN: "BossBar 标题文本"
+          color:
+            en: "Boss bar color"
+            zh-CN: "BossBar 颜色"
+          overlay:
+            en: "Boss bar overlay style"
+            zh-CN: "BossBar 覆盖样式"
+          darken_screen:
+            en: "Whether to darken screen while boss bar is shown"
+            zh-CN: "显示 BossBar 时是否压暗屏幕"
+          play_music:
+            en: "Whether to play boss music while boss bar is shown"
+            zh-CN: "显示 BossBar 时是否播放 Boss 音乐"
+          create_world_fog:
+            en: "Whether to create world fog while boss bar is shown"
+            zh-CN: "显示 BossBar 时是否产生世界迷雾"
+        health_check:
+          en: "Lobby backend health check settings"
+          zh-CN: "大厅后端健康检查设置"
+          interval_secs:
+            en: "Health check interval in seconds"
+            zh-CN: "健康检查间隔（秒）"
+          timeout_ms:
+            en: "Health check timeout in milliseconds"
+            zh-CN: "健康检查超时时间（毫秒）"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

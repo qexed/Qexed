@@ -1,6 +1,9 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{DeriveInput, Field, Ident, LitStr, Token, Type, spanned::Spanned};
+use syn::{
+    DeriveInput, Field, GenericArgument, Ident, LitStr, PathArguments, Token, Type,
+    spanned::Spanned,
+};
 
 #[derive(Default)]
 struct AutoDocAttrs {
@@ -366,9 +369,21 @@ fn push_translated_entry(target: &str, display_name: &LitStr, i18n_key: &str) ->
     let i18n_key = LitStr::new(i18n_key, Span::call_site());
 
     quote! {
+        let mut translation = ::rust_i18n::t!(#i18n_key, locale = lang).to_string();
+        if translation == #i18n_key {
+            let zh_fallback = ::rust_i18n::t!(#i18n_key, locale = "zh-CN").to_string();
+            if zh_fallback != #i18n_key {
+                translation = zh_fallback;
+            } else {
+                let en_fallback = ::rust_i18n::t!(#i18n_key, locale = "en").to_string();
+                if en_fallback != #i18n_key {
+                    translation = en_fallback;
+                }
+            }
+        }
         #target.push((
             #display_name.to_string(),
-            ::rust_i18n::t!(#i18n_key, locale = lang).to_string(),
+            translation,
         ));
     }
 }
@@ -404,15 +419,16 @@ fn push_recursive_entries(
 ) -> TokenStream {
     let target = Ident::new(target, Span::call_site());
     let method = Ident::new(method, Span::call_site());
+    let trait_target = autodoc_trait_target_type(field_ty);
 
     match prefix {
         Some(prefix) => quote! {
-            for (sub_key, sub_desc) in <#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang) {
+            for (sub_key, sub_desc) in <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang) {
                 #target.push((format!("{}.{}", #prefix, sub_key), sub_desc));
             }
         },
         None => quote! {
-            #target.extend(<#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang));
+            #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang));
         },
     }
 }
@@ -423,17 +439,37 @@ fn push_recursive_sensitive_entries(
     prefix: Option<&LitStr>,
 ) -> TokenStream {
     let target = Ident::new(target, Span::call_site());
+    let trait_target = autodoc_trait_target_type(field_ty);
 
     match prefix {
         Some(prefix) => quote! {
-            for sub_key in <#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields() {
+            for sub_key in <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields() {
                 #target.push(format!("{}.{}", #prefix, sub_key));
             }
         },
         None => quote! {
-            #target.extend(<#field_ty as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields());
+            #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields());
         },
     }
+}
+
+fn autodoc_trait_target_type(field_ty: &Type) -> TokenStream {
+    let Type::Path(type_path) = field_ty else {
+        return quote! { #field_ty };
+    };
+    let Some(last_segment) = type_path.path.segments.last() else {
+        return quote! { #field_ty };
+    };
+    if last_segment.ident != "Vec" {
+        return quote! { #field_ty };
+    }
+    let PathArguments::AngleBracketed(args) = &last_segment.arguments else {
+        return quote! { #field_ty };
+    };
+    let Some(GenericArgument::Type(inner_ty)) = args.args.first() else {
+        return quote! { #field_ty };
+    };
+    quote! { #inner_ty }
 }
 
 fn push_error(errors: &mut Option<syn::Error>, error: syn::Error) {

@@ -12,6 +12,12 @@ pub struct SplitConfigFile {
     pub root_path: &'static str,
 }
 
+#[derive(Debug, Clone)]
+pub struct OwnedSplitConfigFile {
+    pub file_name: String,
+    pub root_path: String,
+}
+
 // ========================
 // AutoDoc 元数据
 // ========================
@@ -59,6 +65,13 @@ pub trait AppConfigTrait:
 
     fn split_config_files() -> &'static [SplitConfigFile] {
         &[]
+    }
+
+    fn dynamic_split_config_files(
+        _doc: &DocumentMut,
+        _split_dir: &std::path::Path,
+    ) -> Result<Vec<OwnedSplitConfigFile>> {
+        Ok(Vec::new())
     }
 
     fn load_or_create_default(
@@ -393,21 +406,21 @@ fn sync_split_config_files<T: AppConfigTrait>(
     doc: &DocumentMut,
     split_dir: &std::path::Path,
 ) -> Result<()> {
-    let split_files = T::split_config_files();
+    let split_files = resolved_split_config_files::<T>(doc, split_dir)?;
     if split_files.is_empty() {
         return Ok(());
     }
 
     std::fs::create_dir_all(split_dir)?;
-    for split_file in split_files {
-        let file_path = safe_split_file_path(split_dir, split_file.file_name)?;
-        let Some(item) = get_item_by_dotted_path(doc, split_file.root_path) else {
+    for split_file in &split_files {
+        let file_path = safe_split_file_path(split_dir, &split_file.file_name)?;
+        let Some(item) = get_item_by_dotted_path(doc, &split_file.root_path) else {
             continue;
         };
 
         let mut split_doc = DocumentMut::new();
-        set_item_by_dotted_path(&mut split_doc, split_file.root_path, item.clone())?;
-        prune_nested_split_config_items::<T>(&mut split_doc, split_file.root_path);
+        set_item_by_dotted_path(&mut split_doc, &split_file.root_path, item.clone())?;
+        prune_nested_split_config_items(&mut split_doc, &split_file.root_path, &split_files);
         std::fs::write(&file_path, split_doc.to_string())
             .with_context(|| format!("无法写入拆分配置文件 {}", file_path.display()))?;
     }
@@ -421,8 +434,9 @@ fn write_config_documents<T: AppConfigTrait>(
     split_dir: &std::path::Path,
 ) -> Result<()> {
     let mut main_doc = doc.clone();
+    let split_files = resolved_split_config_files::<T>(&main_doc, split_dir)?;
     sync_split_config_files::<T>(&main_doc, split_dir)?;
-    prune_split_config_items::<T>(&mut main_doc);
+    prune_split_config_items(&mut main_doc, &split_files);
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -435,8 +449,9 @@ fn overlay_split_config_files<T: AppConfigTrait>(
     doc: &mut DocumentMut,
     split_dir: &std::path::Path,
 ) -> Result<()> {
-    for split_file in T::split_config_files() {
-        let file_path = safe_split_file_path(split_dir, split_file.file_name)?;
+    let split_files = resolved_split_config_files::<T>(doc, split_dir)?;
+    for split_file in split_files {
+        let file_path = safe_split_file_path(split_dir, &split_file.file_name)?;
         if !file_path.exists() {
             continue;
         }
@@ -452,19 +467,40 @@ fn overlay_split_config_files<T: AppConfigTrait>(
     Ok(())
 }
 
-fn prune_split_config_items<T: AppConfigTrait>(doc: &mut DocumentMut) {
-    for split_file in T::split_config_files() {
-        let _ = take_item_by_dotted_path(doc, split_file.root_path);
+fn prune_split_config_items(doc: &mut DocumentMut, split_files: &[OwnedSplitConfigFile]) {
+    for split_file in split_files {
+        let _ = take_item_by_dotted_path(doc, &split_file.root_path);
     }
 }
 
-fn prune_nested_split_config_items<T: AppConfigTrait>(doc: &mut DocumentMut, root_path: &str) {
+fn prune_nested_split_config_items(
+    doc: &mut DocumentMut,
+    root_path: &str,
+    split_files: &[OwnedSplitConfigFile],
+) {
     let child_prefix = format!("{root_path}.");
-    for split_file in T::split_config_files() {
+    for split_file in split_files {
         if split_file.root_path.starts_with(&child_prefix) {
-            let _ = take_item_by_dotted_path(doc, split_file.root_path);
+            let _ = take_item_by_dotted_path(doc, &split_file.root_path);
         }
     }
+}
+
+fn resolved_split_config_files<T: AppConfigTrait>(
+    doc: &DocumentMut,
+    split_dir: &std::path::Path,
+) -> Result<Vec<OwnedSplitConfigFile>> {
+    let mut split_files = T::split_config_files()
+        .iter()
+        .map(|split| OwnedSplitConfigFile {
+            file_name: split.file_name.to_string(),
+            root_path: split.root_path.to_string(),
+        })
+        .collect::<Vec<_>>();
+    split_files.extend(T::dynamic_split_config_files(doc, split_dir)?);
+    split_files.sort_by(|left, right| left.root_path.cmp(&right.root_path));
+    split_files.dedup_by(|left, right| left.root_path == right.root_path);
+    Ok(split_files)
 }
 
 fn safe_split_file_path(
@@ -472,14 +508,24 @@ fn safe_split_file_path(
     file_name: &str,
 ) -> Result<std::path::PathBuf> {
     let file_path = std::path::Path::new(file_name);
-    if file_path.components().count() != 1
-        || file_path.extension().and_then(|ext| ext.to_str()) != Some("toml")
-    {
+    if file_path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("invalid split config file name: {file_name}"),
+            format!("invalid split config file extension: {file_name}"),
         )
         .into());
+    }
+    for component in file_path.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid split config file path: {file_name}"),
+                )
+                .into());
+            }
+        }
     }
 
     Ok(split_dir.join(file_path))
@@ -926,32 +972,46 @@ fn update_autodoc_for_key(doc: &mut DocumentMut, key: &str, new_comment: &str) {
         let (parent_parts, last_part) = parts.split_at(parts.len() - 1);
 
         if let Some(parent_item) = get_item_mut_by_path(doc, parent_parts) {
-            if let toml_edit::Item::Table(table) = parent_item {
-                // 判断最后一个部分是表还是键
-                if let Some(last_item) = table.get_mut(last_part[0]) {
-                    match last_item {
-                        // ✅ 子表
-                        toml_edit::Item::Table(sub_table) => {
-                            update_table_decor(
-                                sub_table,
-                                start_marker,
-                                end_marker,
-                                &processed_comment,
-                            );
-                        }
-                        // ✅ 普通键
-                        _ => {
-                            if let Some(mut key_mut) = table.key_mut(last_part[0]) {
-                                update_key_decor(
-                                    &mut key_mut,
+            match parent_item {
+                toml_edit::Item::Table(table) => {
+                    // 判断最后一个部分是表还是键
+                    if let Some(last_item) = table.get_mut(last_part[0]) {
+                        match last_item {
+                            // ✅ 子表
+                            toml_edit::Item::Table(sub_table) => {
+                                update_table_decor(
+                                    sub_table,
                                     start_marker,
                                     end_marker,
                                     &processed_comment,
                                 );
                             }
+                            // ✅ 数组表
+                            toml_edit::Item::ArrayOfTables(array) => {
+                                update_array_tables_decor(
+                                    array,
+                                    start_marker,
+                                    end_marker,
+                                    &processed_comment,
+                                );
+                            }
+                            // ✅ 普通键
+                            _ => {
+                                if let Some(mut key_mut) = table.key_mut(last_part[0]) {
+                                    update_key_decor(
+                                        &mut key_mut,
+                                        start_marker,
+                                        end_marker,
+                                        &processed_comment,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
+                // 当父节点是数组表时，不给元素内字段批量写注释，避免在 [[...]] 前重复膨胀
+                toml_edit::Item::ArrayOfTables(_) => {}
+                _ => {}
             }
         }
     }
@@ -1032,6 +1092,17 @@ fn update_table_decor(
     }
     table.decor_mut().set_prefix(RawString::from(final_prefix));
 }
+
+fn update_array_tables_decor(
+    array: &mut toml_edit::ArrayOfTables,
+    start_marker: &str,
+    end_marker: &str,
+    new_content: &str,
+) {
+    if let Some(first) = array.iter_mut().next() {
+        update_table_decor(first, start_marker, end_marker, new_content);
+    }
+}
 fn build_safe_path(
     base: &std::path::Path,
     path: &'static str,
@@ -1111,33 +1182,32 @@ fn replace_autodoc_block(
     end_marker: &str,
     new_content: &str,
 ) -> String {
-    let lines: Vec<&str> = prefix.lines().collect();
     let mut result = Vec::new();
     let mut in_block = false;
-    let mut block_inserted = false;
 
-    for line in &lines {
-        if line.trim() == start_marker.trim() {
-            result.push(start_marker.to_string());
-            result.push(new_content.to_string());
-            result.push(end_marker.to_string());
+    for line in prefix.lines() {
+        let trimmed = line.trim();
+        if trimmed == start_marker.trim() {
             in_block = true;
-            block_inserted = true;
-        } else if line.trim() == end_marker.trim() {
+            continue;
+        }
+        if in_block && trimmed == end_marker.trim() {
             in_block = false;
             continue;
-        } else if in_block {
-            continue;
-        } else {
-            result.push(line.to_string());
         }
+        if in_block {
+            continue;
+        }
+        result.push(line.to_string());
     }
 
-    if !block_inserted {
-        result.push(start_marker.to_string());
-        result.push(new_content.to_string());
-        result.push(end_marker.to_string());
+    while result.last().is_some_and(|line| line.trim().is_empty()) {
+        result.pop();
     }
+
+    result.push(start_marker.to_string());
+    result.push(new_content.to_string());
+    result.push(end_marker.to_string());
 
     result.join("\n")
 }

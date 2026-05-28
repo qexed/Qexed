@@ -1,4 +1,5 @@
 mod auth;
+mod audit;
 mod bootstrap;
 mod code_of_conduct;
 mod commands;

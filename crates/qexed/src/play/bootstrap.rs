@@ -26,17 +26,20 @@ pub(super) async fn send_initial_player_state<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     config: &qexed_config::app::qexed::Qexed,
     world_config: &qexed_config::app::qexed::server::World,
+    world_rules: &crate::world::WorldRulesManager,
     play_dimension: &str,
     player: &OnlinePlayer,
     inventory: &crate::inventory::PlayerInventory,
     survival: crate::player_data::StoredSurvival,
     permissions: &crate::permissions::PermissionManager,
+    plugins: &crate::plugins::PluginManager,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let view_distance = world_config.view_distance.max(1);
     let simulation_distance = world_config.simulation_distance.max(1);
+    let game_time = world_rules.current_time(play_dimension);
     sink.send(ChangeDifficulty {
         difficulty: 2,
         locked: false,
@@ -93,16 +96,25 @@ where
         .iter()
         .map(|server| server.id.clone())
         .collect::<Vec<_>>();
-    let command_tree = if visible_commands.as_slice() == ["help", "list"] {
-        crate::commands::command_tree()
-    } else {
-        crate::commands::command_tree_for_lobby(&visible_commands, &lobby_server_ids)
-    };
+    let mut plugin_commands = Vec::new();
+    for command in plugins.plugin_commands() {
+        if permissions
+            .can_run_command(&player.profile, &command.name)
+            .await?
+        {
+            plugin_commands.push(command.name);
+        }
+    }
+    let command_tree = crate::commands::command_tree_for_lobby_with_extra(
+        &visible_commands,
+        &lobby_server_ids,
+        &plugin_commands,
+    );
     sink.send(command_tree).await?;
 
     sink.send(InitializeBorder::default()).await?;
     sink.send(SetTime {
-        game_time: 0,
+        game_time,
         clock_updates: Vec::new(),
     })
     .await?;
@@ -153,6 +165,7 @@ where
 pub(super) async fn send_respawn_player_state<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world_config: &qexed_config::app::qexed::server::World,
+    world_rules: &crate::world::WorldRulesManager,
     play_dimension: &str,
     position: qexed_protocol::to_client::play::add_entity::EntityPosition,
 ) -> Result<()>
@@ -161,6 +174,7 @@ where
 {
     let view_distance = world_config.view_distance.max(1);
     let simulation_distance = world_config.simulation_distance.max(1);
+    let game_time = world_rules.current_time(play_dimension);
 
     sink.send(ChangeDifficulty {
         difficulty: 2,
@@ -175,7 +189,7 @@ where
     .await?;
     sink.send(InitializeBorder::default()).await?;
     sink.send(SetTime {
-        game_time: 0,
+        game_time,
         clock_updates: Vec::new(),
     })
     .await?;

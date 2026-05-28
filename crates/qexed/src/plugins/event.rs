@@ -9,6 +9,10 @@ pub enum PluginEvent {
     LanguageChange,
     MiningSpeed,
     BlockDrops,
+    Commands,
+    CommandExecute,
+    NpcMutations,
+    NpcInteract,
 }
 
 impl PluginEvent {
@@ -23,6 +27,10 @@ impl PluginEvent {
             Self::LanguageChange => "qexed_plugin_language_change",
             Self::MiningSpeed => "qexed_plugin_mining_speed",
             Self::BlockDrops => "qexed_plugin_block_drops",
+            Self::Commands => "qexed_plugin_commands",
+            Self::CommandExecute => "qexed_plugin_command_execute",
+            Self::NpcMutations => "qexed_plugin_npc_mutations",
+            Self::NpcInteract => "qexed_plugin_npc_interact",
         }
     }
 }

@@ -4,6 +4,7 @@ mod gpu_light;
 mod gpu_worldgen;
 mod light;
 mod manager;
+mod rules;
 pub mod region;
 mod vanilla_noise;
 
@@ -17,6 +18,7 @@ pub(crate) use light::{
 };
 pub use light::{WorldLightAlgorithm, WorldLightMode, light_gpu_from_config};
 pub use manager::{WorldManager, WorldSession};
+pub use rules::WorldRulesManager;
 
 const OVERWORLD_HEIGHT: i32 = 384;
 const SECTION_HEIGHT: i32 = 16;

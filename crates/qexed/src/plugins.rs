@@ -14,9 +14,13 @@ use files::{PLUGIN_DIR, plugin_files};
 use instance::PluginInstance;
 pub use payload::{
     BlockDropPosition, BlockDropQuery, BlockDropResponse, ItemEnchantment, MiningSpeedQuery,
-    MiningSpeedResponse, PluginEnchantment,
+    MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp, NpcMutationQuery,
+    NpcMutationResponse, PlayerAction, PluginCommandDefinition, PluginCommandQuery,
+    PluginCommandResponse, PluginEnchantment,
 };
-use payload::{ChunkPayload, ConfigReloadPayload, LanguagePayload, player_payload};
+use payload::{
+    ChunkPayload, ConfigReloadPayload, LanguagePayload, player_payload, player_payload_owned,
+};
 
 use crate::players::OnlinePlayer;
 
@@ -151,6 +155,68 @@ impl PluginManager {
         result
     }
 
+    pub fn plugin_commands(&self) -> Vec<PluginCommandDefinition> {
+        let mut commands = self.query_empty_json::<PluginCommandDefinition>(PluginEvent::Commands);
+        commands.retain(|command| {
+            let name = command.name.trim();
+            !name.is_empty() && !name.chars().any(char::is_whitespace)
+        });
+        commands.sort_by(|left, right| left.name.cmp(&right.name));
+        commands.dedup_by(|left, right| left.name == right.name);
+        commands
+    }
+
+    pub fn execute_command(
+        &self,
+        player: &OnlinePlayer,
+        command: &str,
+        argument: &str,
+    ) -> PluginCommandResponse {
+        let query = PluginCommandQuery {
+            command: command.to_string(),
+            argument: argument.to_string(),
+            player: player_payload_owned(player),
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in self.query_json::<_, PluginCommandResponse>(PluginEvent::CommandExecute, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn query_npc_mutations(&self, reason: &str) -> Vec<NpcMutationOp> {
+        let query = NpcMutationQuery {
+            reason: reason.to_string(),
+        };
+        let mut operations = Vec::new();
+        for response in self.query_json::<_, NpcMutationResponse>(PluginEvent::NpcMutations, &query)
+        {
+            operations.extend(response.operations);
+        }
+        operations
+    }
+
+    pub fn emit_npc_interact(
+        &self,
+        player: &OnlinePlayer,
+        entity: NpcEntityPayload,
+        action: &str,
+    ) {
+        self.emit_json(
+            PluginEvent::NpcInteract,
+            &NpcInteractPayload {
+                player: player_payload_owned(player),
+                entity,
+                action: action.to_string(),
+            },
+        );
+    }
+
     #[cfg(test)]
     pub fn empty_for_tests() -> Self {
         Self::empty()
@@ -224,6 +290,13 @@ impl PluginManager {
             }
         }
         responses
+    }
+
+    fn query_empty_json<R>(&self, event: PluginEvent) -> Vec<R>
+    where
+        R: DeserializeOwned,
+    {
+        self.query_json(event, &serde_json::json!({}))
     }
 }
 

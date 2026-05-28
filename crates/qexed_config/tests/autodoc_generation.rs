@@ -37,11 +37,13 @@ fn load_split_qexed_config(dir: &std::path::Path) -> anyhow::Result<Qexed> {
         "lan_discovery.toml",
         "player_data.toml",
         "player_messages.toml",
+        "player_audit.toml",
         "content_filter.toml",
         "permissions.toml",
         "resource_pack.toml",
         "entities.toml",
         "scoreboard.toml",
+        "lobby.toml",
     ] {
         let path = split_dir.join(file_name);
         if path.exists() {
@@ -645,6 +647,60 @@ pitch = 0.0
     let world = std::fs::read_to_string(split_dir.join("world.toml"))?;
     assert!(!qexed.contains("[server.world]"));
     assert!(world.contains("path = \"split-world\""));
+
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn lobby_split_file_uses_localized_comments() -> anyhow::Result<()> {
+    let dir = temp_config_dir("lobby_localized_comment");
+    Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+
+    let lobby = std::fs::read_to_string(dir.join("qexed.d").join("lobby.toml"))?;
+    assert!(!lobby.contains("config.qexed.server.lobby"));
+    assert!(lobby.contains("AutoDoc"));
+
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn entities_autodoc_does_not_expand_duplicate_blocks_for_array_tables() -> anyhow::Result<()> {
+    let dir = temp_config_dir("entities_autodoc_dedup");
+    Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+
+    let entities_path = dir.join("qexed.d").join("entities.toml");
+    std::fs::write(
+        &entities_path,
+        r#"[server]
+[server.entities]
+enable = true
+dimension = "minecraft:overworld"
+# ======= AutoDoc =======
+# duplicated block 1
+# =======================
+# ======= AutoDoc =======
+# duplicated block 2
+# =======================
+# ======= AutoDoc =======
+# duplicated block 3
+# =======================
+[[server.entities.list]]
+id = "guide"
+kind = "npc"
+name = "Guide"
+"#,
+    )?;
+
+    Qexed::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+
+    let entities = std::fs::read_to_string(&entities_path)?;
+    let marker_count = entities.matches("# ======= AutoDoc =======").count();
+    assert!(
+        marker_count <= 12,
+        "unexpected duplicated AutoDoc markers in entities.toml: {marker_count}\n{entities}"
+    );
 
     let _ = std::fs::remove_dir_all(dir);
     Ok(())

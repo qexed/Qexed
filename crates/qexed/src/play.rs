@@ -28,6 +28,7 @@ use qexed_protocol::to_client::play::{
     position::Position,
     respawn::{KEEP_NO_DATA, Respawn},
     set_held_slot::SetHeldSlot,
+    set_time::SetTime,
     system_chat::SystemChat,
 };
 use qexed_protocol::to_server::play::{
@@ -73,6 +74,7 @@ const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 const CHUNK_SEND_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
 const PLAYER_ACTION_START_DESTROY_BLOCK: i32 = 0;
 const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
@@ -85,11 +87,13 @@ pub async fn initialize<R, W>(
     config: &qexed_config::app::qexed::Qexed,
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     player_data: &PlayerDataManager,
     permissions: &crate::permissions::PermissionManager,
     plugins: &crate::plugins::PluginManager,
+    player_audit: &crate::audit::PlayerAuditLogger,
     content_filter: &crate::content_filter::ContentFilter,
     profile: &qexed_packet::net_types::GameProfile,
 ) -> Result<()>
@@ -106,6 +110,8 @@ where
     } else {
         saved_player.dimension.clone()
     };
+    world_rules.ensure_loaded(&play_dimension)?;
+    let play_rule = world_rules.snapshot(&play_dimension);
     let view_distance = world_config.view_distance.max(1);
     let chunk_load_parallelism = chunk_load_parallelism_limit(world_config.chunk_load_parallelism);
     let simulation_distance = world_config.simulation_distance.max(1);
@@ -151,7 +157,7 @@ where
         reduced_debug_info: false,
         enable_respawn_screen: true,
         do_limited_crafting: false,
-        dimension_type: VarInt(dimension_type_holder_id(&world_config.dimension_type)),
+        dimension_type: VarInt(dimension_type_holder_id(&play_rule.dimension_type)),
         dimension_name: play_dimension.clone(),
         hashed_seed: 0,
         game_mode: world_config.game_mode.protocol_id(),
@@ -171,11 +177,13 @@ where
         sink,
         config,
         world_config,
+        world_rules,
         &play_dimension,
         &session.player,
         &inventory,
         saved_player.survival,
         permissions,
+        plugins,
     )
     .await?;
     send_existing_players(sink, players, profile.uuid, player_entity_type).await?;
@@ -218,11 +226,13 @@ where
         config,
         authenticator,
         world,
+        world_rules,
         players,
         player_data,
         entities,
         permissions,
         plugins,
+        player_audit,
         content_filter,
         session,
         player_entity_type,
@@ -245,11 +255,13 @@ async fn wait_for_play_packets<R, W>(
     config: &qexed_config::app::qexed::Qexed,
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
     entities: &crate::entities::EntityManager,
     permissions: &crate::permissions::PermissionManager,
     plugins: &crate::plugins::PluginManager,
+    player_audit: &crate::audit::PlayerAuditLogger,
     content_filter: &crate::content_filter::ContentFilter,
     mut session: PlayerSession,
     player_entity_type: i32,
@@ -277,6 +289,9 @@ where
     let mut survival_tick = tokio::time::interval(SURVIVAL_TICK_INTERVAL);
     survival_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     survival_tick.tick().await;
+    let mut world_time_tick = tokio::time::interval(WORLD_TIME_TICK_INTERVAL);
+    world_time_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    world_time_tick.tick().await;
     let mut pending_keep_alive = None;
     let mut chat_session: Option<crate::secure_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0;
@@ -373,6 +388,15 @@ where
                     pending_dig = None;
                 }
             }
+            _ = world_time_tick.tick() => {
+                let game_time = world_rules.tick_dimension_time(&play_dimension);
+                sink.send(SetTime {
+                    game_time,
+                    clock_updates: Vec::new(),
+                })
+                .await?;
+                sink.flush().await?;
+            }
             event = session.receiver.recv() => {
                 let Some(event) = event else {
                     continue;
@@ -451,6 +475,13 @@ where
                             vec![qexed_protocol::to_client::play::set_equipment::Equipment::mainhand(
                                 main_hand,
                             )],
+                        );
+                        player_audit.log_item_switch(
+                            profile,
+                            &play_dimension,
+                            carried.slot,
+                            inventory.held_item().item_id.as_ref().map(|id| id.0),
+                            inventory.held_item().item_count.0,
                         );
                         sink.flush().await?;
                     } else {
@@ -549,6 +580,13 @@ where
                         profile.uuid,
                         vec![qexed_protocol::to_client::play::set_equipment::Equipment::mainhand(held)],
                     );
+                    player_audit.log_item_switch(
+                        profile,
+                        &play_dimension,
+                        slot as i16,
+                        inventory.held_item().item_id.as_ref().map(|id| id.0),
+                        inventory.held_item().item_count.0,
+                    );
                     sink.flush().await?;
                     continue;
                 }
@@ -570,9 +608,11 @@ where
                     }
                     if use_item_on.hand.0 == 0 {
                         if let Some(block_state) = crate::inventory::placed_block_state_for_item(inventory.held_item()) {
-                            if place_held_block(
+                            let held_item_id = inventory.held_item().item_id.as_ref().map(|id| id.0);
+                            let placed = place_held_block(
                                 sink,
                                 world,
+                                world_rules,
                                 players,
                                 world_config,
                                 &play_dimension,
@@ -581,8 +621,17 @@ where
                                 &use_item_on,
                                 block_state,
                             )
-                            .await?
-                            {
+                            .await?;
+                            if !placed.is_empty() {
+                                for changed in &placed {
+                                    player_audit.log_block_place(
+                                        profile,
+                                        &play_dimension,
+                                        &changed.position,
+                                        changed.block_state,
+                                        held_item_id,
+                                    );
+                                }
                                 sync_held_item_after_world_edit(
                                     sink,
                                     players,
@@ -630,9 +679,10 @@ where
                     match action.status.0 {
                         PLAYER_ACTION_START_DESTROY_BLOCK => {
                             if should_destroy_block(world_config.game_mode, PLAYER_ACTION_START_DESTROY_BLOCK) {
-                                destroy_block(
+                                if let Some(destroyed) = destroy_block(
                                     sink,
                                     world,
+                                    world_rules,
                                     players,
                                     entities,
                                     plugins,
@@ -642,7 +692,15 @@ where
                                     inventory.held_item(),
                                     action.location,
                                 )
-                                .await?;
+                                .await? {
+                                    player_audit.log_block_break(
+                                        profile,
+                                        &play_dimension,
+                                        &destroyed.position,
+                                        destroyed.previous_state,
+                                        inventory.held_item().item_id.as_ref().map(|id| id.0),
+                                    );
+                                }
                             } else {
                                 pending_dig = begin_destroy_block(
                                     sink,
@@ -672,9 +730,10 @@ where
                             .await?;
                             pending_dig = None;
                             if can_destroy {
-                                destroy_block(
+                                let destroyed = destroy_block(
                                     sink,
                                     world,
+                                    world_rules,
                                     players,
                                     entities,
                                     plugins,
@@ -685,8 +744,18 @@ where
                                     action.location,
                                 )
                                 .await?;
-                                survival.apply_exhaustion(MINING_EXHAUSTION_PER_BLOCK);
-                                if !survival.is_dead() {
+                                let was_destroyed = destroyed.is_some();
+                                if let Some(destroyed) = destroyed {
+                                    player_audit.log_block_break(
+                                        profile,
+                                        &play_dimension,
+                                        &destroyed.position,
+                                        destroyed.previous_state,
+                                        inventory.held_item().item_id.as_ref().map(|id| id.0),
+                                    );
+                                    survival.apply_exhaustion(MINING_EXHAUSTION_PER_BLOCK);
+                                }
+                                if !survival.is_dead() && was_destroyed {
                                     collect_nearby_drops(
                                         sink,
                                         players,
@@ -729,7 +798,14 @@ where
                     let interact = crate::connection::decode_payload::<Interact>(&mut payload)?;
                     if !survival.is_dead() {
                         let outcome = lobby
-                            .handle_entity_interact(sink, entities, interact, &lobby_status)
+                            .handle_entity_interact(
+                                sink,
+                                entities,
+                                plugins,
+                                &session.player,
+                                interact,
+                                &lobby_status,
+                            )
                             .await?;
                         if outcome.opened_menu {
                             lobby_menu_open = true;
@@ -783,6 +859,7 @@ where
                         respawn_player(
                             sink,
                             world,
+                            world_rules,
                             players,
                             plugins,
                             world_config,
@@ -1052,15 +1129,22 @@ where
                 if packet_id == ChatCommand::ID {
                     let command = crate::connection::decode_payload::<ChatCommand>(&mut payload)?;
                     log::debug!("received chat command: /{}", command.command);
+                    player_audit.log_command(
+                        profile,
+                        &play_dimension,
+                        &format!("/{}", command.command),
+                    );
                     let outcome = handle_chat_command(
                         sink,
                         config,
                         world,
+                        world_rules,
                         players,
                         entities,
                         permissions,
                         plugins,
                         profile,
+                        session.player.entity_id,
                         &command.command,
                         &lobby,
                         &mut lobby_status,
@@ -1478,6 +1562,7 @@ where
 async fn respawn_player<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
@@ -1498,8 +1583,9 @@ where
 
     survival.respawn();
     *position = spawn_position(&world_config.spawn);
+    let dimension_rule = world_rules.snapshot(dimension);
     sink.send(Respawn {
-        dimension_type: VarInt(dimension_type_holder_id(&world_config.dimension_type)),
+        dimension_type: VarInt(dimension_type_holder_id(&dimension_rule.dimension_type)),
         dimension_name: dimension.to_string(),
         hashed_seed: 0,
         game_mode: world_config.game_mode.protocol_id(),
@@ -1529,7 +1615,7 @@ where
         flags: 0,
     })
     .await?;
-    send_respawn_player_state(sink, world_config, dimension, *position).await?;
+    send_respawn_player_state(sink, world_config, world_rules, dimension, *position).await?;
     sink.send(survival.health_packet()).await?;
     chunk_state
         .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
@@ -1542,6 +1628,7 @@ where
 async fn teleport_to_spawn<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
@@ -1571,7 +1658,7 @@ where
         flags: 0,
     })
     .await?;
-    send_respawn_player_state(sink, world_config, dimension, *position).await?;
+    send_respawn_player_state(sink, world_config, world_rules, dimension, *position).await?;
     chunk_state
         .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
         .await?;
@@ -1582,6 +1669,7 @@ where
 async fn place_held_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     world_config: &qexed_config::app::qexed::server::World,
     dimension: &str,
@@ -1589,7 +1677,7 @@ async fn place_held_block<W>(
     player_position: &EntityPosition,
     use_item_on: &UseItemOn,
     block_state: i32,
-) -> Result<bool>
+) -> Result<Vec<PlacedBlockChange>>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
@@ -1619,7 +1707,7 @@ where
             && player_intersects_block(player_position, &target))
     {
         send_block_rollback(sink, world, dimension, target).await?;
-        return Ok(false);
+        return Ok(Vec::new());
     }
 
     if let Some(upper_state) = crate::inventory::upper_half_block_state(block_state) {
@@ -1633,12 +1721,13 @@ where
         {
             send_block_rollback(sink, world, dimension, target).await?;
             send_block_rollback(sink, world, dimension, upper).await?;
-            return Ok(false);
+            return Ok(Vec::new());
         }
 
         let placed_lower = apply_block_change(
             sink,
             world,
+            world_rules,
             players,
             world_config,
             dimension,
@@ -1648,38 +1737,58 @@ where
         )
         .await?;
         if !placed_lower {
-            return Ok(false);
+            return Ok(Vec::new());
         }
-        apply_block_change(
+        let placed_upper = apply_block_change(
             sink,
             world,
+            world_rules,
             players,
             world_config,
             dimension,
             actor,
-            upper,
+            upper.clone(),
             upper_state,
         )
         .await?;
-        return Ok(true);
+        let mut placed = vec![PlacedBlockChange {
+            position: target,
+            block_state,
+        }];
+        if placed_upper {
+            placed.push(PlacedBlockChange {
+                position: upper,
+                block_state: upper_state,
+            });
+        }
+        return Ok(placed);
     }
 
-    apply_block_change(
+    let placed = apply_block_change(
         sink,
         world,
+        world_rules,
         players,
         world_config,
         dimension,
         actor,
-        target,
+        target.clone(),
         block_state,
     )
-    .await
+    .await?;
+    if !placed {
+        return Ok(Vec::new());
+    }
+    Ok(vec![PlacedBlockChange {
+        position: target,
+        block_state,
+    }])
 }
 
 async fn destroy_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
@@ -1688,7 +1797,7 @@ async fn destroy_block<W>(
     actor: uuid::Uuid,
     held_item: &qexed_protocol::types::Slot,
     position: BlockPosition,
-) -> Result<bool>
+) -> Result<Option<DestroyedBlockChange>>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
@@ -1697,7 +1806,7 @@ where
         .unwrap_or_else(crate::inventory::air_block_state);
     if crate::inventory::is_air_block_state(current) {
         send_block_rollback(sink, world, dimension, position).await?;
-        return Ok(false);
+        return Ok(None);
     }
 
     let paired_position = if crate::inventory::upper_half_block_state(current).is_some() {
@@ -1711,6 +1820,7 @@ where
     let destroyed = apply_block_change(
         sink,
         world,
+        world_rules,
         players,
         world_config,
         dimension,
@@ -1724,6 +1834,7 @@ where
             apply_block_change(
                 sink,
                 world,
+                world_rules,
                 players,
                 world_config,
                 dimension,
@@ -1746,8 +1857,12 @@ where
             &position,
         )
         .await?;
+        return Ok(Some(DestroyedBlockChange {
+            position,
+            previous_state: current,
+        }));
     }
-    Ok(destroyed)
+    Ok(None)
 }
 
 async fn drop_broken_block<W>(
@@ -1974,6 +2089,7 @@ where
 async fn apply_block_change<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     world_config: &qexed_config::app::qexed::server::World,
     dimension: &str,
@@ -1984,7 +2100,7 @@ async fn apply_block_change<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    if !can_modify_world(world_config, &position) {
+    if !can_modify_world_with_dimension_rules(world_config, world_rules, dimension, &position) {
         log::debug!(
             "blocked world edit: read_only={}, spawn_protection_radius={}, position=({}, {}, {})",
             world_config.read_only,
@@ -2003,7 +2119,13 @@ where
         block_state,
     ))
     .await?;
-    let light_update = if world.dynamic_light_enabled() {
+    let dimension_rule = world_rules.snapshot(dimension);
+    let light_update = if world.dynamic_light_enabled()
+        && matches!(
+            dimension_rule.light,
+            qexed_config::app::qexed::server::LightMode::Dynamic
+        )
+    {
         let update = world.light_update(
             dimension,
             position.x.div_euclid(16),
@@ -2016,6 +2138,19 @@ where
     };
     players.broadcast_block_changed(actor, position, block_state, light_update);
     Ok(true)
+}
+
+fn can_modify_world_with_dimension_rules(
+    world_config: &qexed_config::app::qexed::server::World,
+    world_rules: &crate::world::WorldRulesManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    if !can_modify_world(world_config, position) {
+        return false;
+    }
+    let rule = world_rules.snapshot(dimension);
+    !rule.read_only && rule.block_updates
 }
 
 async fn send_block_rollback<W>(
@@ -2124,6 +2259,18 @@ fn offset_position(position: &BlockPosition, dx: i32, dy: i32, dz: i32) -> Block
         y: position.y + dy,
         z: position.z + dz,
     }
+}
+
+#[derive(Debug, Clone)]
+struct PlacedBlockChange {
+    position: BlockPosition,
+    block_state: i32,
+}
+
+#[derive(Debug, Clone)]
+struct DestroyedBlockChange {
+    position: BlockPosition,
+    previous_state: i32,
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::OnceLock};
+use std::{collections::HashSet, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context, Result};
 use qexed_packet::net_types::VarInt;
@@ -156,31 +156,62 @@ pub fn command_tree_for(commands: &[&str]) -> Commands {
 }
 
 pub fn command_tree_for_lobby(commands: &[&str], server_ids: &[String]) -> Commands {
+    command_tree_for_lobby_with_extra(commands, server_ids, &[])
+}
+
+pub fn command_tree_for_lobby_with_extra(
+    commands: &[&str],
+    server_ids: &[String],
+    extra_literals: &[String],
+) -> Commands {
     let server_ids = server_command_literals(server_ids);
+    let extra_literals = server_command_literals(extra_literals);
     let mut nodes = vec![Node {
         flags: 0x00,
         children: Vec::new(),
         ..Node::default()
     }];
     for command in commands {
-        let index = nodes.len() as i32;
-        nodes[0].children.push(VarInt(index));
-        if *command == "lobby" {
+        let index = if *command == "lobby" {
+            let index = nodes.len() as i32;
             nodes.push(lobby_literal(index + 1, index + 2));
             nodes.push(executable_literal("status"));
             nodes.push(executable_literal("refresh"));
+            index
         } else if *command == "server" {
+            let index = nodes.len() as i32;
             nodes.push(server_literal(index + 1, index + 2, server_ids.len()));
-            nodes.push(greedy_string_argument("target"));
+            nodes.push(word_string_argument("target", true));
             for server_id in &server_ids {
                 nodes.push(executable_literal(server_id));
             }
-        } else if *command == "entity" || *command == "structure" {
-            nodes.push(greedy_command_literal(command, index + 1));
-            nodes.push(greedy_string_argument("action"));
+            index
+        } else if *command == "entity" {
+            append_entity_command_nodes(&mut nodes)
+        } else if *command == "structure" {
+            append_structure_command_nodes(&mut nodes)
         } else {
-            nodes.push(executable_literal(command));
+            let index = nodes.len() as i32;
+            nodes.push(literal_with_optional_greedy_argument(
+                command,
+                (nodes.len() + 1) as i32,
+            ));
+            nodes.push(greedy_string_argument("args"));
+            index
+        };
+        nodes[0].children.push(VarInt(index));
+    }
+    for literal in extra_literals {
+        if commands.contains(&literal.as_str()) {
+            continue;
         }
+        let index = nodes.len() as i32;
+        nodes.push(literal_with_optional_greedy_argument(
+            &literal,
+            (nodes.len() + 1) as i32,
+        ));
+        nodes.push(greedy_string_argument("args"));
+        nodes[0].children.push(VarInt(index));
     }
 
     Commands {
@@ -206,20 +237,40 @@ pub async fn visible_commands(
     profile: &qexed_packet::net_types::GameProfile,
 ) -> anyhow::Result<Vec<&'static str>> {
     let mut commands = Vec::new();
-    for command in [
-        "help",
-        "list",
-        "lobby",
-        "server",
-        "spawn",
-        "entity",
-        "structure",
-    ] {
+    let mut seen = HashSet::new();
+    for command in builtin_command_literals()
+        .iter()
+        .chain(vanilla_command_literals().iter())
+        .copied()
+    {
+        if !seen.insert(command) {
+            continue;
+        }
         if permissions.can_run_command(profile, command).await? {
             commands.push(command);
         }
     }
+    commands.sort_unstable();
     Ok(commands)
+}
+
+pub fn is_known_vanilla_command(command: &str) -> bool {
+    let command = command.trim().trim_start_matches('/').to_ascii_lowercase();
+    if command.is_empty() {
+        return false;
+    }
+    vanilla_command_literals()
+        .iter()
+        .any(|candidate| *candidate == command)
+}
+
+pub fn normalize_command_name(command: &str) -> String {
+    match command.trim().trim_start_matches('/').to_ascii_lowercase().as_str() {
+        "tp" => "teleport".to_string(),
+        "w" | "tell" => "msg".to_string(),
+        "xp" => "experience".to_string(),
+        name => name.to_string(),
+    }
 }
 
 pub fn permission_node(command: &str) -> Option<String> {
@@ -242,6 +293,15 @@ fn executable_literal(name: &str) -> Node {
     Node {
         flags: 0x01 | 0x04,
         children: Vec::new(),
+        name: Some(name.to_string()),
+        ..Node::default()
+    }
+}
+
+fn literal_with_optional_greedy_argument(name: &str, argument_index: i32) -> Node {
+    Node {
+        flags: 0x01 | 0x04,
+        children: vec![VarInt(argument_index)],
         name: Some(name.to_string()),
         ..Node::default()
     }
@@ -270,13 +330,135 @@ fn server_literal(argument_index: i32, literal_start_index: i32, literal_count: 
     }
 }
 
-fn greedy_command_literal(name: &str, argument_index: i32) -> Node {
-    Node {
+fn append_entity_command_nodes(nodes: &mut Vec<Node>) -> i32 {
+    let entity_index = nodes.len() as i32;
+    nodes.push(Node {
         flags: 0x01 | 0x04,
-        children: vec![VarInt(argument_index)],
-        name: Some(name.to_string()),
+        children: Vec::new(),
+        name: Some("entity".to_string()),
         ..Node::default()
-    }
+    });
+
+    let list_index = nodes.len() as i32;
+    nodes.push(executable_literal("list"));
+
+    let spawn_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("spawn".to_string()),
+        ..Node::default()
+    });
+
+    let move_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("move".to_string()),
+        ..Node::default()
+    });
+
+    let remove_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("remove".to_string()),
+        ..Node::default()
+    });
+
+    let spawn_entity_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("entity".to_string()),
+        ..Node::default()
+    });
+    let spawn_npc_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("npc".to_string()),
+        ..Node::default()
+    });
+    let spawn_hologram_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("hologram".to_string()),
+        ..Node::default()
+    });
+
+    let spawn_params_index = nodes.len() as i32;
+    nodes.push(greedy_string_argument("params"));
+
+    let move_id_index = nodes.len() as i32;
+    nodes.push(word_string_argument("id", true));
+    let remove_id_index = nodes.len() as i32;
+    nodes.push(word_string_argument("id", true));
+
+    nodes[entity_index as usize].children = vec![
+        VarInt(list_index),
+        VarInt(spawn_index),
+        VarInt(move_index),
+        VarInt(remove_index),
+    ];
+    nodes[spawn_index as usize].children = vec![
+        VarInt(spawn_entity_index),
+        VarInt(spawn_npc_index),
+        VarInt(spawn_hologram_index),
+    ];
+    nodes[move_index as usize].children = vec![VarInt(move_id_index)];
+    nodes[remove_index as usize].children = vec![VarInt(remove_id_index)];
+    nodes[spawn_entity_index as usize].children = vec![VarInt(spawn_params_index)];
+    nodes[spawn_npc_index as usize].children = vec![VarInt(spawn_params_index)];
+    nodes[spawn_hologram_index as usize].children = vec![VarInt(spawn_params_index)];
+
+    entity_index
+}
+
+fn append_structure_command_nodes(nodes: &mut Vec<Node>) -> i32 {
+    let structure_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("structure".to_string()),
+        ..Node::default()
+    });
+
+    let list_index = nodes.len() as i32;
+    nodes.push(executable_literal("list"));
+    let place_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("place".to_string()),
+        ..Node::default()
+    });
+    let locate_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("locate".to_string()),
+        ..Node::default()
+    });
+
+    let place_id_index = nodes.len() as i32;
+    nodes.push(word_string_argument("id", true));
+    let locate_id_index = nodes.len() as i32;
+    nodes.push(word_string_argument("id", true));
+    let place_position_index = nodes.len() as i32;
+    nodes.push(greedy_string_argument("position"));
+
+    nodes[structure_index as usize].children = vec![
+        VarInt(list_index),
+        VarInt(place_index),
+        VarInt(locate_index),
+    ];
+    nodes[place_index as usize].children = vec![VarInt(place_id_index)];
+    nodes[locate_index as usize].children = vec![VarInt(locate_id_index)];
+    nodes[place_id_index as usize].children = vec![VarInt(place_position_index)];
+
+    structure_index
 }
 
 fn greedy_string_argument(name: &str) -> Node {
@@ -287,6 +469,19 @@ fn greedy_string_argument(name: &str) -> Node {
         parser_id: Some(VarInt(5)),
         properties: Some(Varies::BrigadierString(BrigadierString {
             behavior: VarInt(2),
+        })),
+        ..Node::default()
+    }
+}
+
+fn word_string_argument(name: &str, executable: bool) -> Node {
+    Node {
+        flags: 0x02 | if executable { 0x04 } else { 0 },
+        children: Vec::new(),
+        name: Some(name.to_string()),
+        parser_id: Some(VarInt(5)),
+        properties: Some(Varies::BrigadierString(BrigadierString {
+            behavior: VarInt(0),
         })),
         ..Node::default()
     }
@@ -353,6 +548,101 @@ fn workspace_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn builtin_command_literals() -> &'static [&'static str] {
+    &["help", "list", "lobby", "server", "spawn", "entity", "structure"]
+}
+
+fn vanilla_command_literals() -> &'static [&'static str] {
+    // Source: Minecraft Java 1.21.4 command registry cross-checked against
+    // https://mappings.dev/1.21.4/net/minecraft/server/commands/index.html
+    // Snapshot date: 2026-05-28. Deprecated/testing/debug-only commands are excluded.
+    &[
+        "advancement",
+        "attribute",
+        "ban",
+        "ban-ip",
+        "banlist",
+        "bossbar",
+        "clear",
+        "clone",
+        "damage",
+        "data",
+        "datapack",
+        "debug",
+        "defaultgamemode",
+        "deop",
+        "difficulty",
+        "effect",
+        "enchant",
+        "execute",
+        "experience",
+        "fill",
+        "fillbiome",
+        "forceload",
+        "function",
+        "gamemode",
+        "gamerule",
+        "give",
+        "help",
+        "item",
+        "jfr",
+        "kick",
+        "kill",
+        "list",
+        "locate",
+        "loot",
+        "me",
+        "msg",
+        "op",
+        "pardon",
+        "pardon-ip",
+        "particle",
+        "perf",
+        "place",
+        "playsound",
+        "publish",
+        "random",
+        "recipe",
+        "reload",
+        "return",
+        "ride",
+        "rotate",
+        "save-all",
+        "save-off",
+        "save-on",
+        "say",
+        "schedule",
+        "scoreboard",
+        "seed",
+        "setblock",
+        "setidletimeout",
+        "setworldspawn",
+        "spawnpoint",
+        "spectate",
+        "spreadplayers",
+        "stop",
+        "stopsound",
+        "summon",
+        "tag",
+        "team",
+        "teammsg",
+        "teleport",
+        "tell",
+        "tellraw",
+        "tick",
+        "time",
+        "title",
+        "tm",
+        "tp",
+        "transfer",
+        "trigger",
+        "w",
+        "weather",
+        "whitelist",
+        "worldborder",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use qexed_packet::Packet;
@@ -361,18 +651,25 @@ mod tests {
     fn command_tree_contains_help_and_list() {
         let tree = super::command_tree();
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes.len(), 13);
-        assert_eq!(tree.nodes[1].name.as_deref(), Some("help"));
-        assert_eq!(tree.nodes[2].name.as_deref(), Some("list"));
-        assert_eq!(tree.nodes[3].name.as_deref(), Some("lobby"));
-        assert_eq!(tree.nodes[4].name.as_deref(), Some("status"));
-        assert_eq!(tree.nodes[5].name.as_deref(), Some("refresh"));
-        assert_eq!(tree.nodes[6].name.as_deref(), Some("server"));
-        assert_eq!(tree.nodes[7].name.as_deref(), Some("target"));
-        assert_eq!(tree.nodes[9].name.as_deref(), Some("entity"));
-        assert_eq!(tree.nodes[10].name.as_deref(), Some("action"));
-        assert_eq!(tree.nodes[11].name.as_deref(), Some("structure"));
-        assert_eq!(tree.nodes[12].name.as_deref(), Some("action"));
+        assert_eq!(tree.nodes[0].children.len(), 7);
+
+        let root_command_names = tree.nodes[0]
+            .children
+            .iter()
+            .map(|index| {
+                tree.nodes[index.0 as usize]
+                    .name
+                    .as_deref()
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        assert!(root_command_names.contains(&"help"));
+        assert!(root_command_names.contains(&"list"));
+        assert!(root_command_names.contains(&"lobby"));
+        assert!(root_command_names.contains(&"server"));
+        assert!(root_command_names.contains(&"spawn"));
+        assert!(root_command_names.contains(&"entity"));
+        assert!(root_command_names.contains(&"structure"));
 
         let mut buf = bytes::BytesMut::new();
         let mut writer = qexed_packet::PacketWriter::new(&mut buf);
@@ -442,29 +739,52 @@ mod tests {
     }
 
     #[test]
-    fn entity_command_accepts_greedy_action() {
+    fn entity_command_contains_subcommands() {
         let tree = super::command_tree_for(&["entity"]);
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes.len(), 3);
+        assert_eq!(tree.nodes.len(), 12);
         assert_eq!(tree.nodes[1].name.as_deref(), Some("entity"));
         assert_eq!(
             tree.nodes[1].children,
-            vec![qexed_packet::net_types::VarInt(2)]
+            vec![
+                qexed_packet::net_types::VarInt(2),
+                qexed_packet::net_types::VarInt(3),
+                qexed_packet::net_types::VarInt(4),
+                qexed_packet::net_types::VarInt(5),
+            ]
         );
-        assert_eq!(tree.nodes[2].name.as_deref(), Some("action"));
+        assert_eq!(tree.nodes[2].name.as_deref(), Some("list"));
+        assert_eq!(tree.nodes[3].name.as_deref(), Some("spawn"));
+        assert_eq!(tree.nodes[4].name.as_deref(), Some("move"));
+        assert_eq!(tree.nodes[5].name.as_deref(), Some("remove"));
+        assert_eq!(tree.nodes[6].name.as_deref(), Some("entity"));
+        assert_eq!(tree.nodes[7].name.as_deref(), Some("npc"));
+        assert_eq!(tree.nodes[8].name.as_deref(), Some("hologram"));
+        assert_eq!(tree.nodes[9].name.as_deref(), Some("params"));
+        assert_eq!(tree.nodes[10].name.as_deref(), Some("id"));
+        assert_eq!(tree.nodes[11].name.as_deref(), Some("id"));
     }
 
     #[test]
-    fn structure_command_accepts_greedy_action() {
+    fn structure_command_contains_subcommands() {
         let tree = super::command_tree_for(&["structure"]);
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes.len(), 3);
+        assert_eq!(tree.nodes.len(), 8);
         assert_eq!(tree.nodes[1].name.as_deref(), Some("structure"));
         assert_eq!(
             tree.nodes[1].children,
-            vec![qexed_packet::net_types::VarInt(2)]
+            vec![
+                qexed_packet::net_types::VarInt(2),
+                qexed_packet::net_types::VarInt(3),
+                qexed_packet::net_types::VarInt(4),
+            ]
         );
-        assert_eq!(tree.nodes[2].name.as_deref(), Some("action"));
+        assert_eq!(tree.nodes[2].name.as_deref(), Some("list"));
+        assert_eq!(tree.nodes[3].name.as_deref(), Some("place"));
+        assert_eq!(tree.nodes[4].name.as_deref(), Some("locate"));
+        assert_eq!(tree.nodes[5].name.as_deref(), Some("id"));
+        assert_eq!(tree.nodes[6].name.as_deref(), Some("id"));
+        assert_eq!(tree.nodes[7].name.as_deref(), Some("position"));
     }
 
     #[test]

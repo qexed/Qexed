@@ -2192,6 +2192,17 @@ where
         });
     }
 
+    let parent_paths = fields
+        .iter()
+        .filter_map(|field| field.path.rsplit_once('.').map(|(parent, _)| parent.to_string()))
+        .collect::<BTreeSet<_>>();
+    for field in &mut fields {
+        if field.value_type == "unknown" && parent_paths.contains(&field.path) {
+            // 这类字段通常是空数组（被 skip_serializing_if 省略）但存在子字段定义。
+            field.value_type = "array".to_string();
+        }
+    }
+
     fields.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(DocApp {
@@ -2282,7 +2293,11 @@ fn render_toml_object(values: &serde_json::Map<String, JsonValue>, prefix: &str)
                 sections.push(format!("[{section}]\n{body}"));
             }
         } else {
-            assignments.push(format!("{} = {}", quote_toml_key(key), render_toml_value(value)));
+            assignments.push(format!(
+                "{} = {}",
+                quote_toml_key(key),
+                render_toml_value(value)
+            ));
         }
     }
 
@@ -2311,7 +2326,9 @@ fn render_toml_value(value: &JsonValue) -> String {
             let entries = values
                 .iter()
                 .filter(|(_, value)| !value.is_null())
-                .map(|(key, value)| format!("{} = {}", quote_toml_key(key), render_toml_value(value)))
+                .map(|(key, value)| {
+                    format!("{} = {}", quote_toml_key(key), render_toml_value(value))
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{{ {entries} }}")
@@ -2688,7 +2705,10 @@ fn render_next_app_config_page(
     out.push_str("  ConfigFieldTable,\n");
     out.push_str("} from \"../../ConfigDocClient\";\n\n");
     out.push_str(&format!("export const configFields = {};\n\n", fields_json));
-    out.push_str(&format!("export const configDocs = {};\n\n", config_docs_json));
+    out.push_str(&format!(
+        "export const configDocs = {};\n\n",
+        config_docs_json
+    ));
     out.push_str(&format!("export const configLabels = {};\n\n", labels_json));
 
     out.push_str(&format!("# {}\n\n", app.name));
@@ -2805,7 +2825,8 @@ fn top_level_fields(app: &DocApp) -> Vec<&DocField> {
         .iter()
         .filter(|field| {
             !app.fields.iter().any(|candidate| {
-                is_complex_field(candidate) && field.path.starts_with(&format!("{}.", candidate.path))
+                is_complex_field(candidate)
+                    && field.path.starts_with(&format!("{}.", candidate.path))
             })
         })
         .collect()
@@ -3182,8 +3203,8 @@ fn escape_mdx_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, render_next_app_config_page,
-        write_assets, write_next_app_docs,
+        DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, Qexed, collect_app,
+        render_next_app_config_page, write_assets, write_next_app_docs,
     };
 
     fn temp_output_dir(name: &str) -> std::path::PathBuf {
@@ -3295,6 +3316,24 @@ mod tests {
         assert!(page.contains("fields={configFields}"));
 
         let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn qexed_doc_fields_include_entities_list_structure() -> anyhow::Result<()> {
+        let app = collect_app::<Qexed>("qexed", "qexed.toml", "zh-CN")?;
+        assert!(
+            app.fields
+                .iter()
+                .any(|field| field.path == "server.entities.list"),
+            "missing server.entities.list in doc fields"
+        );
+        assert!(
+            app.fields
+                .iter()
+                .any(|field| field.path == "server.entities.list.id"),
+            "missing server.entities.list.id in doc fields"
+        );
         Ok(())
     }
 }
