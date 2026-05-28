@@ -57,3 +57,24 @@ Your contribution will allow more players to run and manage Qexed servers in the
 cargo build --bin qexed
 cargo run
 ```
+
+### Cross Compile (cross)
+Qexed depends on GPU (`wgpu`/Vulkan backend) and OpenSSL. The repository provides a `Cross.toml` for common Linux targets.
+
+```sh
+cargo install cross --git https://github.com/cross-rs/cross
+cross build -p qexed --target x86_64-unknown-linux-gnu
+cross build -p qexed --target aarch64-unknown-linux-gnu
+```
+
+If the target machine may not have GPU support, keep CPU-only build (default):
+
+```sh
+cross build -p qexed --target x86_64-unknown-linux-musl
+```
+
+Enable GPU acceleration only when needed:
+
+```sh
+cross build -p qexed --target x86_64-unknown-linux-gnu --features gpu
+```

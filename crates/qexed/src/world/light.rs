@@ -9,8 +9,9 @@ use std::{collections::VecDeque, sync::Arc};
 
 use super::{
     AIR_BLOCK_STATE_ID, CHUNK_DAMPENING_LEN, LIGHT_SECTION_COUNT, MIN_LIGHT_SECTION_Y,
-    OVERWORLD_HEIGHT, PLAINS_BIOME_ID, SECTION_HEIGHT, WORLD_MAX_Y, WORLD_MIN_Y, gpu_light,
+    OVERWORLD_HEIGHT, PLAINS_BIOME_ID, SECTION_HEIGHT, WORLD_MAX_Y, WORLD_MIN_Y,
 };
+use super::gpu_light;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorldLightMode {
     Static,
