@@ -1639,6 +1639,10 @@ pub struct World {
     #[AutoDoc(key = "config.qexed.server.world.chunk_load_parallelism")]
     pub chunk_load_parallelism: usize,
 
+    #[serde(default = "default_chunk_update_delay_ms")]
+    #[AutoDoc(key = "config.qexed.server.world.chunk_update_delay_ms")]
+    pub chunk_update_delay_ms: u64,
+
     #[AutoDoc(key = "config.qexed.server.world.simulation_distance")]
     pub simulation_distance: i32,
 
@@ -1649,6 +1653,10 @@ pub struct World {
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.world.light_algorithm")]
     pub light_algorithm: LightAlgorithm,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks", sub)]
+    pub precompiled_chunks: PrecompiledChunks,
 
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.world.gpu", sub)]
@@ -1672,9 +1680,11 @@ impl Default for World {
             dimension_type: "minecraft:overworld".to_string(),
             view_distance: 3,
             chunk_load_parallelism: default_chunk_load_parallelism(),
+            chunk_update_delay_ms: default_chunk_update_delay_ms(),
             simulation_distance: 3,
             light: LightMode::default(),
             light_algorithm: LightAlgorithm::default(),
+            precompiled_chunks: PrecompiledChunks::default(),
             gpu: WorldGpu::default(),
             spawn: Spawn::default(),
         }
@@ -1758,9 +1768,11 @@ fn doc_contains_world_root_fields(doc: &toml_edit::DocumentMut) -> bool {
         "dimension_type",
         "view_distance",
         "chunk_load_parallelism",
+        "chunk_update_delay_ms",
         "simulation_distance",
         "light",
         "light_algorithm",
+        "precompiled_chunks",
         "gpu",
         "spawn",
     ]
@@ -1806,8 +1818,63 @@ fn default_chunk_load_parallelism() -> usize {
     4
 }
 
+fn default_chunk_update_delay_ms() -> u64 {
+    1000
+}
+
 fn default_spawn_protection_radius() -> i32 {
     16
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct PrecompiledChunks {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_precompiled_chunks_light")]
+    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.light")]
+    pub light: bool,
+
+    #[serde(default = "default_precompiled_chunks_max_cached_packets")]
+    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.max_cached_packets")]
+    pub max_cached_packets: usize,
+
+    #[serde(default = "default_precompiled_chunks_max_cached_packet_bytes")]
+    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.max_cached_packet_bytes")]
+    pub max_cached_packet_bytes: usize,
+
+    #[serde(default = "default_precompiled_chunks_block_state_cache_limit")]
+    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.block_state_cache_limit")]
+    pub block_state_cache_limit: usize,
+}
+
+impl Default for PrecompiledChunks {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            light: default_precompiled_chunks_light(),
+            max_cached_packets: default_precompiled_chunks_max_cached_packets(),
+            max_cached_packet_bytes: default_precompiled_chunks_max_cached_packet_bytes(),
+            block_state_cache_limit: default_precompiled_chunks_block_state_cache_limit(),
+        }
+    }
+}
+
+fn default_precompiled_chunks_light() -> bool {
+    true
+}
+
+fn default_precompiled_chunks_max_cached_packets() -> usize {
+    256
+}
+
+fn default_precompiled_chunks_max_cached_packet_bytes() -> usize {
+    16 * 1024 * 1024
+}
+
+fn default_precompiled_chunks_block_state_cache_limit() -> usize {
+    65_536
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -2117,7 +2184,7 @@ mod tests {
         ContentFilter, ContentFilterEngine, EntityKind, ForwardingMode, GameMode,
         GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
         LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerAudit, PlayerAuditStorage,
-        PlayerData, PlayerDataEngine, PlayerMessages, ResourcePack,
+        PlayerData, PlayerDataEngine, PlayerMessages, PrecompiledChunks, ResourcePack,
         ResourcePackObjectStorageProvider, ResourcePackSource, Server, World, WorldGenerator,
     };
 
@@ -2254,6 +2321,13 @@ simulation_distance = 3
 light = "static"
 light_algorithm = "fast"
 
+[precompiled_chunks]
+enable = true
+light = false
+max_cached_packets = 128
+max_cached_packet_bytes = 8388608
+block_state_cache_limit = 4096
+
 [spawn]
 x = 0.0
 y = 0.0
@@ -2268,6 +2342,16 @@ pitch = 0.0
         assert_eq!(world.generator, WorldGenerator::VanillaFlat);
         assert_eq!(world.generator_preset, "minecraft:classic_flat");
         assert_eq!(world.seed, 12345);
+        assert_eq!(
+            world.precompiled_chunks,
+            PrecompiledChunks {
+                enable: true,
+                light: false,
+                max_cached_packets: 128,
+                max_cached_packet_bytes: 8_388_608,
+                block_state_cache_limit: 4096,
+            }
+        );
     }
 
     #[test]

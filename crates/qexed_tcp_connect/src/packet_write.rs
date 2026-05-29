@@ -24,6 +24,19 @@ pub struct PacketSend {
     compression_threshold: i32,
 }
 
+impl PacketSink<tokio::io::Sink> {
+    pub fn encode_payload_frame_with_threshold<B: AsRef<[u8]>>(
+        payload: B,
+        compression_threshold: Option<i32>,
+    ) -> Result<Bytes, PacketWriteError> {
+        let mut sink = PacketSink::new(tokio::io::sink());
+        if let Some(threshold) = compression_threshold {
+            sink.set_compression_threshold(threshold);
+        }
+        sink.encode_payload_frame(payload)
+    }
+}
+
 impl<W: AsyncWrite + Unpin> PacketSink<W> {
     pub fn new(writer: W) -> Self {
         Self {
@@ -54,6 +67,10 @@ impl<W: AsyncWrite + Unpin> PacketSink<W> {
 
     pub fn is_compression_enabled(&self) -> bool {
         self.compression_threshold.is_some()
+    }
+
+    pub fn compression_threshold(&self) -> Option<i32> {
+        self.compression_threshold
     }
 
     pub fn enable_encryption(&mut self, shared_secret: &[u8]) -> Result<(), PacketWriteError> {
@@ -110,12 +127,27 @@ impl<W: AsyncWrite + Unpin> PacketSink<W> {
 
     pub async fn send_raw<B: AsRef<[u8]>>(&mut self, payload: B) -> Result<(), PacketWriteError> {
         let frame = self.encode_frame(payload.as_ref())?;
+        self.send_encoded_frame(frame).await
+    }
+
+    pub async fn send_encoded_frame<B: AsRef<[u8]>>(
+        &mut self,
+        frame: B,
+    ) -> Result<(), PacketWriteError> {
+        let frame = BytesMut::from(frame.as_ref());
         let frame = self.encrypt_frame(&frame)?;
         self.writer
             .write_all(&frame)
             .await
             .map_err(PacketWriteError::OtherError)?;
         Ok(())
+    }
+
+    pub fn encode_payload_frame<B: AsRef<[u8]>>(
+        &self,
+        payload: B,
+    ) -> Result<Bytes, PacketWriteError> {
+        Ok(self.encode_frame(payload.as_ref())?.freeze())
     }
 
     pub async fn flush(&mut self) -> Result<(), PacketWriteError> {

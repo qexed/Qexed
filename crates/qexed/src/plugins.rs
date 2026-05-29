@@ -1,7 +1,7 @@
 use std::{
     fs,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -32,60 +32,107 @@ use payload::{
 use crate::players::OnlinePlayer;
 
 pub struct PluginManager {
-    plugins: Mutex<Vec<PluginInstance>>,
+    plugins: OnceLock<Mutex<Vec<PluginInstance>>>,
+    initialized: Mutex<bool>,
+    path: std::path::PathBuf,
 }
 
 impl PluginManager {
     pub fn load_default() -> Self {
-        Self::load_from_dir(PLUGIN_DIR)
+        Self::from_dir(PLUGIN_DIR)
+    }
+
+    pub fn from_dir(path: impl AsRef<Path>) -> Self {
+        Self {
+            plugins: OnceLock::new(),
+            initialized: Mutex::new(false),
+            path: path.as_ref().to_path_buf(),
+        }
     }
 
     pub fn load_from_dir(path: impl AsRef<Path>) -> Self {
-        let path = path.as_ref();
-        if let Err(err) = fs::create_dir_all(path) {
-            log::warn!(
-                "plugin directory create failed: path={}, error={err}",
-                path.display()
-            );
-            return Self::empty();
-        }
-
-        let engine = Engine::default();
-        let services = Arc::new(host::PluginHostServices::default());
-        let mut plugins = plugin_files(path)
-            .into_iter()
-            .filter_map(
-                |file| match PluginInstance::load(&engine, file, services.clone()) {
-                    Ok(plugin) => Some(plugin),
-                    Err(err) => {
-                        log::warn!("WASM plugin load failed: {err:#}");
-                        None
-                    }
-                },
-            )
-            .collect::<Vec<_>>();
-
-        plugins.sort_by(|left, right| {
-            right
-                .priority
-                .cmp(&left.priority)
-                .then_with(|| left.name.cmp(&right.name))
-        });
-
-        if !plugins.is_empty() {
-            let summary = plugins
-                .iter()
-                .map(|plugin| format!("{}({})", plugin.name, plugin.priority))
-                .collect::<Vec<_>>()
-                .join(", ");
-            log::info!("loaded WASM plugins: {summary}");
-        }
-
-        Self {
-            plugins: Mutex::new(plugins),
-        }
+        let manager = Self::from_dir(path);
+        manager.ensure_loaded();
+        manager
     }
 
+    pub fn ensure_initialized(&self, language: &str) -> bool {
+        let mut initialized = self
+            .initialized
+            .lock()
+            .expect("plugin manager initialization state poisoned");
+        if *initialized {
+            return false;
+        }
+        self.ensure_loaded();
+        self.emit_init();
+        self.emit_config_reload("config/qexed.toml");
+        self.emit_language_change(language);
+        *initialized = true;
+        true
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.plugins.get().is_some()
+    }
+
+    pub fn plugin_count(&self) -> usize {
+        self.plugins
+            .get()
+            .map(|plugins| plugins.lock().expect("plugin manager poisoned").len())
+            .unwrap_or(0)
+    }
+
+    fn ensure_loaded(&self) -> &Mutex<Vec<PluginInstance>> {
+        self.plugins
+            .get_or_init(|| Mutex::new(load_plugins(&self.path)))
+    }
+}
+
+fn load_plugins(path: &Path) -> Vec<PluginInstance> {
+    if let Err(err) = fs::create_dir_all(path) {
+        log::warn!(
+            "plugin directory create failed: path={}, error={err}",
+            path.display()
+        );
+        return Vec::new();
+    }
+
+    let engine = Engine::default();
+    let services = Arc::new(host::PluginHostServices::default());
+    let mut plugins = plugin_files(path)
+        .into_iter()
+        .filter_map(
+            |file| match PluginInstance::load(&engine, file, services.clone()) {
+                Ok(plugin) => Some(plugin),
+                Err(err) => {
+                    log::warn!("WASM plugin load failed: {err:#}");
+                    None
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    plugins.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+
+    if !plugins.is_empty() {
+        let summary = plugins
+            .iter()
+            .map(|plugin| format!("{}({})", plugin.name, plugin.priority))
+            .collect::<Vec<_>>()
+            .join(", ");
+        log::info!("loaded WASM plugins: {summary}");
+    }
+
+    plugins
+}
+
+impl PluginManager {
     pub fn emit_init(&self) {
         self.emit_empty(PluginEvent::Init);
     }
@@ -346,7 +393,10 @@ impl PluginManager {
             handled: false,
             actions: Vec::new(),
         };
-        let mut plugins = self.plugins.lock().expect("plugin manager poisoned");
+        let mut plugins = self
+            .ensure_loaded()
+            .lock()
+            .expect("plugin manager poisoned");
         for plugin in plugins.iter_mut() {
             let response = match plugin.call_event_or_query(PluginEvent::NpcInteract, &payload) {
                 Ok(Some(response)) => response,
@@ -379,8 +429,12 @@ impl PluginManager {
     }
 
     fn empty() -> Self {
+        let plugins = OnceLock::new();
+        let _ = plugins.set(Mutex::new(Vec::new()));
         Self {
-            plugins: Mutex::new(Vec::new()),
+            plugins,
+            initialized: Mutex::new(true),
+            path: std::path::PathBuf::new(),
         }
     }
 
@@ -400,7 +454,10 @@ impl PluginManager {
     }
 
     fn emit(&self, event: PluginEvent, payload: &[u8]) {
-        let mut plugins = self.plugins.lock().expect("plugin manager poisoned");
+        let mut plugins = self
+            .ensure_loaded()
+            .lock()
+            .expect("plugin manager poisoned");
         for plugin in plugins.iter_mut() {
             if let Err(err) = plugin.call_event(event, payload) {
                 log::warn!(
@@ -423,7 +480,10 @@ impl PluginManager {
                 return Vec::new();
             }
         };
-        let mut plugins = self.plugins.lock().expect("plugin manager poisoned");
+        let mut plugins = self
+            .ensure_loaded()
+            .lock()
+            .expect("plugin manager poisoned");
         let mut responses = Vec::new();
         for plugin in plugins.iter_mut() {
             let response = match plugin.call_query(event, &payload) {

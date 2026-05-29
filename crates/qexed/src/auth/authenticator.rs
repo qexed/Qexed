@@ -5,6 +5,7 @@ use openssl::{
     rsa::{Padding, Rsa},
     sign::Verifier,
 };
+use std::sync::{Arc, Mutex};
 
 use super::{
     AuthenticatedProfile,
@@ -16,33 +17,25 @@ const SESSION_SERVER_URL: &str = "https://sessionserver.mojang.com/session/minec
 const SERVICES_PUBLIC_KEYS_URL: &str = "https://api.minecraftservices.com/publickeys";
 const SERVER_ID: &str = "";
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Authenticator {
+    inner: Arc<Mutex<Option<Arc<AuthenticatorInner>>>>,
+}
+
+struct AuthenticatorInner {
     public_key_der: Vec<u8>,
-    private_key: std::sync::Arc<Rsa<Private>>,
+    private_key: Rsa<Private>,
     http: reqwest::Client,
-    service_public_keys: std::sync::Arc<tokio::sync::RwLock<Option<Vec<PKey<Public>>>>>,
+    service_public_keys: tokio::sync::RwLock<Option<Vec<PKey<Public>>>>,
 }
 
 impl Authenticator {
     pub fn new() -> anyhow::Result<Self> {
-        let private_key = Rsa::generate(1024)?;
-        let public_key_der = private_key.public_key_to_der()?;
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .user_agent(concat!("qexed/", env!("CARGO_PKG_VERSION")))
-            .build()?;
-
-        Ok(Self {
-            public_key_der,
-            private_key: std::sync::Arc::new(private_key),
-            http,
-            service_public_keys: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-        })
+        Ok(Self::default())
     }
 
-    pub fn public_key_der(&self) -> &[u8] {
-        &self.public_key_der
+    pub fn public_key_der(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(self.inner()?.public_key_der.clone())
     }
 
     pub fn decrypt_login_key(
@@ -50,8 +43,9 @@ impl Authenticator {
         key_packet: &qexed_protocol::to_server::login::encryption_begin::EncryptionBegin,
         expected_verify_token: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let shared_secret = self.decrypt_rsa(&key_packet.shared_secret.0)?;
-        let verify_token = self.decrypt_rsa(&key_packet.verify_token.0)?;
+        let inner = self.inner()?;
+        let shared_secret = inner.decrypt_rsa(&key_packet.shared_secret.0)?;
+        let verify_token = inner.decrypt_rsa(&key_packet.verify_token.0)?;
 
         if verify_token != expected_verify_token {
             anyhow::bail!("登录验证 token 不匹配");
@@ -70,8 +64,9 @@ impl Authenticator {
         shared_secret: &[u8],
         remote_ip: Option<std::net::IpAddr>,
     ) -> anyhow::Result<AuthenticatedProfile> {
-        let digest = minecraft_server_hash(SERVER_ID, shared_secret, &self.public_key_der);
-        let mut request = self
+        let inner = self.inner()?;
+        let digest = minecraft_server_hash(SERVER_ID, shared_secret, &inner.public_key_der);
+        let mut request = inner
             .http
             .get(SESSION_SERVER_URL)
             .query(&[("username", username), ("serverId", digest.as_str())]);
@@ -121,16 +116,17 @@ impl Authenticator {
     }
 
     async fn service_public_keys(&self) -> anyhow::Result<Vec<PKey<Public>>> {
-        if let Some(keys) = self.service_public_keys.read().await.as_ref() {
+        let inner = self.inner()?;
+        if let Some(keys) = inner.service_public_keys.read().await.as_ref() {
             return Ok(keys.clone());
         }
 
-        let mut guard = self.service_public_keys.write().await;
+        let mut guard = inner.service_public_keys.write().await;
         if let Some(keys) = guard.as_ref() {
             return Ok(keys.clone());
         }
 
-        let response = self.http.get(SERVICES_PUBLIC_KEYS_URL).send().await?;
+        let response = inner.http.get(SERVICES_PUBLIC_KEYS_URL).send().await?;
         if !response.status().is_success() {
             anyhow::bail!("Mojang publickeys 服务返回异常状态: {}", response.status());
         }
@@ -154,6 +150,38 @@ impl Authenticator {
 
         *guard = Some(keys.clone());
         Ok(keys)
+    }
+
+    fn inner(&self) -> anyhow::Result<Arc<AuthenticatorInner>> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("authenticator state poisoned"))?;
+        if let Some(inner) = inner.as_ref() {
+            return Ok(inner.clone());
+        }
+
+        let created = Arc::new(AuthenticatorInner::new()?);
+        *inner = Some(created.clone());
+        Ok(created)
+    }
+}
+
+impl AuthenticatorInner {
+    fn new() -> anyhow::Result<Self> {
+        let private_key = Rsa::generate(1024)?;
+        let public_key_der = private_key.public_key_to_der()?;
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent(concat!("qexed/", env!("CARGO_PKG_VERSION")))
+            .build()?;
+
+        Ok(Self {
+            public_key_der,
+            private_key,
+            http,
+            service_public_keys: tokio::sync::RwLock::new(None),
+        })
     }
 
     fn decrypt_rsa(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {

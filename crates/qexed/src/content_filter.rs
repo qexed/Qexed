@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct ContentFilter {
     config: ContentFilterConfig,
     words: Vec<String>,
-    client: reqwest::Client,
+    client: Option<reqwest::Client>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,9 +26,13 @@ impl ContentFilter {
         words.dedup();
 
         Ok(Self {
+            client: if config.enable && config.engine == ContentFilterEngine::Api {
+                Some(reqwest::Client::new())
+            } else {
+                None
+            },
             config: config.clone(),
             words,
-            client: reqwest::Client::new(),
         })
     }
 
@@ -71,8 +75,11 @@ impl ContentFilter {
             return Ok(FilterAction::Allow(message.to_string()));
         }
 
-        let mut request = self
-            .client
+        let Some(client) = self.client.as_ref() else {
+            return Ok(FilterAction::Allow(message.to_string()));
+        };
+
+        let mut request = client
             .post(&self.config.api_url)
             .json(&ApiRequest { text: message });
         if !self.config.api_token.trim().is_empty() {

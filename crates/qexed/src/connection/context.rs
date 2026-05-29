@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::auth::Authenticator;
 
@@ -17,6 +17,7 @@ pub struct ServerContext {
     pub content_filter: Arc<crate::content_filter::ContentFilter>,
     pub resource_pack: Arc<crate::resource_pack::ResourcePackManager>,
     pub code_of_conducts: Arc<crate::code_of_conduct::CodeOfConductTexts>,
+    plugin_startup_applied: Arc<OnceLock<()>>,
 }
 
 impl ServerContext {
@@ -34,9 +35,6 @@ impl ServerContext {
     ) -> anyhow::Result<Self> {
         let config = config.into();
         let plugins = Arc::new(crate::plugins::PluginManager::load_default());
-        plugins.emit_init();
-        plugins.emit_config_reload("config/qexed.toml");
-        plugins.emit_language_change(&config.language);
 
         let world_generator = crate::world::generator::from_config(&config.world);
         let world_rules = crate::world::WorldRulesManager::from_world_config(&config.world)?;
@@ -47,7 +45,10 @@ impl ServerContext {
             crate::world::light_gpu_from_config(&config.world.gpu),
             config.world.read_only,
             world_generator,
-        );
+        )
+        .with_precompiled_chunks(crate::world::PrecompiledChunkSettings::from(
+            &config.world.precompiled_chunks,
+        ));
         world.ensure_storage(&config.world.dimension)?;
         let player_data = crate::player_data::PlayerDataManager::from_config(
             config.world.path.clone(),
@@ -67,12 +68,6 @@ impl ServerContext {
             entity_ids.clone(),
         )
         .await?;
-        apply_plugin_npc_mutations(
-            &config.server.entity_rendering,
-            &plugins,
-            &players,
-            &entities,
-        );
         let mut resource_pack =
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
                 .await?;
@@ -95,7 +90,20 @@ impl ServerContext {
             content_filter: Arc::new(content_filter),
             resource_pack: Arc::new(resource_pack),
             code_of_conducts: Arc::new(code_of_conducts),
+            plugin_startup_applied: Arc::new(OnceLock::new()),
         })
+    }
+
+    pub fn ensure_plugins_initialized(&self) {
+        self.plugin_startup_applied.get_or_init(|| {
+            self.plugins.ensure_initialized(&self.config.language);
+            apply_plugin_npc_mutations(
+                &self.config.server.entity_rendering,
+                &self.plugins,
+                &self.players,
+                &self.entities,
+            );
+        });
     }
 }
 

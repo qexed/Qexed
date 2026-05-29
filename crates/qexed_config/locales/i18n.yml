@@ -187,6 +187,9 @@ config:
         chunk_load_parallelism:
           en: "Maximum number of chunk build tasks per player"
           zh-CN: "每名玩家同时构建区块的最大任务数"
+        chunk_update_delay_ms:
+          en: "Delay in milliseconds before applying chunk center updates after player movement. If the player remains in the first neighbor ring, only the new edge chunks and delayed unload chunks are processed."
+          zh-CN: "玩家移动后延迟应用区块中心更新的毫秒数。若延迟后玩家仍在原区块第一圈 8 邻域内，只处理新增边缘区块和延迟卸载区块。"
         simulation_distance:
           en: "Initial simulation distance"
           zh-CN: "初始模拟距离"
@@ -196,6 +199,24 @@ config:
         light_algorithm:
           en: "World lighting calculation algorithm: fast or ray_trace"
           zh-CN: "世界光照计算算法：fast 或 ray_trace"
+        precompiled_chunks:
+          en: "Precompiled chunk packet cache. Recommended for read-only worlds because it reuses encoded chunk packets instead of rebuilding complete chunk objects for every player."
+          zh-CN: "预编译区块数据包缓存。只读世界推荐启用，它会复用已编码的区块数据包，避免为每个玩家重复构建完整区块对象。"
+          enable:
+            en: "Enable precompiled chunk packets. Read-only worlds benefit most; writable worlds invalidate affected chunk packets when blocks change."
+            zh-CN: "启用预编译区块数据包。只读世界收益最大；可写世界在方块变更时会失效受影响区块的数据包。"
+          light:
+            en: "Include lighting data in precompiled packets. Disable this when dynamic lighting or externally refreshed lighting should be rebuilt separately."
+            zh-CN: "将光照数据也纳入预编译数据包。动态光照或需要外部刷新光照时可关闭，让光照单独重建。"
+          max_cached_packets:
+            en: "Maximum number of precompiled chunk packets kept in memory. 0 disables the packet-count limit."
+            zh-CN: "内存中保留的最大预编译区块数据包数量。0 表示不限制。"
+          max_cached_packet_bytes:
+            en: "Maximum total bytes used by precompiled chunk packet cache. 0 disables the byte limit. Keep this conservative for worlds where players can travel far."
+            zh-CN: "预编译区块数据包缓存可使用的最大总字节数。0 表示不限制字节数。玩家可以跑图的世界应将此值设得保守。"
+          block_state_cache_limit:
+            en: "Maximum number of individual block states retained for plugin queries when full chunk objects are not kept. 0 disables the block-state query cache."
+            zh-CN: "不保留完整区块对象时，为插件查询保留的单方块状态数量上限。0 表示关闭方块状态查询缓存。"
         gpu:
           en: "Experimental GPU calculation settings for world lighting and vanilla_noise post-processing. Unavailable GPU falls back to CPU."
           zh-CN: "世界光照与 vanilla_noise 后处理 GPU 计算设置（实验性）。GPU 不可用时回退 CPU。"

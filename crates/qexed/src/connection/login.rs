@@ -64,6 +64,7 @@ where
 
     read_expected_packet::<LoginAcknowledged, _>(packets).await?;
     let client_locale = handle_configuration(packets, sink, context, &login.login_host).await?;
+    context.ensure_plugins_initialized();
     crate::play::initialize(
         packets,
         sink,
@@ -198,7 +199,7 @@ where
     let verify_token = random_verify_token();
     sink.send(to_client::login::encryption_begin::EncryptionBegin {
         server_id: String::new(),
-        public_key: context.authenticator.public_key_der().to_vec().into(),
+        public_key: context.authenticator.public_key_der()?.into(),
         verify_token: verify_token.clone().into(),
         should_authenticate: true,
     })

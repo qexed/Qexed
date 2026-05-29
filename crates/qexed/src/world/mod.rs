@@ -60,7 +60,7 @@ pub(crate) use light::{
     sky_light_from_neighbourhood, write_empty_section, write_fixed_long_array,
 };
 pub use light::{WorldLightAlgorithm, WorldLightMode, light_gpu_from_config};
-pub use manager::{WorldManager, WorldSession};
+pub use manager::{PrecompiledChunkSettings, WorldManager, WorldSession};
 pub use rules::WorldRulesManager;
 
 const OVERWORLD_HEIGHT: i32 = 384;

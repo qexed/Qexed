@@ -88,6 +88,13 @@ const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
 const PLAYER_ACTION_STOP_DESTROY_BLOCK: i32 = 2;
 const PLAYER_ACTION_DROP_ITEM_STACK: i32 = 3;
 const PLAYER_ACTION_DROP_ITEM: i32 = 4;
+
+fn pending_chunk_center_update_sleep(chunk_state: &ChunkSendState) -> tokio::time::Sleep {
+    let deadline = chunk_state
+        .pending_center_update_deadline()
+        .unwrap_or_else(Instant::now);
+    tokio::time::sleep_until(tokio::time::Instant::from_std(deadline))
+}
 const PLAYER_HEIGHT_BLOCKS: f64 = 1.8;
 
 pub async fn initialize<R, W>(
@@ -243,13 +250,14 @@ where
     })
     .await?;
 
-    let chunk_state = ChunkSendState::new(
+    let mut chunk_state = ChunkSendState::new(
         play_dimension.clone(),
         spawn_chunk_x,
         spawn_chunk_z,
         view_distance,
         chunk_load_parallelism,
     );
+    chunk_state.set_center_update_delay(Duration::from_millis(world_config.chunk_update_delay_ms));
     sink.flush().await?;
 
     let result = wait_for_play_packets(
@@ -405,7 +413,7 @@ where
     chunk_state
         .send_center_chunk_first(sink, world, plugins)
         .await?;
-    chunk_state.start_next_chunk_load(world, Some(&chunk_sender));
+    chunk_state.start_next_chunk_load(world, Some(&chunk_sender), sink.compression_threshold());
 
     let result: Result<()> = async {
         loop {
@@ -416,7 +424,7 @@ where
                 };
                 chunk_state
                     .queue_loaded_chunk(loaded_chunk);
-                chunk_state.start_next_chunk_load(world, Some(&chunk_sender));
+                chunk_state.start_next_chunk_load(world, Some(&chunk_sender), sink.compression_threshold());
                 chunk_state
                     .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
                     .await?;
@@ -432,6 +440,14 @@ where
                     .await?;
                 if unloaded > 0 {
                     log::debug!("delayed chunk unload completed: count={unloaded}");
+                }
+            }
+            _ = pending_chunk_center_update_sleep(&chunk_state), if chunk_state.has_pending_center_update() => {
+                if chunk_state
+                    .apply_due_center_update(sink, &chunk_sender, world, position.x, position.z)
+                    .await?
+                {
+                    log::debug!("delayed chunk center update applied");
                 }
             }
             _ = survival_tick.tick() => {

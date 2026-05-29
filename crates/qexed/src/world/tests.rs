@@ -290,6 +290,27 @@ fn world_manager_caches_loaded_region_chunks() {
     assert_eq!(manager.cached_region_chunk_count(), 1);
 }
 
+#[test]
+fn precompiled_world_write_does_not_cache_full_region_chunk() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager =
+        WorldManager::new(dir.path()).with_precompiled_chunks(super::PrecompiledChunkSettings {
+            enable: true,
+            ..Default::default()
+        });
+
+    manager
+        .write_region_chunk(
+            "minecraft:overworld",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"chunk").unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(manager.cached_region_chunk_count(), 0);
+}
+
 #[derive(Debug)]
 struct CachedGeneratedChunkGenerator {
     position: qexed_packet::net_types::Position,
@@ -558,8 +579,339 @@ fn read_only_world_rejects_region_writes_and_block_changes() {
 }
 
 #[test]
+fn precompiled_read_only_world_skips_full_region_chunk_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::with_generator(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        true,
+        Arc::new(generator::VanillaFlatGenerator::from_preset(
+            "minecraft:classic_flat",
+        )),
+    )
+    .with_precompiled_chunks(super::PrecompiledChunkSettings {
+        enable: true,
+        ..Default::default()
+    });
+    let grass = super::chunk_nbt::default_block_state_id("minecraft:grass_block");
+    let position = qexed_packet::net_types::Position {
+        x: 0,
+        y: super::WORLD_MIN_Y + 3,
+        z: 0,
+    };
+
+    let chunk = manager.network_chunk("minecraft:overworld", 0, 0).unwrap();
+    let payload =
+        qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk).unwrap();
+    let frame =
+        qexed_tcp_connect::PacketSink::<tokio::io::Sink>::encode_payload_frame_with_threshold(
+            payload,
+            Some(256),
+        )
+        .unwrap();
+    manager.remember_precompiled_chunk_frame("minecraft:overworld", 0, 0, frame.clone(), Some(256));
+
+    assert_eq!(manager.cached_region_chunk_count(), 0);
+    assert_eq!(manager.cached_precompiled_chunk_count(), 1);
+    assert_eq!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                0,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap(),
+        Some(frame)
+    );
+    assert_eq!(
+        manager.block_state_at("minecraft:overworld", &position),
+        Some(grass)
+    );
+    assert_eq!(manager.cached_block_state_count(), 1);
+}
+
+#[test]
+fn block_change_invalidates_precompiled_chunk_packet_and_block_state_cache() {
+    let world_file = tempfile::NamedTempFile::new().unwrap();
+    let manager = WorldManager::with_generator(
+        world_file.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        false,
+        Arc::new(generator::VanillaFlatGenerator::from_preset(
+            "minecraft:classic_flat",
+        )),
+    )
+    .with_precompiled_chunks(super::PrecompiledChunkSettings {
+        enable: true,
+        ..Default::default()
+    });
+    let position = qexed_packet::net_types::Position {
+        x: 0,
+        y: super::WORLD_MIN_Y + 3,
+        z: 0,
+    };
+
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        0,
+        0,
+        bytes::Bytes::from_static(b"cached"),
+        Some(256),
+    );
+    assert!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                0,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        manager
+            .block_state_at("minecraft:overworld", &position)
+            .is_some()
+    );
+
+    manager
+        .place_blocks("minecraft:overworld", [(position.clone(), 1)])
+        .unwrap();
+
+    assert!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                0,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        manager.dirty_chunk_sections("minecraft:overworld", 0, 0),
+        vec![position.y.div_euclid(16)]
+    );
+    assert_eq!(manager.cached_block_state_count(), 0);
+}
+
+#[test]
+fn dirty_precompiled_chunk_is_not_recached_before_persist_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::with_generator(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        false,
+        Arc::new(generator::VanillaFlatGenerator::from_preset(
+            "minecraft:classic_flat",
+        )),
+    )
+    .with_precompiled_chunks(super::PrecompiledChunkSettings {
+        enable: true,
+        ..Default::default()
+    });
+    let position = qexed_packet::net_types::Position {
+        x: 0,
+        y: super::WORLD_MIN_Y + 3,
+        z: 0,
+    };
+
+    manager.mark_precompiled_chunk_dirty("minecraft:overworld", &position);
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        0,
+        0,
+        bytes::Bytes::from_static(b"stale"),
+        Some(256),
+    );
+
+    assert_eq!(manager.cached_precompiled_chunk_count(), 0);
+    assert_eq!(
+        manager.dirty_chunk_sections("minecraft:overworld", 0, 0),
+        vec![position.y.div_euclid(16)]
+    );
+}
+
+#[test]
+fn precompiled_chunk_cache_respects_byte_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager =
+        WorldManager::new(dir.path()).with_precompiled_chunks(super::PrecompiledChunkSettings {
+            enable: true,
+            max_cached_packets: 0,
+            max_cached_packet_bytes: 10,
+            ..Default::default()
+        });
+
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        0,
+        0,
+        bytes::Bytes::from_static(b"12345"),
+        Some(256),
+    );
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        1,
+        0,
+        bytes::Bytes::from_static(b"1234567890"),
+        Some(256),
+    );
+
+    assert_eq!(manager.cached_precompiled_chunk_count(), 1);
+    assert_eq!(manager.cached_precompiled_chunk_bytes(), 10);
+    assert!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                0,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                1,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap()
+            .is_some()
+    );
+
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        2,
+        0,
+        bytes::Bytes::from_static(b"too large for this budget"),
+        Some(256),
+    );
+    assert_eq!(manager.cached_precompiled_chunk_count(), 1);
+    assert_eq!(manager.cached_precompiled_chunk_bytes(), 10);
+}
+
+#[test]
+fn precompiled_chunk_cache_keeps_compression_threshold_specific_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager =
+        WorldManager::new(dir.path()).with_precompiled_chunks(super::PrecompiledChunkSettings {
+            enable: true,
+            max_cached_packets: 0,
+            max_cached_packet_bytes: 32,
+            ..Default::default()
+        });
+
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        0,
+        0,
+        bytes::Bytes::from_static(b"plain-frame"),
+        None,
+    );
+    manager.remember_precompiled_chunk_frame(
+        "minecraft:overworld",
+        0,
+        0,
+        bytes::Bytes::from_static(b"compressed"),
+        Some(256),
+    );
+
+    assert_eq!(manager.cached_precompiled_chunk_count(), 2);
+    assert_eq!(manager.cached_precompiled_chunk_bytes(), 21);
+    assert_eq!(
+        manager
+            .precompiled_chunk_packet("minecraft:overworld", 0, 0, manager.cache_epoch(), None)
+            .unwrap(),
+        Some(bytes::Bytes::from_static(b"plain-frame"))
+    );
+    assert_eq!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                0,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap(),
+        Some(bytes::Bytes::from_static(b"compressed"))
+    );
+}
+
+#[test]
+fn precompiled_packet_without_light_rebuilds_light_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::with_generator(
+        dir.path(),
+        WorldLightMode::Dynamic,
+        WorldLightAlgorithm::Fast,
+        None,
+        false,
+        Arc::new(generator::EmptyWorldGenerator),
+    )
+    .with_precompiled_chunks(super::PrecompiledChunkSettings {
+        enable: true,
+        light: false,
+        ..Default::default()
+    });
+    let _session = manager.begin_session();
+    let chunk = manager
+        .generated_network_chunk_for_session("minecraft:overworld", 0, 0, manager.cache_epoch())
+        .unwrap();
+    let mut prefix = bytes::BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut prefix);
+    qexed_packet::net_types::VarInt(qexed_protocol::to_client::play::map_chunk::MapChunk::ID)
+        .serialize(&mut writer)
+        .unwrap();
+    chunk.chunk_x.serialize(&mut writer).unwrap();
+    chunk.chunk_z.serialize(&mut writer).unwrap();
+    chunk.data.serialize(&mut writer).unwrap();
+
+    manager.remember_precompiled_chunk_packet_without_light(
+        "minecraft:overworld",
+        0,
+        0,
+        prefix.freeze(),
+        Some(256),
+    );
+
+    assert_eq!(manager.cached_precompiled_chunk_count(), 1);
+    assert!(
+        manager
+            .precompiled_chunk_packet(
+                "minecraft:overworld",
+                0,
+                0,
+                manager.cache_epoch(),
+                Some(256)
+            )
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
 fn ending_last_world_session_clears_chunk_light_cache() {
-    let manager = WorldManager::new("world");
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
     let session = manager.begin_session();
     let epoch = manager.cache_epoch();
 
@@ -593,6 +945,32 @@ fn ending_last_world_session_clears_chunk_light_cache() {
         Some(epoch),
     );
     assert_eq!(manager.cached_light_chunk_count(), 0);
+}
+
+#[test]
+fn precompiled_world_keeps_light_cache_after_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager =
+        WorldManager::new(dir.path()).with_precompiled_chunks(super::PrecompiledChunkSettings {
+            enable: true,
+            light: false,
+            ..Default::default()
+        });
+    let session = manager.begin_session();
+    let epoch = manager.cache_epoch();
+
+    manager.remember_chunk_light_dampening(
+        "minecraft:overworld",
+        0,
+        0,
+        vec![0; super::CHUNK_DAMPENING_LEN],
+        Some(epoch),
+    );
+    assert_eq!(manager.cached_light_chunk_count(), 1);
+
+    drop(session);
+
+    assert_eq!(manager.cached_light_chunk_count(), 1);
 }
 
 fn nibble_at(layer: &qexed_protocol::to_client::play::map_chunk::LightArray, index: usize) -> u8 {

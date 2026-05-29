@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use bytes::{Bytes, BytesMut};
+use qexed_packet::{Packet, PacketCodec};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{OnceLock, mpsc},
@@ -26,6 +28,7 @@ const INITIAL_MAX_UNACKNOWLEDGED_BATCHES: usize = 1;
 const MAX_UNACKNOWLEDGED_BATCHES: usize = 10;
 const MAX_CHUNK_LOAD_THREADS: usize = 4;
 const MAX_CHUNK_GENERATE_THREADS: usize = 8;
+const DEFAULT_CHUNK_CENTER_UPDATE_DELAY: Duration = Duration::from_secs(1);
 
 pub(super) struct ChunkSendState {
     pub(super) dimension: String,
@@ -38,6 +41,8 @@ pub(super) struct ChunkSendState {
     pub(super) ready_chunks: VecDeque<ChunkLoadResult>,
     pub(super) pending_unloads: HashMap<(i32, i32), Instant>,
     pub(super) loading_chunks: HashSet<(i32, i32)>,
+    pending_center_update: Option<PendingCenterUpdate>,
+    center_update_delay: Duration,
     pub(super) desired_chunks_per_tick: f32,
     pub(super) batch_quota: f32,
     pub(super) unacknowledged_batches: usize,
@@ -47,7 +52,14 @@ pub(super) struct ChunkSendState {
 pub(super) struct ChunkLoadResult {
     pub(super) chunk_x: i32,
     pub(super) chunk_z: i32,
-    payload: Result<bytes::Bytes>,
+    frame: Result<bytes::Bytes>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingCenterUpdate {
+    origin_x: i32,
+    origin_z: i32,
+    due_at: Instant,
 }
 
 #[derive(Clone, Debug)]
@@ -116,6 +128,7 @@ impl ChunkTaskPool {
         chunk_x: i32,
         chunk_z: i32,
         cache_epoch: u64,
+        compression_threshold: Option<i32>,
     ) -> Result<bytes::Bytes> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         self.sender
@@ -125,6 +138,7 @@ impl ChunkTaskPool {
                 chunk_x,
                 chunk_z,
                 cache_epoch,
+                compression_threshold,
                 reply: ChunkTaskReply::OneShot(sender),
             })
             .context("queue chunk packet build task")?;
@@ -138,6 +152,7 @@ impl ChunkTaskPool {
         chunk_x: i32,
         chunk_z: i32,
         cache_epoch: u64,
+        compression_threshold: Option<i32>,
         sender: tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
     ) {
         if self
@@ -148,6 +163,7 @@ impl ChunkTaskPool {
                 chunk_x,
                 chunk_z,
                 cache_epoch,
+                compression_threshold,
                 reply: ChunkTaskReply::Channel(sender),
             })
             .is_err()
@@ -164,6 +180,7 @@ enum ChunkTask {
         chunk_x: i32,
         chunk_z: i32,
         cache_epoch: u64,
+        compression_threshold: Option<i32>,
         reply: ChunkTaskReply,
     },
 }
@@ -177,6 +194,7 @@ impl ChunkTask {
                 chunk_x,
                 chunk_z,
                 cache_epoch,
+                compression_threshold,
                 reply,
             } => {
                 match build_saved_chunk_payload_sync(
@@ -185,6 +203,7 @@ impl ChunkTask {
                     chunk_x,
                     chunk_z,
                     cache_epoch,
+                    compression_threshold,
                 ) {
                     Ok(Some(payload)) => reply.send(chunk_x, chunk_z, Ok(payload)),
                     Ok(None) => {
@@ -195,6 +214,7 @@ impl ChunkTask {
                                 chunk_x,
                                 chunk_z,
                                 cache_epoch,
+                                compression_threshold,
                                 reply,
                             })
                             .is_err()
@@ -218,6 +238,7 @@ enum ChunkGenerateTask {
         chunk_x: i32,
         chunk_z: i32,
         cache_epoch: u64,
+        compression_threshold: Option<i32>,
         reply: ChunkTaskReply,
     },
 }
@@ -231,6 +252,7 @@ impl ChunkGenerateTask {
                 chunk_x,
                 chunk_z,
                 cache_epoch,
+                compression_threshold,
                 reply,
             } => {
                 let payload = build_generated_chunk_payload_sync(
@@ -239,6 +261,7 @@ impl ChunkGenerateTask {
                     chunk_x,
                     chunk_z,
                     cache_epoch,
+                    compression_threshold,
                 );
                 reply.send(chunk_x, chunk_z, payload);
             }
@@ -252,16 +275,16 @@ enum ChunkTaskReply {
 }
 
 impl ChunkTaskReply {
-    fn send(self, chunk_x: i32, chunk_z: i32, payload: Result<bytes::Bytes>) {
+    fn send(self, chunk_x: i32, chunk_z: i32, frame: Result<bytes::Bytes>) {
         match self {
             ChunkTaskReply::OneShot(sender) => {
-                let _ = sender.send(payload);
+                let _ = sender.send(frame);
             }
             ChunkTaskReply::Channel(sender) => {
                 let _ = sender.send(ChunkLoadResult {
                     chunk_x,
                     chunk_z,
-                    payload,
+                    frame,
                 });
             }
         }
@@ -287,11 +310,17 @@ impl ChunkSendState {
             ready_chunks: VecDeque::new(),
             pending_unloads: HashMap::new(),
             loading_chunks: HashSet::new(),
+            pending_center_update: None,
+            center_update_delay: DEFAULT_CHUNK_CENTER_UPDATE_DELAY,
             desired_chunks_per_tick: START_CHUNKS_PER_TICK,
             batch_quota: 0.0,
             unacknowledged_batches: 0,
             max_unacknowledged_batches: INITIAL_MAX_UNACKNOWLEDGED_BATCHES,
         }
+    }
+
+    pub(super) fn set_center_update_delay(&mut self, delay: Duration) {
+        self.center_update_delay = delay;
     }
 
     pub(super) async fn update_center<W>(
@@ -308,9 +337,93 @@ impl ChunkSendState {
         let chunk_x = chunk_coord(x);
         let chunk_z = chunk_coord(z);
         if chunk_x == self.center_x && chunk_z == self.center_z {
+            self.pending_center_update = None;
+            return Ok(());
+        }
+        if self.center_update_delay.is_zero() {
+            self.apply_center_update_to_chunk(sink, chunk_sender, world, chunk_x, chunk_z)
+                .await?;
             return Ok(());
         }
 
+        self.schedule_center_update();
+        Ok(())
+    }
+
+    pub(super) fn has_pending_center_update(&self) -> bool {
+        self.pending_center_update.is_some()
+    }
+
+    pub(super) fn pending_center_update_deadline(&self) -> Option<Instant> {
+        self.pending_center_update
+            .as_ref()
+            .map(|pending| pending.due_at)
+    }
+
+    pub(super) async fn apply_due_center_update<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        chunk_sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
+        world: &WorldManager,
+        x: f64,
+        z: f64,
+    ) -> Result<bool>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let Some(pending) = self.pending_center_update else {
+            return Ok(false);
+        };
+        if pending.due_at > Instant::now() {
+            return Ok(false);
+        }
+        self.pending_center_update = None;
+
+        let chunk_x = chunk_coord(x);
+        let chunk_z = chunk_coord(z);
+        if chunk_x == self.center_x && chunk_z == self.center_z {
+            return Ok(false);
+        }
+
+        if self.center_x == pending.origin_x
+            && self.center_z == pending.origin_z
+            && first_ring_neighbor(pending.origin_x, pending.origin_z, chunk_x, chunk_z)
+        {
+            self.apply_incremental_center_update(sink, chunk_sender, world, chunk_x, chunk_z)
+                .await?;
+            return Ok(true);
+        }
+
+        self.apply_center_update_to_chunk(sink, chunk_sender, world, chunk_x, chunk_z)
+            .await?;
+        Ok(true)
+    }
+
+    fn schedule_center_update(&mut self) {
+        if self.pending_center_update.is_some() {
+            return;
+        }
+        self.pending_center_update = Some(PendingCenterUpdate {
+            origin_x: self.center_x,
+            origin_z: self.center_z,
+            due_at: Instant::now() + self.center_update_delay,
+        });
+    }
+
+    async fn apply_center_update_to_chunk<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        chunk_sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
+        world: &WorldManager,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        if chunk_x == self.center_x && chunk_z == self.center_z {
+            return Ok(());
+        }
         let next = visible_chunk_set(chunk_x, chunk_z, self.view_distance);
         sink.send(UpdateViewPosition {
             chunk_x: VarInt(chunk_x),
@@ -322,10 +435,76 @@ impl ChunkSendState {
         self.center_z = chunk_z;
         self.mark_delayed_unloads(next, Instant::now() + CHUNK_UNLOAD_DELAY);
         self.refresh_pending_chunks();
-        self.start_next_chunk_load(world, Some(chunk_sender));
+        self.start_next_chunk_load(world, Some(chunk_sender), sink.compression_threshold());
         sink.flush().await?;
         log::debug!(
             "鐜╁绉诲姩鍒版柊鍖哄潡锛屽凡琛ュ彂瑙嗚窛鍖哄潡: center=({chunk_x}, {chunk_z})"
+        );
+        Ok(())
+    }
+
+    async fn apply_incremental_center_update<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        chunk_sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
+        world: &WorldManager,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let Some((mut entering, leaving)) = incremental_chunk_delta(
+            self.center_x,
+            self.center_z,
+            chunk_x,
+            chunk_z,
+            self.view_distance,
+        ) else {
+            self.apply_center_update_to_chunk(sink, chunk_sender, world, chunk_x, chunk_z)
+                .await?;
+            return Ok(());
+        };
+
+        sink.send(UpdateViewPosition {
+            chunk_x: VarInt(chunk_x),
+            chunk_z: VarInt(chunk_z),
+        })
+        .await?;
+
+        self.center_x = chunk_x;
+        self.center_z = chunk_z;
+
+        let unload_at = Instant::now() + CHUNK_UNLOAD_DELAY;
+        for chunk in &entering {
+            self.pending_unloads.remove(chunk);
+        }
+        for chunk in &leaving {
+            if self.visible_chunks.contains(chunk) {
+                self.pending_unloads.entry(*chunk).or_insert(unload_at);
+            }
+        }
+
+        self.retain_work_for_current_view();
+        entering.sort_by_key(|(chunk_x, chunk_z)| {
+            chunk_send_priority(self.center_x, self.center_z, *chunk_x, *chunk_z)
+        });
+        let entering_len = entering.len();
+        for chunk in entering {
+            if self.visible_chunks.contains(&chunk)
+                || self.loading_chunks.contains(&chunk)
+                || self.pending_chunks.contains(&chunk)
+            {
+                continue;
+            }
+            self.pending_chunks.push_back(chunk);
+        }
+        self.start_next_chunk_load(world, Some(chunk_sender), sink.compression_threshold());
+        sink.flush().await?;
+        log::debug!(
+            "incremental chunk center update: center=({chunk_x}, {chunk_z}), entering={}, leaving={}",
+            entering_len,
+            leaving.len()
         );
         Ok(())
     }
@@ -352,7 +531,7 @@ impl ChunkSendState {
 
         self.reset_view(chunk_x, chunk_z);
         self.send_center_chunk_first(sink, world, plugins).await?;
-        self.start_next_chunk_load(world, Some(chunk_sender));
+        self.start_next_chunk_load(world, Some(chunk_sender), sink.compression_threshold());
         sink.flush().await?;
         log::debug!("respawn chunk view reset: center=({chunk_x}, {chunk_z})");
         Ok(())
@@ -379,6 +558,7 @@ impl ChunkSendState {
     pub(super) fn reset_view(&mut self, center_x: i32, center_z: i32) {
         self.center_x = center_x;
         self.center_z = center_z;
+        self.pending_center_update = None;
         self.visible_chunks.clear();
         self.pending_chunks.clear();
         self.ready_chunks.clear();
@@ -413,11 +593,12 @@ impl ChunkSendState {
                 chunk.0,
                 chunk.1,
                 cache_epoch,
+                sink.compression_threshold(),
             )
             .await?;
 
         sink.send(ChunkBatchStart {}).await?;
-        sink.send_raw(chunk_payload).await?;
+        sink.send_encoded_frame(chunk_payload).await?;
         for update in world.placed_block_updates(&self.dimension, chunk.0, chunk.1) {
             sink.send(update).await?;
         }
@@ -457,9 +638,10 @@ impl ChunkSendState {
                     chunk_x,
                     chunk_z,
                     cache_epoch,
+                    sink.compression_threshold(),
                 )
                 .await?;
-            sink.send_raw(chunk_payload).await?;
+            sink.send_encoded_frame(chunk_payload).await?;
             for update in world.placed_block_updates(&self.dimension, chunk_x, chunk_z) {
                 sink.send(update).await?;
             }
@@ -544,14 +726,13 @@ impl ChunkSendState {
             return Ok(0);
         }
 
-        let target_chunks = self.target_chunks();
         let mut expired = self
             .pending_unloads
             .iter()
             .filter_map(|(chunk, unload_at)| {
                 (*unload_at <= now
                     && self.visible_chunks.contains(chunk)
-                    && !target_chunks.contains(chunk))
+                    && !self.chunk_in_current_view(*chunk))
                 .then_some(*chunk)
             })
             .collect::<Vec<_>>();
@@ -579,6 +760,7 @@ impl ChunkSendState {
         &mut self,
         world: &WorldManager,
         sender: Option<&tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>>,
+        compression_threshold: Option<i32>,
     ) {
         let Some(sender) = sender else {
             return;
@@ -600,6 +782,7 @@ impl ChunkSendState {
                 chunk_x,
                 chunk_z,
                 cache_epoch,
+                compression_threshold,
                 sender.clone(),
             );
             self.loading_chunks.insert(chunk);
@@ -609,7 +792,7 @@ impl ChunkSendState {
     pub(super) fn queue_loaded_chunk(&mut self, loaded: ChunkLoadResult) {
         let chunk = (loaded.chunk_x, loaded.chunk_z);
         self.loading_chunks.remove(&chunk);
-        if self.visible_chunks.contains(&chunk) || !self.target_chunks().contains(&chunk) {
+        if self.visible_chunks.contains(&chunk) || !self.chunk_in_current_view(chunk) {
             return;
         }
         self.ready_chunks.push_back(loaded);
@@ -643,18 +826,18 @@ impl ChunkSendState {
 
         let selected = self.take_ready_chunks(self.batch_quota.floor() as usize);
         if selected.is_empty() {
-            self.start_next_chunk_load(world, Some(sender));
+            self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
             return Ok(0);
         }
 
         let mut chunks = Vec::with_capacity(selected.len());
         for loaded in selected {
-            chunks.push((loaded.chunk_x, loaded.chunk_z, loaded.payload?));
+            chunks.push((loaded.chunk_x, loaded.chunk_z, loaded.frame?));
         }
 
         sink.send(ChunkBatchStart {}).await?;
-        for (chunk_x, chunk_z, chunk_payload) in &chunks {
-            sink.send_raw(chunk_payload.clone()).await?;
+        for (chunk_x, chunk_z, chunk_frame) in &chunks {
+            sink.send_encoded_frame(chunk_frame.clone()).await?;
             for update in world.placed_block_updates(&self.dimension, *chunk_x, *chunk_z) {
                 sink.send(update).await?;
             }
@@ -669,7 +852,7 @@ impl ChunkSendState {
         .await?;
         sink.flush().await?;
 
-        self.start_next_chunk_load(world, Some(sender));
+        self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
         Ok(chunks.len())
     }
 
@@ -731,6 +914,103 @@ impl ChunkSendState {
     pub(super) fn has_pending_unloads(&self) -> bool {
         !self.pending_unloads.is_empty()
     }
+
+    fn chunk_in_current_view(&self, chunk: (i32, i32)) -> bool {
+        chunk_in_view(self.center_x, self.center_z, self.view_distance, chunk)
+    }
+
+    fn retain_work_for_current_view(&mut self) {
+        let center_x = self.center_x;
+        let center_z = self.center_z;
+        let view_distance = self.view_distance;
+        self.pending_chunks
+            .retain(|chunk| chunk_in_view(center_x, center_z, view_distance, *chunk));
+        self.ready_chunks.retain(|chunk| {
+            chunk_in_view(
+                center_x,
+                center_z,
+                view_distance,
+                (chunk.chunk_x, chunk.chunk_z),
+            )
+        });
+        self.loading_chunks
+            .retain(|chunk| chunk_in_view(center_x, center_z, view_distance, *chunk));
+    }
+}
+
+fn first_ring_neighbor(origin_x: i32, origin_z: i32, chunk_x: i32, chunk_z: i32) -> bool {
+    let dx = chunk_x - origin_x;
+    let dz = chunk_z - origin_z;
+    (-1..=1).contains(&dx) && (-1..=1).contains(&dz) && (dx != 0 || dz != 0)
+}
+
+fn incremental_chunk_delta(
+    old_x: i32,
+    old_z: i32,
+    new_x: i32,
+    new_z: i32,
+    view_distance: i32,
+) -> Option<(Vec<(i32, i32)>, Vec<(i32, i32)>)> {
+    if !first_ring_neighbor(old_x, old_z, new_x, new_z) {
+        return None;
+    }
+
+    let view_distance = view_distance.max(1);
+    let dx = new_x - old_x;
+    let dz = new_z - old_z;
+    let mut entering = HashSet::new();
+    let mut leaving = HashSet::new();
+
+    if dx > 0 {
+        let enter_x = new_x + view_distance;
+        let leave_x = old_x - view_distance;
+        for chunk_z in new_z - view_distance..=new_z + view_distance {
+            entering.insert((enter_x, chunk_z));
+        }
+        for chunk_z in old_z - view_distance..=old_z + view_distance {
+            leaving.insert((leave_x, chunk_z));
+        }
+    } else if dx < 0 {
+        let enter_x = new_x - view_distance;
+        let leave_x = old_x + view_distance;
+        for chunk_z in new_z - view_distance..=new_z + view_distance {
+            entering.insert((enter_x, chunk_z));
+        }
+        for chunk_z in old_z - view_distance..=old_z + view_distance {
+            leaving.insert((leave_x, chunk_z));
+        }
+    }
+
+    if dz > 0 {
+        let enter_z = new_z + view_distance;
+        let leave_z = old_z - view_distance;
+        for chunk_x in new_x - view_distance..=new_x + view_distance {
+            entering.insert((chunk_x, enter_z));
+        }
+        for chunk_x in old_x - view_distance..=old_x + view_distance {
+            leaving.insert((chunk_x, leave_z));
+        }
+    } else if dz < 0 {
+        let enter_z = new_z - view_distance;
+        let leave_z = old_z + view_distance;
+        for chunk_x in new_x - view_distance..=new_x + view_distance {
+            entering.insert((chunk_x, enter_z));
+        }
+        for chunk_x in old_x - view_distance..=old_x + view_distance {
+            leaving.insert((chunk_x, leave_z));
+        }
+    }
+
+    let mut entering = entering.into_iter().collect::<Vec<_>>();
+    entering.sort_unstable();
+    let mut leaving = leaving.into_iter().collect::<Vec<_>>();
+    leaving.sort_unstable();
+    Some((entering, leaving))
+}
+
+fn chunk_in_view(center_x: i32, center_z: i32, view_distance: i32, chunk: (i32, i32)) -> bool {
+    let view_distance = view_distance.max(1);
+    (chunk.0 - center_x).abs() <= view_distance && (chunk.1 - center_z).abs() <= view_distance
 }
 
 fn chunk_send_priority(
@@ -750,8 +1030,23 @@ fn build_saved_chunk_payload_sync(
     chunk_x: i32,
     chunk_z: i32,
     cache_epoch: u64,
+    compression_threshold: Option<i32>,
 ) -> Result<Option<bytes::Bytes>> {
     let total_start = Instant::now();
+    if let Some(payload) = world.precompiled_chunk_packet(
+        dimension,
+        chunk_x,
+        chunk_z,
+        cache_epoch,
+        compression_threshold,
+    )? {
+        log::trace!(
+            "chunk frame cache hit: phase=load, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), bytes={}",
+            payload.len()
+        );
+        return Ok(Some(payload));
+    }
+
     let chunk_start = Instant::now();
     let Some(chunk) =
         world.saved_network_chunk_for_session(dimension, chunk_x, chunk_z, cache_epoch)?
@@ -761,8 +1056,15 @@ fn build_saved_chunk_payload_sync(
     let chunk_elapsed = chunk_start.elapsed();
 
     let encode_start = Instant::now();
-    let payload = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
-        .context("encode saved chunk packet")?;
+    let payload = encode_chunk_payload(
+        world,
+        dimension,
+        chunk_x,
+        chunk_z,
+        chunk,
+        compression_threshold,
+    )
+    .context("encode saved chunk packet")?;
     let encode_elapsed = encode_start.elapsed();
     let total_elapsed = total_start.elapsed();
 
@@ -785,16 +1087,38 @@ fn build_generated_chunk_payload_sync(
     chunk_x: i32,
     chunk_z: i32,
     cache_epoch: u64,
+    compression_threshold: Option<i32>,
 ) -> Result<bytes::Bytes> {
     let total_start = Instant::now();
+    if let Some(payload) = world.precompiled_chunk_packet(
+        &dimension,
+        chunk_x,
+        chunk_z,
+        cache_epoch,
+        compression_threshold,
+    )? {
+        log::trace!(
+            "chunk frame cache hit: phase=generate, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), bytes={}",
+            payload.len()
+        );
+        return Ok(payload);
+    }
+
     let chunk_start = Instant::now();
     let chunk =
         world.generated_network_chunk_for_session(&dimension, chunk_x, chunk_z, cache_epoch)?;
     let chunk_elapsed = chunk_start.elapsed();
 
     let encode_start = Instant::now();
-    let payload = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
-        .context("encode chunk packet")?;
+    let payload = encode_chunk_payload(
+        &world,
+        &dimension,
+        chunk_x,
+        chunk_z,
+        chunk,
+        compression_threshold,
+    )
+    .context("encode chunk packet")?;
     let encode_elapsed = encode_start.elapsed();
     let total_elapsed = total_start.elapsed();
 
@@ -809,6 +1133,68 @@ fn build_generated_chunk_payload_sync(
     }
 
     Ok(payload)
+}
+
+fn encode_chunk_payload(
+    world: &WorldManager,
+    dimension: &str,
+    chunk_x: i32,
+    chunk_z: i32,
+    chunk: qexed_protocol::to_client::play::map_chunk::MapChunk,
+    compression_threshold: Option<i32>,
+) -> Result<Bytes> {
+    if !world.precompiled_chunk_packets_enabled() {
+        let payload = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
+            .context("encode chunk packet")?;
+        return qexed_tcp_connect::PacketSink::<tokio::io::Sink>::encode_payload_frame_with_threshold(
+            payload,
+            compression_threshold,
+        )
+        .context("encode chunk frame");
+    }
+
+    if world.precompiled_chunk_payload_includes_light() {
+        let payload = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(chunk)
+            .context("encode chunk packet")?;
+        let frame =
+            qexed_tcp_connect::PacketSink::<tokio::io::Sink>::encode_payload_frame_with_threshold(
+                payload,
+                compression_threshold,
+            )
+            .context("encode chunk frame")?;
+        world.remember_precompiled_chunk_frame(
+            dimension,
+            chunk_x,
+            chunk_z,
+            frame.clone(),
+            compression_threshold,
+        );
+        return Ok(frame);
+    }
+
+    let mut buf = BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+    VarInt(qexed_protocol::to_client::play::map_chunk::MapChunk::ID).serialize(&mut writer)?;
+    chunk.chunk_x.serialize(&mut writer)?;
+    chunk.chunk_z.serialize(&mut writer)?;
+    chunk.data.serialize(&mut writer)?;
+    let prefix = buf.freeze();
+
+    let mut payload = BytesMut::from(prefix.as_ref());
+    let mut writer = qexed_packet::PacketWriter::new(&mut payload);
+    chunk.light.serialize(&mut writer)?;
+    world.remember_precompiled_chunk_packet_without_light(
+        dimension,
+        chunk_x,
+        chunk_z,
+        prefix,
+        compression_threshold,
+    );
+    qexed_tcp_connect::PacketSink::<tokio::io::Sink>::encode_payload_frame_with_threshold(
+        payload.freeze(),
+        compression_threshold,
+    )
+    .context("encode chunk frame")
 }
 
 fn duration_ms(duration: Duration) -> f64 {
@@ -889,7 +1275,7 @@ mod tests {
         ChunkLoadResult {
             chunk_x,
             chunk_z,
-            payload: Ok(bytes::Bytes::new()),
+            frame: Ok(bytes::Bytes::new()),
         }
     }
 
@@ -972,5 +1358,73 @@ mod tests {
         assert_eq!(selected.len(), 1);
         assert_eq!((selected[0].chunk_x, selected[0].chunk_z), (1, 0));
         assert!(state.ready_chunks.is_empty());
+    }
+
+    #[test]
+    fn first_ring_neighbor_matches_eight_directions() {
+        for chunk in [
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+            (-1, 0),
+            (1, 0),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+        ] {
+            assert!(first_ring_neighbor(0, 0, chunk.0, chunk.1));
+        }
+
+        assert!(!first_ring_neighbor(0, 0, 0, 0));
+        assert!(!first_ring_neighbor(0, 0, 2, 0));
+        assert!(!first_ring_neighbor(0, 0, 0, -2));
+    }
+
+    #[test]
+    fn incremental_chunk_delta_for_east_move_only_touches_edges() {
+        let (entering, leaving) = incremental_chunk_delta(0, 0, 1, 0, 2).unwrap();
+
+        assert_eq!(entering, vec![(3, -2), (3, -1), (3, 0), (3, 1), (3, 2)]);
+        assert_eq!(leaving, vec![(-2, -2), (-2, -1), (-2, 0), (-2, 1), (-2, 2)]);
+    }
+
+    #[test]
+    fn incremental_chunk_delta_for_diagonal_move_deduplicates_corner() {
+        let (entering, leaving) = incremental_chunk_delta(0, 0, 1, 1, 1).unwrap();
+
+        assert_eq!(entering, vec![(0, 2), (1, 2), (2, 0), (2, 1), (2, 2)]);
+        assert_eq!(leaving, vec![(-1, -1), (-1, 0), (-1, 1), (0, -1), (1, -1)]);
+    }
+
+    #[test]
+    fn incremental_chunk_delta_rejects_far_move() {
+        assert!(incremental_chunk_delta(0, 0, 2, 0, 2).is_none());
+        assert!(incremental_chunk_delta(0, 0, 0, 0, 2).is_none());
+    }
+
+    #[test]
+    fn retain_work_for_current_view_drops_stale_work() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+        state.center_x = 1;
+        state.pending_chunks.extend([(2, 0), (-1, 0)]);
+        state.ready_chunks.push_back(loaded_chunk(1, 1));
+        state.ready_chunks.push_back(loaded_chunk(-1, 0));
+        state.loading_chunks.extend([(0, 0), (-1, 0)]);
+
+        state.retain_work_for_current_view();
+
+        assert_eq!(
+            state.pending_chunks.iter().copied().collect::<Vec<_>>(),
+            vec![(2, 0)]
+        );
+        assert_eq!(state.ready_chunks.len(), 1);
+        assert_eq!(
+            state
+                .ready_chunks
+                .front()
+                .map(|chunk| (chunk.chunk_x, chunk.chunk_z)),
+            Some((1, 1))
+        );
+        assert_eq!(state.loading_chunks, HashSet::from([(0, 0)]));
     }
 }

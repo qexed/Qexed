@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use qexed_packet::net_types::VarInt;
+use qexed_packet::{PacketCodec, net_types::VarInt};
 use qexed_protocol::to_client::play::{
     block_update::BlockUpdate,
     light_update::LightUpdate,
@@ -27,6 +27,11 @@ pub struct WorldManager {
     generator: Arc<dyn generator::WorldChunkGenerator>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, PendingBlock>>>,
     region_chunk_cache: Arc<Mutex<RegionChunkCache>>,
+    precompiled_chunk_cache: Arc<Mutex<PrecompiledChunkCache>>,
+    block_state_cache: Arc<Mutex<BlockStateCache>>,
+    dirty_chunk_sections:
+        Arc<Mutex<std::collections::HashMap<ChunkKey, std::collections::BTreeSet<i32>>>>,
+    precompiled_chunks: PrecompiledChunkSettings,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
     region_locks: Arc<Mutex<std::collections::HashMap<RegionKey, Arc<Mutex<()>>>>>,
     block_write_queue: WorldWriteQueue,
@@ -36,10 +41,46 @@ pub struct WorldManager {
 }
 
 const REGION_CHUNK_CACHE_LIMIT: usize = 256;
+const DEFAULT_PRECOMPILED_CHUNK_PACKET_LIMIT: usize = 256;
+const DEFAULT_PRECOMPILED_CHUNK_PACKET_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_BLOCK_STATE_CACHE_LIMIT: usize = 65_536;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrecompiledChunkSettings {
+    pub enable: bool,
+    pub light: bool,
+    pub max_cached_packets: usize,
+    pub max_cached_packet_bytes: usize,
+    pub block_state_cache_limit: usize,
+}
+
+impl Default for PrecompiledChunkSettings {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            light: true,
+            max_cached_packets: DEFAULT_PRECOMPILED_CHUNK_PACKET_LIMIT,
+            max_cached_packet_bytes: DEFAULT_PRECOMPILED_CHUNK_PACKET_BYTES,
+            block_state_cache_limit: DEFAULT_BLOCK_STATE_CACHE_LIMIT,
+        }
+    }
+}
+
+impl From<&qexed_config::app::qexed::server::PrecompiledChunks> for PrecompiledChunkSettings {
+    fn from(config: &qexed_config::app::qexed::server::PrecompiledChunks) -> Self {
+        Self {
+            enable: config.enable,
+            light: config.light,
+            max_cached_packets: config.max_cached_packets,
+            max_cached_packet_bytes: config.max_cached_packet_bytes,
+            block_state_cache_limit: config.block_state_cache_limit,
+        }
+    }
+}
 
 #[derive(Clone)]
 struct WorldWriteQueue {
-    sender: mpsc::Sender<WorldWriteTask>,
+    sender: Arc<Mutex<Option<mpsc::Sender<WorldWriteTask>>>>,
 }
 
 impl std::fmt::Debug for WorldWriteQueue {
@@ -56,7 +97,17 @@ enum WorldWriteTask {
 
 impl WorldWriteQueue {
     fn new() -> Self {
-        let (sender, receiver) = mpsc::channel::<WorldWriteTask>();
+        Self {
+            sender: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn sender(&self) -> mpsc::Sender<WorldWriteTask> {
+        let mut sender = self.sender.lock().expect("world write queue poisoned");
+        if let Some(sender) = sender.as_ref() {
+            return sender.clone();
+        }
+        let (tx, receiver) = mpsc::channel::<WorldWriteTask>();
         std::thread::Builder::new()
             .name("qexed-world-write".to_string())
             .spawn(move || {
@@ -71,12 +122,13 @@ impl WorldWriteQueue {
                 }
             })
             .expect("create world write queue thread");
-        Self { sender }
+        *sender = Some(tx.clone());
+        tx
     }
 
     fn spawn(&self, task: impl FnOnce() + Send + 'static) {
         if self
-            .sender
+            .sender()
             .send(WorldWriteTask::Run(Box::new(task)))
             .is_err()
         {
@@ -87,7 +139,7 @@ impl WorldWriteQueue {
     #[cfg(test)]
     fn flush(&self) {
         let (sender, receiver) = mpsc::channel();
-        if self.sender.send(WorldWriteTask::Flush(sender)).is_ok() {
+        if self.sender().send(WorldWriteTask::Flush(sender)).is_ok() {
             let _ = receiver.recv();
         }
     }
@@ -127,6 +179,190 @@ impl RegionChunkCache {
     }
 
     fn touch(&mut self, key: ChunkKey) {
+        self.order.retain(|existing| existing != &key);
+        self.order.push_back(key);
+    }
+}
+
+#[derive(Debug, Default)]
+struct PrecompiledChunkCache {
+    packets: std::collections::HashMap<PrecompiledChunkKey, PrecompiledChunkPacket>,
+    order: std::collections::VecDeque<PrecompiledChunkKey>,
+    total_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PrecompiledChunkKey {
+    chunk: ChunkKey,
+    compression_threshold: Option<i32>,
+}
+
+impl PrecompiledChunkKey {
+    fn new(dimension: &str, x: i32, z: i32, compression_threshold: Option<i32>) -> Self {
+        Self {
+            chunk: ChunkKey::new(dimension, x, z),
+            compression_threshold,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum PrecompiledChunkPacket {
+    FullFrame { frame: bytes::Bytes },
+    WithoutLight { prefix: bytes::Bytes },
+}
+
+impl PrecompiledChunkPacket {
+    fn byte_len(&self) -> usize {
+        match self {
+            Self::FullFrame { frame } => frame.len(),
+            Self::WithoutLight { prefix } => prefix.len(),
+        }
+    }
+}
+
+impl PrecompiledChunkCache {
+    fn get(&mut self, key: &PrecompiledChunkKey) -> Option<PrecompiledChunkPacket> {
+        let packet = self.packets.get(key)?;
+        let packet = packet.clone();
+        self.touch(key.clone());
+        Some(packet)
+    }
+
+    fn insert(
+        &mut self,
+        key: PrecompiledChunkKey,
+        packet: PrecompiledChunkPacket,
+        packet_limit: usize,
+        byte_limit: usize,
+    ) {
+        let packet_bytes = packet.byte_len();
+        if byte_limit != 0 && packet_bytes > byte_limit {
+            self.remove(&key);
+            return;
+        }
+
+        if let Some(previous) = self.packets.insert(key.clone(), packet) {
+            self.total_bytes = self.total_bytes.saturating_sub(previous.byte_len());
+        }
+        self.total_bytes = self.total_bytes.saturating_add(packet_bytes);
+        self.touch(key.clone());
+        while (packet_limit != 0 && self.packets.len() > packet_limit)
+            || (byte_limit != 0 && self.total_bytes > byte_limit)
+        {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if self.packets.len() == 1 && oldest == key {
+                self.order.push_back(oldest);
+                break;
+            }
+            if let Some(removed) = self.packets.remove(&oldest) {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.byte_len());
+            }
+        }
+    }
+
+    fn invalidate(&mut self, key: &ChunkKey) -> bool {
+        let matching = self
+            .packets
+            .keys()
+            .filter(|packet_key| packet_key.chunk == *key)
+            .cloned()
+            .collect::<Vec<_>>();
+        let removed = !matching.is_empty();
+        for key in matching {
+            self.remove(&key);
+        }
+        removed
+    }
+
+    fn remove(&mut self, key: &PrecompiledChunkKey) -> Option<PrecompiledChunkPacket> {
+        self.order.retain(|existing| existing != key);
+        let removed = self.packets.remove(key)?;
+        self.total_bytes = self.total_bytes.saturating_sub(removed.byte_len());
+        Some(removed)
+    }
+
+    fn clear(&mut self) -> usize {
+        let cleared = self.packets.len();
+        self.packets.clear();
+        self.order.clear();
+        self.total_bytes = 0;
+        cleared
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.packets.len()
+    }
+
+    #[cfg(test)]
+    fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    fn touch(&mut self, key: PrecompiledChunkKey) {
+        self.order.retain(|existing| existing != &key);
+        self.order.push_back(key);
+    }
+}
+
+#[derive(Debug, Default)]
+struct BlockStateCache {
+    blocks: std::collections::HashMap<BlockKey, i32>,
+    order: std::collections::VecDeque<BlockKey>,
+}
+
+impl BlockStateCache {
+    fn get(&mut self, key: &BlockKey) -> Option<i32> {
+        let block_state = *self.blocks.get(key)?;
+        self.touch(key.clone());
+        Some(block_state)
+    }
+
+    fn insert(&mut self, key: BlockKey, block_state: i32, limit: usize) {
+        if limit == 0 {
+            return;
+        }
+        self.blocks.insert(key.clone(), block_state);
+        self.touch(key.clone());
+        while self.blocks.len() > limit {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if oldest != key {
+                self.blocks.remove(&oldest);
+            }
+        }
+    }
+
+    fn invalidate_chunk(&mut self, chunk_key: &ChunkKey) {
+        self.blocks.retain(|key, _| {
+            !(key.dimension == chunk_key.dimension
+                && key.x.div_euclid(16) == chunk_key.x
+                && key.z.div_euclid(16) == chunk_key.z)
+        });
+        self.order.retain(|key| {
+            !(key.dimension == chunk_key.dimension
+                && key.x.div_euclid(16) == chunk_key.x
+                && key.z.div_euclid(16) == chunk_key.z)
+        });
+    }
+
+    fn clear(&mut self) -> usize {
+        let cleared = self.blocks.len();
+        self.blocks.clear();
+        self.order.clear();
+        cleared
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.blocks.len()
+    }
+
+    fn touch(&mut self, key: BlockKey) {
         self.order.retain(|existing| existing != &key);
         self.order.push_back(key);
     }
@@ -179,6 +415,10 @@ impl WorldManager {
             generator,
             placed_blocks: Default::default(),
             region_chunk_cache: Default::default(),
+            precompiled_chunk_cache: Default::default(),
+            block_state_cache: Default::default(),
+            dirty_chunk_sections: Default::default(),
+            precompiled_chunks: PrecompiledChunkSettings::default(),
             chunk_light_dampening: Default::default(),
             region_locks: Default::default(),
             block_write_queue: WorldWriteQueue::new(),
@@ -186,6 +426,11 @@ impl WorldManager {
             active_sessions: Default::default(),
             cache_epoch: Default::default(),
         }
+    }
+
+    pub fn with_precompiled_chunks(mut self, settings: PrecompiledChunkSettings) -> Self {
+        self.precompiled_chunks = settings;
+        self
     }
 
     #[allow(dead_code)]
@@ -210,6 +455,136 @@ impl WorldManager {
         self.cache_epoch.load(Ordering::Acquire)
     }
 
+    pub fn precompiled_chunk_packets_enabled(&self) -> bool {
+        self.precompiled_chunks.enable
+    }
+
+    pub fn precompiled_chunk_payload_includes_light(&self) -> bool {
+        self.precompiled_chunks.light && !self.dynamic_light_enabled()
+    }
+
+    pub fn precompiled_chunk_packet(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: u64,
+        compression_threshold: Option<i32>,
+    ) -> Result<Option<bytes::Bytes>> {
+        if !self.precompiled_chunk_packets_enabled() {
+            return Ok(None);
+        }
+        let packet = self
+            .precompiled_chunk_cache
+            .lock()
+            .expect("world precompiled chunk cache poisoned")
+            .get(&PrecompiledChunkKey::new(
+                dimension,
+                chunk_x,
+                chunk_z,
+                compression_threshold,
+            ));
+        match packet {
+            Some(PrecompiledChunkPacket::FullFrame { frame }) => Ok(Some(frame)),
+            Some(PrecompiledChunkPacket::WithoutLight { prefix }) => {
+                let mut buf = bytes::BytesMut::from(prefix.as_ref());
+                let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+                self.chunk_light_for_payload(dimension, chunk_x, chunk_z, Some(cache_epoch))
+                    .serialize(&mut writer)?;
+                Ok(Some(
+                    qexed_tcp_connect::PacketSink::<tokio::io::Sink>::encode_payload_frame_with_threshold(
+                        buf.freeze(),
+                        compression_threshold,
+                    )?,
+                ))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn remember_precompiled_chunk_frame(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        frame: bytes::Bytes,
+        compression_threshold: Option<i32>,
+    ) {
+        if !self.can_remember_precompiled_chunk(dimension, chunk_x, chunk_z) {
+            return;
+        }
+        if !self.precompiled_chunk_payload_includes_light() {
+            return;
+        }
+        self.remember_precompiled_chunk_entry(
+            dimension,
+            chunk_x,
+            chunk_z,
+            PrecompiledChunkPacket::FullFrame { frame },
+            compression_threshold,
+        );
+    }
+
+    pub fn remember_precompiled_chunk_packet_without_light(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        prefix: bytes::Bytes,
+        compression_threshold: Option<i32>,
+    ) {
+        if !self.can_remember_precompiled_chunk(dimension, chunk_x, chunk_z) {
+            return;
+        }
+        self.remember_precompiled_chunk_entry(
+            dimension,
+            chunk_x,
+            chunk_z,
+            PrecompiledChunkPacket::WithoutLight { prefix },
+            compression_threshold,
+        );
+    }
+
+    fn can_remember_precompiled_chunk(&self, dimension: &str, chunk_x: i32, chunk_z: i32) -> bool {
+        if !self.precompiled_chunk_packets_enabled() {
+            return false;
+        }
+        let key = ChunkKey::new(dimension, chunk_x, chunk_z);
+        let dirty = self
+            .dirty_chunk_sections
+            .lock()
+            .expect("world dirty chunk section store poisoned")
+            .contains_key(&key);
+        if dirty {
+            return false;
+        }
+        !self.chunk_has_pending_block_overlay(&key)
+    }
+
+    fn remember_precompiled_chunk_entry(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        packet: PrecompiledChunkPacket,
+        compression_threshold: Option<i32>,
+    ) {
+        let key = PrecompiledChunkKey::new(dimension, chunk_x, chunk_z, compression_threshold);
+        self.precompiled_chunk_cache
+            .lock()
+            .expect("world precompiled chunk cache poisoned")
+            .insert(
+                key.clone(),
+                packet,
+                self.precompiled_chunks.max_cached_packets,
+                self.precompiled_chunks.max_cached_packet_bytes,
+            );
+        self.dirty_chunk_sections
+            .lock()
+            .expect("world dirty chunk section store poisoned")
+            .remove(&key.chunk);
+    }
+
     #[cfg(test)]
     pub(crate) fn cached_light_chunk_count(&self) -> usize {
         self.chunk_light_dampening
@@ -225,6 +600,45 @@ impl WorldManager {
             .expect("world region chunk cache poisoned")
             .chunks
             .len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_precompiled_chunk_count(&self) -> usize {
+        self.precompiled_chunk_cache
+            .lock()
+            .expect("world precompiled chunk cache poisoned")
+            .len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_precompiled_chunk_bytes(&self) -> usize {
+        self.precompiled_chunk_cache
+            .lock()
+            .expect("world precompiled chunk cache poisoned")
+            .total_bytes()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_block_state_count(&self) -> usize {
+        self.block_state_cache
+            .lock()
+            .expect("world block state cache poisoned")
+            .len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dirty_chunk_sections(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Vec<i32> {
+        self.dirty_chunk_sections
+            .lock()
+            .expect("world dirty chunk section store poisoned")
+            .get(&ChunkKey::new(dimension, chunk_x, chunk_z))
+            .map(|sections| sections.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -291,7 +705,7 @@ impl WorldManager {
         chunk_z: i32,
         cache_epoch: Option<u64>,
     ) -> Result<Option<MapChunk>> {
-        if let Some(chunk) = self.load_region_chunk(dimension, chunk_x, chunk_z)? {
+        if let Some(chunk) = self.read_region_chunk_for_network(dimension, chunk_x, chunk_z)? {
             match chunk_nbt::network_chunk_and_light_dampening_from_region(
                 chunk_x,
                 chunk_z,
@@ -347,7 +761,9 @@ impl WorldManager {
             generated.light_dampening,
             cache_epoch,
         );
-        if let Some(region_chunk) = generated.region_chunk {
+        if let Some(region_chunk) = generated.region_chunk
+            && self.should_cache_full_region_chunks()
+        {
             self.remember_region_chunk(dimension, chunk_x, chunk_z, region_chunk);
         }
         let mut packet = generated.packet;
@@ -413,6 +829,12 @@ impl WorldManager {
         chunk_x: i32,
         chunk_z: i32,
     ) -> Result<Option<region::ChunkData>> {
+        if !self.should_cache_full_region_chunks() {
+            return self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+                self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
+            });
+        }
+
         let key = ChunkKey::new(dimension, chunk_x, chunk_z);
         if let Some(chunk) = self
             .region_chunk_cache
@@ -430,6 +852,24 @@ impl WorldManager {
             self.remember_region_chunk(dimension, chunk_x, chunk_z, chunk.clone());
         }
         Ok(loaded)
+    }
+
+    fn read_region_chunk_for_network(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<region::ChunkData>> {
+        if self.precompiled_chunk_packets_enabled() {
+            return self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+                self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
+            });
+        }
+        self.load_region_chunk(dimension, chunk_x, chunk_z)
+    }
+
+    fn should_cache_full_region_chunks(&self) -> bool {
+        !self.precompiled_chunk_packets_enabled()
     }
 
     #[allow(dead_code)]
@@ -462,10 +902,14 @@ impl WorldManager {
         } else {
             region::AnvilRegion::new(&region_path)
         };
-        let cached = chunk.clone();
+        let cached = self
+            .should_cache_full_region_chunks()
+            .then(|| chunk.clone());
         region.write_chunk(chunk_x, chunk_z, chunk)?;
         region.save()?;
-        self.remember_region_chunk(dimension, chunk_x, chunk_z, cached);
+        if let Some(cached) = cached {
+            self.remember_region_chunk(dimension, chunk_x, chunk_z, cached);
+        }
         Ok(())
     }
 
@@ -520,6 +964,7 @@ impl WorldManager {
             .lock()
             .expect("world block store poisoned")
             .insert(BlockKey::new(dimension, &position), pending);
+        self.mark_chunk_dirty_for_block_change(dimension, &position);
         self.queue_block_persist(dimension.to_string(), position.clone(), pending);
         self.mark_placed_block_light_dampening(
             dimension,
@@ -568,6 +1013,7 @@ impl WorldManager {
                 };
                 placed_blocks.insert(BlockKey::new(dimension, position), pending);
                 expected.push((position.clone(), pending));
+                self.mark_chunk_dirty_for_block_change(dimension, position);
             }
         }
 
@@ -602,6 +1048,7 @@ impl WorldManager {
             match world.persist_block_change(&dimension, &position, pending.block_state) {
                 Ok(()) => {
                     world.remove_placed_block_if_current(&dimension, &position, pending);
+                    world.clear_dirty_chunk_if_clean(&dimension, &position);
                 }
                 Err(err) => {
                     log::warn!(
@@ -646,6 +1093,9 @@ impl WorldManager {
             match world.persist_block_changes(&dimension, &blocks) {
                 Ok(()) => {
                     world.remove_placed_blocks_if_current(&dimension, &expected);
+                    for (position, _) in &expected {
+                        world.clear_dirty_chunk_if_clean(&dimension, position);
+                    }
                 }
                 Err(err) => {
                     log::warn!(
@@ -670,6 +1120,37 @@ impl WorldManager {
             .get(&key)
             .copied()
             == Some(expected)
+    }
+
+    fn chunk_has_pending_block_overlay(&self, chunk_key: &ChunkKey) -> bool {
+        self.placed_blocks
+            .lock()
+            .expect("world block store poisoned")
+            .keys()
+            .any(|key| {
+                key.dimension == chunk_key.dimension
+                    && key.x.div_euclid(16) == chunk_key.x
+                    && key.z.div_euclid(16) == chunk_key.z
+            })
+    }
+
+    fn clear_dirty_chunk_if_clean(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) {
+        let chunk_key = ChunkKey::new(
+            dimension,
+            position.x.div_euclid(16),
+            position.z.div_euclid(16),
+        );
+        if self.chunk_has_pending_block_overlay(&chunk_key) {
+            return;
+        }
+        self.dirty_chunk_sections
+            .lock()
+            .expect("world dirty chunk section store poisoned")
+            .remove(&chunk_key);
     }
 
     fn remove_placed_block_if_current(
@@ -724,13 +1205,24 @@ impl WorldManager {
             return Some(block_state);
         }
 
+        let block_key = BlockKey::new(dimension, position);
+        if let Some(block_state) = self
+            .block_state_cache
+            .lock()
+            .expect("world block state cache poisoned")
+            .get(&block_key)
+        {
+            return Some(block_state);
+        }
+
         let chunk_x = position.x.div_euclid(16);
         let chunk_z = position.z.div_euclid(16);
         match self.load_region_chunk(dimension, chunk_x, chunk_z) {
             Ok(Some(chunk)) => match chunk_nbt::block_state_at_from_region(&chunk, position) {
                 Ok(block_state) => {
-                    if block_state.is_some() {
-                        return block_state;
+                    if let Some(block_state) = block_state {
+                        self.remember_block_state(block_key, block_state);
+                        return Some(block_state);
                     }
                 }
                 Err(err) => {
@@ -750,7 +1242,11 @@ impl WorldManager {
             }
         }
 
-        self.generator.block_state_at(dimension, position)
+        let block_state = self.generator.block_state_at(dimension, position);
+        if let Some(block_state) = block_state {
+            self.remember_block_state(block_key, block_state);
+        }
+        block_state
     }
 
     pub fn placed_block_updates(
@@ -790,6 +1286,62 @@ impl WorldManager {
             .lock()
             .expect("world region chunk cache poisoned")
             .insert(ChunkKey::new(dimension, chunk_x, chunk_z), chunk);
+    }
+
+    fn remember_block_state(&self, key: BlockKey, block_state: i32) {
+        if !self.precompiled_chunk_packets_enabled()
+            || self.precompiled_chunks.block_state_cache_limit == 0
+        {
+            return;
+        }
+        self.block_state_cache
+            .lock()
+            .expect("world block state cache poisoned")
+            .insert(
+                key,
+                block_state,
+                self.precompiled_chunks.block_state_cache_limit,
+            );
+    }
+
+    fn mark_chunk_dirty_for_block_change(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) {
+        if !self.precompiled_chunk_packets_enabled() {
+            return;
+        }
+        self.mark_precompiled_chunk_dirty(dimension, position);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn mark_precompiled_chunk_dirty(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) {
+        let chunk_key = ChunkKey::new(
+            dimension,
+            position.x.div_euclid(16),
+            position.z.div_euclid(16),
+        );
+        self.precompiled_chunk_cache
+            .lock()
+            .expect("world precompiled chunk cache poisoned")
+            .invalidate(&chunk_key);
+        self.block_state_cache
+            .lock()
+            .expect("world block state cache poisoned")
+            .invalidate_chunk(&chunk_key);
+        if (WORLD_MIN_Y..=WORLD_MAX_Y).contains(&position.y) {
+            self.dirty_chunk_sections
+                .lock()
+                .expect("world dirty chunk section store poisoned")
+                .entry(chunk_key)
+                .or_default()
+                .insert(position.y.div_euclid(16));
+        }
     }
 
     fn dimension_region_path(&self, dimension: &str) -> std::path::PathBuf {
@@ -938,10 +1490,20 @@ impl WorldManager {
     }
 
     fn chunk_light_for_update(&self, dimension: &str, chunk_x: i32, chunk_z: i32) -> Light {
+        self.chunk_light_for_payload(dimension, chunk_x, chunk_z, None)
+    }
+
+    fn chunk_light_for_payload(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        cache_epoch: Option<u64>,
+    ) -> Light {
         match self.light_mode {
             WorldLightMode::Static | WorldLightMode::Fixed(_) => self.chunk_light(),
             WorldLightMode::Dynamic => {
-                self.calculated_chunk_light(dimension, chunk_x, chunk_z, None)
+                self.calculated_chunk_light(dimension, chunk_x, chunk_z, cache_epoch)
             }
         }
     }
@@ -1087,16 +1649,43 @@ impl WorldManager {
         }
 
         self.cache_epoch.fetch_add(1, Ordering::AcqRel);
-        let mut chunks = self
-            .chunk_light_dampening
-            .lock()
-            .expect("world light cache poisoned");
-        let cleared = chunks.len();
-        *chunks = std::collections::HashMap::new();
-        self.region_chunk_cache
+        let cleared = if self.precompiled_chunk_packets_enabled() {
+            0
+        } else {
+            let mut chunks = self
+                .chunk_light_dampening
+                .lock()
+                .expect("world light cache poisoned");
+            let cleared = chunks.len();
+            *chunks = std::collections::HashMap::new();
+            cleared
+        };
+        let region_cleared = self
+            .region_chunk_cache
             .lock()
             .expect("world region chunk cache poisoned")
             .clear();
+        let precompiled_cleared = if self.precompiled_chunk_packets_enabled() {
+            0
+        } else {
+            self.precompiled_chunk_cache
+                .lock()
+                .expect("world precompiled chunk cache poisoned")
+                .clear()
+        };
+        let block_state_cleared = if self.precompiled_chunk_packets_enabled() {
+            0
+        } else {
+            self.block_state_cache
+                .lock()
+                .expect("world block state cache poisoned")
+                .clear()
+        };
+        if region_cleared > 0 || precompiled_cleared > 0 || block_state_cleared > 0 {
+            log::debug!(
+                "cleared world caches: region_chunks={region_cleared}, precompiled_packets={precompiled_cleared}, block_states={block_state_cleared}"
+            );
+        }
         if cleared > 0 {
             log::debug!("已清理世界区块光照缓存: chunks={cleared}");
         }
