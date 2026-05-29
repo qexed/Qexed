@@ -6,6 +6,69 @@ pub mod qexed_args;
 pub mod server;
 pub mod world_rules;
 
+const QEXED_SPLIT_CONFIG_FILES: &[qexed_config::tool::SplitConfigFile] = &[
+    qexed_config::tool::SplitConfigFile {
+        file_name: "plugin_download.toml",
+        root_path: "plugin_download",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "server.toml",
+        root_path: "server",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "content_filter.toml",
+        root_path: "server.content_filter",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "entities.toml",
+        root_path: "server.entities",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "entity_rendering.toml",
+        root_path: "server.entity_rendering",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "lan_discovery.toml",
+        root_path: "server.lan_discovery",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "lobby.toml",
+        root_path: "server.lobby",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "menus.toml",
+        root_path: "server.menus",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "permissions.toml",
+        root_path: "server.permissions",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "placeholders.toml",
+        root_path: "server.placeholders",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "player_audit.toml",
+        root_path: "server.player_audit",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "player_data.toml",
+        root_path: "server.player_data",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "player_messages.toml",
+        root_path: "server.player_messages",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "resource_pack.toml",
+        root_path: "server.resource_pack",
+    },
+    qexed_config::tool::SplitConfigFile {
+        file_name: "scoreboard.toml",
+        root_path: "server.scoreboard",
+    },
+];
+
 #[derive(Debug, Serialize, Deserialize, AutoDoc)]
 pub struct Qexed {
     #[AutoDoc(key = "config.qexed.version")]
@@ -67,16 +130,7 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
     const NAME: &'static str = "qexed";
 
     fn split_config_files() -> &'static [qexed_config::tool::SplitConfigFile] {
-        &[
-            qexed_config::tool::SplitConfigFile {
-                file_name: "plugin_download.toml",
-                root_path: "plugin_download",
-            },
-            qexed_config::tool::SplitConfigFile {
-                file_name: "server.toml",
-                root_path: "server",
-            },
-        ]
+        QEXED_SPLIT_CONFIG_FILES
     }
 
     fn dynamic_split_config_files(
@@ -115,8 +169,9 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
                 let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                     continue;
                 };
-                if stem.eq_ignore_ascii_case("server")
-                    || stem.eq_ignore_ascii_case("plugin_download")
+                if QEXED_SPLIT_CONFIG_FILES
+                    .iter()
+                    .any(|file| file.file_name.eq_ignore_ascii_case(&format!("{stem}.toml")))
                 {
                     continue;
                 }
@@ -137,6 +192,29 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
             }
         }
         Ok(split_files)
+    }
+
+    fn config_file_description(lang: &str, config_file: &str, root_path: Option<&str>) -> String {
+        let key = match root_path {
+            None => "autodoc.file_description.qexed.main",
+            Some("plugin_download") => "autodoc.file_description.qexed.plugin_download",
+            Some("server") => "autodoc.file_description.qexed.server",
+            Some("server.content_filter") => "autodoc.file_description.qexed.content_filter",
+            Some("server.entities") => "autodoc.file_description.qexed.entities",
+            Some("server.entity_rendering") => "autodoc.file_description.qexed.entity_rendering",
+            Some("server.lan_discovery") => "autodoc.file_description.qexed.lan_discovery",
+            Some("server.lobby") => "autodoc.file_description.qexed.lobby",
+            Some("server.menus") => "autodoc.file_description.qexed.menus",
+            Some("server.permissions") => "autodoc.file_description.qexed.permissions",
+            Some("server.placeholders") => "autodoc.file_description.qexed.placeholders",
+            Some("server.player_audit") => "autodoc.file_description.qexed.player_audit",
+            Some("server.player_data") => "autodoc.file_description.qexed.player_data",
+            Some("server.player_messages") => "autodoc.file_description.qexed.player_messages",
+            Some("server.resource_pack") => "autodoc.file_description.qexed.resource_pack",
+            Some("server.scoreboard") => "autodoc.file_description.qexed.scoreboard",
+            _ => "autodoc.file_description.default",
+        };
+        rust_i18n::t!(key, locale = lang, file = config_file).to_string()
     }
 }
 

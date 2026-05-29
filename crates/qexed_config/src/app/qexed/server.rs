@@ -470,7 +470,7 @@ pub struct LobbyMenuItem {
     pub lore: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.action")]
+    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.action", sub)]
     pub action: LobbyAction,
 }
 
@@ -497,7 +497,7 @@ pub struct LobbyNpcAction {
     pub entity: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions.action")]
+    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions.action", sub)]
     pub action: LobbyAction,
 }
 
@@ -590,7 +590,7 @@ pub struct MenuHotbarItem {
     pub lore: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.action")]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.action", sub)]
     pub action: MenuAction,
 }
 
@@ -655,7 +655,7 @@ pub struct MenuItem {
     pub lore: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items.action")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items.action", sub)]
     pub action: MenuAction,
 }
 
@@ -1703,6 +1703,15 @@ impl Default for World {
 impl qexed_config::tool::AppConfigTrait for World {
     const PATH: &'static str = "/";
     const NAME: &'static str = "world";
+
+    fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
+        rust_i18n::t!(
+            "autodoc.file_description.world",
+            locale = lang,
+            file = config_file
+        )
+        .to_string()
+    }
 
     fn load_legacy_config(base_dir: &std::path::Path) -> anyhow::Result<Option<Self>> {
         for path in [

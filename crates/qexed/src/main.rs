@@ -5,6 +5,7 @@ mod code_of_conduct;
 mod commands;
 mod config;
 mod connection;
+mod console;
 mod content_filter;
 mod entities;
 mod inventory;

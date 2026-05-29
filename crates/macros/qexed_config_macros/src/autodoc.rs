@@ -22,6 +22,7 @@ struct AutoDocAttrs {
 struct SerdeAttrs {
     serialize_name: Option<String>,
     flatten: bool,
+    skip: bool,
 }
 
 struct FieldDoc {
@@ -58,6 +59,7 @@ pub fn expand(input: DeriveInput) -> TokenStream {
     }
 
     let mut doc_builders = Vec::new();
+    let mut value_type_builders = Vec::new();
     let mut default_display_builders = Vec::new();
     let mut sensitive_builders = Vec::new();
     let mut pending_builders = Vec::new();
@@ -70,6 +72,7 @@ pub fn expand(input: DeriveInput) -> TokenStream {
         append_field_builders(
             field,
             &mut doc_builders,
+            &mut value_type_builders,
             &mut default_display_builders,
             &mut sensitive_builders,
             &mut pending_builders,
@@ -86,6 +89,12 @@ pub fn expand(input: DeriveInput) -> TokenStream {
                 let mut all_doc = Vec::new();
                 #(#doc_builders)*
                 all_doc
+            }
+
+            fn field_value_types() -> Vec<(String, &'static str)> {
+                let mut all_value_types = Vec::new();
+                #(#value_type_builders)*
+                all_value_types
             }
 
             fn default_display_fields(lang: &str) -> Vec<(String, String)> {
@@ -155,7 +164,7 @@ fn parse_field_doc(field: &Field) -> syn::Result<FieldDoc> {
         }
     }
 
-    if !serde.flatten && auto_doc.key.is_none() {
+    if !serde.flatten && !serde.skip && auto_doc.key.is_none() {
         return Err(syn::Error::new(
             ident.span(),
             format!("Field `{}` missing AutoDoc key", field_name),
@@ -209,6 +218,11 @@ fn parse_serde_attr(attr: &syn::Attribute, serde: &mut SerdeAttrs) -> syn::Resul
             return Ok(());
         }
 
+        if meta.path.is_ident("skip") {
+            serde.skip = true;
+            return Ok(());
+        }
+
         if meta.path.is_ident("rename") {
             if meta.input.peek(Token![=]) {
                 let value = meta.value()?;
@@ -243,6 +257,7 @@ fn parse_serde_attr(attr: &syn::Attribute, serde: &mut SerdeAttrs) -> syn::Resul
 fn append_field_builders(
     field: &FieldDoc,
     doc_builders: &mut Vec<TokenStream>,
+    value_type_builders: &mut Vec<TokenStream>,
     default_display_builders: &mut Vec<TokenStream>,
     sensitive_builders: &mut Vec<TokenStream>,
     pending_builders: &mut Vec<TokenStream>,
@@ -251,6 +266,10 @@ fn append_field_builders(
     deprecation_builders: &mut Vec<TokenStream>,
     danger_builders: &mut Vec<TokenStream>,
 ) {
+    if field.serde.skip {
+        return;
+    }
+
     let display_name_lit = LitStr::new(&field.display_name, field.span);
 
     if !field.serde.flatten {
@@ -261,6 +280,11 @@ fn append_field_builders(
             .expect("non-flatten fields must have an AutoDoc key");
 
         doc_builders.push(push_translated_entry("all_doc", &display_name_lit, key));
+        value_type_builders.push(push_value_type_entry(
+            "all_value_types",
+            &display_name_lit,
+            field_value_type_name(&field.field_ty, field.auto_doc.has_sub),
+        ));
         if let Some(default_display) = &field.auto_doc.default_display {
             default_display_builders.push(push_literal_entry(
                 "all_default_display",
@@ -318,6 +342,11 @@ fn append_field_builders(
     doc_builders.push(push_recursive_entries(
         "all_doc",
         "doc_fields",
+        &field.field_ty,
+        prefix.as_ref(),
+    ));
+    value_type_builders.push(push_recursive_type_entries(
+        "all_value_types",
         &field.field_ty,
         prefix.as_ref(),
     ));
@@ -400,6 +429,18 @@ fn push_literal_entry(target: &str, display_name: &LitStr, value: &str) -> Token
     }
 }
 
+fn push_value_type_entry(target: &str, display_name: &LitStr, value_type: &str) -> TokenStream {
+    let target = Ident::new(target, Span::call_site());
+    let value_type = LitStr::new(value_type, Span::call_site());
+
+    quote! {
+        #target.push((
+            #display_name.to_string(),
+            #value_type,
+        ));
+    }
+}
+
 fn push_optional_translated_entry(
     builders: &mut Vec<TokenStream>,
     target: &str,
@@ -408,6 +449,26 @@ fn push_optional_translated_entry(
 ) {
     if let Some(i18n_key) = i18n_key {
         builders.push(push_translated_entry(target, display_name, i18n_key));
+    }
+}
+
+fn push_recursive_type_entries(
+    target: &str,
+    field_ty: &Type,
+    prefix: Option<&LitStr>,
+) -> TokenStream {
+    let target = Ident::new(target, Span::call_site());
+    let trait_target = autodoc_trait_target_type(field_ty);
+
+    match prefix {
+        Some(prefix) => quote! {
+            for (sub_key, sub_value_type) in <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types() {
+                #target.push((format!("{}.{}", #prefix, sub_key), sub_value_type));
+            }
+        },
+        None => quote! {
+            #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types());
+        },
     }
 }
 
@@ -451,6 +512,89 @@ fn push_recursive_sensitive_entries(
             #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields());
         },
     }
+}
+
+fn field_value_type_name(field_ty: &Type, has_sub: bool) -> &'static str {
+    if type_is_generic(field_ty, "Vec")
+        || type_is_generic(field_ty, "HashSet")
+        || type_is_generic(field_ty, "BTreeSet")
+    {
+        return "array";
+    }
+    if let Some(inner_ty) = generic_inner_type(field_ty, "Option") {
+        return field_value_type_name(inner_ty, has_sub);
+    }
+    if type_is_generic(field_ty, "HashMap") || type_is_generic(field_ty, "BTreeMap") {
+        return "object";
+    }
+    if has_sub {
+        return "object";
+    }
+
+    let Some(ident) = last_type_ident(field_ty) else {
+        return "unknown";
+    };
+    match ident.as_str() {
+        "bool" => "boolean",
+        "usize" | "u64" | "u32" | "u16" | "u8" | "isize" | "i64" | "i32" | "i16" | "i8" => {
+            "integer"
+        }
+        "f64" | "f32" => "number",
+        "String" | "str" | "PathBuf" | "Uuid" | "Duration" => "string",
+        name if enum_like_type_name(name) => "string",
+        _ => "object",
+    }
+}
+
+fn enum_like_type_name(name: &str) -> bool {
+    [
+        "Algorithm",
+        "Color",
+        "Engine",
+        "Generator",
+        "Kind",
+        "Level",
+        "Mode",
+        "Overlay",
+        "Provider",
+        "Selector",
+        "Source",
+        "Storage",
+    ]
+    .iter()
+    .any(|suffix| name.ends_with(suffix))
+}
+
+fn type_is_generic(field_ty: &Type, generic_name: &str) -> bool {
+    generic_inner_type(field_ty, generic_name).is_some()
+}
+
+fn generic_inner_type<'a>(field_ty: &'a Type, generic_name: &str) -> Option<&'a Type> {
+    let Type::Path(type_path) = field_ty else {
+        return None;
+    };
+    let last_segment = type_path.path.segments.last()?;
+    if last_segment.ident != generic_name {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &last_segment.arguments else {
+        return None;
+    };
+    let Some(GenericArgument::Type(inner_ty)) = args.args.first() else {
+        return None;
+    };
+    Some(inner_ty)
+}
+
+fn last_type_ident(field_ty: &Type) -> Option<String> {
+    let Type::Path(type_path) = field_ty else {
+        return None;
+    };
+    type_path
+        .path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
 }
 
 fn autodoc_trait_target_type(field_ty: &Type) -> TokenStream {

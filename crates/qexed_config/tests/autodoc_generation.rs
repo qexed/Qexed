@@ -99,18 +99,26 @@ fn generated_configs_include_autodoc_comments() -> anyhow::Result<()> {
 
     let qexed = std::fs::read_to_string(dir.join("qexed.toml"))?;
     assert!(qexed.contains("# ==== AutoDocHeader ===="));
+    assert!(qexed.contains("qexed.toml:"));
     assert!(!qexed.contains("# config.qexed."));
+    assert!(!qexed.contains("[server]"));
+    assert!(!qexed.contains("[plugin_download]"));
 
     let plugin_download =
         std::fs::read_to_string(dir.join("qexed.d").join("plugin_download.toml"))?;
+    assert!(plugin_download.contains("# ==== AutoDocHeader ===="));
+    assert!(plugin_download.contains("plugin_download.toml:"));
     assert!(plugin_download.contains("插件下载设置"));
 
     let server = std::fs::read_to_string(dir.join("qexed.d").join("server.toml"))?;
+    assert!(server.contains("# ==== AutoDocHeader ===="));
+    assert!(server.contains("server.toml:"));
     assert!(server.contains("[server]"));
     assert!(server.contains("ip = \"0.0.0.0:25565\""));
     assert!(!server.contains("[server.world]"));
 
     let world = std::fs::read_to_string(dir.join("world.toml"))?;
+    assert!(world.contains("world.toml:"));
     assert!(!world.contains("[server.world]"));
     assert!(world.contains("generator = \"empty\""));
 

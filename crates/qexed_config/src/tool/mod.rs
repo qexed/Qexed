@@ -45,6 +45,9 @@ impl Default for AutoDocConfig {
 // ========================
 pub trait AutoDocConfigTrait {
     fn doc_fields(lang: &str) -> Vec<(String, String)>;
+    fn field_value_types() -> Vec<(String, &'static str)> {
+        Vec::new()
+    }
     fn default_display_fields(lang: &str) -> Vec<(String, String)>;
     fn sensitive_fields() -> Vec<String>;
     fn deprecation_fields(lang: &str) -> Vec<(String, String)>;
@@ -72,6 +75,15 @@ pub trait AppConfigTrait:
         _split_dir: &std::path::Path,
     ) -> Result<Vec<OwnedSplitConfigFile>> {
         Ok(Vec::new())
+    }
+
+    fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
+        rust_i18n::t!(
+            "autodoc.file_description.default",
+            locale = lang,
+            file = config_file
+        )
+        .to_string()
     }
 
     fn load_legacy_config(_base_dir: &std::path::Path) -> Result<Option<Self>> {
@@ -232,10 +244,17 @@ pub trait AppConfigTrait:
         }
 
         // 6. ✅ 更新 Header（只保留一个）
-        ensure_or_update_doc_header(&mut doc, &effective_lang);
+        ensure_or_update_doc_header::<Self>(
+            &mut doc,
+            &effective_lang,
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(Self::NAME),
+            None,
+        );
 
         // 7. ✅ 写回文件
-        write_config_documents::<Self>(&doc, &path, &split_dir)?;
+        write_config_documents::<Self>(&doc, &path, &split_dir, &effective_lang)?;
 
         // 8. 反序列化
         let clean_doc = remove_auto_doc_fields(&doc);
@@ -361,10 +380,17 @@ pub trait AppConfigTrait:
 
                 update_autodoc_for_key(&mut doc, &key, &comment_parts.join("\n\n"));
             }
-            ensure_or_update_doc_header(&mut doc, &effective_lang);
+            ensure_or_update_doc_header::<Self>(
+                &mut doc,
+                &effective_lang,
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(Self::NAME),
+                None,
+            );
         }
 
-        write_config_documents::<Self>(&doc, &path, &split_dir)?;
+        write_config_documents::<Self>(&doc, &path, &split_dir, &effective_lang)?;
         write_secrets_doc(&secrets_path, &secrets_doc)?;
         Ok(())
     }
@@ -474,12 +500,19 @@ pub trait AppConfigTrait:
             update_autodoc_for_key(&mut doc, &key, &full_comment);
         }
 
-        ensure_or_update_doc_header(&mut doc, &effective_lang);
+        ensure_or_update_doc_header::<Self>(
+            &mut doc,
+            &effective_lang,
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(Self::NAME),
+            None,
+        );
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        write_config_documents::<Self>(&doc, path, split_dir)?;
+        write_config_documents::<Self>(&doc, path, split_dir, &effective_lang)?;
         write_secrets_doc(secrets_path, &secrets_doc)?;
         Ok(config)
     }
@@ -534,6 +567,7 @@ fn split_dir_for(path: &std::path::Path) -> Result<std::path::PathBuf> {
 fn sync_split_config_files<T: AppConfigTrait>(
     doc: &DocumentMut,
     split_dir: &std::path::Path,
+    lang: &str,
 ) -> Result<()> {
     let split_files = resolved_split_config_files::<T>(doc, split_dir)?;
     if split_files.is_empty() {
@@ -558,6 +592,12 @@ fn sync_split_config_files<T: AppConfigTrait>(
             split_file_local_root_path(&split_file.root_path),
             &split_files,
         );
+        ensure_or_update_doc_header::<T>(
+            &mut split_doc,
+            lang,
+            &split_file.file_name,
+            Some(&split_file.root_path),
+        );
         std::fs::write(&file_path, split_doc.to_string())
             .with_context(|| format!("无法写入拆分配置文件 {}", file_path.display()))?;
     }
@@ -569,11 +609,20 @@ fn write_config_documents<T: AppConfigTrait>(
     doc: &DocumentMut,
     path: &std::path::Path,
     split_dir: &std::path::Path,
+    lang: &str,
 ) -> Result<()> {
     let mut main_doc = doc.clone();
     let split_files = resolved_split_config_files::<T>(&main_doc, split_dir)?;
-    sync_split_config_files::<T>(&main_doc, split_dir)?;
+    sync_split_config_files::<T>(&main_doc, split_dir, lang)?;
     prune_split_config_items(&mut main_doc, &split_files);
+    ensure_or_update_doc_header::<T>(
+        &mut main_doc,
+        lang,
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(T::NAME),
+        None,
+    );
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1381,9 +1430,16 @@ fn ensure_comment_prefix(text: &str) -> String {
         .join("\n")
 }
 
-fn ensure_or_update_doc_header(doc: &mut DocumentMut, lang: &str) {
+fn ensure_or_update_doc_header<T: AppConfigTrait>(
+    doc: &mut DocumentMut,
+    lang: &str,
+    config_file: &str,
+    root_path: Option<&str>,
+) {
     let header_text = rust_i18n::t!("autodoc.header", locale = lang);
-    let processed_header = ensure_comment_prefix(&header_text);
+    let file_description = T::config_file_description(lang, config_file, root_path);
+    let full_header = format!("{header_text}\n\n{file_description}");
+    let processed_header = ensure_comment_prefix(&full_header);
     let start_marker = "# ==== AutoDocHeader ====";
     let end_marker = "# =======================";
     let new_header_block = format!("{}\n{}\n{}", start_marker, processed_header, end_marker);

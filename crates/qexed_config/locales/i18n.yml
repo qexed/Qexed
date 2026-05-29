@@ -47,6 +47,63 @@ autodoc:
     en: "Migration notice: \n%{text}"
     zh-CN: "迁移建议：\n%{text}"
 
+  file_description:
+    default:
+      en: "%{file}: configuration file."
+      zh-CN: "%{file}: 配置文件。"
+    world:
+      en: "%{file}: world save, generator, spawn, lighting, and GPU calculation settings."
+      zh-CN: "%{file}: 世界存档、生成器、出生点、光照和 GPU 计算设置。"
+    qexed:
+      main:
+        en: "%{file}: Qexed main configuration. Keeps global switches and points to qexed.d module files."
+        zh-CN: "%{file}: Qexed 主配置。用于全局开关，其他模块拆分到 qexed.d 下。"
+      plugin_download:
+        en: "%{file}: plugin download source and authentication settings."
+        zh-CN: "%{file}: 插件下载源和认证设置。"
+      server:
+        en: "%{file}: core server runtime, network, proxy, rate-limit, MOTD, and favicon settings."
+        zh-CN: "%{file}: 核心服务端运行、网络、代理、速率限制、MOTD 和图标设置。"
+      content_filter:
+        en: "%{file}: chat content filter engine, word list, and external API settings."
+        zh-CN: "%{file}: 聊天内容审核引擎、词库和外部 API 设置。"
+      entities:
+        en: "%{file}: static entity, NPC, and hologram configuration."
+        zh-CN: "%{file}: 静态实体、NPC 和悬浮字配置。"
+      entity_rendering:
+        en: "%{file}: per-viewer entity render distance and entity stacking settings."
+        zh-CN: "%{file}: 按玩家视角的实体渲染距离和实体堆叠显示设置。"
+      lan_discovery:
+        en: "%{file}: Minecraft LAN discovery broadcast settings."
+        zh-CN: "%{file}: Minecraft 局域网发现广播设置。"
+      lobby:
+        en: "%{file}: lobby mode, backend selector, navigator item, broadcasts, and boss bar settings."
+        zh-CN: "%{file}: 大厅模式、后端选择器、导航器物品、广播和 BossBar 设置。"
+      menus:
+        en: "%{file}: inventory hotbar and chest menu definitions."
+        zh-CN: "%{file}: 物品栏快捷菜单和箱子菜单定义。"
+      permissions:
+        en: "%{file}: local or LuckPerms permission backend settings."
+        zh-CN: "%{file}: 本地权限或 LuckPerms 权限后端设置。"
+      placeholders:
+        en: "%{file}: text placeholder formatting settings."
+        zh-CN: "%{file}: 文本占位符格式化设置。"
+      player_audit:
+        en: "%{file}: player action audit switches and storage settings."
+        zh-CN: "%{file}: 玩家行为审计开关和存储设置。"
+      player_data:
+        en: "%{file}: player data persistence engine and database connection settings."
+        zh-CN: "%{file}: 玩家数据持久化引擎和数据库连接设置。"
+      player_messages:
+        en: "%{file}: player join and leave announcement templates."
+        zh-CN: "%{file}: 玩家进服和退服提示模板。"
+      resource_pack:
+        en: "%{file}: server resource pack delivery and object storage settings."
+        zh-CN: "%{file}: 服务端资源包下发和对象存储设置。"
+      scoreboard:
+        en: "%{file}: sidebar scoreboard objective, title, and line settings."
+        zh-CN: "%{file}: 侧边栏计分板目标、标题和行内容设置。"
+
 qexed_config:
   config:
     server:

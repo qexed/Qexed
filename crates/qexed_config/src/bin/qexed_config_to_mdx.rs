@@ -8,7 +8,8 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Parser, ValueEnum};
 use qexed_config::{
     app::{
-        qexed::Qexed, qexed_ip_connection_speed_test::QexedIpConnectionSpeedTest,
+        qexed::{Qexed, server::World},
+        qexed_ip_connection_speed_test::QexedIpConnectionSpeedTest,
         qexed_warden::QexedWarden,
     },
     build,
@@ -97,6 +98,7 @@ type ConfigDocFile = {
   name: string;
   configPath: string;
   route: string;
+  description: string;
 };
 
 type ConfigTreeNode = {
@@ -418,6 +420,7 @@ function ConfigTreeNodes({
             className={`qexed-vscode-tree-file ${normalizeConfigPath(node.doc.configPath) === currentPath ? "is-active" : ""}`}
             href={`${basePath === "/" ? "" : basePath}/${node.doc.route}`}
             key={node.path}
+            title={node.doc.description}
           >
             <span className="qexed-vscode-file-icon" aria-hidden="true" />
             <span>{node.name}</span>
@@ -1869,6 +1872,8 @@ struct DocApp {
     name: String,
     config_file: String,
     config_path: String,
+    description: String,
+    root_path: Option<String>,
     fields: Vec<DocField>,
 }
 
@@ -1878,6 +1883,7 @@ struct ConfigDocFile {
     #[serde(rename = "configPath")]
     config_path: String,
     route: String,
+    description: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2137,15 +2143,7 @@ fn collect_bundle(commit: &str, langs: &[String]) -> Result<DocBundle> {
     for lang in langs {
         languages.push(LanguageDocs {
             lang: lang.clone(),
-            apps: vec![
-                collect_app::<Qexed>("qexed", "qexed.toml", lang)?,
-                collect_app::<QexedWarden>("qexed_warden", "qexed_warden.toml", lang)?,
-                collect_app::<QexedIpConnectionSpeedTest>(
-                    "qexed_ip_connect_speed_test",
-                    "qexed_ip_connect_speed_test.toml",
-                    lang,
-                )?,
-            ],
+            apps: collect_language_apps(lang)?,
         });
     }
 
@@ -2155,7 +2153,61 @@ fn collect_bundle(commit: &str, langs: &[String]) -> Result<DocBundle> {
     })
 }
 
+fn collect_language_apps(lang: &str) -> Result<Vec<DocApp>> {
+    let mut apps = Vec::new();
+    apps.push(collect_app::<Qexed>("qexed", "qexed.toml", lang)?);
+    apps.extend(collect_split_apps::<Qexed>("qexed", lang)?);
+    apps.push(collect_app::<World>("world", "world.toml", lang)?);
+    apps.push(collect_app::<QexedWarden>(
+        "qexed_warden",
+        "qexed_warden.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedIpConnectionSpeedTest>(
+        "qexed_ip_connect_speed_test",
+        "qexed_ip_connect_speed_test.toml",
+        lang,
+    )?);
+    Ok(apps)
+}
+
 fn collect_app<T>(name: &str, config_file: &str, lang: &str) -> Result<DocApp>
+where
+    T: AppConfigTrait + AutoDocConfigTrait + Serialize + Default,
+{
+    collect_app_with_scope::<T>(name, config_file, lang, None)
+}
+
+fn collect_split_apps<T>(owner_name: &str, lang: &str) -> Result<Vec<DocApp>>
+where
+    T: AppConfigTrait + AutoDocConfigTrait + Serialize + Default,
+{
+    let mut apps = Vec::new();
+    for split in T::split_config_files() {
+        let route = format!(
+            "{}_{}",
+            owner_name,
+            split
+                .file_name
+                .strip_suffix(".toml")
+                .unwrap_or(split.file_name)
+        );
+        apps.push(collect_app_with_scope::<T>(
+            &route,
+            split.file_name,
+            lang,
+            Some(split.root_path),
+        )?);
+    }
+    Ok(apps)
+}
+
+fn collect_app_with_scope<T>(
+    name: &str,
+    config_file: &str,
+    lang: &str,
+    root_path: Option<&str>,
+) -> Result<DocApp>
 where
     T: AppConfigTrait + AutoDocConfigTrait + Serialize + Default,
 {
@@ -2169,24 +2221,28 @@ where
         migration_notices: into_map(T::migration_notice_fields(lang)),
     };
     let default_display = into_map(T::default_display_fields(lang));
+    let value_types = into_type_map(T::field_value_types());
 
+    let split_root_paths = split_root_paths::<T>();
     let mut fields = Vec::new();
-    for (path, description) in T::doc_fields(lang) {
-        let default = value_at_path(&defaults, &path);
+    for (path, description) in scoped_entries(T::doc_fields(lang), root_path) {
+        let full_path = full_field_path(root_path, &path);
+        if split_scope_excludes(root_path, &full_path, &split_root_paths) {
+            continue;
+        }
+        let default = value_at_path(&defaults, &full_path);
         fields.push(DocField {
-            value_type: default
-                .map(value_type_name)
-                .unwrap_or("unknown")
+            value_type: resolved_value_type(default, value_types.get(&full_path).copied())
                 .to_string(),
             default_value: default_display
-                .get(&path)
+                .get(&full_path)
                 .cloned()
                 .or_else(|| default.and_then(display_default_value)),
-            warning: notices.warnings.get(&path).cloned(),
-            danger: notices.dangers.get(&path).cloned(),
-            pending_deprecated: notices.pending_deprecated.get(&path).cloned(),
-            deprecated: notices.deprecated.get(&path).cloned(),
-            migration_notice: notices.migration_notices.get(&path).cloned(),
+            warning: notices.warnings.get(&full_path).cloned(),
+            danger: notices.dangers.get(&full_path).cloned(),
+            pending_deprecated: notices.pending_deprecated.get(&full_path).cloned(),
+            deprecated: notices.deprecated.get(&full_path).cloned(),
+            migration_notice: notices.migration_notices.get(&full_path).cloned(),
             path,
             description,
         });
@@ -2203,8 +2259,13 @@ where
         .collect::<BTreeSet<_>>();
     for field in &mut fields {
         if field.value_type == "unknown" && parent_paths.contains(&field.path) {
-            // 这类字段通常是空数组（被 skip_serializing_if 省略）但存在子字段定义。
             field.value_type = "array".to_string();
+        }
+    }
+
+    for field in &mut fields {
+        if field.value_type == "array" && parent_paths.contains(&field.path) {
+            field.default_value = None;
         }
     }
 
@@ -2213,8 +2274,45 @@ where
     Ok(DocApp {
         name: name.to_string(),
         config_file: config_file.to_string(),
-        config_path: config_path::<T>(config_file),
+        config_path: config_path::<T>(config_file, root_path),
+        description: T::config_file_description(lang, config_file, root_path),
+        root_path: root_path.map(str::to_string),
         fields,
+    })
+}
+
+fn split_root_paths<T: AppConfigTrait>() -> Vec<&'static str> {
+    T::split_config_files()
+        .iter()
+        .map(|split| split.root_path)
+        .collect()
+}
+
+fn scoped_path_contains(root_path: &str, path: &str) -> bool {
+    path == root_path
+        || path
+            .strip_prefix(root_path)
+            .is_some_and(|suffix| suffix.starts_with('.'))
+}
+
+fn split_scope_excludes(
+    current_root_path: Option<&str>,
+    full_path: &str,
+    split_root_paths: &[&'static str],
+) -> bool {
+    split_root_paths.iter().any(|split_root_path| {
+        if Some(*split_root_path) == current_root_path {
+            return false;
+        }
+        match current_root_path {
+            Some(current_root_path) => {
+                split_root_path
+                    .strip_prefix(current_root_path)
+                    .is_some_and(|suffix| suffix.starts_with('.'))
+                    && scoped_path_contains(split_root_path, full_path)
+            }
+            None => scoped_path_contains(split_root_path, full_path),
+        }
     })
 }
 
@@ -2226,6 +2324,7 @@ fn config_doc_files(language_docs: &LanguageDocs) -> Vec<ConfigDocFile> {
             name: app.name.clone(),
             config_path: app.config_path.clone(),
             route: app.name.clone(),
+            description: app.description.clone(),
         })
         .collect()
 }
@@ -2234,13 +2333,67 @@ fn into_map(values: Vec<(String, String)>) -> BTreeMap<String, String> {
     values.into_iter().collect()
 }
 
-fn config_path<T: AppConfigTrait>(config_file: &str) -> String {
+fn into_type_map(values: Vec<(String, &'static str)>) -> BTreeMap<String, &'static str> {
+    values.into_iter().collect()
+}
+
+fn config_path<T: AppConfigTrait>(config_file: &str, root_path: Option<&str>) -> String {
     let base = T::PATH.trim_matches('/');
+    let config_file = scoped_config_file::<T>(config_file, root_path);
     if base.is_empty() {
         format!("config/{config_file}")
     } else {
         format!("config/{base}/{config_file}")
     }
+}
+
+fn scoped_config_file<T: AppConfigTrait>(config_file: &str, root_path: Option<&str>) -> String {
+    if root_path.is_some() {
+        format!("{}.d/{config_file}", T::NAME)
+    } else {
+        config_file.to_string()
+    }
+}
+
+fn scoped_entries(
+    entries: Vec<(String, String)>,
+    root_path: Option<&str>,
+) -> Vec<(String, String)> {
+    let Some(root_path) = root_path else {
+        return entries;
+    };
+    let local_root_path = split_file_local_root_path(root_path);
+    entries
+        .into_iter()
+        .filter_map(|(path, description)| {
+            if path == root_path {
+                Some((local_root_path.to_string(), description))
+            } else {
+                path.strip_prefix(&format!("{root_path}."))
+                    .map(|suffix| (format!("{local_root_path}.{suffix}"), description))
+            }
+        })
+        .collect()
+}
+
+fn full_field_path(root_path: Option<&str>, path: &str) -> String {
+    match root_path {
+        Some(root_path) => {
+            let local_root_path = split_file_local_root_path(root_path);
+            if path == local_root_path {
+                root_path.to_string()
+            } else if let Some(suffix) = path.strip_prefix(&format!("{local_root_path}.")) {
+                format!("{root_path}.{suffix}")
+            } else {
+                format!("{root_path}.{path}")
+            }
+        }
+        None => path.to_string(),
+    }
+}
+
+fn split_file_local_root_path(root_path: &str) -> &str {
+    root_path.strip_prefix("server.").unwrap_or(root_path)
 }
 
 fn value_at_path<'a>(root: &'a JsonValue, path: &str) -> Option<&'a JsonValue> {
@@ -2249,6 +2402,17 @@ fn value_at_path<'a>(root: &'a JsonValue, path: &str) -> Option<&'a JsonValue> {
         current = current.get(part)?;
     }
     Some(current)
+}
+
+fn resolved_value_type(
+    default: Option<&JsonValue>,
+    type_hint: Option<&'static str>,
+) -> &'static str {
+    match default {
+        Some(JsonValue::Null) => type_hint.unwrap_or("null"),
+        Some(value) => value_type_name(value),
+        None => type_hint.unwrap_or("unknown"),
+    }
 }
 
 fn value_type_name(value: &JsonValue) -> &'static str {
@@ -2629,7 +2793,12 @@ fn render_markdown_app(commit: &str, lang: &str, app: &DocApp, mdx: bool) -> Str
     out.push_str(&format!("- {}: `{commit}`\n", ui.commit));
     out.push_str(&format!("- {}: `{lang}`\n", ui.language));
     out.push_str(&format!("- {}: `{}`\n", ui.config_file, app.config_path));
-    out.push_str(&format!("- {}: `{}`\n\n", ui.field_count, app.fields.len()));
+    out.push_str(&format!("- {}: `{}`\n", ui.field_count, app.fields.len()));
+    out.push_str(&format!(
+        "- {}: {}\n\n",
+        ui.description,
+        escape_markdown(&app.description)
+    ));
 
     out.push_str(&format!(
         "| {} | {} | {} | {} | {} |\n",
@@ -2720,7 +2889,12 @@ fn render_next_app_config_page(
     out.push_str(&format!("- {}: `{commit}`\n", ui.commit));
     out.push_str(&format!("- {}: `{lang}`\n", ui.language));
     out.push_str(&format!("- {}: `{}`\n", ui.config_file, app.config_path));
-    out.push_str(&format!("- {}: `{}`\n\n", ui.field_count, app.fields.len()));
+    out.push_str(&format!("- {}: `{}`\n", ui.field_count, app.fields.len()));
+    out.push_str(&format!(
+        "- {}: {}\n\n",
+        ui.description,
+        escape_markdown(&app.description)
+    ));
     out.push_str(&format!(
         "<ConfigDocProvider appName=\"{}\" configPath=\"{}\" configDocs={{configDocs}} commit=\"{}\" lang=\"{}\" fields={{configFields}} labels={{configLabels}}>\n\n",
         escape_mdx_attribute(&app.name),
@@ -2965,10 +3139,11 @@ fn render_site_index(bundle: &DocBundle, target: &str) -> String {
         ));
         for app in &language_docs.apps {
             out.push_str(&format!(
-                "- [{}]({}/{}.md)\n",
+                "- [{}]({}/{}.md): {}\n",
                 app.name,
                 escape_markdown_link(&language_docs.lang),
-                escape_markdown_link(&app.name)
+                escape_markdown_link(&app.name),
+                escape_markdown(&app.description)
             ));
         }
         out.push('\n');
@@ -2990,11 +3165,12 @@ fn render_language_index(commit: &str, language_docs: &LanguageDocs) -> String {
 
     for app in &language_docs.apps {
         out.push_str(&format!(
-            "- [{}]({}.md): `{}` {}\n",
+            "- [{}]({}.md): `{}` {} - {}\n",
             app.name,
             escape_markdown_link(&app.name),
             app.fields.len(),
-            ui.field_unit
+            ui.field_unit,
+            escape_markdown(&app.description)
         ));
     }
 
@@ -3208,8 +3384,8 @@ fn escape_mdx_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, Qexed, collect_app,
-        render_next_app_config_page, write_assets, write_next_app_docs,
+        DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, Qexed, QexedWarden, collect_app,
+        collect_bundle, render_next_app_config_page, write_assets, write_next_app_docs,
     };
 
     fn temp_output_dir(name: &str) -> std::path::PathBuf {
@@ -3243,6 +3419,8 @@ mod tests {
             name: "qexed".to_string(),
             config_file: "qexed.toml".to_string(),
             config_path: "config/qexed.toml".to_string(),
+            description: "qexed.toml: Qexed 主配置。".to_string(),
+            root_path: None,
             fields: vec![
                 DocField {
                     path: "server.ip".to_string(),
@@ -3293,6 +3471,7 @@ mod tests {
         assert!(page.contains("<ConfigComplexDetails />"));
         assert!(page.contains("configDocs={configDocs}"));
         assert!(page.contains("\"configPath\": \"config/qexed.toml\""));
+        assert!(page.contains("\"description\":"));
         assert!(page.contains("\"currentValue\": \"当前值\""));
         assert!(page.contains("\"path\": \"server.ip\""));
         Ok(())
@@ -3326,19 +3505,103 @@ mod tests {
 
     #[test]
     fn qexed_doc_fields_include_entities_list_structure() -> anyhow::Result<()> {
-        let app = collect_app::<Qexed>("qexed", "qexed.toml", "zh-CN")?;
+        let mut bundle = collect_bundle("test-commit", &["zh-CN".to_string()])?;
+        let language_docs = bundle.languages.remove(0);
+        let app = language_docs
+            .apps
+            .iter()
+            .find(|app| app.name == "qexed_entities")
+            .expect("qexed entities split doc must be generated");
+
+        assert_eq!(app.config_path, "config/qexed.d/entities.toml");
+        assert_eq!(app.root_path.as_deref(), Some("server.entities"));
+        assert!(app.description.contains("entities.toml"));
+        assert_eq!(field_type(app, "entities"), "object");
+        assert_eq!(field_type(app, "entities.list"), "array");
+        assert_eq!(field_type(app, "entities.list.id"), "string");
+        assert_eq!(field_type(app, "entities.list.kind"), "string");
+        assert_eq!(field_type(app, "entities.list.x"), "number");
+        assert_eq!(field_type(app, "entities.list.data"), "integer");
+        assert_eq!(field_type(app, "entities.list.on_ground"), "boolean");
         assert!(
-            app.fields
+            !app.fields
                 .iter()
-                .any(|field| field.path == "server.entities.list"),
-            "missing server.entities.list in doc fields"
+                .any(|field| field.path.starts_with("server.entities")),
+            "split docs must use local field paths"
         );
         assert!(
-            app.fields
-                .iter()
-                .any(|field| field.path == "server.entities.list.id"),
-            "missing server.entities.list.id in doc fields"
+            !app.fields.iter().any(|field| field.value_type == "unknown"),
+            "qexed entities docs still contain unknown value types"
         );
+
+        let main = collect_app::<Qexed>("qexed", "qexed.toml", "zh-CN")?;
+        assert_eq!(field_type(&main, "version"), "integer");
+        assert!(
+            !main
+                .fields
+                .iter()
+                .any(|field| field.path.starts_with("server")),
+            "qexed main docs must only expose fields kept in qexed.toml"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn qexed_menu_action_split_doc_expands_complex_action() -> anyhow::Result<()> {
+        let mut bundle = collect_bundle("test-commit", &["zh-CN".to_string()])?;
+        let language_docs = bundle.languages.remove(0);
+        let app = language_docs
+            .apps
+            .iter()
+            .find(|app| app.name == "qexed_menus")
+            .expect("qexed menus split doc must be generated");
+
+        assert_eq!(app.config_path, "config/qexed.d/menus.toml");
+        assert_eq!(field_type(app, "menus.chests.items.action"), "object");
+        assert_eq!(field_type(app, "menus.chests.items.action.kind"), "string");
+        assert!(
+            !app.fields.iter().any(|field| field.value_type == "unknown"),
+            "qexed menus docs still contain unknown value types"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn world_config_is_documented_as_own_file() -> anyhow::Result<()> {
+        let bundle = collect_bundle("test-commit", &["zh-CN".to_string()])?;
+        let world = bundle.languages[0]
+            .apps
+            .iter()
+            .find(|app| app.name == "world")
+            .expect("world config doc must be generated");
+
+        assert_eq!(world.config_path, "config/world.toml");
+        assert_eq!(field_type(world, "path"), "string");
+        assert_eq!(field_type(world, "gpu.enable"), "boolean");
+        assert_eq!(field_type(world, "precompiled_chunks.enable"), "boolean");
+        assert!(
+            !world
+                .fields
+                .iter()
+                .any(|field| field.value_type == "unknown"),
+            "world docs still contain unknown value types"
+        );
+        Ok(())
+    }
+
+    fn field_type<'a>(app: &'a DocApp, path: &str) -> &'a str {
+        app.fields
+            .iter()
+            .find(|field| field.path == path)
+            .unwrap_or_else(|| panic!("missing doc field: {path}"))
+            .value_type
+            .as_str()
+    }
+
+    #[test]
+    fn optional_defaults_keep_declared_value_type() -> anyhow::Result<()> {
+        let app = collect_app::<QexedWarden>("qexed_warden", "qexed_warden.toml", "zh-CN")?;
+        assert_eq!(field_type(&app, "data.pika.master_name"), "string");
         Ok(())
     }
 }
