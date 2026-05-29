@@ -14,6 +14,8 @@ pub async fn load() -> anyhow::Result<Option<crate::config::RuntimeConfig>> {
     qexed_log::log_init(log_level_from_config(config.server.log_level)).await;
     log_runtime_info();
     log_online_warnings(&config);
+    crate::registry_sync::configure_mojang_cache_path(&config.server.mojang_cache_path);
+    crate::registry_sync::ensure_data_ready()?;
 
     Ok(Some(config))
 }

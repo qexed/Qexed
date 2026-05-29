@@ -26,6 +26,7 @@
 /META-INF
 /assets/LuckPerms-master
 /assets/seed-123456
+/crates/qexed/cache
 *.log
 .idea
 # 未使用的代码

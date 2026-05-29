@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::{
     to_client::play::{
@@ -12,10 +12,7 @@ use qexed_protocol::{
         slot_display_types,
     },
 };
-use serde_json::Value;
-use std::{collections::HashMap, path::Path, sync::OnceLock};
-
-const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
+use std::{collections::HashMap, sync::OnceLock};
 
 pub(super) async fn send_initial_recipe_book<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
@@ -211,11 +208,11 @@ struct RecipeRegistry {
 
 impl RecipeRegistry {
     fn load() -> Result<Self> {
-        let root = workspace_root();
-        let path = root.join(REGISTRIES_REPORT);
         Ok(Self {
-            item_ids: load_registry_id_map(&path, "minecraft:item")?,
-            category_ids: load_registry_id_map(&path, "minecraft:recipe_book_category")?,
+            item_ids: crate::registry_sync::load_registry_id_map("minecraft:item")?,
+            category_ids: crate::registry_sync::load_registry_id_map(
+                "minecraft:recipe_book_category",
+            )?,
         })
     }
 
@@ -241,39 +238,6 @@ impl RecipeRegistry {
     fn category_id(&self, name: &str) -> i32 {
         self.category_ids.get(name).copied().unwrap_or_default()
     }
-}
-
-fn load_registry_id_map(path: &Path, registry_id: &str) -> Result<HashMap<String, i32>> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let value: Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    let entries = value
-        .get(registry_id)
-        .and_then(|registry| registry.get("entries"))
-        .and_then(Value::as_object)
-        .with_context(|| format!("registry not found in {}: {registry_id}", path.display()))?;
-
-    let mut ids = HashMap::new();
-    for (name, value) in entries {
-        let Some(id) = value
-            .get("protocol_id")
-            .and_then(Value::as_i64)
-            .and_then(|id| i32::try_from(id).ok())
-        else {
-            continue;
-        };
-        ids.insert(name.clone(), id);
-    }
-    Ok(ids)
-}
-
-fn workspace_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 #[cfg(test)]

@@ -8,8 +8,6 @@ use anyhow::{Context, Result};
 
 use super::{AIR_BLOCK_STATE_ID, PLAINS_BIOME_ID, ceil_log2};
 
-const BLOCKS_REPORT: &str = "assets/reports/blocks.json";
-const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 const BIOME_REGISTRY_DIR: &str = "assets/decompiled_source/src/data/minecraft/worldgen/biome";
 
 pub(super) fn block_state_registry() -> &'static BlockStateRegistry {
@@ -111,14 +109,10 @@ fn block_entity_type_registry() -> &'static BlockEntityTypeRegistry {
 }
 
 fn load_block_state_registry() -> Result<BlockStateRegistry> {
-    let path = workspace_root().join(BLOCKS_REPORT);
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("read block report {}", path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
+    let value = crate::registry_sync::load_blocks_report()?;
     let blocks = value
         .as_object()
-        .with_context(|| format!("block report root is not object: {}", path.display()))?;
+        .with_context(|| "block report root is not object".to_string())?;
 
     let mut id_by_state = HashMap::new();
     let mut state_by_id = HashMap::new();
@@ -199,32 +193,10 @@ fn load_block_state_registry() -> Result<BlockStateRegistry> {
 }
 
 fn load_block_entity_type_registry() -> Result<BlockEntityTypeRegistry> {
-    let path = workspace_root().join(REGISTRIES_REPORT);
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("read registry report {}", path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    let entries = value
-        .get("minecraft:block_entity_type")
-        .and_then(|registry| registry.get("entries"))
-        .and_then(serde_json::Value::as_object)
-        .with_context(|| {
-            format!(
-                "missing minecraft:block_entity_type entries in {}",
-                path.display()
-            )
-        })?;
-
-    let mut id_by_name = HashMap::new();
-    for (name, entry) in entries {
-        let Some(protocol_id) = entry.get("protocol_id").and_then(serde_json::Value::as_i64) else {
-            continue;
-        };
-        let Ok(protocol_id) = i32::try_from(protocol_id) else {
-            continue;
-        };
-        id_by_name.insert(normalize_identifier(name), protocol_id);
-    }
+    let id_by_name = crate::registry_sync::load_registry_id_map("minecraft:block_entity_type")?
+        .into_iter()
+        .map(|(name, protocol_id)| (normalize_identifier(&name), protocol_id))
+        .collect::<HashMap<_, _>>();
 
     if id_by_name.is_empty() {
         anyhow::bail!("block entity type registry contains no entries");
@@ -235,14 +207,7 @@ fn load_block_entity_type_registry() -> Result<BlockEntityTypeRegistry> {
 
 fn load_biome_registry() -> Result<BiomeRegistry> {
     let root = workspace_root().join(BIOME_REGISTRY_DIR);
-    let mut files = json_files(&root)?;
-    files.sort();
-
-    let mut id_by_name = HashMap::new();
-    for (index, path) in files.iter().enumerate() {
-        let id = entry_id_from_path(&root, path)?;
-        id_by_name.insert(id, index as i32);
-    }
+    let id_by_name = crate::registry_sync::load_dynamic_registry_id_map(&root, "worldgen/biome")?;
 
     if id_by_name.is_empty() {
         anyhow::bail!("biome registry contains no entries");
@@ -252,34 +217,6 @@ fn load_biome_registry() -> Result<BiomeRegistry> {
         global_bits: ceil_log2(id_by_name.len()).max(1),
         id_by_name,
     })
-}
-
-fn json_files(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    collect_json_files(root, &mut files)?;
-    Ok(files)
-}
-
-fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in std::fs::read_dir(dir).with_context(|| format!("read dir {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(&path, files)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn entry_id_from_path(root: &Path, path: &Path) -> Result<String> {
-    let id = path
-        .strip_prefix(root)?
-        .with_extension("")
-        .to_string_lossy()
-        .replace('\\', "/");
-    Ok(format!("minecraft:{id}"))
 }
 
 fn workspace_root() -> PathBuf {

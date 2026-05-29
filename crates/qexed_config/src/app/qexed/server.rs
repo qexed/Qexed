@@ -31,6 +31,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.log_level")]
     pub log_level: ServerLogLevel,
 
+    #[serde(default = "default_mojang_cache_path")]
+    #[AutoDoc(key = "config.qexed.server.mojang_cache_path")]
+    pub mojang_cache_path: String,
+
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.lan_discovery", sub)]
     pub lan_discovery: LanDiscovery,
@@ -140,6 +144,7 @@ impl Default for Server {
             display_players: true,
             online_mode: true,
             log_level: ServerLogLevel::default(),
+            mojang_cache_path: default_mojang_cache_path(),
             lan_discovery: LanDiscovery::default(),
             network_compression_threshold: 256,
             proxy: false,
@@ -1577,6 +1582,10 @@ pub enum ServerLogLevel {
     Warn,
     Error,
     Off,
+}
+
+fn default_mojang_cache_path() -> String {
+    "cache/mojang".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]

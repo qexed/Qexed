@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
     sync::OnceLock,
 };
 
@@ -23,8 +22,6 @@ const AIR_BLOCK_STATE_ID: i32 = 0;
 const HOTBAR_SIZE: usize = 9;
 const MAIN_INVENTORY_SIZE: usize = 27;
 const DEFAULT_STACK_LIMIT: i32 = 64;
-const BLOCKS_REPORT: &str = "assets/reports/blocks.json";
-const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlacementContext {
@@ -605,13 +602,12 @@ fn block_item_registry() -> &'static BlockItemRegistry {
 }
 
 fn load_block_item_registry() -> Result<BlockItemRegistry> {
-    let root = workspace_root();
-    let item_ids = load_registry_id_map(&root.join(REGISTRIES_REPORT), "minecraft:item")?;
+    let item_ids = crate::registry_sync::load_registry_id_map("minecraft:item")?;
     let item_name_by_id = item_ids
         .iter()
         .map(|(name, id)| (*id, name.clone()))
         .collect::<HashMap<_, _>>();
-    let block_states = load_block_state_metadata(&root.join(BLOCKS_REPORT))?;
+    let block_states = load_block_state_metadata()?;
     let mut block_state_by_item_id = HashMap::new();
     let mut item_id_by_block_state = HashMap::new();
     let mut states_by_block_state = HashMap::new();
@@ -656,39 +652,11 @@ fn load_block_item_registry() -> Result<BlockItemRegistry> {
     })
 }
 
-fn load_registry_id_map(path: &Path, registry_id: &str) -> Result<HashMap<String, i32>> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    let entries = value
-        .get(registry_id)
-        .and_then(|registry| registry.get("entries"))
-        .and_then(serde_json::Value::as_object)
-        .with_context(|| format!("registry not found in {}: {registry_id}", path.display()))?;
-
-    let mut ids = HashMap::new();
-    for (name, value) in entries {
-        let Some(id) = value
-            .get("protocol_id")
-            .and_then(serde_json::Value::as_i64)
-            .and_then(|id| i32::try_from(id).ok())
-        else {
-            continue;
-        };
-        ids.insert(name.clone(), id);
-    }
-    Ok(ids)
-}
-
-fn load_block_state_metadata(path: &Path) -> Result<BlockStateMetadata> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
+fn load_block_state_metadata() -> Result<BlockStateMetadata> {
+    let value = crate::registry_sync::load_blocks_report()?;
     let blocks = value
         .as_object()
-        .with_context(|| format!("block report root is not object: {}", path.display()))?;
+        .with_context(|| "block report root is not object".to_string())?;
     let mut metadata = BlockStateMetadata::default();
 
     for (name, block) in blocks {
@@ -700,7 +668,7 @@ fn load_block_state_metadata(path: &Path) -> Result<BlockStateMetadata> {
         let states = block
             .get("states")
             .and_then(serde_json::Value::as_array)
-            .with_context(|| format!("block has no states in {}: {name}", path.display()))?;
+            .with_context(|| format!("block has no states: {name}"))?;
         let Some(default_state) = default_block_state_value(block) else {
             continue;
         };
@@ -780,14 +748,6 @@ fn default_block_state_value(block: &serde_json::Value) -> Option<&serde_json::V
                 .unwrap_or(false)
         })
         .or_else(|| states.first())
-}
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[derive(Default)]

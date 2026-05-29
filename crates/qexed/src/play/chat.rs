@@ -8,12 +8,16 @@ use qexed_protocol::to_client::play::{
     system_chat::SystemChat,
     transfer::Transfer,
 };
+use std::time::Duration;
 
 use qexed_config::app::qexed::server::{ForwardingMode, Server};
 
 use crate::players::PlayerManager;
 
 use super::util::{text_component, translatable_component};
+
+const MIN_PROXY_TARGET_HEALTH_CHECK_TIMEOUT_MS: u64 = 50;
+const MAX_PROXY_TARGET_HEALTH_CHECK_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct CommandOutcome {
@@ -2360,23 +2364,27 @@ where
         );
         return Ok(());
     }
-    if !server_config.proxy_server_id.trim().is_empty()
-        && server_config.proxy_server_id.eq_ignore_ascii_case(server)
-    {
-        send_proxy_connect_feedback(sink, &format!("You are already connected to {server}."))
-            .await?;
-        emit_proxy_connect_result(
-            plugins,
-            players,
-            actor,
-            server,
-            &server_config.proxy_server_id,
-            &server_config.proxy_protocol.to_string(),
-            ProxyConnectStatus::AlreadyConnected,
-            "player is already connected to the target proxy server",
-        );
-        return Ok(());
-    }
+    let target = match preflight_proxy_connect_target(server_config, server).await {
+        ProxyTargetPreflight::Allowed { server_id } => server_id,
+        ProxyTargetPreflight::Rejected {
+            status,
+            user_message,
+            result_message,
+        } => {
+            send_proxy_connect_feedback(sink, &user_message).await?;
+            emit_proxy_connect_result(
+                plugins,
+                players,
+                actor,
+                server,
+                &server_config.proxy_server_id,
+                &server_config.proxy_protocol.to_string(),
+                status,
+                &result_message,
+            );
+            return Ok(());
+        }
+    };
     if !message.trim().is_empty() {
         sink.send(SystemChat {
             content: text_component(message),
@@ -2384,12 +2392,12 @@ where
         })
         .await?;
     }
-    if let Err(err) = sink.send(proxy_connect_payload(server)).await {
+    if let Err(err) = sink.send(proxy_connect_payload(&target)).await {
         emit_proxy_connect_result(
             plugins,
             players,
             actor,
-            server,
+            &target,
             &server_config.proxy_server_id,
             &server_config.proxy_protocol.to_string(),
             ProxyConnectStatus::SendFailed,
@@ -2401,13 +2409,159 @@ where
         plugins,
         players,
         actor,
-        server,
+        &target,
         &server_config.proxy_server_id,
         &server_config.proxy_protocol.to_string(),
         ProxyConnectStatus::SentToProxy,
         "proxy connect request was sent to the proxy",
     );
     Ok(())
+}
+
+enum ProxyTargetPreflight {
+    Allowed {
+        server_id: String,
+    },
+    Rejected {
+        status: ProxyConnectStatus,
+        user_message: String,
+        result_message: String,
+    },
+}
+
+async fn preflight_proxy_connect_target(
+    server_config: &Server,
+    target: &str,
+) -> ProxyTargetPreflight {
+    let target = target.trim();
+    let configured_target = configured_proxy_target(server_config, target);
+    if configured_proxy_targets_enabled(server_config) && configured_target.is_none() {
+        return proxy_target_rejected(
+            ProxyConnectStatus::TargetUnknown,
+            format!("Proxy transfer failed: target server is not configured: {target}."),
+            format!("target proxy server is not declared in qexed lobby servers: {target}"),
+        );
+    }
+
+    let Some(configured_target) = configured_target else {
+        if !server_config.proxy_server_id.trim().is_empty()
+            && server_config.proxy_server_id.eq_ignore_ascii_case(target)
+        {
+            return proxy_target_rejected(
+                ProxyConnectStatus::AlreadyConnected,
+                format!("You are already connected to {target}."),
+                "player is already connected to the target proxy server".to_string(),
+            );
+        }
+        return ProxyTargetPreflight::Allowed {
+            server_id: target.to_string(),
+        };
+    };
+
+    let server_id = configured_target.id.trim();
+    if !server_config.proxy_server_id.trim().is_empty()
+        && server_config
+            .proxy_server_id
+            .eq_ignore_ascii_case(server_id)
+    {
+        return proxy_target_rejected(
+            ProxyConnectStatus::AlreadyConnected,
+            format!("You are already connected to {server_id}."),
+            "player is already connected to the target proxy server".to_string(),
+        );
+    }
+
+    if !configured_target.enable {
+        return proxy_target_rejected(
+            ProxyConnectStatus::TargetDisabled,
+            format!("Proxy transfer failed: target server is disabled: {server_id}."),
+            format!("target proxy server is disabled: {server_id}"),
+        );
+    }
+
+    if configured_target.maintenance {
+        let user_message = if configured_target.maintenance_message.trim().is_empty() {
+            format!("Proxy transfer failed: target server is under maintenance: {server_id}.")
+        } else {
+            configured_target.maintenance_message.trim().to_string()
+        };
+        return proxy_target_rejected(
+            ProxyConnectStatus::TargetMaintenance,
+            user_message,
+            format!("target proxy server is under maintenance: {server_id}"),
+        );
+    }
+
+    if configured_target.host.trim().is_empty()
+        || configured_target.port == 0
+        || !proxy_target_is_reachable(
+            configured_target,
+            proxy_target_health_check_timeout(server_config),
+        )
+        .await
+    {
+        return proxy_target_rejected(
+            ProxyConnectStatus::TargetOffline,
+            format!("Proxy transfer failed: target server is offline: {server_id}."),
+            format!("target proxy server is offline or unreachable: {server_id}"),
+        );
+    }
+
+    ProxyTargetPreflight::Allowed {
+        server_id: server_id.to_string(),
+    }
+}
+
+fn proxy_target_rejected(
+    status: ProxyConnectStatus,
+    user_message: String,
+    result_message: String,
+) -> ProxyTargetPreflight {
+    ProxyTargetPreflight::Rejected {
+        status,
+        user_message,
+        result_message,
+    }
+}
+
+fn configured_proxy_targets_enabled(server_config: &Server) -> bool {
+    server_config
+        .lobby
+        .servers
+        .iter()
+        .any(|server| !server.id.trim().is_empty())
+}
+
+fn configured_proxy_target<'a>(
+    server_config: &'a Server,
+    target: &str,
+) -> Option<&'a qexed_config::app::qexed::server::LobbyServer> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    server_config.lobby.servers.iter().find(|server| {
+        let id = server.id.trim();
+        let name = server.name.trim();
+        (!id.is_empty() && id.eq_ignore_ascii_case(target))
+            || (!name.is_empty() && name.eq_ignore_ascii_case(target))
+    })
+}
+
+fn proxy_target_health_check_timeout(server_config: &Server) -> Duration {
+    Duration::from_millis(server_config.lobby.health_check.timeout_ms.clamp(
+        MIN_PROXY_TARGET_HEALTH_CHECK_TIMEOUT_MS,
+        MAX_PROXY_TARGET_HEALTH_CHECK_TIMEOUT_MS,
+    ))
+}
+
+async fn proxy_target_is_reachable(
+    server: &qexed_config::app::qexed::server::LobbyServer,
+    timeout: Duration,
+) -> bool {
+    let address = format!("{}:{}", server.host.trim(), server.port);
+    let connect = tokio::net::TcpStream::connect(address);
+    matches!(tokio::time::timeout(timeout, connect).await, Ok(Ok(_)))
 }
 
 async fn send_proxy_connect_feedback<W>(
@@ -2434,6 +2588,10 @@ enum ProxyConnectStatus {
     AlreadyConnected,
     SendFailed,
     ProxyContextMissing,
+    TargetUnknown,
+    TargetDisabled,
+    TargetMaintenance,
+    TargetOffline,
 }
 
 impl ProxyConnectStatus {
@@ -2446,6 +2604,10 @@ impl ProxyConnectStatus {
             Self::AlreadyConnected => 103,
             Self::SendFailed => 104,
             Self::ProxyContextMissing => 105,
+            Self::TargetUnknown => 106,
+            Self::TargetDisabled => 107,
+            Self::TargetMaintenance => 108,
+            Self::TargetOffline => 109,
         }
     }
 
@@ -2458,6 +2620,10 @@ impl ProxyConnectStatus {
             Self::AlreadyConnected => "already_connected",
             Self::SendFailed => "send_failed",
             Self::ProxyContextMissing => "proxy_context_missing",
+            Self::TargetUnknown => "target_unknown",
+            Self::TargetDisabled => "target_disabled",
+            Self::TargetMaintenance => "target_maintenance",
+            Self::TargetOffline => "target_offline",
         }
     }
 
@@ -2525,6 +2691,30 @@ fn write_modified_utf8(out: &mut Vec<u8>, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::{bungee_connect_data, proxy_connect_payload};
+
+    fn proxy_server_with_target(
+        target: qexed_config::app::qexed::server::LobbyServer,
+    ) -> qexed_config::app::qexed::server::Server {
+        let mut server = qexed_config::app::qexed::server::Server::default();
+        server.proxy = true;
+        server.proxy_protocol = qexed_config::app::qexed::server::ForwardingMode::Velocity;
+        server.proxy_server_id = "lobby-1".to_string();
+        server.lobby.health_check.timeout_ms = 50;
+        server.lobby.servers.push(target);
+        server
+    }
+
+    fn lobby_server(id: &str) -> qexed_config::app::qexed::server::LobbyServer {
+        qexed_config::app::qexed::server::LobbyServer {
+            id: id.to_string(),
+            enable: true,
+            maintenance: false,
+            maintenance_message: "Server is under maintenance".to_string(),
+            name: String::new(),
+            host: "127.0.0.1".to_string(),
+            port: 25565,
+        }
+    }
 
     #[test]
     fn velocity_connect_payload_uses_bungeecord_connect_channel() {
@@ -2599,6 +2789,10 @@ mod tests {
         assert_eq!(super::ProxyConnectStatus::AlreadyConnected.code(), 103);
         assert_eq!(super::ProxyConnectStatus::SendFailed.code(), 104);
         assert_eq!(super::ProxyConnectStatus::ProxyContextMissing.code(), 105);
+        assert_eq!(super::ProxyConnectStatus::TargetUnknown.code(), 106);
+        assert_eq!(super::ProxyConnectStatus::TargetDisabled.code(), 107);
+        assert_eq!(super::ProxyConnectStatus::TargetMaintenance.code(), 108);
+        assert_eq!(super::ProxyConnectStatus::TargetOffline.code(), 109);
     }
 
     #[test]
@@ -2606,5 +2800,57 @@ mod tests {
         assert!(super::ProxyConnectStatus::SentToProxy.success());
         assert!(!super::ProxyConnectStatus::AlreadyConnected.success());
         assert!(!super::ProxyConnectStatus::ProxyDisabled.success());
+        assert!(!super::ProxyConnectStatus::TargetOffline.success());
+    }
+
+    #[tokio::test]
+    async fn proxy_connect_preflight_rejects_unknown_configured_target() {
+        let config = proxy_server_with_target(lobby_server("survival_1"));
+
+        let result = super::preflight_proxy_connect_target(&config, "missing").await;
+
+        match result {
+            super::ProxyTargetPreflight::Rejected { status, .. } => {
+                assert_eq!(status, super::ProxyConnectStatus::TargetUnknown);
+            }
+            super::ProxyTargetPreflight::Allowed { .. } => {
+                panic!("unknown proxy target should be rejected before Velocity receives it");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_connect_preflight_rejects_current_server_after_resolution() {
+        let config = proxy_server_with_target(lobby_server("lobby-1"));
+
+        let result = super::preflight_proxy_connect_target(&config, "lobby-1").await;
+
+        match result {
+            super::ProxyTargetPreflight::Rejected { status, .. } => {
+                assert_eq!(status, super::ProxyConnectStatus::AlreadyConnected);
+            }
+            super::ProxyTargetPreflight::Allowed { .. } => {
+                panic!("current proxy target should be rejected before Velocity receives it");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_connect_preflight_rejects_disabled_target_by_display_name() {
+        let mut target = lobby_server("survival_1");
+        target.name = "生存服".to_string();
+        target.enable = false;
+        let config = proxy_server_with_target(target);
+
+        let result = super::preflight_proxy_connect_target(&config, "生存服").await;
+
+        match result {
+            super::ProxyTargetPreflight::Rejected { status, .. } => {
+                assert_eq!(status, super::ProxyConnectStatus::TargetDisabled);
+            }
+            super::ProxyTargetPreflight::Allowed { .. } => {
+                panic!("disabled proxy target should be rejected before Velocity receives it");
+            }
+        }
     }
 }

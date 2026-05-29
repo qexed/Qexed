@@ -45,6 +45,7 @@ uuid.workspace = true
 sha2.workspace = true
 wgpu = { workspace = true, optional = true }
 wasmtime.workspace = true
+zip.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
     "Win32_System_Console",

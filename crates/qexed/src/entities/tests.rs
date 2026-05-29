@@ -10,6 +10,7 @@ fn entity_type_id_is_loaded_from_current_report() {
     assert_eq!(entity_type_id("minecraft:player").unwrap(), 155);
     assert_eq!(entity_type_id("minecraft:armor_stand").unwrap(), 5);
     assert_eq!(entity_type_id("minecraft:text_display").unwrap(), 131);
+    assert_eq!(entity_type_id("minecraft:item").unwrap(), 71);
 }
 
 #[test]

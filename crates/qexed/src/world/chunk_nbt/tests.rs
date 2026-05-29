@@ -129,6 +129,24 @@ fn reads_single_block_state_from_saved_section() {
 }
 
 #[test]
+fn embedded_block_report_contains_common_saved_chunk_blocks() {
+    for name in [
+        "minecraft:dirt",
+        "minecraft:stone_bricks",
+        "minecraft:mossy_stone_bricks",
+        "minecraft:beacon",
+        "minecraft:glowstone",
+        "minecraft:oak_planks",
+    ] {
+        assert_ne!(
+            default_block_state_id(name),
+            AIR_BLOCK_STATE_ID,
+            "{name} must not fall back to air when external assets are missing"
+        );
+    }
+}
+
+#[test]
 fn writes_single_block_state_to_saved_section() {
     let stone = default_block_state_id("minecraft:stone");
     let root = chunk_root(vec![section(

@@ -6,29 +6,41 @@ use qexed_protocol::to_client::configuration::tags::{Tag as NetworkTag, Tags, Ta
 use serde_json::Value;
 
 use super::{
-    DATA_ROOT, STATIC_TAG_REGISTRIES, SYNCHRONIZED_REGISTRIES,
+    STATIC_TAG_REGISTRIES, SYNCHRONIZED_REGISTRIES, data_roots,
     registries::{load_dynamic_registry_id_map, load_static_registry_id_maps},
-    util::{json_files, normalize_identifier, read_json, tag_name_from_path, workspace_root},
+    util::{json_files, normalize_identifier, read_json, tag_name_from_path},
 };
 
+const DAMAGE_TYPE_IS_FIRE: &[&str] = &[
+    "minecraft:in_fire",
+    "minecraft:campfire",
+    "minecraft:on_fire",
+    "minecraft:lava",
+    "minecraft:hot_floor",
+    "minecraft:unattributed_fireball",
+    "minecraft:fireball",
+];
+
 pub fn load_tag_packet() -> Result<Tags> {
-    let data_root = workspace_root().join(DATA_ROOT);
-    let tags_root = data_root.join("tags");
+    let data_roots = data_roots();
     let static_id_maps = load_static_registry_id_maps()?;
     let mut registries = Vec::new();
 
-    if !tags_root.exists() {
-        return Ok(Tags { tags: registries });
-    }
-
     for registry in SYNCHRONIZED_REGISTRIES {
-        let registry_tags_dir = tags_root.join(registry);
-        if !registry_tags_dir.exists() {
-            continue;
+        let id_by_name = load_dynamic_registry_id_map(
+            &first_existing_registry_dir(&data_roots, registry)
+                .unwrap_or_else(|| data_roots[0].join(registry)),
+            registry,
+        )?;
+        let mut tags =
+            if let Some(registry_tags_dir) = first_existing_tags_dir(&data_roots, registry) {
+                load_registry_tags(&registry_tags_dir, &id_by_name)?
+            } else {
+                Vec::new()
+            };
+        if *registry == "damage_type" {
+            ensure_required_damage_type_tags(&mut tags, &id_by_name)?;
         }
-
-        let id_by_name = load_dynamic_registry_id_map(&data_root.join(registry), registry)?;
-        let mut tags = load_registry_tags(&registry_tags_dir, &id_by_name)?;
         if tags.is_empty() {
             continue;
         }
@@ -41,10 +53,9 @@ pub fn load_tag_packet() -> Result<Tags> {
     }
 
     for registry in STATIC_TAG_REGISTRIES {
-        let registry_tags_dir = tags_root.join(registry);
-        if !registry_tags_dir.exists() {
+        let Some(registry_tags_dir) = first_existing_tags_dir(&data_roots, registry) else {
             continue;
-        }
+        };
 
         let registry_id = format!("minecraft:{registry}");
         let Some(id_by_name) = static_id_maps.get(&registry_id) else {
@@ -68,6 +79,26 @@ pub fn load_tag_packet() -> Result<Tags> {
     Ok(Tags { tags: registries })
 }
 
+fn first_existing_tags_dir(
+    data_roots: &[std::path::PathBuf],
+    registry: &str,
+) -> Option<std::path::PathBuf> {
+    data_roots
+        .iter()
+        .map(|root| root.join("tags").join(registry))
+        .find(|path| path.exists())
+}
+
+fn first_existing_registry_dir(
+    data_roots: &[std::path::PathBuf],
+    registry: &str,
+) -> Option<std::path::PathBuf> {
+    data_roots
+        .iter()
+        .map(|root| root.join(registry))
+        .find(|path| path.exists())
+}
+
 fn load_registry_tags(
     tags_dir: &std::path::Path,
     id_by_name: &HashMap<String, i32>,
@@ -88,6 +119,32 @@ fn load_registry_tags(
     }
 
     Ok(tags)
+}
+
+fn ensure_required_damage_type_tags(
+    tags: &mut Vec<NetworkTag>,
+    id_by_name: &HashMap<String, i32>,
+) -> Result<()> {
+    if tags.iter().any(|tag| tag.name == "minecraft:is_fire") {
+        return Ok(());
+    }
+
+    let entries = DAMAGE_TYPE_IS_FIRE
+        .iter()
+        .filter_map(|name| id_by_name.get(*name).copied())
+        .map(VarInt)
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        anyhow::bail!(
+            "无法补全 minecraft:damage_type/minecraft:is_fire：damage_type 注册表缺少火焰伤害类型"
+        );
+    }
+
+    tags.push(NetworkTag {
+        name: "minecraft:is_fire".to_string(),
+        entries,
+    });
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,6 +182,46 @@ fn tag_value_from_json(value: &Value) -> Option<TagValue> {
             .and_then(Value::as_str)
             .map(tag_value_from_identifier),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{NetworkTag, ensure_required_damage_type_tags};
+
+    #[test]
+    fn required_damage_type_fire_tag_is_injected_when_assets_are_incomplete() {
+        let mut id_by_name = HashMap::new();
+        id_by_name.insert("minecraft:in_fire".to_string(), 1);
+        id_by_name.insert("minecraft:on_fire".to_string(), 2);
+        let mut tags = Vec::new();
+
+        ensure_required_damage_type_tags(&mut tags, &id_by_name).unwrap();
+
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "minecraft:is_fire");
+        assert_eq!(
+            tags[0]
+                .entries
+                .iter()
+                .map(|entry| entry.0)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn required_damage_type_fire_tag_is_not_duplicated() {
+        let mut tags = vec![NetworkTag {
+            name: "minecraft:is_fire".to_string(),
+            entries: Vec::new(),
+        }];
+
+        ensure_required_damage_type_tags(&mut tags, &HashMap::new()).unwrap();
+
+        assert_eq!(tags.len(), 1);
     }
 }
 

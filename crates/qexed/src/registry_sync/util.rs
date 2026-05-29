@@ -93,7 +93,11 @@ fn number_to_nbt(value: &serde_json::Number) -> Result<Tag> {
             anyhow::bail!("JSON 数字超出 NBT long 范围: {value}")
         }
     } else if let Some(value) = value.as_f64() {
-        Ok(Tag::Double(value))
+        let value = value as f32;
+        if !value.is_finite() {
+            anyhow::bail!("JSON float is not finite: {value}")
+        }
+        Ok(Tag::Float(value))
     } else {
         anyhow::bail!("不支持的 JSON 数字: {value}")
     }

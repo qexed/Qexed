@@ -135,8 +135,8 @@ fn render_lobby_lines(
     let context = crate::placeholders::PlaceholderContext {
         online_players,
         max_players,
-        lobby_online_servers: labels.len(),
-        lobby_total_servers: lobby.server_count(),
+        lobby_online_servers: lobby.online_server_count(status),
+        lobby_total_servers: lobby.total_server_count(),
         lobby_servers: if labels.is_empty() {
             "none".to_string()
         } else {
@@ -242,17 +242,28 @@ mod tests {
         let lobby =
             super::super::lobby::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
                 enable: true,
-                servers: vec![qexed_config::app::qexed::server::LobbyServer {
-                    id: "survival".to_string(),
-                    name: "Survival".to_string(),
-                    ..Default::default()
-                }],
+                servers: vec![
+                    qexed_config::app::qexed::server::LobbyServer {
+                        id: "survival".to_string(),
+                        name: "Survival".to_string(),
+                        ..Default::default()
+                    },
+                    qexed_config::app::qexed::server::LobbyServer {
+                        id: "minigame".to_string(),
+                        name: "Minigame".to_string(),
+                        ..Default::default()
+                    },
+                ],
                 ..Default::default()
             });
         let mut servers = std::collections::HashMap::new();
         servers.insert(
             "survival".to_string(),
             super::super::lobby::LobbyServerStatus::Online,
+        );
+        servers.insert(
+            "minigame".to_string(),
+            super::super::lobby::LobbyServerStatus::Offline,
         );
         let status = super::super::lobby::LobbyStatusSnapshot::from_servers_for_tests(servers);
 
@@ -264,7 +275,7 @@ mod tests {
         assert_eq!(packets.len(), 4);
 
         let first_score = decode_packet::<SetScore>(&packets[2]);
-        assert_text_component(first_score.display.as_ref().unwrap(), "Backends: 1/1");
+        assert_text_component(first_score.display.as_ref().unwrap(), "Backends: 1/2");
 
         let refreshed = super::refresh_lobby_sidebar_packets(
             &config, &lobby, &status, true, &plugins, &player, 1, 20,
@@ -272,7 +283,7 @@ mod tests {
         .unwrap();
         assert_eq!(refreshed.len(), 2);
         let refreshed_first = decode_packet::<SetScore>(&refreshed[0]);
-        assert_text_component(refreshed_first.display.as_ref().unwrap(), "Backends: 1/1");
+        assert_text_component(refreshed_first.display.as_ref().unwrap(), "Backends: 1/2");
     }
 
     fn assert_packet_id<T: Packet>(bytes: &[u8]) {

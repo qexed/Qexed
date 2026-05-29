@@ -112,6 +112,9 @@ config:
       log_level:
         en: "Server log level: trace, debug, info, warn, error, or off. Defaults to info; use debug/trace only when diagnosing issues."
         zh-CN: "服务端日志级别：trace、debug、info、warn、error 或 off。默认 info；仅在排查问题时使用 debug/trace。"
+      mojang_cache_path:
+        en: "Directory used to cache Mojang vanilla registry JSON data. Relative paths are resolved from the server working directory. QEXED_MOJANG_CACHE_DIR overrides this value."
+        zh-CN: "Mojang 原版注册表 JSON 数据缓存目录。相对路径基于服务端实际运行目录解析；QEXED_MOJANG_CACHE_DIR 环境变量会覆盖此配置。"
       lan_discovery:
         en: "LAN discovery settings"
         zh-CN: "局域网发现设置"

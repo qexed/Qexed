@@ -484,10 +484,6 @@ impl LobbyRuntime {
         servers
     }
 
-    pub(super) fn server_count(&self) -> usize {
-        self.config.servers.len()
-    }
-
     pub(super) fn server_command_entries(&self, status: &LobbyStatusSnapshot) -> Vec<String> {
         let mut servers = self
             .config
@@ -537,7 +533,7 @@ impl LobbyRuntime {
             })
     }
 
-    fn total_server_count(&self) -> usize {
+    pub(super) fn total_server_count(&self) -> usize {
         self.config
             .servers
             .iter()
@@ -545,7 +541,7 @@ impl LobbyRuntime {
             .count()
     }
 
-    fn online_server_count(&self, status: &LobbyStatusSnapshot) -> usize {
+    pub(super) fn online_server_count(&self, status: &LobbyStatusSnapshot) -> usize {
         self.config
             .servers
             .iter()
