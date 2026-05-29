@@ -67,7 +67,12 @@ impl ServerContext {
             entity_ids.clone(),
         )
         .await?;
-        apply_plugin_npc_mutations(&plugins, &players, &entities);
+        apply_plugin_npc_mutations(
+            &config.server.entity_rendering,
+            &plugins,
+            &players,
+            &entities,
+        );
         let mut resource_pack =
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
                 .await?;
@@ -95,6 +100,7 @@ impl ServerContext {
 }
 
 fn apply_plugin_npc_mutations(
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
     plugins: &crate::plugins::PluginManager,
     players: &crate::players::PlayerManager,
     entities: &crate::entities::EntityManager,
@@ -120,29 +126,36 @@ fn apply_plugin_npc_mutations(
                 } else {
                     npc.display_name.clone()
                 };
-                if let Err(err) = entities.spawn(
-                    players,
-                    crate::entities::EntitySpawnRequest {
-                        key: key.to_string(),
-                        kind: crate::entities::ManagedEntityKind::Npc,
-                        entity_type: "minecraft:player".to_string(),
-                        dimension: npc.dimension.clone(),
-                        position: qexed_protocol::to_client::play::add_entity::EntityPosition {
-                            x: npc.x,
-                            y: npc.y,
-                            z: npc.z,
-                            yaw: npc.yaw,
-                            pitch: npc.pitch,
-                            on_ground: false,
-                        },
-                        name,
-                        display_name,
-                        skin_textures: npc.skin_textures,
-                        skin_signature: npc.skin_signature,
-                        data: 0,
+                let entity = crate::entities::EntitySpawnRequest {
+                    key: key.to_string(),
+                    kind: crate::entities::ManagedEntityKind::Npc,
+                    entity_type: "minecraft:player".to_string(),
+                    dimension: npc.dimension.clone(),
+                    position: qexed_protocol::to_client::play::add_entity::EntityPosition {
+                        x: npc.x,
+                        y: npc.y,
+                        z: npc.z,
+                        yaw: npc.yaw,
+                        pitch: npc.pitch,
+                        on_ground: false,
                     },
-                ) {
-                    log::warn!("plugin npc upsert failed: key={key}, error={err:#}");
+                    name,
+                    display_name,
+                    skin_textures: npc.skin_textures,
+                    skin_signature: npc.skin_signature,
+                    data: 0,
+                };
+                let spawned = match entities.spawn_local(entity) {
+                    Ok(entity) => entity,
+                    Err(err) => {
+                        log::warn!("plugin npc upsert failed: key={key}, error={err:#}");
+                        continue;
+                    }
+                };
+                if let Err(err) =
+                    entities.send_spawn_to_rendered_viewers(players, rendering, &spawned)
+                {
+                    log::warn!("plugin npc spawn packet failed: key={key}, error={err:#}");
                 } else {
                     log::info!(
                         "plugin npc upserted: key={key}, dimension={}, x={}, y={}, z={}",
@@ -161,8 +174,17 @@ fn apply_plugin_npc_mutations(
                 if entities.entity_by_key(key).is_none() {
                     continue;
                 }
-                if let Err(err) = entities.remove(players, key) {
-                    log::warn!("plugin npc remove failed: key={key}, error={err:#}");
+                match entities.remove_local(key) {
+                    Ok(entity) => {
+                        if let Err(err) =
+                            entities.send_remove_to_rendered_viewers(players, rendering, &entity)
+                        {
+                            log::warn!("plugin npc remove packet failed: key={key}, error={err:#}");
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!("plugin npc remove failed: key={key}, error={err:#}");
+                    }
                 }
             }
         }

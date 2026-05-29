@@ -7,6 +7,7 @@ pub mod chunk_batch_finished;
 pub mod chunk_batch_start;
 pub mod command_suggestions;
 pub mod commands;
+pub mod container_close;
 pub mod container_set_content;
 pub mod container_set_data;
 pub mod container_set_slot;

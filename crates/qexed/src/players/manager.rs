@@ -251,6 +251,15 @@ impl PlayerManager {
         );
     }
 
+    pub fn send_packets_to(&self, profile_id: uuid::Uuid, packets: Vec<Bytes>) {
+        let players = self.players.lock().expect("player manager poisoned");
+        if let Some(handle) = players.get(&profile_id) {
+            let _ = handle
+                .sender
+                .send(PlayerEvent::ClientboundPackets { packets });
+        }
+    }
+
     pub fn online_names(&self) -> Vec<String> {
         self.players
             .lock()

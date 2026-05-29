@@ -625,6 +625,102 @@ config:
           timeout_ms:
             en: "Health check timeout in milliseconds"
             zh-CN: "健康检查超时时间（毫秒）"
+      menus:
+        en: "Inventory hotbar and chest menu settings"
+        zh-CN: "物品栏快捷菜单和箱子菜单设置"
+        enable:
+          en: "Enable configured inventory and chest menus"
+          zh-CN: "启用配置驱动的物品栏和箱子菜单"
+        reset_inventory_on_join:
+          en: "Reset configured menu items when a player joins"
+          zh-CN: "玩家进服时重置配置的菜单物品"
+        fixed_slots_only:
+          en: "Protect only configured hotbar slots instead of the whole hotbar"
+          zh-CN: "只固定已配置的快捷栏格子，而不是固定整个快捷栏"
+        hotbar_items:
+          en: "Hotbar menu item bindings"
+          zh-CN: "快捷栏菜单物品绑定"
+          slot:
+            en: "Hotbar slot index from 0 to 8"
+            zh-CN: "快捷栏格子索引，0 到 8"
+          item:
+            en: "Menu item resource key"
+            zh-CN: "菜单物品资源键"
+          name:
+            en: "Custom item display name"
+            zh-CN: "物品自定义显示名"
+          lore:
+            en: "Custom item lore lines"
+            zh-CN: "物品 lore 文本行"
+          action:
+            en: "Action executed when the item is used"
+            zh-CN: "使用该物品时执行的动作"
+        chests:
+          en: "Configured chest menus"
+          zh-CN: "配置的箱子菜单"
+          id:
+            en: "Menu id used by config actions and plugin OpenMenu actions"
+            zh-CN: "菜单 ID，用于配置动作和插件 OpenMenu 动作"
+          title:
+            en: "Chest menu title"
+            zh-CN: "箱子菜单标题"
+          rows:
+            en: "Chest menu row count from 1 to 6"
+            zh-CN: "箱子菜单行数，1 到 6"
+          items:
+            en: "Items shown in this chest menu"
+            zh-CN: "箱子菜单中的物品"
+            slot:
+              en: "Container slot index"
+              zh-CN: "容器格子索引"
+            item:
+              en: "Menu item resource key"
+              zh-CN: "菜单物品资源键"
+            name:
+              en: "Custom item display name"
+              zh-CN: "物品自定义显示名"
+            lore:
+              en: "Custom item lore lines"
+              zh-CN: "物品 lore 文本行"
+            action:
+              en: "Action executed when this item is clicked"
+              zh-CN: "点击该物品时执行的动作"
+        action:
+          en: "Menu action payload"
+          zh-CN: "菜单动作载荷"
+          kind:
+            en: "Action kind: none, open_menu, transfer, message, hide_players, show_players, or toggle_players"
+            zh-CN: "动作类型：none、open_menu、transfer、message、hide_players、show_players 或 toggle_players"
+          target:
+            en: "Action target, such as a chest menu id"
+            zh-CN: "动作目标，例如箱子菜单 ID"
+          message:
+            en: "Message text for message actions"
+            zh-CN: "message 动作的消息文本"
+      entity_rendering:
+        en: "Per-viewer entity render distance and simplified stacking settings"
+        zh-CN: "按玩家视角的实体渲染距离和简化堆叠显示设置"
+        default_distance:
+          en: "Render distance for generic configured entities, in blocks"
+          zh-CN: "普通配置实体的渲染距离，单位为方块"
+        player_distance:
+          en: "Render distance for other players, in blocks"
+          zh-CN: "其他玩家的渲染距离，单位为方块"
+        npc_distance:
+          en: "Render distance for NPC player entities, in blocks"
+          zh-CN: "NPC 玩家实体的渲染距离，单位为方块"
+        hologram_distance:
+          en: "Render distance for hologram text displays, in blocks"
+          zh-CN: "悬浮字文本显示实体的渲染距离，单位为方块"
+        item_distance:
+          en: "Render distance for dropped item entities, in blocks"
+          zh-CN: "掉落物实体的渲染距离，单位为方块"
+        stack_threshold:
+          en: "Minimum same-type entity count before nearby entities are simplified into one labeled display such as zombie*20. Set 0 or 1 to disable."
+          zh-CN: "同类型近距离实体达到该数量后，简化为 zombie*20 这类带数量的单实体显示。设为 0 或 1 表示关闭"
+        stack_radius:
+          en: "Radius used when grouping same-type entities for simplified stacked display"
+          zh-CN: "同类型实体简化堆叠显示时的分组半径"
       favicon:
         en: "Server icon data URI"
         zh-CN: "服务器图标 data URI"

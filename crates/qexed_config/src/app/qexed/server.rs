@@ -112,6 +112,14 @@ pub struct Server {
     pub scoreboard: Scoreboard,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus", sub)]
+    pub menus: Menus,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering", sub)]
+    pub entity_rendering: EntityRendering,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.placeholders", sub)]
     pub placeholders: Placeholders,
 
@@ -154,6 +162,8 @@ impl Default for Server {
             resource_pack: ResourcePack::default(),
             entities: Entities::default(),
             scoreboard: Scoreboard::default(),
+            menus: Menus::default(),
+            entity_rendering: EntityRendering::default(),
             placeholders: Placeholders::default(),
             lobby: Lobby::default(),
             favicon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAACtklEQVR42u2ay0rDQBSGJ2EQCipqERU3SkFQQUERRJSCuHDrQvcu3Powbn0DH6IIohQKIi26ELRF8FLxAlbsyksTmTC2yVwyk3ZizmySkjaT/zvnP5mT1PpuDJTgYaOEDwAAAAAAAAAAAAAAAAAAAAAAAABI5MAyX7YsS3lC07pvLCs+jAAd4DpqARXxia8BpsOzk5r6QgB0iTfZOnbU0TO9bthRCIhT0cRRpX4U4v2yUnUezJokrA10iReZX7XWYN0CdNUO0Wj7BUzm+rGJvpSJKn2c/M7ZikKQArC/1RqVnYPvjon3gyELwWp+N+j3QyJ8cHYNTU30uPuvz1V3W8yd/IHAmph3UToLqOi5uAAc8dnNDU/0eeW95SSf10UPQlgAQZEPC0U0kzAv5R3xtPDFhRQaHc+4+7flK1R5SqHba30W0HUHoe2gVAOIeFo4EZ8v1Bt7dTSzuuTCCqoHKqmvAoRAYM2PWdF3PH9eeQwUvzyf8WpB6cZiimve6rrdqmYMcylMCh6d8seFO088GbkiZkaB5ftOd4yYl/601x/KvylPxBN7DPUidC+Yjn4FTtQqYazBswETgCNueHygIR41xL94wi8ua2gk/eEer771ofvTI7SX/wrl7043Tszb4O6ijda3s6746bFu1J8e8rLCEX92WHL3afG8KDdHsB0AWHNw1wEOhJG5FTQ52uV+fqk9+grnpTHP68YCIBDoEZTuMguhZiBGA5CdTHYl2I5nCEHnhldj/1mcyBrDCABBdaEd/YUdx6jpPI8xAHQWQJl+w6gMoK0QNhNkmy3jLCCyihRprCJ5JqialrINjEhEVd8VYNPEs+4MUSynjXwsLmMJ7W+GTIh+OxsmOy7iY7cUjoN4aIaiAhCX6AcWQdX1eJz+TYbjfPFQAwAAAAAAAAAAAACl8QOub9TOwLTmGwAAAABJRU5ErkJggg==".to_string(),
@@ -519,6 +529,268 @@ pub enum LobbyActionKind {
     OpenMenu,
     Transfer,
     Message,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct Menus {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.reset_inventory_on_join")]
+    pub reset_inventory_on_join: bool,
+
+    #[serde(default = "default_menus_fixed_slots_only")]
+    #[AutoDoc(key = "config.qexed.server.menus.fixed_slots_only")]
+    pub fixed_slots_only: bool,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items", sub)]
+    pub hotbar_items: Vec<MenuHotbarItem>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests", sub)]
+    pub chests: Vec<ChestMenu>,
+}
+
+impl Default for Menus {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            reset_inventory_on_join: false,
+            fixed_slots_only: default_menus_fixed_slots_only(),
+            hotbar_items: Vec::new(),
+            chests: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct MenuHotbarItem {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.slot")]
+    pub slot: u8,
+
+    #[serde(default = "default_menu_item_item")]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.item")]
+    pub item: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.name")]
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.lore")]
+    pub lore: Vec<String>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.action")]
+    pub action: MenuAction,
+}
+
+impl Default for MenuHotbarItem {
+    fn default() -> Self {
+        Self {
+            slot: 0,
+            item: default_menu_item_item(),
+            name: String::new(),
+            lore: Vec::new(),
+            action: MenuAction::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct ChestMenu {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.id")]
+    pub id: String,
+
+    #[serde(default = "default_chest_menu_title")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.title")]
+    pub title: String,
+
+    #[serde(default = "default_chest_menu_rows")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.rows")]
+    pub rows: u8,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items", sub)]
+    pub items: Vec<MenuItem>,
+}
+
+impl Default for ChestMenu {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: default_chest_menu_title(),
+            rows: default_chest_menu_rows(),
+            items: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct MenuItem {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items.slot")]
+    pub slot: u8,
+
+    #[serde(default = "default_menu_item_item")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items.item")]
+    pub item: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items.name")]
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items.lore")]
+    pub lore: Vec<String>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.chests.items.action")]
+    pub action: MenuAction,
+}
+
+impl Default for MenuItem {
+    fn default() -> Self {
+        Self {
+            slot: 0,
+            item: default_menu_item_item(),
+            name: String::new(),
+            lore: Vec::new(),
+            action: MenuAction::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct MenuAction {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.action.kind")]
+    pub kind: MenuActionKind,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.action.target")]
+    pub target: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.menus.action.message")]
+    pub message: String,
+}
+
+impl Default for MenuAction {
+    fn default() -> Self {
+        Self {
+            kind: MenuActionKind::None,
+            target: String::new(),
+            message: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuActionKind {
+    #[default]
+    None,
+    OpenMenu,
+    Transfer,
+    Message,
+    HidePlayers,
+    ShowPlayers,
+    TogglePlayers,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct EntityRendering {
+    #[serde(default = "default_entity_render_distance")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.default_distance")]
+    pub default_distance: f64,
+
+    #[serde(default = "default_player_render_distance")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.player_distance")]
+    pub player_distance: f64,
+
+    #[serde(default = "default_npc_render_distance")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.npc_distance")]
+    pub npc_distance: f64,
+
+    #[serde(default = "default_hologram_render_distance")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.hologram_distance")]
+    pub hologram_distance: f64,
+
+    #[serde(default = "default_item_render_distance")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.item_distance")]
+    pub item_distance: f64,
+
+    #[serde(default = "default_entity_stack_threshold")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.stack_threshold")]
+    pub stack_threshold: usize,
+
+    #[serde(default = "default_entity_stack_radius")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.stack_radius")]
+    pub stack_radius: f64,
+}
+
+impl Default for EntityRendering {
+    fn default() -> Self {
+        Self {
+            default_distance: default_entity_render_distance(),
+            player_distance: default_player_render_distance(),
+            npc_distance: default_npc_render_distance(),
+            hologram_distance: default_hologram_render_distance(),
+            item_distance: default_item_render_distance(),
+            stack_threshold: default_entity_stack_threshold(),
+            stack_radius: default_entity_stack_radius(),
+        }
+    }
+}
+
+fn default_chest_menu_title() -> String {
+    "Menu".to_string()
+}
+
+fn default_chest_menu_rows() -> u8 {
+    3
+}
+
+fn default_menu_item_item() -> String {
+    "minecraft:paper".to_string()
+}
+
+fn default_menus_fixed_slots_only() -> bool {
+    true
+}
+
+fn default_entity_render_distance() -> f64 {
+    64.0
+}
+
+fn default_player_render_distance() -> f64 {
+    64.0
+}
+
+fn default_npc_render_distance() -> f64 {
+    64.0
+}
+
+fn default_hologram_render_distance() -> f64 {
+    64.0
+}
+
+fn default_item_render_distance() -> f64 {
+    32.0
+}
+
+fn default_entity_stack_threshold() -> usize {
+    20
+}
+
+fn default_entity_stack_radius() -> f64 {
+    4.0
 }
 
 fn default_lobby_protect_world() -> bool {
@@ -2532,5 +2804,80 @@ timeout_ms = 250
         assert!(server.lobby.boss_bar.create_world_fog);
         assert_eq!(server.lobby.health_check.interval_secs, 5);
         assert_eq!(server.lobby.health_check.timeout_ms, 250);
+    }
+
+    #[test]
+    fn parses_menu_settings() {
+        let menus: super::Menus = toml::from_str(
+            r#"
+enable = true
+reset_inventory_on_join = true
+fixed_slots_only = true
+
+[[hotbar_items]]
+slot = 4
+item = "minecraft:compass"
+name = "Menu"
+lore = ["Open menu"]
+
+[hotbar_items.action]
+kind = "open_menu"
+target = "main"
+
+[[chests]]
+id = "main"
+title = "Server Menu"
+rows = 3
+
+[[chests.items]]
+slot = 10
+item = "minecraft:ender_pearl"
+name = "Survival"
+
+[chests.items.action]
+kind = "transfer"
+target = "survival"
+"#,
+        )
+        .unwrap();
+
+        assert!(menus.enable);
+        assert!(menus.reset_inventory_on_join);
+        assert!(menus.fixed_slots_only);
+        assert_eq!(menus.hotbar_items[0].slot, 4);
+        assert_eq!(
+            menus.hotbar_items[0].action.kind,
+            super::MenuActionKind::OpenMenu
+        );
+        assert_eq!(menus.chests[0].id, "main");
+        assert_eq!(
+            menus.chests[0].items[0].action.kind,
+            super::MenuActionKind::Transfer
+        );
+        assert_eq!(menus.chests[0].items[0].action.target, "survival");
+    }
+
+    #[test]
+    fn parses_entity_rendering_settings() {
+        let rendering: super::EntityRendering = toml::from_str(
+            r#"
+default_distance = 48.0
+player_distance = 32.0
+npc_distance = 64.0
+hologram_distance = 96.0
+item_distance = 16.0
+stack_threshold = 12
+stack_radius = 6.5
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(rendering.default_distance, 48.0);
+        assert_eq!(rendering.player_distance, 32.0);
+        assert_eq!(rendering.npc_distance, 64.0);
+        assert_eq!(rendering.hologram_distance, 96.0);
+        assert_eq!(rendering.item_distance, 16.0);
+        assert_eq!(rendering.stack_threshold, 12);
+        assert_eq!(rendering.stack_radius, 6.5);
     }
 }

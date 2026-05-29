@@ -15,10 +15,12 @@ use crate::players::PlayerManager;
 
 use super::util::{text_component, translatable_component};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct CommandOutcome {
     pub teleported: bool,
     pub opened_lobby_menu: bool,
+    pub opened_config_menu: bool,
+    pub opened_config_menu_id: Option<String>,
 }
 
 pub(super) async fn handle_chat_command<W>(
@@ -35,6 +37,12 @@ pub(super) async fn handle_chat_command<W>(
     command: &str,
     lobby: &super::lobby::LobbyRuntime,
     lobby_status: &mut super::lobby::LobbyStatusSnapshot,
+    menus: &super::menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut std::collections::HashSet<uuid::Uuid>,
+    viewer_position: EntityPosition,
+    render_distance: f64,
     chunk_sender: &tokio::sync::mpsc::UnboundedSender<super::chunks::ChunkLoadResult>,
     chunk_state: &mut super::ChunkSendState,
     position: &mut qexed_protocol::to_client::play::add_entity::EntityPosition,
@@ -263,6 +271,7 @@ where
                 sink,
                 players,
                 entities,
+                &config.server.entity_rendering,
                 play_dimension,
                 *position,
                 argument.as_str(),
@@ -318,12 +327,20 @@ where
                         position,
                         next_teleport_id,
                         play_dimension,
+                        menus,
+                        active_config_menu,
+                        players_hidden,
+                        visible_player_entities,
+                        viewer_position,
+                        render_distance,
                         action,
                     )
                     .await?;
                 }
                 return Ok(CommandOutcome {
                     teleported,
+                    opened_config_menu: active_config_menu.is_some(),
+                    opened_config_menu_id: active_config_menu.clone(),
                     ..CommandOutcome::default()
                 });
             }
@@ -1386,6 +1403,7 @@ async fn handle_entity_command<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
     dimension: &str,
     player_position: EntityPosition,
     argument: &str,
@@ -1452,21 +1470,18 @@ where
             if name.trim().is_empty() && kind != crate::entities::ManagedEntityKind::Entity {
                 name = key.to_string();
             }
-            let entity = match entities.spawn(
-                players,
-                crate::entities::EntitySpawnRequest {
-                    key: key.to_string(),
-                    kind,
-                    entity_type,
-                    dimension: dimension.to_string(),
-                    position: player_position,
-                    name: name.clone(),
-                    display_name: name,
-                    skin_textures: String::new(),
-                    skin_signature: String::new(),
-                    data: 0,
-                },
-            ) {
+            let entity = match entities.spawn_local(crate::entities::EntitySpawnRequest {
+                key: key.to_string(),
+                kind,
+                entity_type,
+                dimension: dimension.to_string(),
+                position: player_position,
+                name: name.clone(),
+                display_name: name,
+                skin_textures: String::new(),
+                skin_signature: String::new(),
+                data: 0,
+            }) {
                 Ok(entity) => entity,
                 Err(err) => {
                     send_translatable(
@@ -1478,6 +1493,7 @@ where
                     return Ok(());
                 }
             };
+            entities.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
             send_translatable(
                 sink,
                 "commands.summon.success",
@@ -1490,15 +1506,19 @@ where
                 send_entity_usage(sink, argument).await?;
                 return Ok(());
             };
-            if let Err(err) = entities.move_entity(players, key, player_position) {
-                send_translatable(
-                    sink,
-                    "command.exception",
-                    vec![text_component(format!("{err:#}"))],
-                )
-                .await?;
-                return Ok(());
-            }
+            let moved = match entities.move_entity_local(key, player_position) {
+                Ok(entity) => entity,
+                Err(err) => {
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+            entities.send_move_to_rendered_viewers(players, rendering, &moved)?;
             send_translatable(
                 sink,
                 "commands.teleport.success.location.single",
@@ -1516,15 +1536,19 @@ where
                 send_entity_usage(sink, argument).await?;
                 return Ok(());
             };
-            if let Err(err) = entities.remove(players, key) {
-                send_translatable(
-                    sink,
-                    "command.exception",
-                    vec![text_component(format!("{err:#}"))],
-                )
-                .await?;
-                return Ok(());
-            }
+            let removed = match entities.remove_local(key) {
+                Ok(entity) => entity,
+                Err(err) => {
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+            entities.send_remove_to_rendered_viewers(players, rendering, &removed)?;
             send_translatable(
                 sink,
                 "commands.bossbar.remove.success",
@@ -2082,6 +2106,12 @@ pub(super) async fn apply_plugin_action<W>(
     position: &mut EntityPosition,
     next_teleport_id: &mut i32,
     play_dimension: &mut String,
+    menus: &super::menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut std::collections::HashSet<uuid::Uuid>,
+    viewer_position: EntityPosition,
+    render_distance: f64,
     action: crate::plugins::PlayerAction,
 ) -> Result<bool>
 where
@@ -2164,110 +2194,189 @@ where
             Ok(false)
         }
         crate::plugins::PlayerAction::ProxyConnect { server, message } => {
-            let server = server.trim();
-            let Some(server_config) = server_config else {
-                emit_proxy_connect_result(
-                    plugins,
-                    players,
-                    actor,
-                    server,
-                    "",
-                    "",
-                    ProxyConnectStatus::ProxyContextMissing,
-                    "proxy config was not available while executing plugin action",
-                );
-                return Ok(false);
-            };
-            if server.is_empty() {
-                emit_proxy_connect_result(
-                    plugins,
-                    players,
-                    actor,
-                    server,
-                    &server_config.proxy_server_id,
-                    &server_config.proxy_protocol.to_string(),
-                    ProxyConnectStatus::TargetEmpty,
-                    "target proxy server is empty",
-                );
-                return Ok(false);
-            }
-            if !server_config.proxy {
-                emit_proxy_connect_result(
-                    plugins,
-                    players,
-                    actor,
-                    server,
-                    &server_config.proxy_server_id,
-                    &server_config.proxy_protocol.to_string(),
-                    ProxyConnectStatus::ProxyDisabled,
-                    "proxy forwarding is not enabled",
-                );
-                return Ok(false);
-            }
-            if !matches!(
-                server_config.proxy_protocol,
-                ForwardingMode::Velocity | ForwardingMode::BungeeCord
-            ) {
-                emit_proxy_connect_result(
-                    plugins,
-                    players,
-                    actor,
-                    server,
-                    &server_config.proxy_server_id,
-                    &server_config.proxy_protocol.to_string(),
-                    ProxyConnectStatus::UnsupportedProxyProtocol,
-                    "proxy protocol does not support backend connect plugin messages",
-                );
-                return Ok(false);
-            }
-            if !server_config.proxy_server_id.trim().is_empty()
-                && server_config.proxy_server_id.eq_ignore_ascii_case(server)
-            {
-                emit_proxy_connect_result(
-                    plugins,
-                    players,
-                    actor,
-                    server,
-                    &server_config.proxy_server_id,
-                    &server_config.proxy_protocol.to_string(),
-                    ProxyConnectStatus::AlreadyConnected,
-                    "player is already connected to the target proxy server",
-                );
-                return Ok(false);
-            }
-            if !message.trim().is_empty() {
-                sink.send(SystemChat {
-                    content: text_component(message),
-                    overlay: false,
-                })
-                .await?;
-            }
-            if let Err(err) = sink.send(proxy_connect_payload(server)).await {
-                emit_proxy_connect_result(
-                    plugins,
-                    players,
-                    actor,
-                    server,
-                    &server_config.proxy_server_id,
-                    &server_config.proxy_protocol.to_string(),
-                    ProxyConnectStatus::SendFailed,
-                    &format!("failed to send proxy connect payload: {err}"),
-                );
-                return Err(err.into());
-            }
-            emit_proxy_connect_result(
+            apply_proxy_connect_action(
+                sink,
+                server_config,
                 plugins,
                 players,
                 actor,
-                server,
-                &server_config.proxy_server_id,
-                &server_config.proxy_protocol.to_string(),
-                ProxyConnectStatus::SentToProxy,
-                "proxy connect request was sent to the proxy",
-            );
+                &server,
+                &message,
+            )
+            .await?;
+            Ok(false)
+        }
+        crate::plugins::PlayerAction::OpenMenu { menu } => {
+            let opened = menus.open_menu(sink, &menu).await?;
+            *active_config_menu = opened;
+            Ok(false)
+        }
+        crate::plugins::PlayerAction::SetPlayersVisible { visible } => {
+            super::set_other_players_visible(
+                sink,
+                players,
+                actor,
+                play_dimension,
+                viewer_position,
+                render_distance,
+                visible_player_entities,
+                visible,
+            )
+            .await?;
+            *players_hidden = !visible;
             Ok(false)
         }
     }
+}
+
+pub(super) async fn apply_proxy_connect_action<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    server_config: Option<&qexed_config::app::qexed::server::Server>,
+    plugins: &crate::plugins::PluginManager,
+    players: &crate::players::PlayerManager,
+    actor: uuid::Uuid,
+    server: &str,
+    message: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let server = server.trim();
+    let Some(server_config) = server_config else {
+        send_proxy_connect_feedback(
+            sink,
+            "Proxy transfer is unavailable: proxy config is missing.",
+        )
+        .await?;
+        emit_proxy_connect_result(
+            plugins,
+            players,
+            actor,
+            server,
+            "",
+            "",
+            ProxyConnectStatus::ProxyContextMissing,
+            "proxy config was not available while executing proxy connect action",
+        );
+        return Ok(());
+    };
+    if server.is_empty() {
+        send_proxy_connect_feedback(sink, "Proxy transfer is unavailable: target server is empty.")
+            .await?;
+        emit_proxy_connect_result(
+            plugins,
+            players,
+            actor,
+            server,
+            &server_config.proxy_server_id,
+            &server_config.proxy_protocol.to_string(),
+            ProxyConnectStatus::TargetEmpty,
+            "target proxy server is empty",
+        );
+        return Ok(());
+    }
+    if !server_config.proxy {
+        send_proxy_connect_feedback(sink, "Proxy transfer is unavailable: proxy is disabled.")
+            .await?;
+        emit_proxy_connect_result(
+            plugins,
+            players,
+            actor,
+            server,
+            &server_config.proxy_server_id,
+            &server_config.proxy_protocol.to_string(),
+            ProxyConnectStatus::ProxyDisabled,
+            "proxy forwarding is not enabled",
+        );
+        return Ok(());
+    }
+    if !matches!(
+        server_config.proxy_protocol,
+        ForwardingMode::Velocity | ForwardingMode::BungeeCord
+    ) {
+        send_proxy_connect_feedback(
+            sink,
+            "Proxy transfer is unavailable: proxy protocol does not support backend switching.",
+        )
+        .await?;
+        emit_proxy_connect_result(
+            plugins,
+            players,
+            actor,
+            server,
+            &server_config.proxy_server_id,
+            &server_config.proxy_protocol.to_string(),
+            ProxyConnectStatus::UnsupportedProxyProtocol,
+            "proxy protocol does not support backend connect plugin messages",
+        );
+        return Ok(());
+    }
+    if !server_config.proxy_server_id.trim().is_empty()
+        && server_config.proxy_server_id.eq_ignore_ascii_case(server)
+    {
+        send_proxy_connect_feedback(
+            sink,
+            &format!("You are already connected to {server}."),
+        )
+        .await?;
+        emit_proxy_connect_result(
+            plugins,
+            players,
+            actor,
+            server,
+            &server_config.proxy_server_id,
+            &server_config.proxy_protocol.to_string(),
+            ProxyConnectStatus::AlreadyConnected,
+            "player is already connected to the target proxy server",
+        );
+        return Ok(());
+    }
+    if !message.trim().is_empty() {
+        sink.send(SystemChat {
+            content: text_component(message),
+            overlay: false,
+        })
+        .await?;
+    }
+    if let Err(err) = sink.send(proxy_connect_payload(server)).await {
+        emit_proxy_connect_result(
+            plugins,
+            players,
+            actor,
+            server,
+            &server_config.proxy_server_id,
+            &server_config.proxy_protocol.to_string(),
+            ProxyConnectStatus::SendFailed,
+            &format!("failed to send proxy connect payload: {err}"),
+        );
+        return Err(err.into());
+    }
+    emit_proxy_connect_result(
+        plugins,
+        players,
+        actor,
+        server,
+        &server_config.proxy_server_id,
+        &server_config.proxy_protocol.to_string(),
+        ProxyConnectStatus::SentToProxy,
+        "proxy connect request was sent to the proxy",
+    );
+    Ok(())
+}
+
+async fn send_proxy_connect_feedback<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    message: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    sink.send(SystemChat {
+        content: text_component(message),
+        overlay: false,
+    })
+    .await?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2397,6 +2506,25 @@ mod tests {
             packet
                 .windows("bungeecord:main".len())
                 .any(|window| window == "bungeecord:main".as_bytes())
+        );
+    }
+
+    #[test]
+    fn proxy_connect_payload_contains_target_backend_name() {
+        let packet = qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(
+            proxy_connect_payload("lobby-1"),
+        )
+        .unwrap();
+
+        assert!(
+            packet
+                .windows("lobby-1".len())
+                .any(|window| window == "lobby-1".as_bytes())
+        );
+        assert!(
+            packet
+                .windows("Connect".len())
+                .any(|window| window == "Connect".as_bytes())
         );
     }
 

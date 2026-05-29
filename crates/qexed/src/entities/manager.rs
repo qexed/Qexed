@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -147,6 +148,34 @@ impl EntityManager {
         Ok(packets)
     }
 
+    pub fn spawn_packets_for_view(
+        &self,
+        dimension: &str,
+        viewer_position: EntityPosition,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+    ) -> Result<Vec<Bytes>> {
+        let mut packets = Vec::new();
+        for entity in self.visible_entities_for_view(dimension, viewer_position, rendering) {
+            packets.extend(entity.spawn_packets()?);
+        }
+
+        let item_entity_type = entity_type_id("minecraft:item")?;
+        let dropped_items = self
+            .dropped_items
+            .lock()
+            .expect("entity manager dropped items poisoned");
+        for item in dropped_items
+            .iter()
+            .filter(|item| item.dimension == dimension)
+            .filter(|item| {
+                within_render_distance(item.position, viewer_position, rendering.item_distance)
+            })
+        {
+            packets.extend(item.spawn_packets(item_entity_type)?);
+        }
+        Ok(packets)
+    }
+
     pub fn drop_item(
         &self,
         players: &crate::players::PlayerManager,
@@ -159,20 +188,110 @@ impl EntityManager {
             return Ok(None);
         }
 
-        let entity = DroppedItemEntity {
-            entity_id: self.entity_ids.next(),
-            uuid: uuid::Uuid::new_v4(),
-            dimension: dimension.to_string(),
-            position,
-            item,
-            pickup_ready_at: Instant::now() + ITEM_PICKUP_DELAY,
-        };
+        let entity = self.create_dropped_item(dimension, position, item);
         let packets = entity.spawn_packets(entity_type_id("minecraft:item")?)?;
         self.dropped_items
             .lock()
             .expect("entity manager dropped items poisoned")
             .push(entity.clone());
         players.broadcast_packets_except(actor, packets);
+        Ok(Some(entity))
+    }
+
+    pub fn drop_item_with_rendering(
+        &self,
+        players: &crate::players::PlayerManager,
+        actor: uuid::Uuid,
+        dimension: &str,
+        position: EntityPosition,
+        item: qexed_protocol::types::Slot,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+    ) -> Result<Option<DroppedItemEntity>> {
+        let Some(entity) = self.drop_item_local(dimension, position, item)? else {
+            return Ok(None);
+        };
+        let packets = entity.spawn_packets(entity_type_id("minecraft:item")?)?;
+        for player in players.list_except(actor) {
+            if player.dimension == dimension
+                && within_render_distance(player.position, position, rendering.item_distance)
+            {
+                players.send_packets_to(player.profile.uuid, packets.clone());
+            }
+        }
+        Ok(Some(entity))
+    }
+
+    pub fn send_spawn_to_rendered_viewers(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        entity: &ManagedEntity,
+    ) -> Result<()> {
+        self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
+    }
+
+    pub fn refresh_managed_entities_for_viewers(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        dimensions: &[String],
+    ) -> Result<()> {
+        if dimensions.is_empty() {
+            return Ok(());
+        }
+
+        let dimension_set = dimensions.iter().collect::<HashSet<_>>();
+        for player in players.list_except(uuid::Uuid::nil()) {
+            if !dimension_set.contains(&player.dimension) {
+                continue;
+            }
+            players.send_packets_to(
+                player.profile.uuid,
+                self.managed_entity_view_packets(&player.dimension, player.position, rendering)?,
+            );
+        }
+        Ok(())
+    }
+
+    pub fn send_move_to_rendered_viewers(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        entity: &ManagedEntity,
+    ) -> Result<()> {
+        self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
+    }
+
+    pub fn send_remove_to_rendered_viewers(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        entity: &ManagedEntity,
+    ) -> Result<()> {
+        let remove_packets = entity.remove_packets()?;
+        for player in players.list_except(uuid::Uuid::nil()) {
+            if player.dimension == entity.dimension {
+                players.send_packets_to(player.profile.uuid, remove_packets.clone());
+            }
+        }
+        self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
+    }
+
+    pub fn drop_item_local(
+        &self,
+        dimension: &str,
+        position: EntityPosition,
+        item: qexed_protocol::types::Slot,
+    ) -> Result<Option<DroppedItemEntity>> {
+        if item.item_count.0 <= 0 {
+            return Ok(None);
+        }
+
+        let entity = self.create_dropped_item(dimension, position, item);
+        self.dropped_items
+            .lock()
+            .expect("entity manager dropped items poisoned")
+            .push(entity.clone());
         Ok(Some(entity))
     }
 
@@ -213,6 +332,13 @@ impl EntityManager {
         players: &crate::players::PlayerManager,
         request: EntitySpawnRequest,
     ) -> Result<ManagedEntity> {
+        let entity = self.spawn_local(request)?;
+        let packets = entity.spawn_packets()?;
+        players.broadcast_packets(packets);
+        Ok(entity)
+    }
+
+    pub fn spawn_local(&self, request: EntitySpawnRequest) -> Result<ManagedEntity> {
         let key = request.key.trim();
         if key.is_empty() {
             anyhow::bail!("entity id cannot be empty");
@@ -245,14 +371,11 @@ impl EntityManager {
             data: request.data,
         };
 
-        let packets = entity.spawn_packets()?;
         let mut entities = self.entities.lock().expect("entity manager poisoned");
         if entities.iter().any(|existing| existing.key == entity.key) {
             anyhow::bail!("duplicate entity id: {}", entity.key);
         }
         entities.push(entity.clone());
-        drop(entities);
-        players.broadcast_packets(packets);
         Ok(entity)
     }
 
@@ -274,17 +397,30 @@ impl EntityManager {
         Ok(())
     }
 
+    pub fn move_entity_local(&self, key: &str, position: EntityPosition) -> Result<ManagedEntity> {
+        let mut entities = self.entities.lock().expect("entity manager poisoned");
+        let entity = entities
+            .iter_mut()
+            .find(|entity| entity.key == key)
+            .with_context(|| format!("entity not found: {key}"))?;
+        entity.position = position;
+        Ok(entity.clone())
+    }
+
     pub fn remove(&self, players: &crate::players::PlayerManager, key: &str) -> Result<()> {
+        let entity = self.remove_local(key)?;
+        let packets = entity.remove_packets()?;
+        players.broadcast_packets(packets);
+        Ok(())
+    }
+
+    pub fn remove_local(&self, key: &str) -> Result<ManagedEntity> {
         let mut entities = self.entities.lock().expect("entity manager poisoned");
         let index = entities
             .iter()
             .position(|entity| entity.key == key)
             .with_context(|| format!("entity not found: {key}"))?;
-        let entity = entities.remove(index);
-        let packets = entity.remove_packets()?;
-        drop(entities);
-        players.broadcast_packets(packets);
-        Ok(())
+        Ok(entities.remove(index))
     }
 
     fn spawn_configured(
@@ -350,6 +486,83 @@ impl EntityManager {
         }
         entities.push(entity.clone());
         Ok(entity)
+    }
+
+    fn visible_entities_for_view(
+        &self,
+        dimension: &str,
+        viewer_position: EntityPosition,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+    ) -> Vec<ManagedEntity> {
+        let entities = self
+            .entities
+            .lock()
+            .expect("entity manager poisoned")
+            .iter()
+            .filter(|entity| entity.dimension == dimension)
+            .filter(|entity| {
+                within_render_distance(
+                    entity.position,
+                    viewer_position,
+                    render_distance_for_entity(entity, rendering),
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        simplify_stacked_entities(entities, rendering)
+    }
+
+    fn managed_entity_view_packets(
+        &self,
+        dimension: &str,
+        viewer_position: EntityPosition,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+    ) -> Result<Vec<Bytes>> {
+        let all_entities = self
+            .entities
+            .lock()
+            .expect("entity manager poisoned")
+            .iter()
+            .filter(|entity| entity.dimension == dimension)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut packets = Vec::new();
+        for entity in &all_entities {
+            packets.extend(entity.remove_packets()?);
+        }
+        for entity in simplify_stacked_entities(
+            all_entities
+                .into_iter()
+                .filter(|entity| {
+                    within_render_distance(
+                        entity.position,
+                        viewer_position,
+                        render_distance_for_entity(entity, rendering),
+                    )
+                })
+                .collect(),
+            rendering,
+        ) {
+            packets.extend(entity.spawn_packets()?);
+        }
+        Ok(packets)
+    }
+
+    fn create_dropped_item(
+        &self,
+        dimension: &str,
+        position: EntityPosition,
+        item: qexed_protocol::types::Slot,
+    ) -> DroppedItemEntity {
+        DroppedItemEntity {
+            entity_id: self.entity_ids.next(),
+            uuid: uuid::Uuid::new_v4(),
+            dimension: dimension.to_string(),
+            position,
+            item,
+            pickup_ready_at: Instant::now() + ITEM_PICKUP_DELAY,
+        }
     }
 }
 
@@ -453,4 +666,99 @@ fn can_reach_item(collector: EntityPosition, item: EntityPosition) -> bool {
     (collector.x - item.x).abs() <= ITEM_PICKUP_RADIUS_XZ
         && (collector.y + 0.9 - item.y).abs() <= ITEM_PICKUP_RADIUS_Y
         && (collector.z - item.z).abs() <= ITEM_PICKUP_RADIUS_XZ
+}
+
+fn render_distance_for_entity(
+    entity: &ManagedEntity,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> f64 {
+    match entity.kind {
+        ManagedEntityKind::Entity => rendering.default_distance,
+        ManagedEntityKind::Npc => rendering.npc_distance,
+        ManagedEntityKind::Hologram => rendering.hologram_distance,
+    }
+}
+
+fn within_render_distance(entity: EntityPosition, viewer: EntityPosition, distance: f64) -> bool {
+    if distance <= 0.0 {
+        return false;
+    }
+    let dx = entity.x - viewer.x;
+    let dz = entity.z - viewer.z;
+    (dx * dx + dz * dz) <= distance * distance
+}
+
+fn simplify_stacked_entities(
+    entities: Vec<ManagedEntity>,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> Vec<ManagedEntity> {
+    if rendering.stack_threshold <= 1 || rendering.stack_radius <= 0.0 {
+        return entities;
+    }
+
+    let mut by_type: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, entity) in entities.iter().enumerate() {
+        if entity.kind == ManagedEntityKind::Entity {
+            by_type
+                .entry(entity.entity_type.clone())
+                .or_default()
+                .push(index);
+        }
+    }
+
+    let mut hidden = HashSet::new();
+    let mut stacked_names = HashMap::<usize, String>::new();
+    let stack_radius_sq = rendering.stack_radius * rendering.stack_radius;
+
+    for indexes in by_type.values() {
+        for &base_index in indexes {
+            if hidden.contains(&base_index) {
+                continue;
+            }
+            let base = &entities[base_index];
+            let mut group = vec![base_index];
+            for &candidate_index in indexes {
+                if candidate_index == base_index || hidden.contains(&candidate_index) {
+                    continue;
+                }
+                let candidate = &entities[candidate_index];
+                let dx = base.position.x - candidate.position.x;
+                let dy = base.position.y - candidate.position.y;
+                let dz = base.position.z - candidate.position.z;
+                if dx * dx + dy * dy + dz * dz <= stack_radius_sq {
+                    group.push(candidate_index);
+                }
+            }
+
+            if group.len() < rendering.stack_threshold {
+                continue;
+            }
+            let label = format!(
+                "{}*{}",
+                base.entity_type
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or(base.entity_type.as_str()),
+                group.len()
+            );
+            stacked_names.insert(base_index, label);
+            for index in group.into_iter().skip(1) {
+                hidden.insert(index);
+            }
+        }
+    }
+
+    entities
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, mut entity)| {
+            if hidden.contains(&index) {
+                return None;
+            }
+            if let Some(name) = stacked_names.remove(&index) {
+                entity.display_name = name;
+            }
+            Some(entity)
+        })
+        .collect()
 }

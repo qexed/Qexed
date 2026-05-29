@@ -397,7 +397,6 @@ impl PacketCodec for SlotHash {
         Ok(())
     }
 }
-#[qexed_packet_macros::subenum]
 #[derive(Debug, PartialEq, Clone)]
 pub enum ComponentsToAdd {
     MinecraftCustomData(minecraft::CustomData),
@@ -497,6 +496,238 @@ pub enum ComponentsToAdd {
     MinecraftSheepColor(minecraft::SheepColor),
     MinecraftShulkerColor(minecraft::ShulkerColor),
     Unknown,
+}
+
+impl Default for ComponentsToAdd {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl PacketCodec for ComponentsToAdd {
+    fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+        match self {
+            Self::MinecraftCustomData(data) => serialize_data_component(0, data, w),
+            Self::MinecraftMaxStackSize(data) => serialize_data_component(1, data, w),
+            Self::MinecraftMaxDamage(data) => serialize_data_component(2, data, w),
+            Self::MinecraftDamage(data) => serialize_data_component(3, data, w),
+            Self::MinecraftUnbreakable(data) => serialize_data_component(4, data, w),
+            Self::MinecraftCustomName(data) => serialize_data_component(6, data, w),
+            Self::MinecraftItemName(data) => serialize_data_component(9, data, w),
+            Self::MinecraftItemModel(data) => serialize_data_component(10, data, w),
+            Self::MinecraftLore(data) => serialize_data_component(11, data, w),
+            Self::MinecraftRarity(data) => serialize_data_component(12, data, w),
+            Self::MinecraftEnchantments(data) => serialize_data_component(13, data, w),
+            Self::MinecraftCanPlaceOn(data) => serialize_data_component(14, data, w),
+            Self::MinecraftCanBreak(data) => serialize_data_component(15, data, w),
+            Self::MinecraftAttributeModifiers(data) => serialize_data_component(16, data, w),
+            Self::MinecraftCustomModelData(data) => serialize_data_component(17, data, w),
+            Self::MinecraftTooltipDisplay(data) => serialize_data_component(18, data, w),
+            Self::MinecraftRepairCost(data) => serialize_data_component(19, data, w),
+            Self::MinecraftCreativeSlotLock(data) => serialize_data_component(20, data, w),
+            Self::MinecraftEnchantmentGlintOverride(data) => serialize_data_component(21, data, w),
+            Self::MinecraftIntangibleProjectile(data) => serialize_data_component(22, data, w),
+            Self::MinecraftFood(data) => serialize_data_component(23, data, w),
+            Self::MinecraftConsumable(data) => serialize_data_component(24, data, w),
+            Self::MinecraftUseRemainder(data) => serialize_data_component(25, data, w),
+            Self::MinecraftUseCooldown(data) => serialize_data_component(26, data, w),
+            Self::MinecraftDamageResistant(data) => serialize_data_component(27, data, w),
+            Self::MinecraftTool(data) => serialize_data_component(28, data, w),
+            Self::MinecraftWeapon(data) => serialize_data_component(29, data, w),
+            Self::MinecraftEnchantable(data) => serialize_data_component(31, data, w),
+            Self::MinecraftEquippable(data) => serialize_data_component(32, data, w),
+            Self::MinecraftRepairable(data) => serialize_data_component(33, data, w),
+            Self::MinecraftGlider(data) => serialize_data_component(34, data, w),
+            Self::MinecraftTooltipStyle(data) => serialize_data_component(35, data, w),
+            Self::MinecraftDeathProtection(data) => serialize_data_component(36, data, w),
+            Self::MinecraftBlocksAttacks(data) => serialize_data_component(37, data, w),
+            Self::MinecraftStoredEnchantments(data) => serialize_data_component(42, data, w),
+            Self::MinecraftDyedColor(data) => serialize_data_component(44, data, w),
+            Self::MinecraftMapColor(data) => serialize_data_component(45, data, w),
+            Self::MinecraftMapId(data) => serialize_data_component(46, data, w),
+            Self::MinecraftMapDecorations(data) => serialize_data_component(47, data, w),
+            Self::MinecraftMapPostProcessing(data) => serialize_data_component(48, data, w),
+            Self::MinecraftChargedProjectiles(data) => serialize_data_component(49, data, w),
+            Self::MinecraftBundleContents(data) => serialize_data_component(50, data, w),
+            Self::MinecraftPotionContents(data) => serialize_data_component(51, data, w),
+            Self::MinecraftPotionDurationScale(data) => serialize_data_component(52, data, w),
+            Self::MinecraftSuspiciousStewEffects(data) => serialize_data_component(53, data, w),
+            Self::MinecraftWritableBookContent(data) => serialize_data_component(54, data, w),
+            Self::MinecraftWrittenBookContent(data) => serialize_data_component(55, data, w),
+            Self::MinecraftTrim(data) => serialize_data_component(56, data, w),
+            Self::MinecraftDebugStickState(data) => serialize_data_component(57, data, w),
+            Self::MinecraftEntityData(data) => serialize_data_component(58, data, w),
+            Self::MinecraftBucketEntityData(data) => serialize_data_component(59, data, w),
+            Self::MinecraftBlockEntityData(data) => serialize_data_component(60, data, w),
+            Self::MinecraftInstrument(data) => serialize_data_component(61, data, w),
+            Self::MinecraftProvidesTrimMaterial(data) => serialize_data_component(62, data, w),
+            Self::MinecraftOminousBottleAmplifier(data) => serialize_data_component(63, data, w),
+            Self::MinecraftJukeboxPlayable(data) => serialize_data_component(64, data, w),
+            Self::MinecraftProvidesBannerPatterns(data) => serialize_data_component(65, data, w),
+            Self::MinecraftRecipes(data) => serialize_data_component(66, data, w),
+            Self::MinecraftLodestoneTracker(data) => serialize_data_component(67, data, w),
+            Self::MinecraftFireworkExplosion(data) => serialize_data_component(68, data, w),
+            Self::MinecraftFireworks(data) => serialize_data_component(69, data, w),
+            Self::MinecraftProfile(data) => serialize_data_component(70, data, w),
+            Self::MinecraftNoteBlockSound(data) => serialize_data_component(71, data, w),
+            Self::MinecraftBannerPatterns(data) => serialize_data_component(72, data, w),
+            Self::MinecraftBaseColor(data) => serialize_data_component(73, data, w),
+            Self::MinecraftPotDecorations(data) => serialize_data_component(74, data, w),
+            Self::MinecraftContainer(data) => serialize_data_component(75, data, w),
+            Self::MinecraftBlockState(data) => serialize_data_component(76, data, w),
+            Self::MinecraftBees(data) => serialize_data_component(77, data, w),
+            Self::MinecraftLock(data) => serialize_data_component(78, data, w),
+            Self::MinecraftContainerLoot(data) => serialize_data_component(79, data, w),
+            Self::MinecraftBreakSound(data) => serialize_data_component(80, data, w),
+            Self::MinecraftVillagerVariant(data) => serialize_data_component(81, data, w),
+            Self::MinecraftWolfVariant(data) => serialize_data_component(82, data, w),
+            Self::MinecraftWolfSoundVariant(data) => serialize_data_component(83, data, w),
+            Self::MinecraftWolfCollar(data) => serialize_data_component(84, data, w),
+            Self::MinecraftFoxVariant(data) => serialize_data_component(85, data, w),
+            Self::MinecraftSalmonSize(data) => serialize_data_component(86, data, w),
+            Self::MinecraftParrotVariant(data) => serialize_data_component(87, data, w),
+            Self::MinecraftTropicalFishPattern(data) => serialize_data_component(88, data, w),
+            Self::MinecraftTropicalFishBaseColor(data) => serialize_data_component(89, data, w),
+            Self::MinecraftTropicalFishPatternColor(data) => serialize_data_component(90, data, w),
+            Self::MinecraftMooshroomVariant(data) => serialize_data_component(91, data, w),
+            Self::MinecraftRabbitVariant(data) => serialize_data_component(92, data, w),
+            Self::MinecraftPigVariant(data) => serialize_data_component(93, data, w),
+            Self::MinecraftCowVariant(data) => serialize_data_component(95, data, w),
+            Self::MinecraftChickenVariant(data) => serialize_data_component(97, data, w),
+            Self::MinecraftFrogVariant(data) => serialize_data_component(100, data, w),
+            Self::MinecraftHorseVariant(data) => serialize_data_component(101, data, w),
+            Self::MinecraftPaintingVariant(data) => serialize_data_component(102, data, w),
+            Self::MinecraftLlamaVariant(data) => serialize_data_component(103, data, w),
+            Self::MinecraftAxolotlVariant(data) => serialize_data_component(104, data, w),
+            Self::MinecraftCatVariant(data) => serialize_data_component(105, data, w),
+            Self::MinecraftCatCollar(data) => serialize_data_component(107, data, w),
+            Self::MinecraftSheepColor(data) => serialize_data_component(108, data, w),
+            Self::MinecraftShulkerColor(data) => serialize_data_component(109, data, w),
+            Self::Unknown => Err(anyhow::anyhow!("Cannot serialize unknown data component")),
+        }
+    }
+
+    fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+        let mut id = VarInt(-1);
+        id.deserialize(r)?;
+        *self = match id.0 {
+            0 => Self::MinecraftCustomData(deserialize_data_component(r)?),
+            1 => Self::MinecraftMaxStackSize(deserialize_data_component(r)?),
+            2 => Self::MinecraftMaxDamage(deserialize_data_component(r)?),
+            3 => Self::MinecraftDamage(deserialize_data_component(r)?),
+            4 => Self::MinecraftUnbreakable(deserialize_data_component(r)?),
+            6 => Self::MinecraftCustomName(deserialize_data_component(r)?),
+            9 => Self::MinecraftItemName(deserialize_data_component(r)?),
+            10 => Self::MinecraftItemModel(deserialize_data_component(r)?),
+            11 => Self::MinecraftLore(deserialize_data_component(r)?),
+            12 => Self::MinecraftRarity(deserialize_data_component(r)?),
+            13 => Self::MinecraftEnchantments(deserialize_data_component(r)?),
+            14 => Self::MinecraftCanPlaceOn(deserialize_data_component(r)?),
+            15 => Self::MinecraftCanBreak(deserialize_data_component(r)?),
+            16 => Self::MinecraftAttributeModifiers(deserialize_data_component(r)?),
+            17 => Self::MinecraftCustomModelData(deserialize_data_component(r)?),
+            18 => Self::MinecraftTooltipDisplay(deserialize_data_component(r)?),
+            19 => Self::MinecraftRepairCost(deserialize_data_component(r)?),
+            20 => Self::MinecraftCreativeSlotLock(deserialize_data_component(r)?),
+            21 => Self::MinecraftEnchantmentGlintOverride(deserialize_data_component(r)?),
+            22 => Self::MinecraftIntangibleProjectile(deserialize_data_component(r)?),
+            23 => Self::MinecraftFood(deserialize_data_component(r)?),
+            24 => Self::MinecraftConsumable(deserialize_data_component(r)?),
+            25 => Self::MinecraftUseRemainder(deserialize_data_component(r)?),
+            26 => Self::MinecraftUseCooldown(deserialize_data_component(r)?),
+            27 => Self::MinecraftDamageResistant(deserialize_data_component(r)?),
+            28 => Self::MinecraftTool(deserialize_data_component(r)?),
+            29 => Self::MinecraftWeapon(deserialize_data_component(r)?),
+            31 => Self::MinecraftEnchantable(deserialize_data_component(r)?),
+            32 => Self::MinecraftEquippable(deserialize_data_component(r)?),
+            33 => Self::MinecraftRepairable(deserialize_data_component(r)?),
+            34 => Self::MinecraftGlider(deserialize_data_component(r)?),
+            35 => Self::MinecraftTooltipStyle(deserialize_data_component(r)?),
+            36 => Self::MinecraftDeathProtection(deserialize_data_component(r)?),
+            37 => Self::MinecraftBlocksAttacks(deserialize_data_component(r)?),
+            42 => Self::MinecraftStoredEnchantments(deserialize_data_component(r)?),
+            44 => Self::MinecraftDyedColor(deserialize_data_component(r)?),
+            45 => Self::MinecraftMapColor(deserialize_data_component(r)?),
+            46 => Self::MinecraftMapId(deserialize_data_component(r)?),
+            47 => Self::MinecraftMapDecorations(deserialize_data_component(r)?),
+            48 => Self::MinecraftMapPostProcessing(deserialize_data_component(r)?),
+            49 => Self::MinecraftChargedProjectiles(deserialize_data_component(r)?),
+            50 => Self::MinecraftBundleContents(deserialize_data_component(r)?),
+            51 => Self::MinecraftPotionContents(deserialize_data_component(r)?),
+            52 => Self::MinecraftPotionDurationScale(deserialize_data_component(r)?),
+            53 => Self::MinecraftSuspiciousStewEffects(deserialize_data_component(r)?),
+            54 => Self::MinecraftWritableBookContent(deserialize_data_component(r)?),
+            55 => Self::MinecraftWrittenBookContent(deserialize_data_component(r)?),
+            56 => Self::MinecraftTrim(deserialize_data_component(r)?),
+            57 => Self::MinecraftDebugStickState(deserialize_data_component(r)?),
+            58 => Self::MinecraftEntityData(deserialize_data_component(r)?),
+            59 => Self::MinecraftBucketEntityData(deserialize_data_component(r)?),
+            60 => Self::MinecraftBlockEntityData(deserialize_data_component(r)?),
+            61 => Self::MinecraftInstrument(deserialize_data_component(r)?),
+            62 => Self::MinecraftProvidesTrimMaterial(deserialize_data_component(r)?),
+            63 => Self::MinecraftOminousBottleAmplifier(deserialize_data_component(r)?),
+            64 => Self::MinecraftJukeboxPlayable(deserialize_data_component(r)?),
+            65 => Self::MinecraftProvidesBannerPatterns(deserialize_data_component(r)?),
+            66 => Self::MinecraftRecipes(deserialize_data_component(r)?),
+            67 => Self::MinecraftLodestoneTracker(deserialize_data_component(r)?),
+            68 => Self::MinecraftFireworkExplosion(deserialize_data_component(r)?),
+            69 => Self::MinecraftFireworks(deserialize_data_component(r)?),
+            70 => Self::MinecraftProfile(deserialize_data_component(r)?),
+            71 => Self::MinecraftNoteBlockSound(deserialize_data_component(r)?),
+            72 => Self::MinecraftBannerPatterns(deserialize_data_component(r)?),
+            73 => Self::MinecraftBaseColor(deserialize_data_component(r)?),
+            74 => Self::MinecraftPotDecorations(deserialize_data_component(r)?),
+            75 => Self::MinecraftContainer(deserialize_data_component(r)?),
+            76 => Self::MinecraftBlockState(deserialize_data_component(r)?),
+            77 => Self::MinecraftBees(deserialize_data_component(r)?),
+            78 => Self::MinecraftLock(deserialize_data_component(r)?),
+            79 => Self::MinecraftContainerLoot(deserialize_data_component(r)?),
+            80 => Self::MinecraftBreakSound(deserialize_data_component(r)?),
+            81 => Self::MinecraftVillagerVariant(deserialize_data_component(r)?),
+            82 => Self::MinecraftWolfVariant(deserialize_data_component(r)?),
+            83 => Self::MinecraftWolfSoundVariant(deserialize_data_component(r)?),
+            84 => Self::MinecraftWolfCollar(deserialize_data_component(r)?),
+            85 => Self::MinecraftFoxVariant(deserialize_data_component(r)?),
+            86 => Self::MinecraftSalmonSize(deserialize_data_component(r)?),
+            87 => Self::MinecraftParrotVariant(deserialize_data_component(r)?),
+            88 => Self::MinecraftTropicalFishPattern(deserialize_data_component(r)?),
+            89 => Self::MinecraftTropicalFishBaseColor(deserialize_data_component(r)?),
+            90 => Self::MinecraftTropicalFishPatternColor(deserialize_data_component(r)?),
+            91 => Self::MinecraftMooshroomVariant(deserialize_data_component(r)?),
+            92 => Self::MinecraftRabbitVariant(deserialize_data_component(r)?),
+            93 => Self::MinecraftPigVariant(deserialize_data_component(r)?),
+            95 => Self::MinecraftCowVariant(deserialize_data_component(r)?),
+            97 => Self::MinecraftChickenVariant(deserialize_data_component(r)?),
+            100 => Self::MinecraftFrogVariant(deserialize_data_component(r)?),
+            101 => Self::MinecraftHorseVariant(deserialize_data_component(r)?),
+            102 => Self::MinecraftPaintingVariant(deserialize_data_component(r)?),
+            103 => Self::MinecraftLlamaVariant(deserialize_data_component(r)?),
+            104 => Self::MinecraftAxolotlVariant(deserialize_data_component(r)?),
+            105 => Self::MinecraftCatVariant(deserialize_data_component(r)?),
+            107 => Self::MinecraftCatCollar(deserialize_data_component(r)?),
+            108 => Self::MinecraftSheepColor(deserialize_data_component(r)?),
+            109 => Self::MinecraftShulkerColor(deserialize_data_component(r)?),
+            other => anyhow::bail!("unsupported data component type id: {other}"),
+        };
+        Ok(())
+    }
+}
+
+fn serialize_data_component<T: PacketCodec>(
+    id: i32,
+    data: &T,
+    w: &mut qexed_packet::PacketWriter,
+) -> anyhow::Result<()> {
+    VarInt(id).serialize(w)?;
+    data.serialize(w)
+}
+
+fn deserialize_data_component<T: PacketCodec + Default>(
+    r: &mut qexed_packet::PacketReader,
+) -> anyhow::Result<T> {
+    let mut data = T::default();
+    data.deserialize(r)?;
+    Ok(data)
 }
 #[qexed_packet_macros::substruct]
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -1346,6 +1577,69 @@ pub enum SlotDisplay {
     WithRemainder(Box<slot_display_types::minecraft::WithRemainder>),
     Composite(slot_display_types::minecraft::Composite),
     Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use qexed_packet::{PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
+
+    use super::{ComponentsToAdd, Slot, minecraft};
+
+    #[test]
+    fn slot_item_name_and_lore_use_data_component_registry_ids() {
+        let slot = Slot {
+            item_count: VarInt(1),
+            item_id: Some(VarInt(1)),
+            number_of_components_to_add: Some(VarInt(2)),
+            number_of_components_to_remove: Some(VarInt(0)),
+            components_to_add: Some(vec![
+                ComponentsToAdd::MinecraftItemName(minecraft::ItemName {
+                    name: text_component("Menu"),
+                }),
+                ComponentsToAdd::MinecraftLore(minecraft::Lore {
+                    lines: vec![text_component("Open")],
+                }),
+            ]),
+            components_to_remove: None,
+        };
+
+        let mut buf = bytes::BytesMut::new();
+        let mut writer = PacketWriter::new(&mut buf);
+        slot.serialize(&mut writer).unwrap();
+        let mut bytes = buf.freeze();
+        let mut reader = PacketReader::new(&mut bytes);
+
+        let mut count = VarInt::default();
+        count.deserialize(&mut reader).unwrap();
+        let mut item_id = VarInt::default();
+        item_id.deserialize(&mut reader).unwrap();
+        let mut add_count = VarInt::default();
+        add_count.deserialize(&mut reader).unwrap();
+        let mut remove_count = VarInt::default();
+        remove_count.deserialize(&mut reader).unwrap();
+        let mut first_component = VarInt::default();
+        first_component.deserialize(&mut reader).unwrap();
+        let mut item_name = minecraft::ItemName::default();
+        item_name.deserialize(&mut reader).unwrap();
+        let mut second_component = VarInt::default();
+        second_component.deserialize(&mut reader).unwrap();
+
+        assert_eq!(count.0, 1);
+        assert_eq!(item_id.0, 1);
+        assert_eq!(add_count.0, 2);
+        assert_eq!(remove_count.0, 0);
+        assert_eq!(first_component.0, 9);
+        assert_eq!(second_component.0, 11);
+    }
+
+    fn text_component(text: &str) -> super::TextComponent {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "text".to_string(),
+            qexed_nbt::Tag::String(std::sync::Arc::from(text.to_string())),
+        );
+        qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
+    }
 }
 pub mod slot_display_types {
 

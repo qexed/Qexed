@@ -176,6 +176,71 @@ fn runtime_entities_can_spawn_move_and_remove() {
 }
 
 #[test]
+fn entity_view_simplifies_stacked_same_type_entities() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids,
+    )
+    .unwrap();
+    let position = EntityPosition {
+        x: 0.0,
+        y: 64.0,
+        z: 0.0,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: true,
+    };
+    for index in 0..3 {
+        manager
+            .spawn_local(EntitySpawnRequest {
+                key: format!("zombie-{index}"),
+                kind: ManagedEntityKind::Entity,
+                entity_type: "minecraft:zombie".to_string(),
+                dimension: "minecraft:overworld".to_string(),
+                position: EntityPosition {
+                    x: f64::from(index) * 0.5,
+                    ..position
+                },
+                name: String::new(),
+                display_name: String::new(),
+                skin_textures: String::new(),
+                skin_signature: String::new(),
+                data: 0,
+            })
+            .unwrap();
+    }
+
+    let packets = manager
+        .spawn_packets_for_view(
+            "minecraft:overworld",
+            position,
+            &qexed_config::app::qexed::server::EntityRendering {
+                default_distance: 64.0,
+                stack_threshold: 3,
+                stack_radius: 4.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    let add_entity_count = packets
+        .iter()
+        .filter(|packet| {
+            packet[0] == qexed_protocol::to_client::play::add_entity::AddEntity::ID as u8
+        })
+        .count();
+    assert_eq!(add_entity_count, 1);
+    let label = "zombie*3".as_bytes();
+    assert!(
+        packets
+            .iter()
+            .any(|packet| packet.windows(label.len()).any(|window| window == label)),
+        "stacked entity view should include zombie*3 label"
+    );
+}
+
+#[test]
 fn npc_spawn_packets_include_display_name_in_player_info() {
     let entity = ManagedEntity {
         key: "shop".to_string(),

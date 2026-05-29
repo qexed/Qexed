@@ -30,7 +30,7 @@ const MIN_HEALTH_CHECK_INTERVAL_SECS: u64 = 1;
 const MAX_HEALTH_CHECK_INTERVAL_SECS: u64 = 300;
 const MIN_HEALTH_CHECK_TIMEOUT_MS: u64 = 50;
 const MAX_HEALTH_CHECK_TIMEOUT_MS: u64 = 5_000;
-pub(super) const MENU_WINDOW_ID: u8 = LOBBY_MENU_WINDOW_ID as u8;
+pub(super) const MENU_WINDOW_ID: i32 = LOBBY_MENU_WINDOW_ID;
 
 #[derive(Debug, Clone)]
 pub(super) struct LobbyRuntime {
@@ -344,7 +344,7 @@ impl LobbyRuntime {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        if !self.enabled() || i32::from(click.window_id) != LOBBY_MENU_WINDOW_ID {
+        if !self.enabled() || click.window_id.0 != LOBBY_MENU_WINDOW_ID {
             return Ok(false);
         }
 
@@ -434,13 +434,27 @@ impl LobbyRuntime {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
+        self.transfer_to_server_with_message(sink, server_id, "", status)
+            .await
+    }
+
+    pub(super) async fn transfer_to_server_with_message<W>(
+        &self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        server_id: &str,
+        message: &str,
+        status: &LobbyStatusSnapshot,
+    ) -> Result<bool>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
         if !self.enabled() {
             return Ok(false);
         }
         let action = LobbyAction {
             kind: LobbyActionKind::Transfer,
             target: server_id.trim().to_string(),
-            message: String::new(),
+            message: message.trim().to_string(),
         };
         self.transfer(sink, &action, status).await?;
         Ok(true)

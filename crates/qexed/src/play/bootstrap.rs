@@ -233,11 +233,16 @@ pub(super) async fn send_existing_players<W>(
     profile_id: uuid::Uuid,
     player_entity_type: i32,
     play_dimension: &str,
+    viewer_position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    render_distance: f64,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     for player in players.list_except(profile_id) {
+        if !within_render_distance(viewer_position, player.position, render_distance) {
+            continue;
+        }
         let event = crate::players::PlayerEvent::Joined(player);
         for packet in event.packets(player_entity_type, play_dimension)? {
             sink.send_raw(packet).await?;
@@ -250,12 +255,27 @@ pub(super) async fn send_existing_entities<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     entities: &crate::entities::EntityManager,
     dimension: &str,
+    viewer_position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    for packet in entities.spawn_packets_for_dimension(dimension)? {
+    for packet in entities.spawn_packets_for_view(dimension, viewer_position, rendering)? {
         sink.send_raw(packet).await?;
     }
     Ok(())
+}
+
+fn within_render_distance(
+    left: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    right: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    distance: f64,
+) -> bool {
+    if distance <= 0.0 {
+        return false;
+    }
+    let dx = left.x - right.x;
+    let dz = left.z - right.z;
+    (dx * dx + dz * dz) <= distance * distance
 }

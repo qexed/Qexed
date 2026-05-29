@@ -258,6 +258,12 @@ pub enum PlayerAction {
         #[serde(default)]
         message: String,
     },
+    OpenMenu {
+        menu: String,
+    },
+    SetPlayersVisible {
+        visible: bool,
+    },
 }
 
 pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload {

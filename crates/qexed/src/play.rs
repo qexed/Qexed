@@ -4,6 +4,7 @@ mod chunks;
 mod drops;
 mod events;
 mod lobby;
+mod menus;
 mod mining;
 mod recipes;
 mod scoreboard;
@@ -12,7 +13,10 @@ mod survival;
 mod util;
 
 use anyhow::Result;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use qexed_config::app::qexed::server::GameMode;
 use qexed_packet::{
@@ -81,6 +85,8 @@ const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
 const PLAYER_ACTION_START_DESTROY_BLOCK: i32 = 0;
 const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
 const PLAYER_ACTION_STOP_DESTROY_BLOCK: i32 = 2;
+const PLAYER_ACTION_DROP_ITEM_STACK: i32 = 3;
+const PLAYER_ACTION_DROP_ITEM: i32 = 4;
 const PLAYER_HEIGHT_BLOCKS: f64 = 1.8;
 
 pub async fn initialize<R, W>(
@@ -118,7 +124,11 @@ where
     let view_distance = world_config.view_distance.max(1);
     let chunk_load_parallelism = chunk_load_parallelism_limit(world_config.chunk_load_parallelism);
     let simulation_distance = world_config.simulation_distance.max(1);
-    let inventory = saved_player.inventory();
+    let mut inventory = saved_player.inventory();
+    let initial_lobby = lobby::LobbyRuntime::new(&config.server.lobby);
+    let _ = lobby::sync_navigator_item(&mut inventory, &initial_lobby);
+    let initial_menus = menus::MenuRuntime::new(&config.server.menus);
+    let _ = initial_menus.sync_hotbar_items(&mut inventory);
     let stored_was_dead = saved_player.survival.health <= 0.0;
     let initial_survival =
         SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
@@ -197,9 +207,18 @@ where
         profile.uuid,
         player_entity_type,
         &play_dimension,
+        player_position,
+        config.server.entity_rendering.player_distance,
     )
     .await?;
-    send_existing_entities(sink, entities, &play_dimension).await?;
+    send_existing_entities(
+        sink,
+        entities,
+        &play_dimension,
+        player_position,
+        &config.server.entity_rendering,
+    )
+    .await?;
 
     let mut next_teleport_id = 1;
     sink.send(Position {
@@ -330,7 +349,24 @@ where
     }
     let mut lobby_broadcast_index = 0usize;
     let mut lobby_menu_open = false;
+    let menus = menus::MenuRuntime::new(&config.server.menus);
+    let mut active_config_menu: Option<String> = None;
+    let mut players_hidden = false;
+    let mut visible_player_entities = players
+        .list_except(profile.uuid)
+        .into_iter()
+        .filter(|player| player.dimension == play_dimension)
+        .filter(|player| {
+            within_horizontal_distance(
+                position,
+                player.position,
+                config.server.entity_rendering.player_distance,
+            )
+        })
+        .map(|player| player.profile.uuid)
+        .collect::<HashSet<_>>();
     let navigator_changes = lobby::sync_navigator_item(&mut inventory, &lobby);
+    let menu_hotbar_changes = menus.sync_hotbar_items(&mut inventory);
     lobby.show_boss_bar(sink).await?;
     lobby.update_boss_bar_status(sink, &lobby_status).await?;
     for packet in scoreboard::lobby_sidebar_packets(
@@ -345,14 +381,18 @@ where
     )? {
         sink.send_raw(packet).await?;
     }
-    if !navigator_changes.is_empty() {
+    let initial_inventory_changes = navigator_changes
+        .into_iter()
+        .chain(menu_hotbar_changes)
+        .collect::<Vec<_>>();
+    if !initial_inventory_changes.is_empty() {
         sync_inventory_changes(
             sink,
             players,
             profile.uuid,
             session.player.entity_id,
             inventory.selected_slot(),
-            navigator_changes,
+            initial_inventory_changes,
         )
         .await?;
         sink.flush().await?;
@@ -403,6 +443,7 @@ where
                     position,
                     &mut survival,
                     &mut inventory,
+                    &config.server.entity_rendering,
                 ).await? {
                     pending_dig = None;
                 }
@@ -502,6 +543,20 @@ where
                         }
                         session.player.position = position;
                         session.player.dimension = play_dimension.clone();
+                        visible_player_entities.clear();
+                        if !players_hidden {
+                            refresh_visible_players(
+                                sink,
+                                players,
+                                profile.uuid,
+                                player_entity_type,
+                                &play_dimension,
+                                position,
+                                config.server.entity_rendering.player_distance,
+                                &mut visible_player_entities,
+                            )
+                            .await?;
+                        }
                         sink.flush().await?;
                     }
                     continue;
@@ -509,7 +564,19 @@ where
                 if event_is_self(&event, profile.uuid) {
                     continue;
                 }
-                for packet in event.packets(player_entity_type, &play_dimension)? {
+                if players_hidden && event_affects_player_entity(&event) {
+                    continue;
+                }
+                let event_packets = filtered_player_event_packets(
+                    &event,
+                    players,
+                    player_entity_type,
+                    &play_dimension,
+                    position,
+                    config.server.entity_rendering.player_distance,
+                    &mut visible_player_entities,
+                )?;
+                for packet in event_packets {
                     sink.send_raw(packet).await?;
                 }
                 if let Some(message) = player_event_message(config, &event) {
@@ -663,6 +730,22 @@ where
                         sink.flush().await?;
                         continue;
                     }
+                    if menus.fixed_hotbar_slot(
+                        usize::try_from(slot.slot_num - 36).unwrap_or(usize::MAX),
+                    ) {
+                        let changes = menus.sync_hotbar_items(&mut inventory);
+                        sync_inventory_changes(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            inventory.selected_slot(),
+                            changes,
+                        )
+                        .await?;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if let Some(change) = inventory.set_creative_slot(slot.slot_num, slot.item_stack.clone()) {
                         pending_dig = None;
                         sync_inventory_changes(
@@ -781,6 +864,24 @@ where
                 if packet_id == PlayerAction::ID {
                     let action = crate::connection::decode_payload::<PlayerAction>(&mut payload)?;
                     let sequence = action.sequence.clone();
+                    if player_action_drops_item(action.status.0)
+                        && menus.fixed_hotbar_slot(inventory.selected_slot())
+                    {
+                        pending_dig = None;
+                        let changes = menus.sync_hotbar_items(&mut inventory);
+                        sync_inventory_changes(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            inventory.selected_slot(),
+                            changes,
+                        )
+                        .await?;
+                        send_block_change_ack(sink, sequence).await?;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if survival.is_dead() {
                         pending_dig = None;
                         send_block_change_ack(sink, sequence).await?;
@@ -821,6 +922,7 @@ where
                                     profile.uuid,
                                     inventory.held_item(),
                                     action.location,
+                                    &config.server.entity_rendering,
                                 )
                                 .await? {
                                     player_audit.log_block_break(
@@ -872,6 +974,7 @@ where
                                     profile.uuid,
                                     inventory.held_item(),
                                     action.location,
+                                    &config.server.entity_rendering,
                                 )
                                 .await?;
                                 let was_destroyed = destroyed.is_some();
@@ -912,6 +1015,35 @@ where
                     let sequence = use_item.sequence.clone();
                     if !survival.is_dead()
                         && use_item.hand.0 == 0
+                        && let Some(action) = menus.action_for_hotbar_slot(inventory.selected_slot())
+                    {
+                        let outcome = run_menu_action(
+                            sink,
+                            &menus,
+                            players,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            profile.uuid,
+                            &play_dimension,
+                            position,
+                            config.server.entity_rendering.player_distance,
+                            Some(&config.server),
+                            plugins,
+                            &lobby,
+                            &lobby_status,
+                            action,
+                        )
+                        .await?;
+                        if outcome.opened_menu {
+                            active_config_menu = outcome.opened_menu_id;
+                        }
+                        pending_dig = None;
+                        send_block_change_ack(sink, sequence).await?;
+                        sink.flush().await?;
+                        continue;
+                    }
+                    if !survival.is_dead()
+                        && use_item.hand.0 == 0
                         && lobby
                             .handle_use_item(sink, inventory.selected_slot(), &lobby_status)
                             .await?
@@ -928,6 +1060,7 @@ where
                     let interact = crate::connection::decode_payload::<Interact>(&mut payload)?;
                     if !survival.is_dead() {
                         let plugin_outcome = if is_primary_interact(&interact) {
+                            let viewer_position = position;
                             handle_plugin_npc_interact(
                                 sink,
                                 world,
@@ -945,6 +1078,12 @@ where
                                 &mut position,
                                 &mut next_teleport_id,
                                 &mut play_dimension,
+                                &menus,
+                                &mut active_config_menu,
+                                &mut players_hidden,
+                                &mut visible_player_entities,
+                                viewer_position,
+                                config.server.entity_rendering.player_distance,
                             )
                             .await?
                         } else {
@@ -974,6 +1113,7 @@ where
                 if packet_id == Attack::ID {
                     let attack = crate::connection::decode_payload::<Attack>(&mut payload)?;
                     if !survival.is_dead() {
+                        let viewer_position = position;
                         let plugin_outcome = handle_plugin_npc_interact(
                             sink,
                             world,
@@ -991,6 +1131,12 @@ where
                             &mut position,
                             &mut next_teleport_id,
                             &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            viewer_position,
+                            config.server.entity_rendering.player_distance,
                         )
                         .await?;
                         if plugin_outcome.handled {
@@ -1006,12 +1152,63 @@ where
 
                 if packet_id == ContainerClick::ID {
                     let click = crate::connection::decode_payload::<ContainerClick>(&mut payload)?;
-                    if lobby.handle_container_click(sink, click, &lobby_status).await? {
+                    let affects_fixed_menu_slot =
+                        container_click_affects_fixed_menu_slot(&click, &menus);
+                    if let Some(action) = menus
+                        .handle_container_click(sink, active_config_menu.as_deref(), click.clone())
+                        .await?
+                    {
+                        let outcome = run_menu_action(
+                            sink,
+                            &menus,
+                            players,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            profile.uuid,
+                            &play_dimension,
+                            position,
+                            config.server.entity_rendering.player_distance,
+                            Some(&config.server),
+                            plugins,
+                            &lobby,
+                            &lobby_status,
+                            action,
+                        )
+                        .await?;
+                        if outcome.opened_menu {
+                            active_config_menu = outcome.opened_menu_id;
+                        } else {
+                            active_config_menu = None;
+                            menus.close_menu(sink).await?;
+                        }
+                        pending_dig = None;
+                        resync_inventory_state(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &inventory,
+                        )
+                        .await?;
+                        sink.flush().await?;
+                    } else if lobby.handle_container_click(sink, click, &lobby_status).await? {
                         lobby_menu_open = true;
                         pending_dig = None;
                         sink.flush().await?;
                     } else if lobby.protect_world() || lobby.navigator_slot().is_some() {
                         let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
+                        pending_dig = None;
+                        resync_inventory_state(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &inventory,
+                        )
+                        .await?;
+                        sink.flush().await?;
+                    } else if affects_fixed_menu_slot {
+                        let _ = menus.sync_hotbar_items(&mut inventory);
                         pending_dig = None;
                         resync_inventory_state(
                             sink,
@@ -1028,8 +1225,11 @@ where
 
                 if packet_id == ContainerClose::ID {
                     let close = crate::connection::decode_payload::<ContainerClose>(&mut payload)?;
-                    if close.window_id == lobby::MENU_WINDOW_ID {
+                    if close.window_id.0 == lobby::MENU_WINDOW_ID {
                         lobby_menu_open = false;
+                    }
+                    if close.window_id.0 == menus::MENU_WINDOW_ID {
+                        active_config_menu = None;
                     }
                     continue;
                 }
@@ -1079,6 +1279,7 @@ where
                         previous,
                         position,
                         &mut inventory,
+                        &config.server.entity_rendering,
                     )
                     .await?;
                     if survival.is_dead() {
@@ -1089,6 +1290,19 @@ where
                         .await?;
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
+                    if !players_hidden {
+                        refresh_visible_players(
+                            sink,
+                            players,
+                            profile.uuid,
+                            player_entity_type,
+                            &play_dimension,
+                            position,
+                            config.server.entity_rendering.player_distance,
+                            &mut visible_player_entities,
+                        )
+                        .await?;
+                    }
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1127,6 +1341,7 @@ where
                         previous,
                         position,
                         &mut inventory,
+                        &config.server.entity_rendering,
                     )
                     .await?;
                     if survival.is_dead() {
@@ -1137,6 +1352,19 @@ where
                         .await?;
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
+                    if !players_hidden {
+                        refresh_visible_players(
+                            sink,
+                            players,
+                            profile.uuid,
+                            player_entity_type,
+                            &play_dimension,
+                            position,
+                            config.server.entity_rendering.player_distance,
+                            &mut visible_player_entities,
+                        )
+                        .await?;
+                    }
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1172,6 +1400,7 @@ where
                         previous,
                         position,
                         &mut inventory,
+                        &config.server.entity_rendering,
                     )
                     .await?;
                     if survival.is_dead() {
@@ -1212,6 +1441,7 @@ where
                         previous,
                         position,
                         &mut inventory,
+                        &config.server.entity_rendering,
                     )
                     .await?;
                     if survival.is_dead() {
@@ -1335,6 +1565,12 @@ where
                         &command.command,
                         &lobby,
                         &mut lobby_status,
+                        &menus,
+                        &mut active_config_menu,
+                        &mut players_hidden,
+                        &mut visible_player_entities,
+                        position,
+                        config.server.entity_rendering.player_distance,
                         &chunk_sender,
                         &mut chunk_state,
                         &mut position,
@@ -1344,11 +1580,28 @@ where
                     if outcome.opened_lobby_menu {
                         lobby_menu_open = true;
                     }
+                    if outcome.opened_config_menu {
+                        active_config_menu = outcome.opened_config_menu_id;
+                    }
                     if outcome.teleported {
                         lobby_menu_open = false;
                         pending_dig = None;
                         session.player.position = position;
                         session.player.dimension = play_dimension.clone();
+                        visible_player_entities.clear();
+                        if !players_hidden {
+                            refresh_visible_players(
+                                sink,
+                                players,
+                                profile.uuid,
+                                player_entity_type,
+                                &play_dimension,
+                                position,
+                                config.server.entity_rendering.player_distance,
+                                &mut visible_player_entities,
+                            )
+                            .await?;
+                        }
                     }
                     sink.flush().await?;
                     continue;
@@ -1569,6 +1822,7 @@ async fn apply_survival_movement<W>(
     previous: EntityPosition,
     current: EntityPosition,
     inventory: &mut crate::inventory::PlayerInventory,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -1589,6 +1843,7 @@ where
                 current,
                 inventory,
                 message,
+                rendering,
             )
             .await?;
         }
@@ -1619,6 +1874,7 @@ async fn apply_survival_tick<W>(
     position: EntityPosition,
     survival: &mut SurvivalState,
     inventory: &mut crate::inventory::PlayerInventory,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -1641,6 +1897,7 @@ where
             position,
             inventory,
             message,
+            rendering,
         )
         .await?;
     }
@@ -1659,6 +1916,7 @@ async fn handle_player_death<W>(
     position: EntityPosition,
     inventory: &mut crate::inventory::PlayerInventory,
     message: DeathMessage,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -1680,7 +1938,9 @@ where
     )
     .await?;
     for item in drops {
-        let Some(drop) = entities.drop_item(players, actor, dimension, position, item)? else {
+        let Some(drop) = entities
+            .drop_item_with_rendering(players, actor, dimension, position, item, rendering)?
+        else {
             continue;
         };
         for packet in drop.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)? {
@@ -1981,6 +2241,384 @@ struct PluginNpcInteractOutcome {
     handled: bool,
 }
 
+#[derive(Debug, Default)]
+struct MenuActionOutcome {
+    opened_menu: bool,
+    opened_menu_id: Option<String>,
+}
+
+async fn run_menu_action<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    menus: &menus::MenuRuntime,
+    players: &PlayerManager,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    actor: uuid::Uuid,
+    dimension: &str,
+    viewer_position: EntityPosition,
+    render_distance: f64,
+    server_config: Option<&qexed_config::app::qexed::server::Server>,
+    plugins: &crate::plugins::PluginManager,
+    lobby: &lobby::LobbyRuntime,
+    lobby_status: &lobby::LobbyStatusSnapshot,
+    action: qexed_config::app::qexed::server::MenuAction,
+) -> Result<MenuActionOutcome>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    match action.kind {
+        qexed_config::app::qexed::server::MenuActionKind::None => Ok(MenuActionOutcome::default()),
+        qexed_config::app::qexed::server::MenuActionKind::OpenMenu => {
+            let opened = menus.open_menu(sink, &action.target).await?;
+            Ok(MenuActionOutcome {
+                opened_menu: opened.is_some(),
+                opened_menu_id: opened,
+            })
+        }
+        qexed_config::app::qexed::server::MenuActionKind::Transfer => {
+            let target = action.target.trim();
+            if target.is_empty() {
+                return Ok(MenuActionOutcome::default());
+            }
+            if lobby.enabled() {
+                lobby
+                    .transfer_to_server_with_message(sink, target, &action.message, lobby_status)
+                    .await?;
+            } else {
+                chat::apply_proxy_connect_action(
+                    sink,
+                    server_config,
+                    plugins,
+                    players,
+                    actor,
+                    target,
+                    &action.message,
+                )
+                .await?;
+            }
+            Ok(MenuActionOutcome::default())
+        }
+        qexed_config::app::qexed::server::MenuActionKind::Message => {
+            if !action.message.trim().is_empty() {
+                sink.send(SystemChat {
+                    content: text_component(action.message),
+                    overlay: false,
+                })
+                .await?;
+            }
+            Ok(MenuActionOutcome::default())
+        }
+        qexed_config::app::qexed::server::MenuActionKind::HidePlayers => {
+            set_other_players_visible(
+                sink,
+                players,
+                actor,
+                dimension,
+                viewer_position,
+                render_distance,
+                visible_player_entities,
+                false,
+            )
+            .await?;
+            *players_hidden = true;
+            Ok(MenuActionOutcome::default())
+        }
+        qexed_config::app::qexed::server::MenuActionKind::ShowPlayers => {
+            set_other_players_visible(
+                sink,
+                players,
+                actor,
+                dimension,
+                viewer_position,
+                render_distance,
+                visible_player_entities,
+                true,
+            )
+            .await?;
+            *players_hidden = false;
+            Ok(MenuActionOutcome::default())
+        }
+        qexed_config::app::qexed::server::MenuActionKind::TogglePlayers => {
+            let visible = *players_hidden;
+            set_other_players_visible(
+                sink,
+                players,
+                actor,
+                dimension,
+                viewer_position,
+                render_distance,
+                visible_player_entities,
+                visible,
+            )
+            .await?;
+            *players_hidden = !visible;
+            Ok(MenuActionOutcome::default())
+        }
+    }
+}
+
+fn filtered_player_event_packets(
+    event: &crate::players::PlayerEvent,
+    players: &PlayerManager,
+    player_entity_type: i32,
+    viewer_dimension: &str,
+    viewer_position: EntityPosition,
+    render_distance: f64,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+) -> Result<Vec<bytes::Bytes>> {
+    match event {
+        crate::players::PlayerEvent::Joined(player) => {
+            if player.dimension != viewer_dimension {
+                return Ok(vec![crate::players::packet_bytes(
+                    qexed_protocol::to_client::play::player_info_update::PlayerInfoUpdate {
+                        actions: qexed_protocol::to_client::play::player_info_update::PlayerInfoActions::player_initializing(),
+                        entries: vec![
+                            qexed_protocol::to_client::play::player_info_update::PlayerInfoEntry::from_profile(
+                                &player.profile,
+                                1,
+                            ),
+                        ],
+                    },
+                )?]);
+            }
+            if !within_horizontal_distance(viewer_position, player.position, render_distance) {
+                visible_player_entities.remove(&player.profile.uuid);
+                return Ok(Vec::new());
+            }
+            visible_player_entities.insert(player.profile.uuid);
+            crate::players::spawn_player_packets(player, player_entity_type)
+        }
+        crate::players::PlayerEvent::Left {
+            profile_id,
+            entity_id,
+            dimension,
+            ..
+        } => {
+            let mut packets = Vec::new();
+            if dimension == viewer_dimension && visible_player_entities.remove(profile_id) {
+                packets.push(crate::players::packet_bytes(
+                    qexed_protocol::to_client::play::add_entity::RemoveEntities::one(*entity_id),
+                )?);
+            }
+            packets.push(crate::players::packet_bytes(
+                qexed_protocol::to_client::play::add_entity::PlayerInfoRemove::one(*profile_id),
+            )?);
+            Ok(packets)
+        }
+        crate::players::PlayerEvent::Moved {
+            profile_id,
+            entity_id,
+            dimension,
+            position,
+        } => {
+            if dimension != viewer_dimension {
+                if visible_player_entities.remove(profile_id) {
+                    return Ok(vec![crate::players::packet_bytes(
+                        qexed_protocol::to_client::play::add_entity::RemoveEntities::one(
+                            *entity_id,
+                        ),
+                    )?]);
+                }
+                return Ok(Vec::new());
+            }
+
+            let in_range = within_horizontal_distance(viewer_position, *position, render_distance);
+            let was_visible = visible_player_entities.contains(profile_id);
+            if in_range && !was_visible {
+                if let Some(player) = players.player_by_uuid(*profile_id) {
+                    visible_player_entities.insert(*profile_id);
+                    return crate::players::spawn_player_packets(&player, player_entity_type);
+                }
+            }
+            if in_range {
+                visible_player_entities.insert(*profile_id);
+                return event.packets(player_entity_type, viewer_dimension);
+            }
+            if was_visible {
+                visible_player_entities.remove(profile_id);
+                return Ok(vec![crate::players::packet_bytes(
+                    qexed_protocol::to_client::play::add_entity::RemoveEntities::one(*entity_id),
+                )?]);
+            }
+            Ok(Vec::new())
+        }
+        crate::players::PlayerEvent::DimensionChanged {
+            profile_id,
+            entity_id,
+            old_dimension,
+            player,
+        } => {
+            let mut packets = Vec::new();
+            if old_dimension == viewer_dimension && visible_player_entities.remove(profile_id) {
+                packets.push(crate::players::packet_bytes(
+                    qexed_protocol::to_client::play::add_entity::RemoveEntities::one(*entity_id),
+                )?);
+            }
+            if player.dimension == viewer_dimension
+                && within_horizontal_distance(viewer_position, player.position, render_distance)
+            {
+                visible_player_entities.insert(*profile_id);
+                packets.extend(crate::players::spawn_player_packets(
+                    player,
+                    player_entity_type,
+                )?);
+            }
+            Ok(packets)
+        }
+        crate::players::PlayerEvent::EquipmentChanged {
+            profile_id,
+            dimension,
+            ..
+        } => {
+            if dimension != viewer_dimension || !visible_player_entities.contains(profile_id) {
+                return Ok(Vec::new());
+            }
+            event.packets(player_entity_type, viewer_dimension)
+        }
+        _ => event.packets(player_entity_type, viewer_dimension),
+    }
+}
+
+async fn refresh_visible_players<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    player_entity_type: i32,
+    dimension: &str,
+    viewer_position: EntityPosition,
+    render_distance: f64,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut still_visible = HashSet::new();
+    for player in players.list_except(actor) {
+        if player.dimension != dimension {
+            continue;
+        }
+        if !within_horizontal_distance(viewer_position, player.position, render_distance) {
+            continue;
+        }
+        still_visible.insert(player.profile.uuid);
+        if visible_player_entities.contains(&player.profile.uuid) {
+            continue;
+        }
+        for packet in crate::players::spawn_player_packets(&player, player_entity_type)? {
+            sink.send_raw(packet).await?;
+        }
+    }
+
+    let to_remove = visible_player_entities
+        .difference(&still_visible)
+        .copied()
+        .collect::<Vec<_>>();
+    for profile_id in to_remove {
+        visible_player_entities.remove(&profile_id);
+        if let Some(player) = players.player_by_uuid(profile_id) {
+            sink.send(
+                qexed_protocol::to_client::play::add_entity::RemoveEntities::one(player.entity_id),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+fn within_horizontal_distance(left: EntityPosition, right: EntityPosition, distance: f64) -> bool {
+    if distance <= 0.0 {
+        return false;
+    }
+    let dx = left.x - right.x;
+    let dz = left.z - right.z;
+    (dx * dx + dz * dz) <= distance * distance
+}
+
+fn player_action_drops_item(status: i32) -> bool {
+    status == PLAYER_ACTION_DROP_ITEM_STACK || status == PLAYER_ACTION_DROP_ITEM
+}
+
+fn container_click_affects_fixed_menu_slot(
+    click: &ContainerClick,
+    menus: &menus::MenuRuntime,
+) -> bool {
+    let clicked_fixed_hotbar_slot =
+        inventory_window_hotbar_slot(click.slot).is_some_and(|slot| menus.fixed_hotbar_slot(slot));
+    let changed_fixed_hotbar_slot = click.changed_slots.0.keys().any(|slot| {
+        inventory_window_hotbar_slot(*slot).is_some_and(|slot| menus.fixed_hotbar_slot(slot))
+    });
+    clicked_fixed_hotbar_slot || changed_fixed_hotbar_slot
+}
+
+fn inventory_window_hotbar_slot(slot: i16) -> Option<usize> {
+    (36..=44)
+        .contains(&slot)
+        .then(|| usize::try_from(slot - 36).ok())
+        .flatten()
+}
+
+pub(super) async fn set_other_players_visible<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    dimension: &str,
+    viewer_position: EntityPosition,
+    render_distance: f64,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    visible: bool,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if visible {
+        visible_player_entities.clear();
+        for player in players.list_except(actor) {
+            if player.dimension != dimension {
+                continue;
+            }
+            if !within_horizontal_distance(viewer_position, player.position, render_distance) {
+                continue;
+            }
+            for packet in crate::players::spawn_player_packets(
+                &player,
+                crate::entities::entity_type_id("minecraft:player")?,
+            )? {
+                sink.send_raw(packet).await?;
+            }
+            visible_player_entities.insert(player.profile.uuid);
+        }
+        return Ok(());
+    }
+
+    let ids = players
+        .list_except(actor)
+        .into_iter()
+        .filter(|player| player.dimension == dimension)
+        .map(|player| player.entity_id)
+        .collect::<Vec<_>>();
+    visible_player_entities.clear();
+    if !ids.is_empty() {
+        sink.send(
+            qexed_protocol::to_client::play::add_entity::RemoveEntities {
+                entity_ids: ids.into_iter().map(VarInt).collect(),
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn event_affects_player_entity(event: &crate::players::PlayerEvent) -> bool {
+    matches!(
+        event,
+        crate::players::PlayerEvent::Joined(_)
+            | crate::players::PlayerEvent::Left { .. }
+            | crate::players::PlayerEvent::Moved { .. }
+            | crate::players::PlayerEvent::DimensionChanged { .. }
+            | crate::players::PlayerEvent::EquipmentChanged { .. }
+    )
+}
+
 async fn handle_plugin_npc_interact<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -1998,6 +2636,12 @@ async fn handle_plugin_npc_interact<W>(
     position: &mut EntityPosition,
     next_teleport_id: &mut i32,
     play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    viewer_position: EntityPosition,
+    render_distance: f64,
 ) -> Result<PluginNpcInteractOutcome>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -2052,6 +2696,12 @@ where
             position,
             next_teleport_id,
             play_dimension,
+            menus,
+            active_config_menu,
+            players_hidden,
+            visible_player_entities,
+            viewer_position,
+            render_distance,
             action,
         )
         .await?;
@@ -2195,6 +2845,7 @@ async fn destroy_block<W>(
     actor: uuid::Uuid,
     held_item: &qexed_protocol::types::Slot,
     position: BlockPosition,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<Option<DestroyedBlockChange>>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -2253,6 +2904,7 @@ where
             current,
             held_item,
             &position,
+            rendering,
         )
         .await?;
         return Ok(Some(DestroyedBlockChange {
@@ -2274,6 +2926,7 @@ async fn drop_broken_block<W>(
     block_state: i32,
     held_item: &qexed_protocol::types::Slot,
     position: &BlockPosition,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -2284,7 +2937,15 @@ where
 
     let drop_position = mining::drop_position(position);
     for item in mining::default_block_drops(block_state, position, held_item, plugins) {
-        let Some(drop) = entities.drop_item(players, actor, dimension, drop_position, item)? else {
+        let Some(drop) = entities.drop_item_with_rendering(
+            players,
+            actor,
+            dimension,
+            drop_position,
+            item,
+            rendering,
+        )?
+        else {
             continue;
         };
         for packet in drop.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)? {

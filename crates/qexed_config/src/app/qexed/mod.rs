@@ -187,4 +187,80 @@ mod tests {
         assert!(roots.contains("server.player_data"));
         let _ = std::fs::remove_dir_all(&temp);
     }
+
+    #[test]
+    fn load_or_create_default_overlays_dynamic_split_files() {
+        let temp = std::env::temp_dir().join(format!(
+            "qexed-config-load-split-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let split_dir = temp.join("qexed.d");
+        std::fs::create_dir_all(&split_dir).unwrap();
+        std::fs::write(
+            temp.join("qexed.toml"),
+            r#"
+version = 0
+update_check = true
+language = "zh-CN"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            split_dir.join("menus.toml"),
+            r#"
+[menus]
+enable = true
+reset_inventory_on_join = true
+fixed_slots_only = true
+
+[[menus.hotbar_items]]
+slot = 4
+item = "minecraft:compass"
+name = "Menu"
+
+[menus.hotbar_items.action]
+kind = "open_menu"
+target = "main"
+
+[[menus.chests]]
+id = "main"
+title = "Server Menu"
+rows = 3
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            split_dir.join("entity_rendering.toml"),
+            r#"
+[entity_rendering]
+default_distance = 40.0
+player_distance = 24.0
+npc_distance = 48.0
+hologram_distance = 80.0
+item_distance = 12.0
+stack_threshold = 7
+stack_radius = 3.5
+"#,
+        )
+        .unwrap();
+
+        let config = Qexed::load_or_create_default(
+            Some("zh-CN".to_string()),
+            Some(false),
+            Some(temp.clone()),
+        )
+        .unwrap();
+
+        assert!(config.server.menus.enable);
+        assert_eq!(config.server.menus.hotbar_items[0].slot, 4);
+        assert_eq!(config.server.menus.chests[0].id, "main");
+        assert_eq!(config.server.entity_rendering.player_distance, 24.0);
+        assert_eq!(config.server.entity_rendering.item_distance, 12.0);
+        assert_eq!(config.server.entity_rendering.stack_threshold, 7);
+        assert_eq!(config.server.entity_rendering.stack_radius, 3.5);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
 }

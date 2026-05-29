@@ -258,6 +258,10 @@ impl PlayerInventory {
         self.selected
     }
 
+    pub fn hotbar_item(&self, slot: usize) -> Option<&Slot> {
+        self.hotbar.get(slot)
+    }
+
     pub fn set_hotbar_slot(&mut self, slot: usize, item: Slot) -> Option<InventorySlotChange> {
         if slot >= self.hotbar.len() {
             return None;

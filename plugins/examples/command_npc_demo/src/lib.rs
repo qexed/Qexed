@@ -1,6 +1,6 @@
 use qexed_plugin_sdk::{
-    NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert, PlayerAction,
-    PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PluginCommandDefinition,
+    NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert, PlaceholderQuery,
+    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PluginCommandDefinition,
     PluginCommandQuery, PluginCommandResponse, ProxyConnectResultPayload,
 };
 
@@ -102,13 +102,25 @@ pub extern "C" fn qexed_plugin_npc_interact(ptr: i32, len: i32) -> i64 {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     }
 
-    qexed_plugin_sdk::response_ptr_len(&proxy_connect_response("Hub NPC clicked. Connecting..."))
+    qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse {
+        handled: true,
+        actions: vec![
+            PlayerAction::SystemMessage {
+                text: "Hub NPC clicked. Opening menu...".to_string(),
+                translate: String::new(),
+                with: Vec::new(),
+                overlay: false,
+            },
+            PlayerAction::OpenMenu {
+                menu: "main".to_string(),
+            },
+        ],
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
-    let Some(payload) =
-        (unsafe { qexed_plugin_sdk::decode_payload::<PlaceholderQuery>(ptr, len) })
+    let Some(payload) = (unsafe { qexed_plugin_sdk::decode_payload::<PlaceholderQuery>(ptr, len) })
     else {
         return qexed_plugin_sdk::response_ptr_len(&PlaceholderResponse::default());
     };
@@ -170,24 +182,6 @@ fn hub_teleport_response(message: &str) -> PluginCommandResponse {
                 z: 0.5,
                 yaw: Some(180.0),
                 pitch: Some(0.0),
-            },
-        ],
-    }
-}
-
-fn proxy_connect_response(message: &str) -> PluginCommandResponse {
-    PluginCommandResponse {
-        handled: true,
-        actions: vec![
-            PlayerAction::SystemMessage {
-                text: message.to_string(),
-                translate: String::new(),
-                with: Vec::new(),
-                overlay: false,
-            },
-            PlayerAction::ProxyConnect {
-                server: TARGET_SERVER.to_string(),
-                message: String::new(),
             },
         ],
     }

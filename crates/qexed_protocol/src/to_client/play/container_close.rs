@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x13)]
+#[qexed_packet_macros::packet(id = 0x11)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ContainerClose {
     pub window_id: VarInt,
@@ -15,7 +15,7 @@ mod tests {
     #[test]
     fn container_close_round_trips_window_id() {
         let packet = ContainerClose {
-            window_id: VarInt(1),
+            window_id: VarInt(2),
         };
         let mut buf = bytes::BytesMut::new();
         let mut writer = qexed_packet::PacketWriter::new(&mut buf);

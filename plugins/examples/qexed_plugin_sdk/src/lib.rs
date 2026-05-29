@@ -252,6 +252,12 @@ pub mod payload {
             server: String,
             message: String,
         },
+        OpenMenu {
+            menu: String,
+        },
+        SetPlayersVisible {
+            visible: bool,
+        },
     }
 }
 
