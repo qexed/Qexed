@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Result;
 use qexed_config::app::qexed::server::{MenuAction, MenuHotbarItem, MenuItem, Menus};
@@ -94,7 +94,19 @@ impl MenuRuntime {
             .any(|item| usize::from(item.slot.min(8)) == slot)
     }
 
-    pub(super) fn action_for_hotbar_slot(&self, slot: usize) -> Option<MenuAction> {
+    pub(super) fn hotbar_item_matches(&self, slot: usize, actual: &Slot) -> bool {
+        if !self.enabled() {
+            return false;
+        }
+        self.config
+            .hotbar_items
+            .iter()
+            .find(|item| usize::from(item.slot.min(8)) == slot)
+            .map(hotbar_slot_item)
+            .is_some_and(|expected| menu_slot_item_matches(actual, &expected))
+    }
+
+    pub(super) fn action_for_hotbar_item(&self, slot: usize, actual: &Slot) -> Option<MenuAction> {
         if !self.enabled() {
             return None;
         }
@@ -102,6 +114,10 @@ impl MenuRuntime {
             .hotbar_items
             .iter()
             .find(|item| usize::from(item.slot.min(8)) == slot)
+            .filter(|item| {
+                let expected = hotbar_slot_item(item);
+                menu_slot_item_matches(actual, &expected)
+            })
             .map(|item| item.action.clone())
     }
 
@@ -215,6 +231,10 @@ fn hotbar_slot_item(item: &MenuHotbarItem) -> Slot {
     named_item_with_lore(&item.item, &item.name, &item.lore, 1)
 }
 
+fn menu_slot_item_matches(actual: &Slot, expected: &Slot) -> bool {
+    actual.item_count.0 > 0 && actual == expected
+}
+
 fn menu_slots(rows: u8, items: &[MenuItem]) -> Vec<Slot> {
     let mut slots = vec![crate::inventory::empty_slot(); usize::from(rows) * 9];
     for item in items {
@@ -231,7 +251,18 @@ fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32
     let item_id = crate::inventory::item_id_for_name(normalize_resource_key(item_name).as_str())
         .unwrap_or_else(|| crate::inventory::item_id_for_name("minecraft:paper").unwrap_or(1));
     let mut item = crate::inventory::simple_item(item_id, count);
-    let mut components = Vec::new();
+    let mut components = vec![ComponentsToAdd::MinecraftCustomData(
+        minecraft::CustomData {
+            data: qexed_nbt::Tag::Compound(Arc::new(
+                [(
+                    "qexed_menu_item".to_string(),
+                    qexed_nbt::Tag::String(Arc::from(normalize_resource_key(item_name))),
+                )]
+                .into_iter()
+                .collect(),
+            )),
+        },
+    )];
     let name = name.trim();
     if !name.is_empty() {
         components.push(ComponentsToAdd::MinecraftItemName(minecraft::ItemName {
@@ -246,10 +277,8 @@ fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32
                 .collect(),
         }));
     }
-    if !components.is_empty() {
-        item.number_of_components_to_add = Some(VarInt(components.len() as i32));
-        item.components_to_add = Some(components);
-    }
+    item.number_of_components_to_add = Some(VarInt(components.len() as i32));
+    item.components_to_add = Some(components);
     item
 }
 
@@ -294,10 +323,38 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert!(runtime.fixed_hotbar_slot(4));
         assert!(!runtime.fixed_hotbar_slot(3));
+        let item = inventory.hotbar_item(4).unwrap();
+        assert!(runtime.hotbar_item_matches(4, item));
         assert_eq!(
-            runtime.action_for_hotbar_slot(4).unwrap().kind,
+            runtime.action_for_hotbar_item(4, item).unwrap().kind,
             MenuActionKind::OpenMenu
         );
+    }
+
+    #[test]
+    fn hotbar_menu_action_requires_configured_item_stack() {
+        let runtime = super::MenuRuntime::new(&Menus {
+            enable: true,
+            hotbar_items: vec![MenuHotbarItem {
+                slot: 4,
+                item: "minecraft:clock".to_string(),
+                name: "Menu Clock".to_string(),
+                action: MenuAction {
+                    kind: MenuActionKind::OpenMenu,
+                    target: "main".to_string(),
+                    message: String::new(),
+                },
+                ..MenuHotbarItem::default()
+            }],
+            ..Menus::default()
+        });
+        let clock_id = crate::inventory::item_id_for_name("minecraft:clock").unwrap();
+        let dirt_id = crate::inventory::item_id_for_name("minecraft:dirt").unwrap();
+        let plain_clock = crate::inventory::simple_item(clock_id, 1);
+        let dirt = crate::inventory::simple_item(dirt_id, 1);
+
+        assert!(runtime.action_for_hotbar_item(4, &plain_clock).is_none());
+        assert!(runtime.action_for_hotbar_item(4, &dirt).is_none());
     }
 
     #[test]

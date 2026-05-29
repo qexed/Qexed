@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::time::Duration;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use qexed_config::app::qexed::server::{
@@ -88,6 +88,13 @@ impl LobbyRuntime {
             self.config.navigator.name.as_str(),
             1,
         ))
+    }
+
+    pub(super) fn navigator_item_matches(&self, selected_slot: usize, actual: &Slot) -> bool {
+        self.navigator_slot() == Some(selected_slot)
+            && self
+                .navigator_item()
+                .is_some_and(|expected| actual.item_count.0 > 0 && actual == &expected)
     }
 
     pub(super) fn broadcast_interval(&self) -> Option<Duration> {
@@ -323,12 +330,13 @@ impl LobbyRuntime {
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         selected_slot: usize,
+        held_item: &Slot,
         status: &LobbyStatusSnapshot,
     ) -> Result<bool>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        if self.navigator_slot() != Some(selected_slot) {
+        if !self.navigator_item_matches(selected_slot, held_item) {
             return Ok(false);
         }
         self.open_menu(sink, status).await?;
@@ -824,7 +832,18 @@ fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32
         .unwrap_or_else(|| crate::inventory::item_id_for_name("minecraft:paper").unwrap_or(1));
     let mut item = crate::inventory::simple_item(item_id, count);
     let name = name.trim();
-    let mut components = Vec::new();
+    let mut components = vec![ComponentsToAdd::MinecraftCustomData(
+        minecraft::CustomData {
+            data: qexed_nbt::Tag::Compound(Arc::new(
+                [(
+                    "qexed_lobby_item".to_string(),
+                    qexed_nbt::Tag::String(Arc::from(normalize_resource_key(item_name))),
+                )]
+                .into_iter()
+                .collect(),
+            )),
+        },
+    )];
     if !name.is_empty() {
         components.push(ComponentsToAdd::MinecraftItemName(minecraft::ItemName {
             name: text_component(name),
@@ -838,10 +857,8 @@ fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32
                 .collect(),
         }));
     }
-    if !components.is_empty() {
-        item.number_of_components_to_add = Some(VarInt(components.len() as i32));
-        item.components_to_add = Some(components);
-    }
+    item.number_of_components_to_add = Some(VarInt(components.len() as i32));
+    item.components_to_add = Some(components);
     item
 }
 
@@ -969,6 +986,28 @@ mod tests {
             crate::inventory::InventorySlotChange::Hotbar { slot: 2, item }
                 if item.item_count.0 > 0
         ));
+    }
+
+    #[test]
+    fn navigator_use_requires_configured_item_stack() {
+        let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
+            enable: true,
+            navigator: LobbyNavigator {
+                slot: 2,
+                item: "minecraft:compass".to_string(),
+                name: "Selector".to_string(),
+                ..LobbyNavigator::default()
+            },
+            ..Default::default()
+        });
+        let compass_id = crate::inventory::item_id_for_name("minecraft:compass").unwrap();
+        let dirt_id = crate::inventory::item_id_for_name("minecraft:dirt").unwrap();
+        let plain_compass = crate::inventory::simple_item(compass_id, 1);
+        let dirt = crate::inventory::simple_item(dirt_id, 1);
+
+        assert!(!lobby.navigator_item_matches(2, &plain_compass));
+        assert!(!lobby.navigator_item_matches(2, &dirt));
+        assert!(lobby.navigator_item_matches(2, &lobby.navigator_item().unwrap()));
     }
 
     #[test]

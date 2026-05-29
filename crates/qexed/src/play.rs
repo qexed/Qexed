@@ -26,6 +26,7 @@ use qexed_packet::{
 use qexed_protocol::to_client::play::{
     add_entity::EntityPosition,
     command_suggestions::{CommandSuggestions, Matches},
+    container_set_slot,
     keep_alive::KeepAlive as ClientboundKeepAlive,
     login::Login,
     player_chat::{PackedMessageSignature, PlayerChat},
@@ -705,8 +706,8 @@ where
                         );
                         continue;
                     }
+                    let creative_hotbar_slot = creative_mode_hotbar_slot(slot.slot_num);
                     if lobby.protect_world() {
-                        let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
                         pending_dig = None;
                         resync_inventory_state(
                             sink,
@@ -719,30 +720,35 @@ where
                         sink.flush().await?;
                         continue;
                     }
-                    if lobby.navigator_slot().is_some_and(|navigator| usize::try_from(slot.slot_num).ok() == Some(navigator)) {
-                        let changes = lobby::sync_navigator_item(&mut inventory, &lobby);
-                        sync_inventory_changes(
+                    if creative_hotbar_slot.is_some_and(|hotbar_slot| {
+                        inventory
+                            .hotbar_item(hotbar_slot)
+                            .is_some_and(|item| lobby.navigator_item_matches(hotbar_slot, item))
+                    }) {
+                        pending_dig = None;
+                        resync_inventory_state(
                             sink,
                             players,
                             profile.uuid,
                             session.player.entity_id,
-                            inventory.selected_slot(),
-                            changes,
+                            &inventory,
                         ).await?;
                         sink.flush().await?;
                         continue;
                     }
-                    if menus.fixed_hotbar_slot(
-                        usize::try_from(slot.slot_num - 36).unwrap_or(usize::MAX),
-                    ) {
-                        let changes = menus.sync_hotbar_items(&mut inventory);
-                        sync_inventory_changes(
+                    if creative_hotbar_slot.is_some_and(|hotbar_slot| {
+                        menus.fixed_hotbar_slot(hotbar_slot)
+                            && inventory
+                                .hotbar_item(hotbar_slot)
+                                .is_some_and(|item| menus.hotbar_item_matches(hotbar_slot, item))
+                    }) {
+                        pending_dig = None;
+                        resync_inventory_state(
                             sink,
                             players,
                             profile.uuid,
                             session.player.entity_id,
-                            inventory.selected_slot(),
-                            changes,
+                            &inventory,
                         )
                         .await?;
                         sink.flush().await?;
@@ -769,7 +775,6 @@ where
                         continue;
                     }
                     if lobby.protect_world() {
-                        let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
                         pending_dig = None;
                         resync_inventory_state(
                             sink,
@@ -867,17 +872,19 @@ where
                     let action = crate::connection::decode_payload::<PlayerAction>(&mut payload)?;
                     let sequence = action.sequence.clone();
                     if player_action_drops_item(action.status.0)
-                        && menus.fixed_hotbar_slot(inventory.selected_slot())
+                        && (menus.hotbar_item_matches(inventory.selected_slot(), inventory.held_item())
+                            || lobby.navigator_item_matches(
+                                inventory.selected_slot(),
+                                inventory.held_item(),
+                            ))
                     {
                         pending_dig = None;
-                        let changes = menus.sync_hotbar_items(&mut inventory);
-                        sync_inventory_changes(
+                        resync_inventory_state(
                             sink,
                             players,
                             profile.uuid,
                             session.player.entity_id,
-                            inventory.selected_slot(),
-                            changes,
+                            &inventory,
                         )
                         .await?;
                         send_block_change_ack(sink, sequence).await?;
@@ -1017,7 +1024,8 @@ where
                     let sequence = use_item.sequence.clone();
                     if !survival.is_dead()
                         && use_item.hand.0 == 0
-                        && let Some(action) = menus.action_for_hotbar_slot(inventory.selected_slot())
+                        && let Some(action) = menus
+                            .action_for_hotbar_item(inventory.selected_slot(), inventory.held_item())
                     {
                         let outcome = run_menu_action(
                             sink,
@@ -1047,7 +1055,12 @@ where
                     if !survival.is_dead()
                         && use_item.hand.0 == 0
                         && lobby
-                            .handle_use_item(sink, inventory.selected_slot(), &lobby_status)
+                            .handle_use_item(
+                                sink,
+                                inventory.selected_slot(),
+                                inventory.held_item(),
+                                &lobby_status,
+                            )
                             .await?
                     {
                         lobby_menu_open = true;
@@ -1155,7 +1168,9 @@ where
                 if packet_id == ContainerClick::ID {
                     let click = crate::connection::decode_payload::<ContainerClick>(&mut payload)?;
                     let affects_fixed_menu_slot =
-                        container_click_affects_fixed_menu_slot(&click, &menus);
+                        container_click_affects_fixed_menu_slot(&click, &menus, &inventory);
+                    let affects_navigator_slot =
+                        container_click_affects_navigator_slot(&click, &lobby, &inventory);
                     if let Some(action) = menus
                         .handle_container_click(sink, active_config_menu.as_deref(), click.clone())
                         .await?
@@ -1197,21 +1212,12 @@ where
                         lobby_menu_open = true;
                         pending_dig = None;
                         sink.flush().await?;
-                    } else if lobby.protect_world() || lobby.navigator_slot().is_some() {
-                        let _ = lobby::sync_navigator_item(&mut inventory, &lobby);
+                    } else if lobby.protect_world()
+                        || affects_navigator_slot
+                        || affects_fixed_menu_slot
+                    {
                         pending_dig = None;
-                        resync_inventory_state(
-                            sink,
-                            players,
-                            profile.uuid,
-                            session.player.entity_id,
-                            &inventory,
-                        )
-                        .await?;
-                        sink.flush().await?;
-                    } else if affects_fixed_menu_slot {
-                        let _ = menus.sync_hotbar_items(&mut inventory);
-                        pending_dig = None;
+                        clear_carried_item(sink).await?;
                         resync_inventory_state(
                             sink,
                             players,
@@ -2778,13 +2784,42 @@ fn player_action_drops_item(status: i32) -> bool {
 fn container_click_affects_fixed_menu_slot(
     click: &ContainerClick,
     menus: &menus::MenuRuntime,
+    inventory: &crate::inventory::PlayerInventory,
 ) -> bool {
-    let clicked_fixed_hotbar_slot =
-        inventory_window_hotbar_slot(click.slot).is_some_and(|slot| menus.fixed_hotbar_slot(slot));
-    let changed_fixed_hotbar_slot = click.changed_slots.0.keys().any(|slot| {
-        inventory_window_hotbar_slot(*slot).is_some_and(|slot| menus.fixed_hotbar_slot(slot))
-    });
-    clicked_fixed_hotbar_slot || changed_fixed_hotbar_slot
+    container_click_affects_hotbar_slot(click, |slot| {
+        menus.fixed_hotbar_slot(slot)
+            && inventory
+                .hotbar_item(slot)
+                .is_some_and(|item| menus.hotbar_item_matches(slot, item))
+    })
+}
+
+fn container_click_affects_navigator_slot(
+    click: &ContainerClick,
+    lobby: &lobby::LobbyRuntime,
+    inventory: &crate::inventory::PlayerInventory,
+) -> bool {
+    container_click_affects_hotbar_slot(click, |slot| {
+        inventory
+            .hotbar_item(slot)
+            .is_some_and(|item| lobby.navigator_item_matches(slot, item))
+    })
+}
+
+fn container_click_affects_hotbar_slot(
+    click: &ContainerClick,
+    mut matches_slot: impl FnMut(usize) -> bool,
+) -> bool {
+    if let Some(slot) = inventory_window_hotbar_slot(click.slot)
+        && matches_slot(slot)
+    {
+        return true;
+    }
+    click
+        .changed_slots
+        .0
+        .keys()
+        .any(|slot| inventory_window_hotbar_slot(*slot).is_some_and(|slot| matches_slot(slot)))
 }
 
 fn inventory_window_hotbar_slot(slot: i16) -> Option<usize> {
@@ -2792,6 +2827,10 @@ fn inventory_window_hotbar_slot(slot: i16) -> Option<usize> {
         .contains(&slot)
         .then(|| usize::try_from(slot - 36).ok())
         .flatten()
+}
+
+fn creative_mode_hotbar_slot(slot: i16) -> Option<usize> {
+    inventory_window_hotbar_slot(slot)
 }
 
 pub(super) async fn set_other_players_visible<W>(
@@ -3582,6 +3621,20 @@ where
     ))
     .await?;
     players.update_equipment(actor, equipment);
+    Ok(())
+}
+
+async fn clear_carried_item<W>(sink: &mut qexed_tcp_connect::PacketSink<W>) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    sink.send(container_set_slot::ContainerSetContent {
+        window_id: VarInt(-1),
+        state_id: VarInt(0),
+        slot: -1,
+        slot_data: crate::inventory::empty_slot(),
+    })
+    .await?;
     Ok(())
 }
 
