@@ -45,7 +45,7 @@ use qexed_protocol::to_server::play::{
     keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
     move_player_pos_rot::MovePlayerPosRot, move_player_rot::MovePlayerRot,
     move_player_status_only::MovePlayerStatusOnly, pick_item_from_block::PickItemFromBlock,
-    player_action::PlayerAction, set_carried_item::SetCarriedItem,
+    player_action::PlayerAction, player_input::PlayerInput, set_carried_item::SetCarriedItem,
     set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
@@ -329,6 +329,8 @@ where
     let enforce_secure_chat = config.server.online_mode;
     let world_config = &config.world;
     let mut position = session.player.position;
+    let mut last_stepped_block: Option<BlockPosition> = None;
+    let mut last_input_flags = 0u8;
     let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
     let lobby = lobby::LobbyRuntime::new(&config.server.lobby);
@@ -1284,9 +1286,59 @@ where
                     .await?;
                     if survival.is_dead() {
                         pending_dig = None;
+                    } else if handle_plugin_player_block_step(
+                        sink,
+                        world,
+                        world_rules,
+                        &config.server,
+                        world_config,
+                        players,
+                        plugins,
+                        &session.player,
+                        &chunk_sender,
+                        &mut chunk_state,
+                        &mut position,
+                        &mut next_teleport_id,
+                        &mut play_dimension,
+                        &menus,
+                        &mut active_config_menu,
+                        &mut players_hidden,
+                        &mut visible_player_entities,
+                        config.server.entity_rendering.player_distance,
+                        &mut last_stepped_block,
+                    )
+                    .await?
+                    {
+                        pending_dig = None;
+                    }
+                    if !survival.is_dead()
+                        && handle_plugin_player_move(
+                            sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
+                            players,
+                            plugins,
+                            &session.player,
+                            previous,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            config.server.entity_rendering.player_distance,
+                        )
+                        .await?
+                    {
+                        pending_dig = None;
                     }
                     chunk_state
-                        .update_center(sink, &chunk_sender, world, movement.x, movement.z)
+                        .update_center(sink, &chunk_sender, world, position.x, position.z)
                         .await?;
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
@@ -1346,9 +1398,59 @@ where
                     .await?;
                     if survival.is_dead() {
                         pending_dig = None;
+                    } else if handle_plugin_player_block_step(
+                        sink,
+                        world,
+                        world_rules,
+                        &config.server,
+                        world_config,
+                        players,
+                        plugins,
+                        &session.player,
+                        &chunk_sender,
+                        &mut chunk_state,
+                        &mut position,
+                        &mut next_teleport_id,
+                        &mut play_dimension,
+                        &menus,
+                        &mut active_config_menu,
+                        &mut players_hidden,
+                        &mut visible_player_entities,
+                        config.server.entity_rendering.player_distance,
+                        &mut last_stepped_block,
+                    )
+                    .await?
+                    {
+                        pending_dig = None;
+                    }
+                    if !survival.is_dead()
+                        && handle_plugin_player_move(
+                            sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
+                            players,
+                            plugins,
+                            &session.player,
+                            previous,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            config.server.entity_rendering.player_distance,
+                        )
+                        .await?
+                    {
+                        pending_dig = None;
                     }
                     chunk_state
-                        .update_center(sink, &chunk_sender, world, movement.x, movement.z)
+                        .update_center(sink, &chunk_sender, world, position.x, position.z)
                         .await?;
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
@@ -1405,6 +1507,56 @@ where
                     .await?;
                     if survival.is_dead() {
                         pending_dig = None;
+                    } else if handle_plugin_player_block_step(
+                        sink,
+                        world,
+                        world_rules,
+                        &config.server,
+                        world_config,
+                        players,
+                        plugins,
+                        &session.player,
+                        &chunk_sender,
+                        &mut chunk_state,
+                        &mut position,
+                        &mut next_teleport_id,
+                        &mut play_dimension,
+                        &menus,
+                        &mut active_config_menu,
+                        &mut players_hidden,
+                        &mut visible_player_entities,
+                        config.server.entity_rendering.player_distance,
+                        &mut last_stepped_block,
+                    )
+                    .await?
+                    {
+                        pending_dig = None;
+                    }
+                    if !survival.is_dead()
+                        && handle_plugin_player_move(
+                            sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
+                            players,
+                            plugins,
+                            &session.player,
+                            previous,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            config.server.entity_rendering.player_distance,
+                        )
+                        .await?
+                    {
+                        pending_dig = None;
                     }
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
@@ -1446,6 +1598,56 @@ where
                     .await?;
                     if survival.is_dead() {
                         pending_dig = None;
+                    } else if handle_plugin_player_block_step(
+                        sink,
+                        world,
+                        world_rules,
+                        &config.server,
+                        world_config,
+                        players,
+                        plugins,
+                        &session.player,
+                        &chunk_sender,
+                        &mut chunk_state,
+                        &mut position,
+                        &mut next_teleport_id,
+                        &mut play_dimension,
+                        &menus,
+                        &mut active_config_menu,
+                        &mut players_hidden,
+                        &mut visible_player_entities,
+                        config.server.entity_rendering.player_distance,
+                        &mut last_stepped_block,
+                    )
+                    .await?
+                    {
+                        pending_dig = None;
+                    }
+                    if !survival.is_dead()
+                        && handle_plugin_player_move(
+                            sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
+                            players,
+                            plugins,
+                            &session.player,
+                            previous,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            config.server.entity_rendering.player_distance,
+                        )
+                        .await?
+                    {
+                        pending_dig = None;
                     }
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
@@ -1461,6 +1663,41 @@ where
                             &mut inventory,
                         )
                         .await?;
+                    }
+                    continue;
+                }
+
+                if packet_id == PlayerInput::ID {
+                    let input = crate::connection::decode_payload::<PlayerInput>(&mut payload)?;
+                    if !survival.is_dead() {
+                        let previous_flags = last_input_flags;
+                        last_input_flags = input.flags;
+                        if handle_plugin_player_input(
+                            sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
+                            players,
+                            plugins,
+                            &session.player,
+                            previous_flags,
+                            input.flags,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
+                            config.server.entity_rendering.player_distance,
+                        )
+                        .await?
+                        {
+                            pending_dig = None;
+                        }
                     }
                     continue;
                 }
@@ -2619,6 +2856,209 @@ fn event_affects_player_entity(event: &crate::players::PlayerEvent) -> bool {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_plugin_player_block_step<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    render_distance: f64,
+    last_stepped_block: &mut Option<BlockPosition>,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Some(block_position) = stepped_block_position(*position) else {
+        *last_stepped_block = None;
+        return Ok(false);
+    };
+    let block_state = world
+        .block_state_at(play_dimension, &block_position)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if crate::inventory::is_air_block_state(block_state) {
+        *last_stepped_block = None;
+        return Ok(false);
+    }
+    if last_stepped_block.as_ref() == Some(&block_position) {
+        return Ok(false);
+    }
+    *last_stepped_block = Some(block_position.clone());
+
+    let block_name = crate::inventory::block_name_for_state(block_state)
+        .unwrap_or_else(|| format!("minecraft:unknown_block_state_{block_state}"));
+    let mut player = player.clone();
+    player.position = *position;
+    player.dimension = play_dimension.clone();
+    let response = plugins.handle_player_block_step(
+        &player,
+        block_state,
+        block_name,
+        crate::plugins::BlockStepPosition {
+            x: block_position.x,
+            y: block_position.y,
+            z: block_position.z,
+        },
+    );
+
+    let mut handled = response.handled || !response.actions.is_empty();
+    for action in response.actions {
+        handled |= chat::apply_plugin_action(
+            sink,
+            Some(server_config),
+            world,
+            world_rules,
+            world_config,
+            players,
+            plugins,
+            player.profile.uuid,
+            chunk_sender,
+            chunk_state,
+            position,
+            next_teleport_id,
+            play_dimension,
+            menus,
+            active_config_menu,
+            players_hidden,
+            visible_player_entities,
+            player.position,
+            render_distance,
+            action,
+        )
+        .await?;
+    }
+    Ok(handled)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_plugin_player_move<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    previous: EntityPosition,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    render_distance: f64,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut player = player.clone();
+    player.position = *position;
+    player.dimension = play_dimension.clone();
+    let response = plugins.handle_player_move(&player, previous);
+    let mut handled = response.handled || !response.actions.is_empty();
+    for action in response.actions {
+        handled |= chat::apply_plugin_action(
+            sink,
+            Some(server_config),
+            world,
+            world_rules,
+            world_config,
+            players,
+            plugins,
+            player.profile.uuid,
+            chunk_sender,
+            chunk_state,
+            position,
+            next_teleport_id,
+            play_dimension,
+            menus,
+            active_config_menu,
+            players_hidden,
+            visible_player_entities,
+            player.position,
+            render_distance,
+            action,
+        )
+        .await?;
+    }
+    Ok(handled)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_plugin_player_input<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    previous_flags: u8,
+    flags: u8,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    render_distance: f64,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut player = player.clone();
+    player.position = *position;
+    player.dimension = play_dimension.clone();
+    let response = plugins.handle_player_input(&player, previous_flags, flags);
+    let mut handled = response.handled || !response.actions.is_empty();
+    for action in response.actions {
+        handled |= chat::apply_plugin_action(
+            sink,
+            Some(server_config),
+            world,
+            world_rules,
+            world_config,
+            players,
+            plugins,
+            player.profile.uuid,
+            chunk_sender,
+            chunk_state,
+            position,
+            next_teleport_id,
+            play_dimension,
+            menus,
+            active_config_menu,
+            players_hidden,
+            visible_player_entities,
+            player.position,
+            render_distance,
+            action,
+        )
+        .await?;
+    }
+    Ok(handled)
+}
+
 async fn handle_plugin_npc_interact<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -3317,6 +3757,17 @@ fn offset_position(position: &BlockPosition, dx: i32, dy: i32, dz: i32) -> Block
         y: position.y + dy,
         z: position.z + dz,
     }
+}
+
+fn stepped_block_position(position: EntityPosition) -> Option<BlockPosition> {
+    if !position.on_ground {
+        return None;
+    }
+    Some(BlockPosition {
+        x: position.x.floor() as i32,
+        y: (position.y - 0.0001).floor() as i32,
+        z: position.z.floor() as i32,
+    })
 }
 
 #[derive(Debug, Clone)]

@@ -1,13 +1,14 @@
 use qexed_plugin_sdk::{
     NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert, PlaceholderQuery,
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, ProxyConnectResultPayload,
+    PluginCommandQuery, PluginCommandResponse, ProxyConnectResultPayload, config_load_or_create,
+    config_read_to_string, economy_currency_info, economy_register_currency,
 };
 
 qexed_plugin_sdk::qexed_plugin_memory!();
 
 const NPC_KEY: &str = "plugin_hub_npc";
-const TARGET_SERVER: &str = "lobby-1";
+const DEFAULT_TARGET_SERVER: &str = "survival_1";
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_priority() -> i32 {
@@ -17,6 +18,14 @@ pub extern "C" fn qexed_plugin_priority() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_init() {
     qexed_plugin_sdk::log("command_npc_demo initialized");
+    let _config = config_load_or_create("config.toml", "target_server = \"survival_1\"\n");
+    let _ = economy_register_currency("qexed:coin", "Coin", "Q", 2);
+    if let Some(currency) = economy_currency_info("qexed:coin") {
+        qexed_plugin_sdk::log(&format!(
+            "economy currency registered: id={}, name={}, symbol={}",
+            currency.id, currency.name, currency.symbol
+        ));
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -40,17 +49,18 @@ pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
     }
 
     if payload.argument.eq_ignore_ascii_case("transfer") {
+        let target_server = target_server();
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse {
             handled: true,
             actions: vec![
                 PlayerAction::SystemMessage {
-                    text: format!("Connecting to {TARGET_SERVER}..."),
+                    text: format!("Connecting to {target_server}..."),
                     translate: String::new(),
                     with: Vec::new(),
                     overlay: false,
                 },
                 PlayerAction::ProxyConnect {
-                    server: TARGET_SERVER.to_string(),
+                    server: target_server,
                     message: String::new(),
                 },
             ],
@@ -102,20 +112,7 @@ pub extern "C" fn qexed_plugin_npc_interact(ptr: i32, len: i32) -> i64 {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     }
 
-    qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse {
-        handled: true,
-        actions: vec![
-            PlayerAction::SystemMessage {
-                text: "Hub NPC clicked. Opening menu...".to_string(),
-                translate: String::new(),
-                with: Vec::new(),
-                overlay: false,
-            },
-            PlayerAction::OpenMenu {
-                menu: "main".to_string(),
-            },
-        ],
-    })
+    qexed_plugin_sdk::response_ptr_len(&proxy_connect_response("Hub NPC clicked. Connecting..."))
 }
 
 #[unsafe(no_mangle)]
@@ -137,7 +134,7 @@ pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
             },
             PlaceholderReplacement {
                 key: "demo_target_server".to_string(),
-                value: TARGET_SERVER.to_string(),
+                value: target_server(),
             },
         ],
     })
@@ -185,4 +182,40 @@ fn hub_teleport_response(message: &str) -> PluginCommandResponse {
             },
         ],
     }
+}
+
+fn proxy_connect_response(message: &str) -> PluginCommandResponse {
+    let target_server = target_server();
+    PluginCommandResponse {
+        handled: true,
+        actions: vec![
+            PlayerAction::SystemMessage {
+                text: message.to_string(),
+                translate: String::new(),
+                with: Vec::new(),
+                overlay: false,
+            },
+            PlayerAction::ProxyConnect {
+                server: target_server,
+                message: String::new(),
+            },
+        ],
+    }
+}
+
+fn target_server() -> String {
+    config_read_to_string("config.toml")
+        .and_then(|config| string_setting(&config, "target_server"))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_TARGET_SERVER.to_string())
+}
+
+fn string_setting(config: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key} = ");
+    config.lines().find_map(|line| {
+        let line = line.trim();
+        let value = line.strip_prefix(&prefix)?.trim();
+        let value = value.strip_prefix('"')?.strip_suffix('"')?;
+        Some(value.to_string())
+    })
 }

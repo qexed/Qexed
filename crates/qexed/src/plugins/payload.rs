@@ -103,6 +103,61 @@ pub struct BlockDropItem {
     pub count: i32,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BlockStepPosition {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlayerPositionPayload {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockStepPayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub block_state: i32,
+    pub block_name: String,
+    pub position: BlockStepPosition,
+    pub player_position: PlayerPositionPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerMovePayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub previous_position: PlayerPositionPayload,
+    pub position: PlayerPositionPayload,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlayerInputState {
+    pub forward: bool,
+    pub backward: bool,
+    pub left: bool,
+    pub right: bool,
+    pub jump: bool,
+    pub shift: bool,
+    pub sprint: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerInputPayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub previous_input: PlayerInputState,
+    pub input: PlayerInputState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginCommandDefinition {
     pub name: String,
@@ -264,6 +319,13 @@ pub enum PlayerAction {
     SetPlayersVisible {
         visible: bool,
     },
+    Velocity {
+        x: f64,
+        y: f64,
+        z: f64,
+        #[serde(default)]
+        additive: bool,
+    },
 }
 
 pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload {
@@ -288,6 +350,31 @@ pub(super) fn player_payload_owned(player: &OnlinePlayer) -> PlayerPayloadOwned 
 
 fn one() -> i32 {
     1
+}
+
+pub(super) fn player_position_payload(
+    position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+) -> PlayerPositionPayload {
+    PlayerPositionPayload {
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        yaw: position.yaw,
+        pitch: position.pitch,
+        on_ground: position.on_ground,
+    }
+}
+
+pub(super) fn player_input_state(flags: u8) -> PlayerInputState {
+    PlayerInputState {
+        forward: flags & qexed_protocol::to_server::play::player_input::FORWARD != 0,
+        backward: flags & qexed_protocol::to_server::play::player_input::BACKWARD != 0,
+        left: flags & qexed_protocol::to_server::play::player_input::LEFT != 0,
+        right: flags & qexed_protocol::to_server::play::player_input::RIGHT != 0,
+        jump: flags & qexed_protocol::to_server::play::player_input::JUMP != 0,
+        shift: flags & qexed_protocol::to_server::play::player_input::SHIFT != 0,
+        sprint: flags & qexed_protocol::to_server::play::player_input::SPRINT != 0,
+    }
 }
 
 fn default_dimension() -> String {

@@ -17,7 +17,10 @@ mod gpu_light {
             bail!("gpu feature is disabled at compile time")
         }
 
-        pub fn fast_sky_light(&self, _neighbourhood: &LightDampeningNeighborhood) -> Result<Vec<u8>> {
+        pub fn fast_sky_light(
+            &self,
+            _neighbourhood: &LightDampeningNeighborhood,
+        ) -> Result<Vec<u8>> {
             bail!("gpu feature is disabled at compile time")
         }
     }

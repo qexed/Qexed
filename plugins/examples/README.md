@@ -9,6 +9,8 @@ Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/hello_world.wa
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/player_audit.wasm" "plugins/"
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/chunk_trace.wasm" "plugins/"
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/command_npc_demo.wasm" "plugins/"
+Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/slime_jump.wasm" "plugins/"
+Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/double_jump.wasm" "plugins/"
 ```
 
 Runtime ABI:
@@ -21,3 +23,7 @@ Runtime ABI:
 Event functions are optional. Except for `qexed_plugin_init()`, event payloads and query responses use the typed postcard binary structures exposed by `qexed_plugin_sdk`, not JSON.
 
 `chunk_trace` logs chunk load/unload events and can produce a lot of output when view distance is high. Use it only for ABI debugging.
+
+`slime_jump` listens for `qexed_plugin_player_block_step` and applies forward/upward velocity when a player steps on `minecraft:slime_block`.
+
+`double_jump` listens for `qexed_plugin_player_move` and applies one extra forward/upward velocity boost while the player is airborne.

@@ -139,6 +139,34 @@ fn offset_position_preserves_original() {
 }
 
 #[test]
+fn stepped_block_position_uses_block_under_feet() {
+    let position = EntityPosition {
+        x: -0.2,
+        y: 64.0,
+        z: 10.9,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: true,
+    };
+
+    assert_eq!(
+        super::stepped_block_position(position),
+        Some(Position {
+            x: -1,
+            y: 63,
+            z: 10
+        })
+    );
+    assert_eq!(
+        super::stepped_block_position(EntityPosition {
+            on_ground: false,
+            ..position
+        }),
+        None
+    );
+}
+
+#[test]
 fn translatable_component_uses_minecraft_translation_key() {
     let component = super::translatable_component(
         "death.fell.accident.water",

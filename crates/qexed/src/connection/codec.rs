@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use bytes::BytesMut;
 use qexed_packet::{Packet, PacketCodec};
 
@@ -37,7 +38,9 @@ where
 {
     let mut reader = qexed_packet::PacketReader::new(payload);
     let mut packet = T::default();
-    packet.deserialize(&mut reader)?;
+    packet
+        .deserialize(&mut reader)
+        .with_context(|| format!("failed to decode payload as {}", std::any::type_name::<T>()))?;
     Ok(packet)
 }
 

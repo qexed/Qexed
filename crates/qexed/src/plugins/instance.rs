@@ -1,9 +1,16 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
-use super::{PluginEvent, PluginState, host::host_log};
+use super::{
+    PluginEvent, PluginState,
+    host::{
+        PluginHostServices, host_config_exists, host_config_read, host_config_write,
+        host_economy_balance, host_economy_currency_info, host_economy_deposit,
+        host_economy_register_currency, host_economy_set_balance, host_economy_withdraw, host_log,
+    },
+};
 
 const MAX_EVENT_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_QUERY_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -18,8 +25,47 @@ pub(super) struct PluginInstance {
     dealloc: Option<TypedFunc<(i32, i32), ()>>,
 }
 
+fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
+    linker
+        .func_wrap("qexed", "config_exists", host_config_exists)
+        .context("register plugin config_exists API")?;
+    linker
+        .func_wrap("qexed", "config_read", host_config_read)
+        .context("register plugin config_read API")?;
+    linker
+        .func_wrap("qexed", "config_write", host_config_write)
+        .context("register plugin config_write API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "economy_register_currency",
+            host_economy_register_currency,
+        )
+        .context("register plugin economy_register_currency API")?;
+    linker
+        .func_wrap("qexed", "economy_currency_info", host_economy_currency_info)
+        .context("register plugin economy_currency_info API")?;
+    linker
+        .func_wrap("qexed", "economy_balance", host_economy_balance)
+        .context("register plugin economy_balance API")?;
+    linker
+        .func_wrap("qexed", "economy_set_balance", host_economy_set_balance)
+        .context("register plugin economy_set_balance API")?;
+    linker
+        .func_wrap("qexed", "economy_deposit", host_economy_deposit)
+        .context("register plugin economy_deposit API")?;
+    linker
+        .func_wrap("qexed", "economy_withdraw", host_economy_withdraw)
+        .context("register plugin economy_withdraw API")?;
+    Ok(())
+}
+
 impl PluginInstance {
-    pub(super) fn load(engine: &Engine, path: PathBuf) -> Result<Self> {
+    pub(super) fn load(
+        engine: &Engine,
+        path: PathBuf,
+        services: Arc<PluginHostServices>,
+    ) -> Result<Self> {
         let name = path
             .file_stem()
             .and_then(|name| name.to_str())
@@ -27,11 +73,18 @@ impl PluginInstance {
             .to_string();
         let module = Module::from_file(engine, &path)
             .with_context(|| format!("编译插件 {}", path.display()))?;
-        let mut store = Store::new(engine, PluginState { name: name.clone() });
+        let mut store = Store::new(
+            engine,
+            PluginState {
+                name: name.clone(),
+                services,
+            },
+        );
         let mut linker = Linker::new(engine);
         linker
             .func_wrap("qexed", "log", host_log)
             .context("注册插件宿主日志 API")?;
+        register_host_apis(&mut linker)?;
         let instance = linker
             .instantiate(&mut store, &module)
             .with_context(|| format!("实例化插件 {}", path.display()))?;

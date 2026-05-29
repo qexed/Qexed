@@ -47,6 +47,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "double_jump"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+]
+
+[[package]]
 name = "embedded-io"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -192,6 +199,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "slime_jump"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
 ]
 
 [[package]]

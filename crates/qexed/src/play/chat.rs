@@ -2226,7 +2226,53 @@ where
             *players_hidden = !visible;
             Ok(false)
         }
+        crate::plugins::PlayerAction::Velocity { x, y, z, additive } => {
+            send_player_velocity(sink, position, next_teleport_id, x, y, z, additive).await?;
+            Ok(false)
+        }
     }
+}
+
+async fn send_player_velocity<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    position: &EntityPosition,
+    next_teleport_id: &mut i32,
+    x: f64,
+    y: f64,
+    z: f64,
+    additive: bool,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !x.is_finite() || !y.is_finite() || !z.is_finite() {
+        return Ok(());
+    }
+
+    const RELATIVE_POSITION_AND_ROTATION: i32 = 0x01 | 0x02 | 0x04 | 0x08 | 0x10;
+    const RELATIVE_DELTA: i32 = 0x20 | 0x40 | 0x80;
+    let teleport_id = *next_teleport_id;
+    *next_teleport_id = next_teleport_id.saturating_add(1);
+    sink.send(Position {
+        teleport_id: VarInt(teleport_id),
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+        dx: x,
+        dy: y,
+        dz: z,
+        yaw: 0.0,
+        pitch: 0.0,
+        flags: RELATIVE_POSITION_AND_ROTATION | if additive { RELATIVE_DELTA } else { 0 },
+    })
+    .await?;
+    log::debug!(
+        "sent player velocity action: x={x}, y={y}, z={z}, additive={additive}, player_x={}, player_y={}, player_z={}",
+        position.x,
+        position.y,
+        position.z
+    );
+    Ok(())
 }
 
 pub(super) async fn apply_proxy_connect_action<W>(
@@ -2261,8 +2307,11 @@ where
         return Ok(());
     };
     if server.is_empty() {
-        send_proxy_connect_feedback(sink, "Proxy transfer is unavailable: target server is empty.")
-            .await?;
+        send_proxy_connect_feedback(
+            sink,
+            "Proxy transfer is unavailable: target server is empty.",
+        )
+        .await?;
         emit_proxy_connect_result(
             plugins,
             players,
@@ -2314,11 +2363,8 @@ where
     if !server_config.proxy_server_id.trim().is_empty()
         && server_config.proxy_server_id.eq_ignore_ascii_case(server)
     {
-        send_proxy_connect_feedback(
-            sink,
-            &format!("You are already connected to {server}."),
-        )
-        .await?;
+        send_proxy_connect_feedback(sink, &format!("You are already connected to {server}."))
+            .await?;
         emit_proxy_connect_result(
             plugins,
             players,

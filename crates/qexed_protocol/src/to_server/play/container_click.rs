@@ -87,7 +87,12 @@ pub struct HashedPatchMap {
 
 impl PacketCodec for HashedPatchMap {
     fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
-        write_bounded_len(self.added_components.len(), 256, "hashed added components", w)?;
+        write_bounded_len(
+            self.added_components.len(),
+            256,
+            "hashed added components",
+            w,
+        )?;
         let mut added = self.added_components.iter().collect::<Vec<_>>();
         added.sort_by_key(|(component, _)| **component);
         for (component, hash) in added {

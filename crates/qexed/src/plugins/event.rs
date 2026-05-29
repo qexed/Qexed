@@ -15,6 +15,9 @@ pub enum PluginEvent {
     NpcInteract,
     ProxyConnectResult,
     Placeholders,
+    PlayerBlockStep,
+    PlayerMove,
+    PlayerInput,
 }
 
 impl PluginEvent {
@@ -35,6 +38,9 @@ impl PluginEvent {
             Self::NpcInteract => "qexed_plugin_npc_interact",
             Self::ProxyConnectResult => "qexed_plugin_proxy_connect_result",
             Self::Placeholders => "qexed_plugin_placeholders",
+            Self::PlayerBlockStep => "qexed_plugin_player_block_step",
+            Self::PlayerMove => "qexed_plugin_player_move",
+            Self::PlayerInput => "qexed_plugin_player_input",
         }
     }
 }

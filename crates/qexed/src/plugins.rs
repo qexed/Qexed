@@ -1,4 +1,8 @@
-use std::{fs, path::Path, sync::Mutex};
+use std::{
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Serialize, de::DeserializeOwned};
 use wasmtime::Engine;
@@ -13,14 +17,16 @@ pub use event::PluginEvent;
 use files::{PLUGIN_DIR, plugin_files};
 use instance::PluginInstance;
 pub use payload::{
-    BlockDropPosition, BlockDropQuery, BlockDropResponse, ItemEnchantment, MiningSpeedQuery,
-    MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp, NpcMutationQuery,
-    NpcMutationResponse, PlaceholderContext, PlaceholderQuery, PlaceholderReplacement,
-    PlaceholderResponse, PlayerAction, PlayerPayloadOwned, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
+    BlockDropPosition, BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition,
+    ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
+    NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
+    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerInputPayload,
+    PlayerMovePayload, PlayerPayloadOwned, PluginCommandDefinition, PluginCommandQuery,
+    PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
 };
 use payload::{
-    ChunkPayload, ConfigReloadPayload, LanguagePayload, player_payload, player_payload_owned,
+    ChunkPayload, ConfigReloadPayload, LanguagePayload, player_input_state, player_payload,
+    player_payload_owned, player_position_payload,
 };
 
 use crate::players::OnlinePlayer;
@@ -45,15 +51,18 @@ impl PluginManager {
         }
 
         let engine = Engine::default();
+        let services = Arc::new(host::PluginHostServices::default());
         let mut plugins = plugin_files(path)
             .into_iter()
-            .filter_map(|file| match PluginInstance::load(&engine, file) {
-                Ok(plugin) => Some(plugin),
-                Err(err) => {
-                    log::warn!("WASM plugin load failed: {err:#}");
-                    None
-                }
-            })
+            .filter_map(
+                |file| match PluginInstance::load(&engine, file, services.clone()) {
+                    Ok(plugin) => Some(plugin),
+                    Err(err) => {
+                        log::warn!("WASM plugin load failed: {err:#}");
+                        None
+                    }
+                },
+            )
             .collect::<Vec<_>>();
 
         plugins.sort_by(|left, right| {
@@ -234,6 +243,84 @@ impl PluginManager {
         replacements
     }
 
+    pub fn handle_player_block_step(
+        &self,
+        player: &OnlinePlayer,
+        block_state: i32,
+        block_name: String,
+        position: BlockStepPosition,
+    ) -> PluginCommandResponse {
+        let query = BlockStepPayload {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            block_state,
+            block_name,
+            position,
+            player_position: player_position_payload(player.position),
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::PlayerBlockStep, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn handle_player_move(
+        &self,
+        player: &OnlinePlayer,
+        previous_position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    ) -> PluginCommandResponse {
+        let query = PlayerMovePayload {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            previous_position: player_position_payload(previous_position),
+            position: player_position_payload(player.position),
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::PlayerMove, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn handle_player_input(
+        &self,
+        player: &OnlinePlayer,
+        previous_flags: u8,
+        flags: u8,
+    ) -> PluginCommandResponse {
+        let query = PlayerInputPayload {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            position: player_position_payload(player.position),
+            previous_input: player_input_state(previous_flags),
+            input: player_input_state(flags),
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::PlayerInput, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
     pub fn handle_npc_interact(
         &self,
         player: &OnlinePlayer,
@@ -379,6 +466,7 @@ fn decode_plugin_response<R: DeserializeOwned>(response: &[u8]) -> Result<R, pos
 
 pub(super) struct PluginState {
     name: String,
+    services: Arc<host::PluginHostServices>,
 }
 
 #[cfg(test)]

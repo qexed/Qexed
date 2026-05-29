@@ -10,9 +10,9 @@ pub struct PlaceholderContext {
 }
 
 impl PlaceholderContext {
-    pub fn max_players_label(&self) -> String {
+    pub fn max_players_label(&self, player: Option<&OnlinePlayer>) -> String {
         if self.max_players < 0 {
-            "unlimited".to_string()
+            unlimited_label(player)
         } else {
             self.max_players.to_string()
         }
@@ -36,7 +36,7 @@ pub fn format_placeholders(
         text: rendered.clone(),
         context: vec![
             context_entry("online_players", context.online_players.to_string()),
-            context_entry("max_players", context.max_players_label()),
+            context_entry("max_players", context.max_players_label(player)),
             context_entry(
                 "lobby_online_servers",
                 context.lobby_online_servers.to_string(),
@@ -66,7 +66,7 @@ pub fn apply_native_placeholders(
 ) -> String {
     let mut rendered = text
         .replace("%online_players%", &context.online_players.to_string())
-        .replace("%max_players%", &context.max_players_label())
+        .replace("%max_players%", &context.max_players_label(player))
         .replace(
             "%lobby_online_servers%",
             &context.lobby_online_servers.to_string(),
@@ -120,6 +120,19 @@ fn placeholder_token(key: &str) -> String {
     }
 }
 
+fn unlimited_label(player: Option<&OnlinePlayer>) -> String {
+    let language = player
+        .map(|player| player.language.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    if language.starts_with("zh") {
+        "无上限".to_string()
+    } else {
+        "unlimited".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PlaceholderContext, apply_native_placeholders};
@@ -139,5 +152,38 @@ mod tests {
         );
 
         assert_eq!(rendered, "Online 2/unlimited Backends 1/3");
+    }
+
+    #[test]
+    fn native_placeholders_render_unlimited_by_player_language() {
+        let player = test_player("zh_cn");
+        let rendered = apply_native_placeholders(
+            Some(&player),
+            "在线 %online_players%/%max_players%",
+            &PlaceholderContext {
+                online_players: 2,
+                max_players: -1,
+                lobby_online_servers: 1,
+                lobby_total_servers: 1,
+                lobby_servers: "跑路谷".to_string(),
+            },
+        );
+
+        assert_eq!(rendered, "在线 2/无上限");
+    }
+
+    fn test_player(language: &str) -> crate::players::OnlinePlayer {
+        crate::players::OnlinePlayer {
+            profile: qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: "Tester".to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 1,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition::default(),
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: language.to_string(),
+        }
     }
 }

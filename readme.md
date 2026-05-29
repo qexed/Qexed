@@ -8,7 +8,8 @@
 A low-performance Minecraft: Java Edition server written in Rust, dedicated to providing a modern, extensible, and stable game server experience.
 
 > ⚠️ **Project is under active development**, APIs and features are subject to change.
-
+>
+> Current compatible version: 26.1.2
 ## ✨ Features
 
 *   **High-performance core**: Leverage Rust's safety and concurrency features to build a stable and efficient server core.
