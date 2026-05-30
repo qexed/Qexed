@@ -1182,6 +1182,38 @@ pub struct EntitySpawnRule {
     pub cap: usize,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.tick_interval_ms")]
+    pub tick_interval_ms: u64,
+
+    #[serde(default = "default_entity_spawn_rule_spawn_chance")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.spawn_chance")]
+    pub spawn_chance: f64,
+
+    #[serde(default = "default_entity_spawn_rule_min_players")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_players")]
+    pub min_players: usize,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_players")]
+    pub max_players: usize,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.activation_range")]
+    pub activation_range: f64,
+
+    #[serde(default = "default_entity_spawn_rule_require_ground")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.require_ground")]
+    pub require_ground: bool,
+
+    #[serde(default = "default_entity_spawn_rule_require_air")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.require_air")]
+    pub require_air: bool,
+
+    #[serde(default = "default_entity_spawn_rule_position_attempts")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.position_attempts")]
+    pub position_attempts: u32,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.name")]
     pub name: String,
 
@@ -1235,6 +1267,14 @@ impl Default for EntitySpawnRule {
             entity_type: default_entity_spawn_rule_entity_type(),
             weight: default_entity_spawn_rule_weight(),
             cap: default_entity_spawn_rule_cap(),
+            tick_interval_ms: 0,
+            spawn_chance: default_entity_spawn_rule_spawn_chance(),
+            min_players: default_entity_spawn_rule_min_players(),
+            max_players: 0,
+            activation_range: 0.0,
+            require_ground: default_entity_spawn_rule_require_ground(),
+            require_air: default_entity_spawn_rule_require_air(),
+            position_attempts: default_entity_spawn_rule_position_attempts(),
             name: String::new(),
             display_name: String::new(),
             ai: default_entity_spawn_rule_ai(),
@@ -1292,6 +1332,26 @@ fn default_entity_spawn_rule_weight() -> u32 {
 
 fn default_entity_spawn_rule_cap() -> usize {
     20
+}
+
+fn default_entity_spawn_rule_spawn_chance() -> f64 {
+    1.0
+}
+
+fn default_entity_spawn_rule_min_players() -> usize {
+    1
+}
+
+fn default_entity_spawn_rule_require_ground() -> bool {
+    false
+}
+
+fn default_entity_spawn_rule_require_air() -> bool {
+    false
+}
+
+fn default_entity_spawn_rule_position_attempts() -> u32 {
+    8
 }
 
 fn default_entity_spawn_rule_ai() -> String {
@@ -3155,6 +3215,14 @@ dimension = "qexed:mine_a"
 entity_type = "minecraft:zombie"
 weight = 80
 cap = 6
+tick_interval_ms = 5000
+spawn_chance = 0.5
+min_players = 1
+max_players = 8
+activation_range = 24.0
+require_ground = true
+require_air = true
+position_attempts = 12
 name = "Mine Zombie"
 display_name = "{\"text\":\"Mine Zombie\"}"
 ai = "follow_nearest_player"
@@ -3180,6 +3248,14 @@ max_z = 8.0
         assert_eq!(entities.spawning.rules[0].id, "mine_zombies");
         assert_eq!(entities.spawning.rules[0].entity_type, "minecraft:zombie");
         assert_eq!(entities.spawning.rules[0].ai, "follow_nearest_player");
+        assert_eq!(entities.spawning.rules[0].tick_interval_ms, 5000);
+        assert_eq!(entities.spawning.rules[0].spawn_chance, 0.5);
+        assert_eq!(entities.spawning.rules[0].min_players, 1);
+        assert_eq!(entities.spawning.rules[0].max_players, 8);
+        assert_eq!(entities.spawning.rules[0].activation_range, 24.0);
+        assert!(entities.spawning.rules[0].require_ground);
+        assert!(entities.spawning.rules[0].require_air);
+        assert_eq!(entities.spawning.rules[0].position_attempts, 12);
     }
 
     #[test]

@@ -12,6 +12,19 @@ use qexed_protocol::{
     types::EntityMetadataEnum,
 };
 
+fn stone_block_state() -> i32 {
+    crate::inventory::placed_block_state_for_item(&qexed_protocol::types::Slot {
+        item_count: qexed_packet::net_types::VarInt(1),
+        item_id: Some(qexed_packet::net_types::VarInt(1)),
+        ..Default::default()
+    })
+    .expect("stone block state")
+}
+
+fn empty_world() -> crate::world::WorldManager {
+    crate::world::WorldManager::new(tempfile::tempdir().expect("temp world dir").keep())
+}
+
 #[test]
 fn entity_type_id_is_loaded_from_current_report() {
     assert_eq!(entity_type_id("minecraft:player").unwrap(), 155);
@@ -292,6 +305,7 @@ fn spawn_rules_respect_caps_and_create_dynamic_entities() {
         Vec::new(),
         "en_us".to_string(),
     );
+    let world = empty_world();
     let spawning = qexed_config::app::qexed::server::EntitySpawning {
         enable: true,
         tick_interval_ms: 50,
@@ -319,6 +333,7 @@ fn spawn_rules_respect_caps_and_create_dynamic_entities() {
     let spawned = manager
         .spawn_from_rules(
             &players,
+            &world,
             &qexed_config::app::qexed::server::EntityRendering::default(),
             &spawning,
             "minecraft:overworld",
@@ -333,12 +348,102 @@ fn spawn_rules_respect_caps_and_create_dynamic_entities() {
         manager
             .spawn_from_rules(
                 &players,
+                &world,
                 &qexed_config::app::qexed::server::EntityRendering::default(),
                 &spawning,
                 "minecraft:overworld",
             )
             .unwrap()
             <= 1
+    );
+}
+
+#[test]
+fn spawn_rules_apply_rule_conditions_and_position_checks() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Tester".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    world.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 0, y: 63, z: 0 },
+        stone_block_state(),
+    );
+
+    let spawning = qexed_config::app::qexed::server::EntitySpawning {
+        enable: true,
+        tick_interval_ms: 50,
+        ai_tick_interval_ms: 50,
+        global_cap: 4,
+        per_dimension_cap: 4,
+        per_type_cap: 4,
+        max_spawn_per_tick: 4,
+        player_activation_range: 1.0,
+        rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
+            id: "grounded".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            entity_type: "minecraft:zombie".to_string(),
+            cap: 4,
+            tick_interval_ms: 60_000,
+            require_ground: true,
+            require_air: true,
+            position_attempts: 1,
+            min_x: 0.0,
+            max_x: 0.0,
+            min_y: 64.0,
+            max_y: 64.0,
+            min_z: 0.0,
+            max_z: 0.0,
+            ..Default::default()
+        }],
+    };
+
+    assert_eq!(
+        manager
+            .spawn_from_rules(
+                &players,
+                &world,
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                &spawning,
+                "minecraft:overworld",
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        manager
+            .spawn_from_rules(
+                &players,
+                &world,
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                &spawning,
+                "minecraft:overworld",
+            )
+            .unwrap(),
+        0
     );
 }
 
@@ -369,6 +474,12 @@ fn follow_nearest_player_ai_moves_entity_toward_player() {
         "minecraft:overworld".to_string(),
         Vec::new(),
         "en_us".to_string(),
+    );
+    let world = empty_world();
+    world.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 0, y: 63, z: 0 },
+        stone_block_state(),
     );
     manager
         .spawn_local(EntitySpawnRequest {
@@ -402,6 +513,7 @@ fn follow_nearest_player_ai_moves_entity_toward_player() {
     manager
         .tick_ai(
             &players,
+            &world,
             &crate::plugins::PluginManager::empty_for_tests(),
             &qexed_config::app::qexed::server::EntityRendering::default(),
             50,
@@ -411,6 +523,93 @@ fn follow_nearest_player_ai_moves_entity_toward_player() {
     let entity = manager.entity_by_key("follower").unwrap();
     assert!(entity.position.x > 0.0);
     assert_eq!(entity.position.z, 0.0);
+}
+
+#[test]
+fn entity_ai_applies_gravity_and_horizontal_collision() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Target".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 4.0,
+            y: 65.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    for x in -1..=3 {
+        world.place_block(
+            "minecraft:overworld",
+            qexed_packet::net_types::Position { x, y: 63, z: 0 },
+            stone_block_state(),
+        );
+    }
+    world.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 1, y: 64, z: 0 },
+        stone_block_state(),
+    );
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "blocked".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 66.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: false,
+            },
+            name: "Blocked".to_string(),
+            display_name: "Blocked".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    for _ in 0..8 {
+        manager
+            .tick_ai(
+                &players,
+                &world,
+                &crate::plugins::PluginManager::empty_for_tests(),
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                50,
+            )
+            .unwrap();
+    }
+
+    let entity = manager.entity_by_key("blocked").unwrap();
+    assert!(entity.position.y < 66.0);
+    assert!(entity.position.x < 0.7);
 }
 
 #[test]

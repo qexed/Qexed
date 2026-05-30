@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use qexed_packet::net_types::Position as BlockPosition;
 use qexed_protocol::to_client::play::add_entity::EntityPosition;
 use serde::Deserialize;
 
@@ -18,6 +19,11 @@ use super::{
 const ITEM_PICKUP_DELAY: Duration = Duration::from_millis(500);
 const ITEM_PICKUP_RADIUS_XZ: f64 = 1.5;
 const ITEM_PICKUP_RADIUS_Y: f64 = 1.5;
+const ENTITY_PHYSICS_WIDTH: f64 = 0.6;
+const ENTITY_PHYSICS_HEIGHT: f64 = 1.95;
+const ENTITY_GRAVITY_PER_TICK: f64 = 0.08;
+const ENTITY_TERMINAL_VELOCITY: f64 = -3.92;
+const ENTITY_GROUND_SNAP: f64 = 0.05;
 
 #[derive(Debug)]
 pub struct EntityManager {
@@ -28,6 +34,8 @@ pub struct EntityManager {
     spawn_sequence: Mutex<u64>,
     last_spawn_tick: Mutex<Option<Instant>>,
     last_ai_tick: Mutex<Option<Instant>>,
+    last_rule_spawn_tick: Mutex<HashMap<String, Instant>>,
+    entity_motion: Mutex<HashMap<String, EntityMotion>>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +43,18 @@ struct CustomEntityRegistration {
     entity_type: String,
     display_name: String,
     ai: String,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct EntityMotion {
+    velocity_y: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct EntityMovement {
+    x: f64,
+    y: f64,
+    z: f64,
 }
 
 impl EntityManager {
@@ -50,6 +70,8 @@ impl EntityManager {
             spawn_sequence: Mutex::new(0),
             last_spawn_tick: Mutex::new(None),
             last_ai_tick: Mutex::new(None),
+            last_rule_spawn_tick: Mutex::new(HashMap::new()),
+            entity_motion: Mutex::new(HashMap::new()),
         };
 
         if !config.enable {
@@ -462,6 +484,11 @@ impl EntityManager {
             anyhow::bail!("duplicate entity id: {}", entity.key);
         }
         entities.push(entity.clone());
+        self.entity_motion
+            .lock()
+            .expect("entity motion state poisoned")
+            .entry(entity.key.clone())
+            .or_default();
         Ok(entity)
     }
 
@@ -506,7 +533,12 @@ impl EntityManager {
             .iter()
             .position(|entity| entity.key == key)
             .with_context(|| format!("entity not found: {key}"))?;
-        Ok(entities.remove(index))
+        let entity = entities.remove(index);
+        self.entity_motion
+            .lock()
+            .expect("entity motion state poisoned")
+            .remove(&entity.key);
+        Ok(entity)
     }
 
     fn spawn_configured(
@@ -686,6 +718,7 @@ impl EntityManager {
     pub fn spawn_from_rules(
         &self,
         players: &crate::players::PlayerManager,
+        world: &crate::world::WorldManager,
         rendering: &qexed_config::app::qexed::server::EntityRendering,
         spawning: &qexed_config::app::qexed::server::EntitySpawning,
         default_dimension: &str,
@@ -728,14 +761,20 @@ impl EntityManager {
             if self.dynamic_count(Some(dimension), None, Some(&rule_id)) >= rule.cap {
                 continue;
             }
-            if !spawn_rule_has_active_viewer(
-                rule,
-                dimension,
-                &viewers,
-                spawning.player_activation_range,
-            ) {
+            let activation_range =
+                spawn_rule_activation_range(rule, spawning.player_activation_range);
+            let active_players =
+                spawn_rule_active_player_count(rule, dimension, &viewers, activation_range);
+            if !spawn_rule_player_count_passes(rule, active_players)
+                || !spawn_rule_chance_passes(rule)
+                || !self.spawn_rule_interval_passes(&rule_id, rule)
+            {
                 continue;
             }
+
+            let Some(position) = spawn_position_for_rule(rule, dimension, world) else {
+                continue;
+            };
 
             let entity = self.spawn_local(spawn_request_from_rule(
                 rule,
@@ -743,7 +782,9 @@ impl EntityManager {
                 dimension,
                 self.next_spawn_sequence(),
                 custom,
+                position,
             )?)?;
+            self.mark_rule_spawned(&rule_id);
             self.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
             spawned += 1;
         }
@@ -754,6 +795,7 @@ impl EntityManager {
     pub fn tick_ai(
         &self,
         players: &crate::players::PlayerManager,
+        world: &crate::world::WorldManager,
         plugins: &crate::plugins::PluginManager,
         rendering: &qexed_config::app::qexed::server::EntityRendering,
         tick_ms: u64,
@@ -776,17 +818,19 @@ impl EntityManager {
                 }
 
                 let previous = entity.position;
+                let mut movement = EntityMovement::default();
                 let mut remove = false;
-                match ai_kind(&entity.ai) {
+                let ai = ai_kind(&entity.ai);
+                match ai {
                     EntityAiKind::None => {}
                     EntityAiKind::RandomStroll => {
-                        apply_random_stroll(entity, tick_ms);
+                        movement = apply_random_stroll(entity, tick_ms);
                     }
                     EntityAiKind::LookAtPlayer => {
                         apply_look_at_nearest_player(entity, &viewers, rendering.default_distance);
                     }
                     EntityAiKind::FollowNearestPlayer => {
-                        apply_follow_nearest_player(entity, &viewers, tick_ms);
+                        movement = apply_follow_nearest_player(entity, &viewers, tick_ms);
                     }
                     EntityAiKind::Plugin => {
                         for operation in plugins
@@ -800,9 +844,9 @@ impl EntityManager {
                                     yaw,
                                     pitch,
                                 } => {
-                                    entity.position.x += finite_or_zero(x).clamp(-4.0, 4.0);
-                                    entity.position.y += finite_or_zero(y).clamp(-4.0, 4.0);
-                                    entity.position.z += finite_or_zero(z).clamp(-4.0, 4.0);
+                                    movement.x += finite_or_zero(x).clamp(-4.0, 4.0);
+                                    movement.y += finite_or_zero(y).clamp(-4.0, 4.0);
+                                    movement.z += finite_or_zero(z).clamp(-4.0, 4.0);
                                     if let Some(yaw) = yaw.filter(|value| value.is_finite()) {
                                         entity.position.yaw = yaw;
                                     }
@@ -831,6 +875,15 @@ impl EntityManager {
                             }
                         }
                     }
+                }
+
+                if !remove && should_apply_entity_physics(entity, ai) {
+                    let mut motion = self
+                        .entity_motion
+                        .lock()
+                        .expect("entity motion state poisoned");
+                    let motion = motion.entry(entity.key.clone()).or_default();
+                    apply_entity_physics(entity, world, motion, movement, tick_ms);
                 }
 
                 if remove {
@@ -904,6 +957,32 @@ impl EntityManager {
 
     fn should_run_ai_tick(&self, interval_ms: u64) -> bool {
         should_run_tick(&self.last_ai_tick, interval_ms)
+    }
+
+    fn spawn_rule_interval_passes(
+        &self,
+        rule_id: &str,
+        rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    ) -> bool {
+        if rule.tick_interval_ms == 0 {
+            return true;
+        }
+        let interval_ms = rule.tick_interval_ms;
+        let interval = Duration::from_millis(interval_ms.max(50));
+        let last_spawns = self
+            .last_rule_spawn_tick
+            .lock()
+            .expect("entity rule spawn state poisoned");
+        last_spawns
+            .get(rule_id)
+            .is_none_or(|last_spawn| Instant::now().duration_since(*last_spawn) >= interval)
+    }
+
+    fn mark_rule_spawned(&self, rule_id: &str) {
+        self.last_rule_spawn_tick
+            .lock()
+            .expect("entity rule spawn state poisoned")
+            .insert(rule_id.to_string(), Instant::now());
     }
 }
 
@@ -1089,18 +1168,25 @@ fn ai_kind(value: &str) -> EntityAiKind {
     }
 }
 
-fn apply_random_stroll(entity: &mut ManagedEntity, tick_ms: u64) {
+fn should_apply_entity_physics(entity: &ManagedEntity, ai: EntityAiKind) -> bool {
+    ai != EntityAiKind::None || !entity.spawn_rule.is_empty()
+}
+
+fn apply_random_stroll(entity: &mut ManagedEntity, tick_ms: u64) -> EntityMovement {
     let mut rng = rand::thread_rng();
     if rand::Rng::gen_range(&mut rng, 0.0..1.0) > 0.35 {
-        return;
+        return EntityMovement::default();
     }
     let yaw = rand::Rng::gen_range(&mut rng, -180.0..180.0);
     let radians = f64::from(yaw).to_radians();
     let tick_scale = (tick_ms as f64 / 200.0).clamp(0.25, 2.0);
     let step = rand::Rng::gen_range(&mut rng, 0.08..0.22) * tick_scale;
-    entity.position.x += -radians.sin() * step;
-    entity.position.z += radians.cos() * step;
     entity.position.yaw = yaw;
+    EntityMovement {
+        x: -radians.sin() * step,
+        y: 0.0,
+        z: radians.cos() * step,
+    }
 }
 
 fn apply_look_at_nearest_player(
@@ -1120,14 +1206,14 @@ fn apply_follow_nearest_player(
     entity: &mut ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
     tick_ms: u64,
-) {
+) -> EntityMovement {
     const FOLLOW_RANGE: f64 = 32.0;
     const STOP_DISTANCE: f64 = 2.0;
     const BASE_STEP: f64 = 0.22;
 
     let Some(target) = nearest_player(entity.position, &entity.dimension, viewers, FOLLOW_RANGE)
     else {
-        return;
+        return EntityMovement::default();
     };
     let dx = target.position.x - entity.position.x;
     let dz = target.position.z - entity.position.z;
@@ -1136,12 +1222,15 @@ fn apply_follow_nearest_player(
     entity.position.yaw = yaw;
     entity.position.pitch = pitch;
     if horizontal <= STOP_DISTANCE {
-        return;
+        return EntityMovement::default();
     }
     let tick_scale = (tick_ms as f64 / 200.0).clamp(0.25, 2.0);
     let step = (BASE_STEP * tick_scale).min(horizontal - STOP_DISTANCE);
-    entity.position.x += dx / horizontal * step;
-    entity.position.z += dz / horizontal * step;
+    EntityMovement {
+        x: dx / horizontal * step,
+        y: 0.0,
+        z: dz / horizontal * step,
+    }
 }
 
 fn nearest_player<'a>(
@@ -1158,6 +1247,144 @@ fn nearest_player<'a>(
             horizontal_distance_sq(position, left.position)
                 .total_cmp(&horizontal_distance_sq(position, right.position))
         })
+}
+
+fn apply_entity_physics(
+    entity: &mut ManagedEntity,
+    world: &crate::world::WorldManager,
+    motion: &mut EntityMotion,
+    movement: EntityMovement,
+    tick_ms: u64,
+) {
+    let tick_scale = (tick_ms as f64 / 50.0).clamp(0.25, 4.0);
+    let dx = movement.x.clamp(-4.0, 4.0);
+    let dz = movement.z.clamp(-4.0, 4.0);
+    let mut dy = movement.y.clamp(-4.0, 4.0);
+
+    if entity_has_ground(world, &entity.dimension, entity.position) && motion.velocity_y <= 0.0 {
+        entity.position.on_ground = true;
+        motion.velocity_y = 0.0;
+    } else {
+        entity.position.on_ground = false;
+        motion.velocity_y = (motion.velocity_y - ENTITY_GRAVITY_PER_TICK * tick_scale)
+            .max(ENTITY_TERMINAL_VELOCITY);
+        dy += motion.velocity_y * tick_scale;
+    }
+
+    if dy != 0.0 {
+        move_entity_axis(entity, world, motion, 0.0, dy, 0.0);
+    }
+    if dx != 0.0 {
+        move_entity_axis(entity, world, motion, dx, 0.0, 0.0);
+    }
+    if dz != 0.0 {
+        move_entity_axis(entity, world, motion, 0.0, 0.0, dz);
+    }
+
+    if entity_has_ground(world, &entity.dimension, entity.position) && motion.velocity_y <= 0.0 {
+        entity.position.on_ground = true;
+        motion.velocity_y = 0.0;
+    } else {
+        entity.position.on_ground = false;
+    }
+}
+
+fn move_entity_axis(
+    entity: &mut ManagedEntity,
+    world: &crate::world::WorldManager,
+    motion: &mut EntityMotion,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+) {
+    let next_x = entity.position.x + dx;
+    let next_y = entity.position.y + dy;
+    let next_z = entity.position.z + dz;
+    if entity_aabb_intersects_solid(
+        world,
+        &entity.dimension,
+        next_x,
+        next_y,
+        next_z,
+        ENTITY_PHYSICS_WIDTH,
+        ENTITY_PHYSICS_HEIGHT,
+    ) {
+        if dy < 0.0 {
+            entity.position.y = next_y.floor() + 1.0;
+            entity.position.on_ground = true;
+            motion.velocity_y = 0.0;
+        } else if dy > 0.0 {
+            motion.velocity_y = 0.0;
+        }
+        return;
+    }
+
+    entity.position.x = next_x;
+    entity.position.y = next_y;
+    entity.position.z = next_z;
+}
+
+fn entity_has_ground(
+    world: &crate::world::WorldManager,
+    dimension: &str,
+    position: EntityPosition,
+) -> bool {
+    let below_y = (position.y - ENTITY_GROUND_SNAP).floor() as i32;
+    let min_x = (position.x - ENTITY_PHYSICS_WIDTH / 2.0 + 0.001).floor() as i32;
+    let max_x = (position.x + ENTITY_PHYSICS_WIDTH / 2.0 - 0.001).floor() as i32;
+    let min_z = (position.z - ENTITY_PHYSICS_WIDTH / 2.0 + 0.001).floor() as i32;
+    let max_z = (position.z + ENTITY_PHYSICS_WIDTH / 2.0 - 0.001).floor() as i32;
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            if block_has_collision_at(world, dimension, x, below_y, z) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn entity_aabb_intersects_solid(
+    world: &crate::world::WorldManager,
+    dimension: &str,
+    x: f64,
+    y: f64,
+    z: f64,
+    width: f64,
+    height: f64,
+) -> bool {
+    let half_width = width / 2.0;
+    let min_x = (x - half_width + 0.001).floor() as i32;
+    let max_x = (x + half_width - 0.001).floor() as i32;
+    let min_y = (y + 0.001).floor() as i32;
+    let max_y = (y + height - 0.001).floor() as i32;
+    let min_z = (z - half_width + 0.001).floor() as i32;
+    let max_z = (z + half_width - 0.001).floor() as i32;
+
+    for block_x in min_x..=max_x {
+        for block_y in min_y..=max_y {
+            for block_z in min_z..=max_z {
+                if block_has_collision_at(world, dimension, block_x, block_y, block_z) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn block_has_collision_at(
+    world: &crate::world::WorldManager,
+    dimension: &str,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> bool {
+    let position = BlockPosition { x, y, z };
+    world
+        .block_state_at(dimension, &position)
+        .map(crate::inventory::block_has_collision)
+        .unwrap_or(false)
 }
 
 fn entity_ai_query(
@@ -1253,24 +1480,102 @@ fn spawn_rule_dimension<'a>(
     }
 }
 
-fn spawn_rule_has_active_viewer(
+fn spawn_rule_activation_range(
+    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    global_activation_range: f64,
+) -> f64 {
+    if rule.activation_range > 0.0 {
+        rule.activation_range
+    } else {
+        global_activation_range
+    }
+    .max(0.0)
+}
+
+fn spawn_rule_active_player_count(
     rule: &qexed_config::app::qexed::server::EntitySpawnRule,
     dimension: &str,
     viewers: &[crate::players::OnlinePlayer],
     activation_range: f64,
-) -> bool {
-    let activation_range = activation_range.max(0.0);
+) -> usize {
     let min_x = rule.min_x.min(rule.max_x) - activation_range;
     let max_x = rule.min_x.max(rule.max_x) + activation_range;
     let min_z = rule.min_z.min(rule.max_z) - activation_range;
     let max_z = rule.min_z.max(rule.max_z) + activation_range;
-    viewers.iter().any(|player| {
-        player.dimension == dimension
-            && player.position.x >= min_x
-            && player.position.x <= max_x
-            && player.position.z >= min_z
-            && player.position.z <= max_z
-    })
+    viewers
+        .iter()
+        .filter(|player| {
+            player.dimension == dimension
+                && player.position.x >= min_x
+                && player.position.x <= max_x
+                && player.position.z >= min_z
+                && player.position.z <= max_z
+        })
+        .count()
+}
+
+fn spawn_rule_player_count_passes(
+    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    active_players: usize,
+) -> bool {
+    active_players >= rule.min_players
+        && (rule.max_players == 0 || active_players <= rule.max_players)
+}
+
+fn spawn_rule_chance_passes(rule: &qexed_config::app::qexed::server::EntitySpawnRule) -> bool {
+    let chance = rule.spawn_chance.clamp(0.0, 1.0);
+    chance >= 1.0 || rand::Rng::gen_range(&mut rand::thread_rng(), 0.0..1.0) < chance
+}
+
+fn spawn_position_for_rule(
+    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    dimension: &str,
+    world: &crate::world::WorldManager,
+) -> Option<EntityPosition> {
+    let attempts = if rule.require_air || rule.require_ground {
+        rule.position_attempts.max(1).min(64)
+    } else {
+        1
+    };
+    for _ in 0..attempts {
+        let position = EntityPosition {
+            x: random_between(rule.min_x, rule.max_x),
+            y: random_spawn_y(rule),
+            z: random_between(rule.min_z, rule.max_z),
+            yaw: rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0),
+            pitch: 0.0,
+            on_ground: rule.on_ground,
+        };
+        if spawn_position_passes(rule, dimension, world, position) {
+            return Some(position);
+        }
+    }
+    None
+}
+
+fn spawn_position_passes(
+    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    dimension: &str,
+    world: &crate::world::WorldManager,
+    position: EntityPosition,
+) -> bool {
+    if rule.require_ground && !entity_has_ground(world, dimension, position) {
+        return false;
+    }
+    if rule.require_air
+        && entity_aabb_intersects_solid(
+            world,
+            dimension,
+            position.x,
+            position.y,
+            position.z,
+            ENTITY_PHYSICS_WIDTH,
+            ENTITY_PHYSICS_HEIGHT,
+        )
+    {
+        return false;
+    }
+    true
 }
 
 fn spawn_request_from_rule(
@@ -1279,6 +1584,7 @@ fn spawn_request_from_rule(
     dimension: &str,
     sequence: u64,
     custom: Option<CustomEntityRegistration>,
+    position: EntityPosition,
 ) -> Result<EntitySpawnRequest> {
     let (entity_type, custom_type, default_display_name, default_ai) = match custom {
         Some(custom) => (
@@ -1321,14 +1627,7 @@ fn spawn_request_from_rule(
         kind: ManagedEntityKind::Entity,
         entity_type,
         dimension: dimension.to_string(),
-        position: EntityPosition {
-            x: random_between(rule.min_x, rule.max_x),
-            y: random_between(rule.min_y, rule.max_y),
-            z: random_between(rule.min_z, rule.max_z),
-            yaw: rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0),
-            pitch: 0.0,
-            on_ground: rule.on_ground,
-        },
+        position,
         name,
         display_name,
         skin_textures: String::new(),
@@ -1352,6 +1651,19 @@ fn random_between(left: f64, right: f64) -> f64 {
     } else {
         rand::Rng::gen_range(&mut rand::thread_rng(), min..=max)
     }
+}
+
+fn random_spawn_y(rule: &qexed_config::app::qexed::server::EntitySpawnRule) -> f64 {
+    if !rule.require_ground && !rule.require_air {
+        return random_between(rule.min_y, rule.max_y);
+    }
+
+    let min = rule.min_y.min(rule.max_y).ceil() as i32;
+    let max = rule.min_y.max(rule.max_y).floor() as i32;
+    if min > max {
+        return random_between(rule.min_y, rule.max_y);
+    }
+    f64::from(rand::Rng::gen_range(&mut rand::thread_rng(), min..=max))
 }
 
 fn simplify_stacked_entities(

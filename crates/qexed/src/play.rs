@@ -478,12 +478,14 @@ where
                 let spawning = &config.server.entities.spawning;
                 entities.spawn_from_rules(
                     players,
+                    world,
                     &config.server.entity_rendering,
                     spawning,
                     &config.world.default_play_dimension(),
                 )?;
                 entities.tick_ai(
                     players,
+                    world,
                     plugins,
                     &config.server.entity_rendering,
                     spawning.ai_tick_interval_ms,

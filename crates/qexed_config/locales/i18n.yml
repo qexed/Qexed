@@ -649,6 +649,30 @@ config:
             cap:
               en: "Maximum live entities from this rule"
               zh-CN: "该规则的存活实体上限"
+            tick_interval_ms:
+              en: "Rule-level minimum interval between successful spawns in milliseconds. 0 disables the rule-level cooldown; the global spawn tick still applies."
+              zh-CN: "该规则两次成功刷怪之间的最小间隔，单位毫秒。0 表示不启用规则级冷却，但仍受全局刷怪 tick 控制。"
+            spawn_chance:
+              en: "Probability for this rule after weight selection, from 0.0 to 1.0"
+              zh-CN: "该规则被权重选中后的实际生成概率，范围 0.0 到 1.0"
+            min_players:
+              en: "Minimum players near the spawn area required for this rule"
+              zh-CN: "触发该规则所需的刷怪区域附近最少玩家数"
+            max_players:
+              en: "Maximum players near the spawn area allowed for this rule. 0 means unlimited."
+              zh-CN: "触发该规则允许的刷怪区域附近最多玩家数。0 表示不限制。"
+            activation_range:
+              en: "Rule-level player activation range. 0 uses player_activation_range."
+              zh-CN: "该规则独立的玩家激活范围。0 表示使用 player_activation_range。"
+            require_ground:
+              en: "Require a solid block below the spawn position"
+              zh-CN: "要求生成位置脚下有可碰撞方块"
+            require_air:
+              en: "Require the entity collision box at the spawn position to be empty"
+              zh-CN: "要求生成位置的实体碰撞箱内没有可碰撞方块"
+            position_attempts:
+              en: "Maximum random position attempts when ground or air checks are enabled"
+              zh-CN: "启用落脚或空气检查时的最大随机位置尝试次数"
             name:
               en: "Entity name used when display_name is empty"
               zh-CN: "display_name 为空时使用的实体名称"
