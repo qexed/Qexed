@@ -45,6 +45,16 @@ struct LocalPermissionHolder {
     groups: Vec<String>,
 }
 
+fn builtin_default_group_permissions() -> LocalPermissionHolder {
+    LocalPermissionHolder {
+        permissions: vec![
+            PermissionNode::new("qexed.command.help", true),
+            PermissionNode::new("qexed.command.list", true),
+        ],
+        groups: Vec::new(),
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct LocalPermissionStore {
     path: PathBuf,
@@ -76,7 +86,14 @@ impl LocalPermissionStore {
 #[async_trait]
 impl PermissionStore for LocalPermissionStore {
     async fn load_user(&self, uuid: uuid::Uuid) -> Result<PermissionSnapshot> {
-        let config = self.load_config().await?;
+        let mut config = self.load_config().await?;
+        if config.groups.is_empty() {
+            config.groups.insert(
+                self.default_group.clone(),
+                builtin_default_group_permissions(),
+            );
+        }
+
         let user_key = uuid.to_string();
         let user = config.users.get(&user_key);
         let mut nodes = Vec::new();

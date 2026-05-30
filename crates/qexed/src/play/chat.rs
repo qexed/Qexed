@@ -59,7 +59,7 @@ where
     let command = command.trim();
     if !permissions.can_run_command(profile, command).await? {
         sink.send(SystemChat {
-            content: translatable_component("commands.help.failed", Vec::new()),
+            content: text_component(permissions.denied_message().to_string()),
             overlay: false,
         })
         .await?;

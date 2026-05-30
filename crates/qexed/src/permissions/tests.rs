@@ -14,6 +14,14 @@ fn command_names_map_to_qexed_permission_nodes() {
         crate::commands::permission_node("/help ignored").as_deref(),
         Some("qexed.command.help")
     );
+    assert_eq!(
+        crate::commands::permission_node("/tp Player").as_deref(),
+        Some("qexed.command.teleport")
+    );
+    assert_eq!(
+        crate::commands::permission_node("teleport Player").as_deref(),
+        Some("qexed.command.teleport")
+    );
     assert_eq!(crate::commands::permission_node("   "), None);
 }
 
@@ -129,7 +137,66 @@ groups = []
 }
 
 #[tokio::test]
-async fn local_engine_missing_file_uses_allow_by_default_without_mysql() {
+async fn local_engine_default_policy_allows_help_and_denies_teleport() {
+    let dir = tempfile::tempdir().unwrap();
+    let uuid = uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+    let mut config = PermissionConfig::default();
+    config.engine = PermissionEngine::Local;
+    config.local_path = dir
+        .path()
+        .join("missing-permissions.toml")
+        .to_string_lossy()
+        .to_string();
+
+    let manager = PermissionManager::from_config(&config).await.unwrap();
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid,
+        username: "player".to_string(),
+        properties: Vec::new(),
+    };
+
+    assert!(manager.can_run_command(&profile, "help").await.unwrap());
+    assert!(manager.can_run_command(&profile, "/list").await.unwrap());
+    assert!(
+        !manager
+            .can_run_command(&profile, "tp player")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !manager
+            .can_run_command(&profile, "teleport player")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn local_engine_empty_policy_file_uses_builtin_default_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("qexed_permissions.toml");
+    std::fs::write(
+        &path,
+        r#"
+[permissions]
+engine = "local"
+"#,
+    )
+    .unwrap();
+
+    let uuid = uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+    let mut config = PermissionConfig::default();
+    config.engine = PermissionEngine::Local;
+    config.local_path = path.to_string_lossy().to_string();
+
+    let manager = PermissionManager::from_config(&config).await.unwrap();
+
+    assert!(manager.check(uuid, "qexed.command.help").await.unwrap());
+    assert!(!manager.check(uuid, "qexed.command.teleport").await.unwrap());
+}
+
+#[tokio::test]
+async fn local_engine_missing_file_can_still_allow_by_default() {
     let dir = tempfile::tempdir().unwrap();
     let uuid = uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
     let mut config = PermissionConfig::default();
@@ -147,6 +214,7 @@ async fn local_engine_missing_file_uses_allow_by_default_without_mysql() {
     let manager = PermissionManager::from_config(&config).await.unwrap();
 
     assert!(manager.check(uuid, "qexed.command.list").await.unwrap());
+    assert!(manager.check(uuid, "qexed.command.teleport").await.unwrap());
 }
 
 #[test]

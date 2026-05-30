@@ -273,6 +273,7 @@ password = "existing-mysql-password"
     assert!(permissions.contains("engine = \"local\""));
     assert!(permissions.contains("local_path = \"config/qexed_permissions.toml\""));
     assert!(permissions.contains("table_prefix = \"luckperms_\""));
+    assert!(permissions.contains("allow_by_default = false"));
     assert!(player_data.contains("password = \"<stored in .secrets>\""));
     assert!(secrets.contains("password = \"existing-mongo-password\""));
     assert!(secrets.contains("password = \"existing-mysql-password\""));

@@ -1491,7 +1491,7 @@ fn default_permissions_default_group() -> String {
 }
 
 fn default_permissions_allow_by_default() -> bool {
-    true
+    false
 }
 
 fn default_permissions_denied_message() -> String {
