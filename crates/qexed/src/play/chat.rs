@@ -189,8 +189,14 @@ where
                 .await?;
                 return Ok(CommandOutcome::default());
             };
+            let proxy_context = super::lobby::ProxyConnectContext {
+                server_config: &config.server,
+                plugins,
+                players,
+                actor: profile.uuid,
+            };
             lobby
-                .transfer_to_server(sink, &server_id, lobby_status)
+                .transfer_to_server(sink, &server_id, lobby_status, Some(&proxy_context))
                 .await?;
             Ok(CommandOutcome::default())
         }
@@ -265,6 +271,19 @@ where
         }
         "entity" => {
             handle_entity_command(
+                sink,
+                players,
+                entities,
+                &config.server.entity_rendering,
+                play_dimension,
+                *position,
+                argument.as_str(),
+            )
+            .await?;
+            Ok(CommandOutcome::default())
+        }
+        "npc" => {
+            handle_npc_command(
                 sink,
                 players,
                 entities,
@@ -1454,6 +1473,10 @@ where
                 send_entity_usage(sink, argument).await?;
                 return Ok(());
             };
+            if kind == crate::entities::ManagedEntityKind::Npc {
+                send_entity_usage(sink, argument).await?;
+                return Ok(());
+            }
             let Some(key) = parts.next() else {
                 send_entity_usage(sink, argument).await?;
                 return Ok(());
@@ -1479,6 +1502,10 @@ where
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 data: 0,
+                look_at_players: false,
+                main_hand_event: "interact".to_string(),
+                off_hand_event: "interact_off_hand".to_string(),
+                attack_event: "attack".to_string(),
             }) {
                 Ok(entity) => entity,
                 Err(err) => {
@@ -1556,6 +1583,173 @@ where
         }
         _ => {
             send_entity_usage(sink, argument).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_npc_command<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+    dimension: &str,
+    player_position: EntityPosition,
+    argument: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut parts = argument.split_whitespace();
+    let Some(action) = parts.next() else {
+        send_npc_usage(sink, argument).await?;
+        return Ok(());
+    };
+
+    match action {
+        "list" => {
+            let mut labels = entities
+                .list_for_dimension(dimension)
+                .into_iter()
+                .filter(|entity| entity.kind == crate::entities::ManagedEntityKind::Npc)
+                .map(|entity| {
+                    format!(
+                        "{} @ {:.1} {:.1} {:.1}",
+                        entity.key, entity.position.x, entity.position.y, entity.position.z
+                    )
+                })
+                .collect::<Vec<_>>();
+            labels.sort();
+            if labels.is_empty() {
+                send_translatable(sink, "commands.datapack.list.available.none", Vec::new())
+                    .await?;
+            } else {
+                send_translatable(
+                    sink,
+                    "commands.datapack.list.available.success",
+                    vec![
+                        text_component(labels.len().to_string()),
+                        text_component(labels.join(", ")),
+                    ],
+                )
+                .await?;
+            }
+        }
+        "spawn" => {
+            let Some(key) = parts.next() else {
+                send_npc_usage(sink, argument).await?;
+                return Ok(());
+            };
+            let mut name = parts.collect::<Vec<_>>().join(" ");
+            if name.trim().is_empty() {
+                name = key.to_string();
+            }
+            let entity = match entities.spawn_local(crate::entities::EntitySpawnRequest {
+                key: key.to_string(),
+                kind: crate::entities::ManagedEntityKind::Npc,
+                entity_type: "minecraft:player".to_string(),
+                dimension: dimension.to_string(),
+                position: player_position,
+                name: name.clone(),
+                display_name: name,
+                skin_textures: String::new(),
+                skin_signature: String::new(),
+                data: 0,
+                look_at_players: false,
+                main_hand_event: "interact".to_string(),
+                off_hand_event: "interact_off_hand".to_string(),
+                attack_event: "attack".to_string(),
+            }) {
+                Ok(entity) => entity,
+                Err(err) => {
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+            entities.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
+            send_translatable(
+                sink,
+                "commands.summon.success",
+                vec![text_component(entity.key)],
+            )
+            .await?;
+        }
+        "move" => {
+            let Some(key) = parts.next() else {
+                send_npc_usage(sink, argument).await?;
+                return Ok(());
+            };
+            if entities
+                .entity_by_key(key)
+                .is_some_and(|entity| entity.kind != crate::entities::ManagedEntityKind::Npc)
+            {
+                send_npc_usage(sink, argument).await?;
+                return Ok(());
+            }
+            let moved = match entities.move_entity_local(key, player_position) {
+                Ok(entity) => entity,
+                Err(err) => {
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+            entities.send_move_to_rendered_viewers(players, rendering, &moved)?;
+            send_translatable(
+                sink,
+                "commands.teleport.success.location.single",
+                vec![
+                    text_component(key.to_string()),
+                    text_component(player_position.x.floor().to_string()),
+                    text_component(player_position.y.floor().to_string()),
+                    text_component(player_position.z.floor().to_string()),
+                ],
+            )
+            .await?;
+        }
+        "remove" => {
+            let Some(key) = parts.next() else {
+                send_npc_usage(sink, argument).await?;
+                return Ok(());
+            };
+            if entities
+                .entity_by_key(key)
+                .is_some_and(|entity| entity.kind != crate::entities::ManagedEntityKind::Npc)
+            {
+                send_npc_usage(sink, argument).await?;
+                return Ok(());
+            }
+            let removed = match entities.remove_local(key) {
+                Ok(entity) => entity,
+                Err(err) => {
+                    send_translatable(
+                        sink,
+                        "command.exception",
+                        vec![text_component(format!("{err:#}"))],
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            };
+            entities.send_remove_to_rendered_viewers(players, rendering, &removed)?;
+            send_translatable(
+                sink,
+                "commands.bossbar.remove.success",
+                vec![text_component(key.to_string())],
+            )
+            .await?;
+        }
+        _ => {
+            send_npc_usage(sink, argument).await?;
         }
     }
     Ok(())
@@ -1798,7 +1992,6 @@ fn nearest_grid_coord(value: i32, spacing: i32) -> i32 {
 fn parse_entity_kind(value: &str) -> Option<crate::entities::ManagedEntityKind> {
     match value {
         "entity" => Some(crate::entities::ManagedEntityKind::Entity),
-        "npc" => Some(crate::entities::ManagedEntityKind::Npc),
         "hologram" => Some(crate::entities::ManagedEntityKind::Hologram),
         _ => None,
     }
@@ -1817,6 +2010,24 @@ where
             "entity".to_string()
         } else {
             format!("entity {}", argument.trim())
+        },
+    )
+    .await
+}
+
+async fn send_npc_usage<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    argument: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    send_unknown_or_incomplete_command(
+        sink,
+        if argument.trim().is_empty() {
+            "npc".to_string()
+        } else {
+            format!("npc {}", argument.trim())
         },
     )
     .await

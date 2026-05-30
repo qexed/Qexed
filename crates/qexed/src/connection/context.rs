@@ -46,10 +46,14 @@ impl ServerContext {
             config.world.read_only,
             world_generator,
         )
+        .with_instances(&config.world.instances)
         .with_precompiled_chunks(crate::world::PrecompiledChunkSettings::from(
             &config.world.precompiled_chunks,
         ));
-        world.ensure_storage(&config.world.dimension)?;
+        world.ensure_configured_storage(&config.world)?;
+        plugins.set_pathfinding_service(std::sync::Arc::new(ServerPathfindingService {
+            world: std::sync::Arc::new(world.clone()),
+        }));
         let player_data = crate::player_data::PlayerDataManager::from_config(
             config.world.path.clone(),
             &config.server.player_data,
@@ -107,6 +111,45 @@ impl ServerContext {
     }
 }
 
+#[derive(Debug)]
+struct ServerPathfindingService {
+    world: std::sync::Arc<crate::world::WorldManager>,
+}
+
+impl crate::plugins::host::PathfindingService for ServerPathfindingService {
+    fn find_path(&self, query: &str) -> Option<String> {
+        let mut parts = query.split_whitespace();
+        let dimension = parts.next()?;
+        let start = qexed_packet::net_types::Position {
+            x: parts.next()?.parse().ok()?,
+            y: parts.next()?.parse().ok()?,
+            z: parts.next()?.parse().ok()?,
+        };
+        let goal = qexed_packet::net_types::Position {
+            x: parts.next()?.parse().ok()?,
+            y: parts.next()?.parse().ok()?,
+            z: parts.next()?.parse().ok()?,
+        };
+        let max_nodes = parts
+            .next()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(4096);
+        let path = crate::play::pathfinding::find_path(crate::play::pathfinding::PathQuery {
+            world: &self.world,
+            dimension,
+            start,
+            goal,
+            max_nodes,
+        })?;
+        Some(
+            path.into_iter()
+                .map(|position| format!("{},{},{}", position.x, position.y, position.z))
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
+    }
+}
+
 fn apply_plugin_npc_mutations(
     rendering: &qexed_config::app::qexed::server::EntityRendering,
     plugins: &crate::plugins::PluginManager,
@@ -152,6 +195,10 @@ fn apply_plugin_npc_mutations(
                     skin_textures: npc.skin_textures,
                     skin_signature: npc.skin_signature,
                     data: 0,
+                    look_at_players: npc.look_at_players,
+                    main_hand_event: npc.main_hand_event,
+                    off_hand_event: npc.off_hand_event,
+                    attack_event: npc.attack_event,
                 };
                 let spawned = match entities.spawn_local(entity) {
                     Ok(entity) => entity,

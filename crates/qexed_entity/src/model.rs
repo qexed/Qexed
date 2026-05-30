@@ -15,6 +15,10 @@ pub struct ManagedEntity {
     pub skin_textures: String,
     pub skin_signature: String,
     pub data: i32,
+    pub look_at_players: bool,
+    pub main_hand_event: String,
+    pub off_hand_event: String,
+    pub attack_event: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +40,10 @@ pub struct EntitySpawnRequest {
     pub skin_textures: String,
     pub skin_signature: String,
     pub data: i32,
+    pub look_at_players: bool,
+    pub main_hand_event: String,
+    pub off_hand_event: String,
+    pub attack_event: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]

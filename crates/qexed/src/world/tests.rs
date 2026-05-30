@@ -243,6 +243,68 @@ fn world_manager_writes_region_chunks() {
 }
 
 #[test]
+fn world_instance_copy_on_write_reads_source_and_overlays_written_chunks() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let instance_dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(source_dir.path()).with_instances(&[
+        qexed_config::app::qexed::server::WorldInstance {
+            id: "mine_a".to_string(),
+            dimension: "qexed:mine_a".to_string(),
+            source_dimension: "minecraft:overworld".to_string(),
+            path: instance_dir.path().to_string_lossy().into_owned(),
+            copy_on_write: true,
+        },
+    ]);
+
+    manager
+        .write_region_chunk(
+            "minecraft:overworld",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"source").unwrap(),
+        )
+        .unwrap();
+    manager
+        .write_region_chunk(
+            "minecraft:overworld",
+            1,
+            0,
+            super::region::ChunkData::zlib(b"source-neighbor").unwrap(),
+        )
+        .unwrap();
+
+    let inherited = manager
+        .load_region_chunk("qexed:mine_a", 0, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(inherited.decompress().unwrap(), b"source");
+
+    manager
+        .write_region_chunk(
+            "qexed:mine_a",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"overlay").unwrap(),
+        )
+        .unwrap();
+
+    let overlay = manager
+        .load_region_chunk("qexed:mine_a", 0, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(overlay.decompress().unwrap(), b"overlay");
+
+    let fallback_after_overlay_region_exists = manager
+        .load_region_chunk("qexed:mine_a", 1, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fallback_after_overlay_region_exists.decompress().unwrap(),
+        b"source-neighbor"
+    );
+}
+
+#[test]
 fn world_manager_loads_block_state_from_saved_region() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::new(dir.path());

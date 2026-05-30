@@ -6,6 +6,7 @@ mod events;
 mod lobby;
 mod menus;
 mod mining;
+pub(crate) mod pathfinding;
 mod recipes;
 mod scoreboard;
 mod session;
@@ -342,6 +343,7 @@ where
     let mut last_input_flags = 0u8;
     let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
+    let mut click_tracker = ClickTracker::new(&config.server.click_detection);
     let lobby = lobby::LobbyRuntime::new(&config.server.lobby);
     let mut lobby_status = if lobby.status_refresh_interval().is_some() {
         lobby.refresh_status().await
@@ -887,6 +889,31 @@ where
                 if packet_id == PlayerAction::ID {
                     let action = crate::connection::decode_payload::<PlayerAction>(&mut payload)?;
                     let sequence = action.sequence.clone();
+                    if click_tracker.record_player_action(
+                        plugins,
+                        &session.player,
+                        action.status.0,
+                    ) {
+                        pending_dig = None;
+                        if config.server.click_detection.cancel_actions {
+                            if player_action_changes_block(action.status.0) {
+                                send_block_rollback(sink, world, &play_dimension, action.location)
+                                    .await?;
+                            } else {
+                                resync_inventory_state(
+                                    sink,
+                                    players,
+                                    profile.uuid,
+                                    session.player.entity_id,
+                                    &inventory,
+                                )
+                                .await?;
+                            }
+                            send_block_change_ack(sink, sequence).await?;
+                            sink.flush().await?;
+                            continue;
+                        }
+                    }
                     if player_action_drops_item(action.status.0)
                         && (menus.hotbar_item_matches(inventory.selected_slot(), inventory.held_item())
                             || lobby.navigator_item_matches(
@@ -903,6 +930,25 @@ where
                             &inventory,
                         )
                         .await?;
+                        send_block_change_ack(sink, sequence).await?;
+                        sink.flush().await?;
+                        continue;
+                    }
+                    if player_action_drops_item(action.status.0) {
+                        drop_player_item(
+                            sink,
+                            players,
+                            entities,
+                            &play_dimension,
+                            profile.uuid,
+                            session.player.entity_id,
+                            position,
+                            &mut inventory,
+                            action.status.0,
+                            &config.server.entity_rendering,
+                        )
+                        .await?;
+                        pending_dig = None;
                         send_block_change_ack(sink, sequence).await?;
                         sink.flush().await?;
                         continue;
@@ -1089,8 +1135,16 @@ where
 
                 if packet_id == Interact::ID {
                     let interact = crate::connection::decode_payload::<Interact>(&mut payload)?;
+                    if click_tracker.record_interact(plugins, &session.player, &interact)
+                        && config.server.click_detection.cancel_actions
+                    {
+                        pending_dig = None;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if !survival.is_dead() {
-                        let plugin_outcome = if is_primary_interact(&interact) {
+                        let plugin_outcome = {
+                            let hand = npc_interact_hand(&interact);
                             let viewer_position = position;
                             handle_plugin_npc_interact(
                                 sink,
@@ -1103,7 +1157,8 @@ where
                                 entities,
                                 &session.player,
                                 interact.entity_id.0,
-                                "interact",
+                                hand.action,
+                                hand.name,
                                 &chunk_sender,
                                 &mut chunk_state,
                                 &mut position,
@@ -1117,14 +1172,24 @@ where
                                 config.server.entity_rendering.player_distance,
                             )
                             .await?
-                        } else {
-                            PluginNpcInteractOutcome::default()
                         };
                         let outcome = if plugin_outcome.handled {
                             lobby::LobbyInteractionOutcome::default()
                         } else {
+                            let proxy_context = lobby::ProxyConnectContext {
+                                server_config: &config.server,
+                                plugins,
+                                players,
+                                actor: profile.uuid,
+                            };
                             lobby
-                                .handle_entity_interact(sink, entities, interact, &lobby_status)
+                                .handle_entity_interact(
+                                    sink,
+                                    entities,
+                                    interact,
+                                    &lobby_status,
+                                    Some(&proxy_context),
+                                )
                                 .await?
                         };
                         if outcome.opened_menu {
@@ -1143,6 +1208,13 @@ where
 
                 if packet_id == Attack::ID {
                     let attack = crate::connection::decode_payload::<Attack>(&mut payload)?;
+                    if click_tracker.record_attack(plugins, &session.player, attack.entity_id.0)
+                        && config.server.click_detection.cancel_actions
+                    {
+                        pending_dig = None;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if !survival.is_dead() {
                         let viewer_position = position;
                         let plugin_outcome = handle_plugin_npc_interact(
@@ -1156,6 +1228,7 @@ where
                             entities,
                             &session.player,
                             attack.entity_id.0,
+                            "attack",
                             "attack",
                             &chunk_sender,
                             &mut chunk_state,
@@ -1224,25 +1297,41 @@ where
                         )
                         .await?;
                         sink.flush().await?;
-                    } else if lobby.handle_container_click(sink, click, &lobby_status).await? {
-                        lobby_menu_open = true;
-                        pending_dig = None;
-                        sink.flush().await?;
-                    } else if lobby.protect_world()
-                        || affects_navigator_slot
-                        || affects_fixed_menu_slot
-                    {
-                        pending_dig = None;
-                        clear_carried_item(sink).await?;
-                        resync_inventory_state(
-                            sink,
+                    } else {
+                        let proxy_context = lobby::ProxyConnectContext {
+                            server_config: &config.server,
+                            plugins,
                             players,
-                            profile.uuid,
-                            session.player.entity_id,
-                            &inventory,
-                        )
-                        .await?;
-                        sink.flush().await?;
+                            actor: profile.uuid,
+                        };
+                        if lobby
+                            .handle_container_click(
+                                sink,
+                                click,
+                                &lobby_status,
+                                Some(&proxy_context),
+                            )
+                            .await?
+                        {
+                            lobby_menu_open = true;
+                            pending_dig = None;
+                            sink.flush().await?;
+                        } else if lobby.protect_world()
+                            || affects_navigator_slot
+                            || affects_fixed_menu_slot
+                        {
+                            pending_dig = None;
+                            clear_carried_item(sink).await?;
+                            resync_inventory_state(
+                                sink,
+                                players,
+                                profile.uuid,
+                                session.player.entity_id,
+                                &inventory,
+                            )
+                            .await?;
+                            sink.flush().await?;
+                        }
                     }
                     continue;
                 }
@@ -1364,6 +1453,7 @@ where
                         .await?;
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
+                    entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !players_hidden {
                         refresh_visible_players(
                             sink,
@@ -1476,6 +1566,7 @@ where
                         .await?;
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
+                    entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !players_hidden {
                         refresh_visible_players(
                             sink,
@@ -1582,6 +1673,7 @@ where
                     }
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
+                    entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -1673,6 +1765,7 @@ where
                     }
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
+                    entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
@@ -2500,6 +2593,95 @@ struct PluginNpcInteractOutcome {
     handled: bool,
 }
 
+struct NpcInteractHand {
+    name: &'static str,
+    action: &'static str,
+}
+
+struct ClickTracker {
+    enable: bool,
+    window: Duration,
+    max_clicks: u32,
+    clicks: std::collections::VecDeque<Instant>,
+}
+
+impl ClickTracker {
+    fn new(config: &qexed_config::app::qexed::server::ClickDetection) -> Self {
+        Self {
+            enable: config.enable,
+            window: Duration::from_millis(config.window_ms.max(1)),
+            max_clicks: config.max_clicks.max(1),
+            clicks: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn record_player_action(
+        &mut self,
+        plugins: &crate::plugins::PluginManager,
+        player: &crate::players::OnlinePlayer,
+        status: i32,
+    ) -> bool {
+        if !matches!(
+            status,
+            PLAYER_ACTION_START_DESTROY_BLOCK
+                | PLAYER_ACTION_DROP_ITEM
+                | PLAYER_ACTION_DROP_ITEM_STACK
+        ) {
+            return false;
+        }
+        self.record(plugins, player, player_action_label(status))
+    }
+
+    fn record_interact(
+        &mut self,
+        plugins: &crate::plugins::PluginManager,
+        player: &crate::players::OnlinePlayer,
+        interact: &Interact,
+    ) -> bool {
+        self.record(plugins, player, npc_interact_hand(interact).action)
+    }
+
+    fn record_attack(
+        &mut self,
+        plugins: &crate::plugins::PluginManager,
+        player: &crate::players::OnlinePlayer,
+        _entity_id: i32,
+    ) -> bool {
+        self.record(plugins, player, "attack")
+    }
+
+    fn record(
+        &mut self,
+        plugins: &crate::plugins::PluginManager,
+        player: &crate::players::OnlinePlayer,
+        action: &'static str,
+    ) -> bool {
+        if !self.enable {
+            return false;
+        }
+        let now = Instant::now();
+        self.clicks.push_back(now);
+        while self
+            .clicks
+            .front()
+            .is_some_and(|time| now.duration_since(*time) > self.window)
+        {
+            self.clicks.pop_front();
+        }
+        let clicks = u32::try_from(self.clicks.len()).unwrap_or(u32::MAX);
+        if clicks <= self.max_clicks {
+            return false;
+        }
+        plugins.emit_click_detected(
+            player,
+            action.to_string(),
+            clicks,
+            self.window.as_millis() as u64,
+        );
+        true
+    }
+}
+
 #[derive(Debug, Default)]
 struct MenuActionOutcome {
     opened_menu: bool,
@@ -2540,8 +2722,20 @@ where
                 return Ok(MenuActionOutcome::default());
             }
             if lobby.enabled() {
+                let proxy_context = server_config.map(|server_config| lobby::ProxyConnectContext {
+                    server_config,
+                    plugins,
+                    players,
+                    actor,
+                });
                 lobby
-                    .transfer_to_server_with_message(sink, target, &action.message, lobby_status)
+                    .transfer_to_server_with_message(
+                        sink,
+                        target,
+                        &action.message,
+                        lobby_status,
+                        proxy_context.as_ref(),
+                    )
                     .await?;
             } else {
                 chat::apply_proxy_connect_action(
@@ -3126,6 +3320,7 @@ async fn handle_plugin_npc_interact<W>(
     player: &crate::players::OnlinePlayer,
     entity_id: i32,
     action_name: &'static str,
+    hand_name: &'static str,
     chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
     chunk_state: &mut ChunkSendState,
     position: &mut EntityPosition,
@@ -3153,12 +3348,19 @@ where
         return Ok(PluginNpcInteractOutcome::default());
     }
 
+    let configured_event = match action_name {
+        "interact" => entity.main_hand_event.clone(),
+        "interact_off_hand" => entity.off_hand_event.clone(),
+        "attack" => entity.attack_event.clone(),
+        _ => action_name.to_string(),
+    };
+
     log::debug!(
         "dispatching plugin npc interact: player={}, entity_key={}, entity_id={}, action={}",
         player.profile.username,
         entity.key,
         entity.entity_id,
-        action_name
+        configured_event
     );
 
     let response = plugins.handle_npc_interact(
@@ -3173,7 +3375,9 @@ where
             yaw: entity.position.yaw,
             pitch: entity.position.pitch,
         },
-        action_name,
+        &configured_event,
+        hand_name,
+        &configured_event,
     );
     let mut handled = response.handled || !response.actions.is_empty();
     for action in response.actions {
@@ -3205,8 +3409,27 @@ where
     Ok(PluginNpcInteractOutcome { handled })
 }
 
-fn is_primary_interact(interact: &Interact) -> bool {
-    interact.hand.0 == 0
+fn npc_interact_hand(interact: &Interact) -> NpcInteractHand {
+    if interact.hand.0 == 1 {
+        NpcInteractHand {
+            name: "off_hand",
+            action: "interact_off_hand",
+        }
+    } else {
+        NpcInteractHand {
+            name: "main_hand",
+            action: "interact",
+        }
+    }
+}
+
+fn player_action_label(status: i32) -> &'static str {
+    match status {
+        PLAYER_ACTION_START_DESTROY_BLOCK => "start_destroy_block",
+        PLAYER_ACTION_DROP_ITEM => "drop_item",
+        PLAYER_ACTION_DROP_ITEM_STACK => "drop_item_stack",
+        _ => "player_action",
+    }
 }
 
 async fn place_held_block<W>(
@@ -3487,6 +3710,70 @@ where
         players.broadcast_packets_except(actor, packets);
     }
     Ok(())
+}
+
+async fn drop_player_item<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    dimension: &str,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    position: EntityPosition,
+    inventory: &mut crate::inventory::PlayerInventory,
+    status: i32,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Some((slot, held)) = inventory.drop_selected(player_action_drop_all(status)) else {
+        return Ok(());
+    };
+    let drop_position = dropped_item_position(position);
+    let Some(drop) = entities.drop_item_with_rendering(
+        players,
+        actor,
+        dimension,
+        drop_position,
+        held,
+        rendering,
+    )?
+    else {
+        return Ok(());
+    };
+    sync_inventory_changes(
+        sink,
+        players,
+        actor,
+        entity_id,
+        inventory.selected_slot(),
+        vec![crate::inventory::InventorySlotChange::Hotbar {
+            slot,
+            item: inventory.held_item().clone(),
+        }],
+    )
+    .await?;
+    for packet in drop.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)? {
+        sink.send_raw(packet).await?;
+    }
+    Ok(())
+}
+
+fn player_action_drop_all(status: i32) -> bool {
+    status == PLAYER_ACTION_DROP_ITEM_STACK
+}
+
+fn dropped_item_position(position: EntityPosition) -> EntityPosition {
+    let yaw = f64::from(position.yaw).to_radians();
+    EntityPosition {
+        x: position.x - yaw.sin() * 0.4,
+        y: position.y + 1.3,
+        z: position.z + yaw.cos() * 0.4,
+        yaw: position.yaw,
+        pitch: position.pitch,
+        on_ground: false,
+    }
 }
 
 async fn begin_destroy_block<W>(

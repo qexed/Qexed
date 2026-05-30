@@ -9,6 +9,7 @@ use super::{
         PluginHostServices, host_config_exists, host_config_read, host_config_write,
         host_economy_balance, host_economy_currency_info, host_economy_deposit,
         host_economy_register_currency, host_economy_set_balance, host_economy_withdraw, host_log,
+        host_lottery_roll, host_pathfinding_find,
     },
 };
 
@@ -57,6 +58,12 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap("qexed", "economy_withdraw", host_economy_withdraw)
         .context("register plugin economy_withdraw API")?;
+    linker
+        .func_wrap("qexed", "lottery_roll", host_lottery_roll)
+        .context("register plugin lottery_roll API")?;
+    linker
+        .func_wrap("qexed", "pathfinding_find", host_pathfinding_find)
+        .context("register plugin pathfinding_find API")?;
     Ok(())
 }
 

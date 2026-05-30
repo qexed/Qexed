@@ -88,6 +88,10 @@ pub struct QexedServerCore {
     #[AutoDoc(key = "config.qexed.server.rate_limit_max_attempts")]
     pub rate_limit_max_attempts: u32,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.click_detection", sub)]
+    pub click_detection: crate::app::qexed::server::ClickDetection,
+
     #[AutoDoc(key = "config.qexed.server.motd")]
     pub motd: Vec<String>,
 
@@ -116,6 +120,7 @@ impl QexedServerCore {
         server.max_port_connections = self.max_port_connections;
         server.rate_limit_window_secs = self.rate_limit_window_secs;
         server.rate_limit_max_attempts = self.rate_limit_max_attempts;
+        server.click_detection = self.click_detection;
         server.motd = self.motd;
         server.code_of_conduct = self.code_of_conduct;
         server.favicon = self.favicon;
@@ -141,6 +146,7 @@ impl Default for QexedServerCore {
             max_port_connections: server.max_port_connections,
             rate_limit_window_secs: server.rate_limit_window_secs,
             rate_limit_max_attempts: server.rate_limit_max_attempts,
+            click_detection: server.click_detection,
             motd: vec![
                 t!("qexed_config.config.server.motd1").to_string(),
                 t!("qexed_config.config.server.motd2").to_string(),

@@ -1,0 +1,27 @@
+# ==== AutoDocHeader ====
+# 官方文档：https://doc.qexed.com/docs/autodoc/
+# 请不要修改 auto_doc_system_ 开头的字段
+# 例如: auto_doc_system_lang
+# 这些设置是用于自动更新配置文件语言自动注释的
+# 但是您可以修改 auto_doc_setting_ 开头的字段
+# auto_doc_setting_lang:当前文件独立语言,若为空则使用全局语言
+# auto_doc_setting_enable:启用AutoDoc功能，该功能可自动为字段根据语言、版本等信息更新注释,以及可选的值等信息
+# 在 "=======================" 下面的注释都不会被系统修改
+# 但是在 "=======================" 上面的注释都会被系统修改，请不要修改
+#
+# rules.toml: 配置文件。
+# =======================
+auto_doc_system_version_hash = "035a3f325c7d62d6e1cab8e4d791cf184a45218d"
+auto_doc_system_lang = "zh-CN"
+auto_doc_setting_lang = ""
+auto_doc_setting_enable = false
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+read_only = false
+block_updates = true
+light = "static"
+light_algorithm = "fast"
+[time]
+value = 0
+daylight_cycle = true
+tick_step = 1

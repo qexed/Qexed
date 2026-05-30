@@ -51,7 +51,7 @@ async fn handle_inner(
     );
     match handshake.next_state.0 {
         1 => handle_status(&mut packets, &mut sink, &context).await,
-        2 => handle_login(handshake, &mut packets, &mut sink, &context).await,
+        2 | 3 => handle_login(handshake, &mut packets, &mut sink, &context).await,
         state => anyhow::bail!("unsupported handshake target state: {state}"),
     }
 }

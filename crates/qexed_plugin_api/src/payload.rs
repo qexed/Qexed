@@ -156,6 +156,33 @@ pub struct PlayerInputPayload {
     pub input: PlayerInputState,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickDetectedPayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub action: String,
+    pub clicks: u32,
+    pub window_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathfindingQuery {
+    pub dimension: String,
+    pub start: BlockDropPosition,
+    pub goal: BlockDropPosition,
+    #[serde(default)]
+    pub max_nodes: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PathfindingResponse {
+    #[serde(default)]
+    pub found: bool,
+    #[serde(default)]
+    pub path: Vec<BlockDropPosition>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginCommandDefinition {
     pub name: String,
@@ -224,6 +251,10 @@ pub struct NpcInteractPayload {
     pub player: PlayerPayloadOwned,
     pub entity: NpcEntityPayload,
     pub action: String,
+    #[serde(default)]
+    pub hand: String,
+    #[serde(default)]
+    pub configured_event: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +306,14 @@ pub struct NpcUpsert {
     pub skin_textures: String,
     #[serde(default)]
     pub skin_signature: String,
+    #[serde(default)]
+    pub look_at_players: bool,
+    #[serde(default = "default_npc_main_hand_event")]
+    pub main_hand_event: String,
+    #[serde(default = "default_npc_off_hand_event")]
+    pub off_hand_event: String,
+    #[serde(default = "default_npc_attack_event")]
+    pub attack_event: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,4 +420,16 @@ fn default_dimension() -> String {
 
 fn one() -> i32 {
     1
+}
+
+fn default_npc_main_hand_event() -> String {
+    "interact".to_string()
+}
+
+fn default_npc_off_hand_event() -> String {
+    "interact_off_hand".to_string()
+}
+
+fn default_npc_attack_event() -> String {
+    "attack".to_string()
 }

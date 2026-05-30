@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use qexed_config::app::qexed::server::{
-    Lobby, LobbyAction, LobbyActionKind, LobbyBossBarColor, LobbyBossBarOverlay, LobbyMenuItem,
-    LobbyServer,
+    ForwardingMode, Lobby, LobbyAction, LobbyActionKind, LobbyBossBarColor, LobbyBossBarOverlay,
+    LobbyMenuItem, LobbyServer, Server,
 };
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::{
@@ -43,6 +43,13 @@ pub(super) struct LobbyRuntime {
 pub(super) struct LobbyInteractionOutcome {
     pub handled: bool,
     pub opened_menu: bool,
+}
+
+pub(super) struct ProxyConnectContext<'a> {
+    pub server_config: &'a Server,
+    pub plugins: &'a crate::plugins::PluginManager,
+    pub players: &'a crate::players::PlayerManager,
+    pub actor: uuid::Uuid,
 }
 
 impl LobbyRuntime {
@@ -348,6 +355,7 @@ impl LobbyRuntime {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         click: ContainerClick,
         status: &LobbyStatusSnapshot,
+        proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<bool>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -367,7 +375,8 @@ impl LobbyRuntime {
         let Some(item) = self.menu_item_for_slot(click.slot) else {
             return Ok(true);
         };
-        self.run_action(sink, &item.action, status).await?;
+        self.run_action(sink, &item.action, status, proxy_context)
+            .await?;
         Ok(true)
     }
 
@@ -377,6 +386,7 @@ impl LobbyRuntime {
         entities: &crate::entities::EntityManager,
         interact: Interact,
         status: &LobbyStatusSnapshot,
+        proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<LobbyInteractionOutcome>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -391,7 +401,7 @@ impl LobbyRuntime {
         let Some(action) = self.npc_actions.get(&entity.key) else {
             return Ok(LobbyInteractionOutcome::default());
         };
-        self.run_action(sink, action, status).await?;
+        self.run_action(sink, action, status, proxy_context).await?;
         Ok(LobbyInteractionOutcome {
             handled: true,
             opened_menu: action_opens_menu(action),
@@ -403,6 +413,7 @@ impl LobbyRuntime {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         action: &LobbyAction,
         status: &LobbyStatusSnapshot,
+        proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -427,7 +438,7 @@ impl LobbyRuntime {
                 }
             }
             LobbyActionKind::Transfer => {
-                self.transfer(sink, action, status).await?;
+                self.transfer(sink, action, status, proxy_context).await?;
             }
         }
         Ok(())
@@ -438,11 +449,12 @@ impl LobbyRuntime {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         server_id: &str,
         status: &LobbyStatusSnapshot,
+        proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<bool>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        self.transfer_to_server_with_message(sink, server_id, "", status)
+        self.transfer_to_server_with_message(sink, server_id, "", status, proxy_context)
             .await
     }
 
@@ -452,6 +464,7 @@ impl LobbyRuntime {
         server_id: &str,
         message: &str,
         status: &LobbyStatusSnapshot,
+        proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<bool>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -464,7 +477,7 @@ impl LobbyRuntime {
             target: server_id.trim().to_string(),
             message: message.trim().to_string(),
         };
-        self.transfer(sink, &action, status).await?;
+        self.transfer(sink, &action, status, proxy_context).await?;
         Ok(true)
     }
 
@@ -556,6 +569,7 @@ impl LobbyRuntime {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         action: &LobbyAction,
         status: &LobbyStatusSnapshot,
+        proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -595,6 +609,21 @@ impl LobbyRuntime {
             overlay: false,
         })
         .await?;
+        if let Some(proxy_context) = proxy_context {
+            if proxy_backend_switching_enabled(proxy_context.server_config) {
+                super::chat::apply_proxy_connect_action(
+                    sink,
+                    Some(proxy_context.server_config),
+                    proxy_context.plugins,
+                    proxy_context.players,
+                    proxy_context.actor,
+                    &server.id,
+                    "",
+                )
+                .await?;
+                return Ok(());
+            }
+        }
         sink.send(Transfer::new(server.host.trim(), server.port))
             .await?;
         Ok(())
@@ -865,6 +894,14 @@ fn normalize_resource_key(value: &str) -> String {
     } else {
         format!("minecraft:{value}")
     }
+}
+
+fn proxy_backend_switching_enabled(server_config: &Server) -> bool {
+    server_config.proxy
+        && matches!(
+            server_config.proxy_protocol,
+            ForwardingMode::Velocity | ForwardingMode::BungeeCord
+        )
 }
 
 fn menu_type_for_rows(rows: u8) -> i32 {

@@ -13,11 +13,34 @@ use super::PluginState;
 const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
 const MAX_HOST_PATH_BYTES: usize = 1024;
 const MAX_HOST_CONFIG_BYTES: usize = 256 * 1024;
+const MAX_HOST_PATHFINDING_BYTES: usize = 16 * 1024;
 const DEFAULT_CURRENCY: &str = "qexed:coin";
 
 #[derive(Debug, Default)]
 pub(super) struct PluginHostServices {
     economy: Mutex<EconomyState>,
+    pathfinding: Mutex<Option<std::sync::Arc<dyn PathfindingService>>>,
+}
+
+pub(crate) trait PathfindingService: Send + Sync + std::fmt::Debug {
+    fn find_path(&self, query: &str) -> Option<String>;
+}
+
+impl PluginHostServices {
+    pub(super) fn set_pathfinding(&self, pathfinding: std::sync::Arc<dyn PathfindingService>) {
+        *self
+            .pathfinding
+            .lock()
+            .expect("pathfinding service poisoned") = Some(pathfinding);
+    }
+
+    fn find_path(&self, query: &str) -> Option<String> {
+        self.pathfinding
+            .lock()
+            .expect("pathfinding service poisoned")
+            .as_ref()
+            .and_then(|service| service.find_path(query))
+    }
 }
 
 #[derive(Debug)]
@@ -371,6 +394,71 @@ pub(super) fn host_economy_withdraw(
         amount,
         EconomyUpdate::Withdraw,
     )
+}
+
+pub(super) fn host_lottery_roll(
+    mut caller: Caller<'_, PluginState>,
+    entries_ptr: i32,
+    entries_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(entries) = host_string(&mut caller, entries_ptr, entries_len, MAX_HOST_CONFIG_BYTES)
+    else {
+        return -1;
+    };
+    let mut total = 0u64;
+    let mut parsed = Vec::<(u64, String)>::new();
+    for line in entries.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((weight, value)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(weight) = weight.trim().parse::<u64>() else {
+            continue;
+        };
+        if weight == 0 {
+            continue;
+        }
+        total = total.saturating_add(weight);
+        parsed.push((weight, value.trim().to_string()));
+    }
+    if total == 0 || parsed.is_empty() {
+        return -1;
+    }
+
+    let mut pick = rand::Rng::gen_range(&mut rand::thread_rng(), 0..total);
+    for (weight, value) in parsed {
+        if pick < weight {
+            return write_host_response(&mut caller, out_ptr, out_len, value.as_bytes());
+        }
+        pick -= weight;
+    }
+    -1
+}
+
+pub(super) fn host_pathfinding_find(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(query) = host_string(
+        &mut caller,
+        query_ptr,
+        query_len,
+        MAX_HOST_PATHFINDING_BYTES,
+    ) else {
+        return -1;
+    };
+    let Some(response) = caller.data().services.find_path(&query) else {
+        return -1;
+    };
+    write_host_response(&mut caller, out_ptr, out_len, response.as_bytes())
 }
 
 fn host_memory_bytes<'a>(

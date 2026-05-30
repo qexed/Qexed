@@ -18,6 +18,8 @@ pub enum PluginEvent {
     PlayerBlockStep,
     PlayerMove,
     PlayerInput,
+    ClickDetected,
+    Pathfinding,
 }
 
 impl PluginEvent {
@@ -41,6 +43,8 @@ impl PluginEvent {
             Self::PlayerBlockStep => "qexed_plugin_player_block_step",
             Self::PlayerMove => "qexed_plugin_player_move",
             Self::PlayerInput => "qexed_plugin_player_input",
+            Self::ClickDetected => "qexed_plugin_click_detected",
+            Self::Pathfinding => "qexed_plugin_pathfinding",
         }
     }
 }

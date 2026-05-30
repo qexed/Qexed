@@ -151,6 +151,26 @@ impl PlayerInventory {
         Some((slot, held))
     }
 
+    pub fn drop_selected(&mut self, whole_stack: bool) -> Option<(usize, Slot)> {
+        let slot = self.selected;
+        let count = self.hotbar[slot].item_count.0;
+        if count <= 0 {
+            return None;
+        }
+
+        let mut dropped = self.hotbar[slot].clone();
+        if whole_stack || count == 1 {
+            self.hotbar[slot] = empty_slot();
+        } else {
+            dropped.item_count = VarInt(1);
+            self.hotbar[slot].item_count = VarInt(count - 1);
+        }
+
+        let held = self.hotbar[slot].clone();
+        self.set_equipment_slot(Equipment::MAINHAND, held);
+        Some((slot, dropped))
+    }
+
     pub fn can_accept_item_stack(&self, item: &Slot) -> bool {
         item_stack_capacity(&self.hotbar, item) + item_stack_capacity(&self.main, item)
             >= item.item_count.0.max(0)

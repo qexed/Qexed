@@ -86,6 +86,10 @@ pub extern "C" fn qexed_plugin_npc_mutations(_ptr: i32, _len: i32) -> i64 {
                 display_name: "狗策划".to_string(),
                 skin_textures: String::new(),
                 skin_signature: String::new(),
+                look_at_players: true,
+                main_hand_event: "interact".to_string(),
+                off_hand_event: "interact_off_hand".to_string(),
+                attack_event: "attack".to_string(),
             },
         }],
     })

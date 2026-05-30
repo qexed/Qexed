@@ -55,6 +55,10 @@ qexed:
       description:
         en: "Lists or manages runtime entities and NPCs."
         zh-CN: "列出或管理运行时实体和 NPC。"
+    npc:
+      description:
+        en: "Lists or manages runtime NPCs."
+        zh-CN: "列出或管理运行时 NPC。"
     structure:
       description:
         en: "Lists, places, or locates built-in structures."

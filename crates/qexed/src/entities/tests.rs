@@ -153,6 +153,10 @@ fn runtime_entities_can_spawn_move_and_remove() {
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 data: 0,
+                look_at_players: false,
+                main_hand_event: "interact".to_string(),
+                off_hand_event: "interact_off_hand".to_string(),
+                attack_event: "attack".to_string(),
             },
         )
         .unwrap();
@@ -208,6 +212,10 @@ fn entity_view_simplifies_stacked_same_type_entities() {
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 data: 0,
+                look_at_players: false,
+                main_hand_event: "interact".to_string(),
+                off_hand_event: "interact_off_hand".to_string(),
+                attack_event: "attack".to_string(),
             })
             .unwrap();
     }
@@ -264,6 +272,10 @@ fn npc_spawn_packets_include_display_name_in_player_info() {
         skin_textures: String::new(),
         skin_signature: String::new(),
         data: 0,
+        look_at_players: true,
+        main_hand_event: "right_click".to_string(),
+        off_hand_event: "left_click".to_string(),
+        attack_event: "attack".to_string(),
     };
 
     let packets = entity.spawn_packets().unwrap();
@@ -307,6 +319,10 @@ fn npc_spawn_packets_include_skin_textures_in_player_info() {
         skin_textures: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYWJjIn19fQ==".to_string(),
         skin_signature: "signed-by-mojang".to_string(),
         data: 0,
+        look_at_players: false,
+        main_hand_event: "interact".to_string(),
+        off_hand_event: "interact_off_hand".to_string(),
+        attack_event: "attack".to_string(),
     };
 
     let packets = entity.spawn_packets().unwrap();

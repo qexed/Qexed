@@ -50,6 +50,8 @@ pub fn command_tree_for_lobby_with_extra(
             append_scoreboard_command_nodes(&mut nodes)
         } else if *command == "entity" {
             append_entity_command_nodes(&mut nodes)
+        } else if *command == "npc" {
+            append_npc_command_nodes(&mut nodes)
         } else if *command == "structure" {
             append_structure_command_nodes(&mut nodes)
         } else {
@@ -307,13 +309,6 @@ fn append_entity_command_nodes(nodes: &mut Vec<Node>) -> i32 {
         name: Some("entity".to_string()),
         ..Node::default()
     });
-    let spawn_npc_index = nodes.len() as i32;
-    nodes.push(Node {
-        flags: 0x01 | 0x04,
-        children: Vec::new(),
-        name: Some("npc".to_string()),
-        ..Node::default()
-    });
     let spawn_hologram_index = nodes.len() as i32;
     nodes.push(Node {
         flags: 0x01 | 0x04,
@@ -336,18 +331,70 @@ fn append_entity_command_nodes(nodes: &mut Vec<Node>) -> i32 {
         VarInt(move_index),
         VarInt(remove_index),
     ];
-    nodes[spawn_index as usize].children = vec![
-        VarInt(spawn_entity_index),
-        VarInt(spawn_npc_index),
-        VarInt(spawn_hologram_index),
-    ];
+    nodes[spawn_index as usize].children =
+        vec![VarInt(spawn_entity_index), VarInt(spawn_hologram_index)];
     nodes[move_index as usize].children = vec![VarInt(move_id_index)];
     nodes[remove_index as usize].children = vec![VarInt(remove_id_index)];
     nodes[spawn_entity_index as usize].children = vec![VarInt(spawn_params_index)];
-    nodes[spawn_npc_index as usize].children = vec![VarInt(spawn_params_index)];
     nodes[spawn_hologram_index as usize].children = vec![VarInt(spawn_params_index)];
 
     entity_index
+}
+
+fn append_npc_command_nodes(nodes: &mut Vec<Node>) -> i32 {
+    let npc_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("npc".to_string()),
+        ..Node::default()
+    });
+
+    let list_index = nodes.len() as i32;
+    nodes.push(executable_literal("list"));
+
+    let spawn_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("spawn".to_string()),
+        ..Node::default()
+    });
+
+    let move_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("move".to_string()),
+        ..Node::default()
+    });
+
+    let remove_index = nodes.len() as i32;
+    nodes.push(Node {
+        flags: 0x01 | 0x04,
+        children: Vec::new(),
+        name: Some("remove".to_string()),
+        ..Node::default()
+    });
+
+    let spawn_params_index = nodes.len() as i32;
+    nodes.push(greedy_string_argument("params"));
+    let move_id_index = nodes.len() as i32;
+    nodes.push(word_string_argument("id", true));
+    let remove_id_index = nodes.len() as i32;
+    nodes.push(word_string_argument("id", true));
+
+    nodes[npc_index as usize].children = vec![
+        VarInt(list_index),
+        VarInt(spawn_index),
+        VarInt(move_index),
+        VarInt(remove_index),
+    ];
+    nodes[spawn_index as usize].children = vec![VarInt(spawn_params_index)];
+    nodes[move_index as usize].children = vec![VarInt(move_id_index)];
+    nodes[remove_index as usize].children = vec![VarInt(remove_id_index)];
+
+    npc_index
 }
 
 fn append_structure_command_nodes(nodes: &mut Vec<Node>) -> i32 {
@@ -835,6 +882,10 @@ fn localized_builtin_help_entry(command: &str, locale: &str) -> Option<CommandHe
             "/entity list|spawn|move|remove ...",
             "qexed.command.entity.description",
         ),
+        "npc" => (
+            "/npc list|spawn|move|remove ...",
+            "qexed.command.npc.description",
+        ),
         "structure" => (
             "/structure list|place|locate ...",
             "qexed.command.structure.description",
@@ -860,6 +911,7 @@ fn builtin_command_literals() -> &'static [&'static str] {
         "gamerule",
         "scoreboard",
         "entity",
+        "npc",
         "structure",
     ]
 }
@@ -963,7 +1015,7 @@ mod tests {
     fn command_tree_contains_help_and_list() {
         let tree = super::command_tree();
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes[0].children.len(), 12);
+        assert_eq!(tree.nodes[0].children.len(), 13);
 
         let root_command_names = tree.nodes[0]
             .children
@@ -986,6 +1038,7 @@ mod tests {
         assert!(root_command_names.contains(&"gamerule"));
         assert!(root_command_names.contains(&"scoreboard"));
         assert!(root_command_names.contains(&"entity"));
+        assert!(root_command_names.contains(&"npc"));
         assert!(root_command_names.contains(&"structure"));
 
         let mut buf = bytes::BytesMut::new();
@@ -1059,7 +1112,7 @@ mod tests {
     fn entity_command_contains_subcommands() {
         let tree = super::command_tree_for(&["entity"]);
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes.len(), 12);
+        assert_eq!(tree.nodes.len(), 11);
         assert_eq!(tree.nodes[1].name.as_deref(), Some("entity"));
         assert_eq!(
             tree.nodes[1].children,
@@ -1075,11 +1128,34 @@ mod tests {
         assert_eq!(tree.nodes[4].name.as_deref(), Some("move"));
         assert_eq!(tree.nodes[5].name.as_deref(), Some("remove"));
         assert_eq!(tree.nodes[6].name.as_deref(), Some("entity"));
-        assert_eq!(tree.nodes[7].name.as_deref(), Some("npc"));
-        assert_eq!(tree.nodes[8].name.as_deref(), Some("hologram"));
-        assert_eq!(tree.nodes[9].name.as_deref(), Some("params"));
+        assert_eq!(tree.nodes[7].name.as_deref(), Some("hologram"));
+        assert_eq!(tree.nodes[8].name.as_deref(), Some("params"));
+        assert_eq!(tree.nodes[9].name.as_deref(), Some("id"));
         assert_eq!(tree.nodes[10].name.as_deref(), Some("id"));
-        assert_eq!(tree.nodes[11].name.as_deref(), Some("id"));
+    }
+
+    #[test]
+    fn npc_command_contains_subcommands() {
+        let tree = super::command_tree_for(&["npc"]);
+        assert_eq!(tree.root_index.0, 0);
+        assert_eq!(tree.nodes.len(), 9);
+        assert_eq!(tree.nodes[1].name.as_deref(), Some("npc"));
+        assert_eq!(
+            tree.nodes[1].children,
+            vec![
+                qexed_packet::net_types::VarInt(2),
+                qexed_packet::net_types::VarInt(3),
+                qexed_packet::net_types::VarInt(4),
+                qexed_packet::net_types::VarInt(5),
+            ]
+        );
+        assert_eq!(tree.nodes[2].name.as_deref(), Some("list"));
+        assert_eq!(tree.nodes[3].name.as_deref(), Some("spawn"));
+        assert_eq!(tree.nodes[4].name.as_deref(), Some("move"));
+        assert_eq!(tree.nodes[5].name.as_deref(), Some("remove"));
+        assert_eq!(tree.nodes[6].name.as_deref(), Some("params"));
+        assert_eq!(tree.nodes[7].name.as_deref(), Some("id"));
+        assert_eq!(tree.nodes[8].name.as_deref(), Some("id"));
     }
 
     #[test]

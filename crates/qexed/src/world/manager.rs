@@ -20,6 +20,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct WorldManager {
     save_path: std::path::PathBuf,
+    instances: Arc<std::collections::HashMap<String, WorldInstanceStorage>>,
     read_only: bool,
     light_mode: WorldLightMode,
     light_algorithm: WorldLightAlgorithm,
@@ -408,6 +409,7 @@ impl WorldManager {
     ) -> Self {
         Self {
             save_path: save_path.into(),
+            instances: Default::default(),
             read_only,
             light_mode,
             light_algorithm,
@@ -430,6 +432,20 @@ impl WorldManager {
 
     pub fn with_precompiled_chunks(mut self, settings: PrecompiledChunkSettings) -> Self {
         self.precompiled_chunks = settings;
+        self
+    }
+
+    pub fn with_instances(
+        mut self,
+        instances: &[qexed_config::app::qexed::server::WorldInstance],
+    ) -> Self {
+        self.instances = Arc::new(
+            instances
+                .iter()
+                .filter_map(|instance| WorldInstanceStorage::from_config(&self.save_path, instance))
+                .map(|instance| (instance.dimension.clone(), instance))
+                .collect(),
+        );
         self
     }
 
@@ -807,20 +823,60 @@ impl WorldManager {
             "从存档读取区块: dimension={dimension}, chunk=({chunk_x}, {chunk_z}), root={}",
             self.save_path.display()
         );
-        let region_path = self.dimension_region_path(dimension).join(format!(
-            "r.{}.{}.mca",
-            floor_div(chunk_x, 32),
-            floor_div(chunk_z, 32)
-        ));
+        let region_path = self
+            .dimension_region_path(dimension)
+            .join(region_file_name(chunk_x, chunk_z));
         if !region_path.exists() {
-            return Ok(None);
+            let Some(instance) = self.instances.get(dimension) else {
+                return Ok(None);
+            };
+            if !instance.copy_on_write {
+                return Ok(None);
+            }
+            return self.load_instance_source_chunk(instance, chunk_x, chunk_z);
         }
 
         let region = region::AnvilRegion::from_file(&region_path)
             .with_context(|| format!("读取区域文件失败: {}", region_path.display()))?;
-        region
+        let overlay_chunk = region
             .read_chunk(chunk_x, chunk_z)
-            .with_context(|| format!("读取区块失败: {chunk_x}, {chunk_z}"))
+            .with_context(|| format!("读取区块失败: {chunk_x}, {chunk_z}"))?;
+        if overlay_chunk.is_some() {
+            return Ok(overlay_chunk);
+        }
+
+        let Some(instance) = self.instances.get(dimension) else {
+            return Ok(None);
+        };
+        if !instance.copy_on_write {
+            return Ok(None);
+        }
+
+        self.load_instance_source_chunk(instance, chunk_x, chunk_z)
+    }
+
+    fn load_instance_source_chunk(
+        &self,
+        instance: &WorldInstanceStorage,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<region::ChunkData>> {
+        let source_region_path = instance
+            .source_region_path(&self.save_path)
+            .join(region_file_name(chunk_x, chunk_z));
+        if !source_region_path.exists() {
+            return Ok(None);
+        }
+        let source_region =
+            region::AnvilRegion::from_file(&source_region_path).with_context(|| {
+                format!(
+                    "read source region failed: {}",
+                    source_region_path.display()
+                )
+            })?;
+        source_region
+            .read_chunk(chunk_x, chunk_z)
+            .with_context(|| format!("read source chunk failed: {chunk_x}, {chunk_z}"))
     }
 
     pub fn load_region_chunk(
@@ -938,6 +994,20 @@ impl WorldManager {
 
         std::fs::create_dir_all(self.dimension_region_path(dimension))
             .with_context(|| format!("创建世界存档目录失败: {}", self.save_path.display()))
+    }
+
+    pub fn ensure_configured_storage(
+        &self,
+        world: &qexed_config::app::qexed::server::World,
+    ) -> Result<()> {
+        self.ensure_storage(&world.dimension)?;
+        for instance in &world.instances {
+            let dimension = instance.dimension.trim();
+            if !dimension.is_empty() {
+                self.ensure_storage(dimension)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn place_block(
@@ -1345,13 +1415,85 @@ impl WorldManager {
     }
 
     fn dimension_region_path(&self, dimension: &str) -> std::path::PathBuf {
-        match dimension {
-            "minecraft:the_nether" => self.save_path.join("DIM-1").join("region"),
-            "minecraft:the_end" => self.save_path.join("DIM1").join("region"),
-            _ => self.save_path.join("region"),
+        if let Some(instance) = self.instances.get(dimension) {
+            return vanilla_dimension_region_path(&instance.path, dimension);
         }
+        vanilla_dimension_region_path(&self.save_path, dimension)
+    }
+}
+
+fn vanilla_dimension_region_path(root: &std::path::Path, dimension: &str) -> std::path::PathBuf {
+    match dimension {
+        "minecraft:the_nether" => root.join("DIM-1").join("region"),
+        "minecraft:the_end" => root.join("DIM1").join("region"),
+        _ => root.join("region"),
+    }
+}
+
+fn region_file_name(chunk_x: i32, chunk_z: i32) -> String {
+    format!(
+        "r.{}.{}.mca",
+        floor_div(chunk_x, 32),
+        floor_div(chunk_z, 32)
+    )
+}
+
+#[derive(Clone, Debug)]
+struct WorldInstanceStorage {
+    dimension: String,
+    path: std::path::PathBuf,
+    source_dimension: String,
+    source_path: std::path::PathBuf,
+    copy_on_write: bool,
+}
+
+impl WorldInstanceStorage {
+    fn from_config(
+        default_save_path: &std::path::Path,
+        config: &qexed_config::app::qexed::server::WorldInstance,
+    ) -> Option<Self> {
+        let dimension = config.dimension.trim();
+        if dimension.is_empty() {
+            return None;
+        }
+        let path = if config.path.trim().is_empty() {
+            default_save_path.join(sanitize_dimension_path(dimension))
+        } else {
+            std::path::PathBuf::from(config.path.trim())
+        };
+        Some(Self {
+            dimension: dimension.to_string(),
+            path,
+            source_dimension: config.source_dimension.trim().to_string(),
+            source_path: default_save_path.to_path_buf(),
+            copy_on_write: config.copy_on_write,
+        })
     }
 
+    fn source_region_path(&self, default_save_path: &std::path::Path) -> std::path::PathBuf {
+        let source_root = if self.source_path.as_os_str().is_empty() {
+            default_save_path
+        } else {
+            &self.source_path
+        };
+        vanilla_dimension_region_path(source_root, &self.source_dimension)
+    }
+}
+
+fn sanitize_dimension_path(dimension: &str) -> String {
+    dimension
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+impl WorldManager {
     fn persist_block_change(
         &self,
         dimension: &str,

@@ -205,6 +205,21 @@ config:
       rate_limit_max_attempts:
         en: "Maximum connection attempts allowed per IP within the rate limit window"
         zh-CN: "同 IP 在时间窗口内允许的最大连接次数"
+      click_detection:
+        en: "Click-rate detection settings"
+        zh-CN: "连点器检测设置"
+        enable:
+          en: "Enable click-rate detection for mining, attacks, interactions, and item drops"
+          zh-CN: "启用挖掘、攻击、交互和丢弃物品的连点检测"
+        window_ms:
+          en: "Detection window in milliseconds"
+          zh-CN: "检测窗口，单位毫秒"
+        max_clicks:
+          en: "Maximum clicks allowed inside the detection window"
+          zh-CN: "检测窗口内允许的最大点击次数"
+        cancel_actions:
+          en: "Cancel the player action after the click-rate threshold is exceeded"
+          zh-CN: "超过连点阈值后取消玩家动作"
       motd:
         en: "Random server description lines"
         zh-CN: "服务器描述随机内容"
@@ -259,6 +274,24 @@ config:
         light_algorithm:
           en: "World lighting calculation algorithm: fast or ray_trace"
           zh-CN: "世界光照计算算法：fast 或 ray_trace"
+        instances:
+          en: "Copy-on-write world instances that start from a source dimension and persist changed chunks separately"
+          zh-CN: "写时复制世界副本；从源维度读取初始区块，并将变更区块单独持久化"
+          id:
+            en: "Stable world instance id"
+            zh-CN: "稳定的世界副本标识"
+          dimension:
+            en: "Dimension resource key exposed to players for this instance"
+            zh-CN: "该副本暴露给玩家的维度资源键"
+          source_dimension:
+            en: "Source dimension used when the instance has no copied chunk"
+            zh-CN: "副本尚未复制区块时读取的源维度"
+          path:
+            en: "Storage path for chunks changed by this instance. Empty uses a sanitized dimension folder under the main world path."
+            zh-CN: "该副本变更区块的存储路径。留空时使用主世界目录下按维度名清理后的目录。"
+          copy_on_write:
+            en: "Read unchanged chunks from the source dimension and write changed chunks to this instance path"
+            zh-CN: "从源维度读取未变更区块，并将变更区块写入该副本路径"
         precompiled_chunks:
           en: "Precompiled chunk packet cache. Recommended for read-only worlds because it reuses encoded chunk packets instead of rebuilding complete chunk objects for every player."
           zh-CN: "预编译区块数据包缓存。只读世界推荐启用，它会复用已编码的区块数据包，避免为每个玩家重复构建完整区块对象。"
@@ -514,6 +547,18 @@ config:
           skin_player_id:
             en: "Player name or UUID used to resolve skin automatically when explicit texture fields are empty"
             zh-CN: "当显式纹理字段为空时，用于自动解析皮肤的玩家名或 UUID"
+          look_at_players:
+            en: "Rotate this NPC to face nearby players when it is visible"
+            zh-CN: "NPC 可见时自动转向附近玩家"
+          main_hand_event:
+            en: "Plugin API event name emitted when the NPC is clicked with the main hand"
+            zh-CN: "主手点击该 NPC 时发送给插件 API 的事件名"
+          off_hand_event:
+            en: "Plugin API event name emitted when the NPC is clicked with the off hand"
+            zh-CN: "副手点击该 NPC 时发送给插件 API 的事件名"
+          attack_event:
+            en: "Plugin API event name emitted when the NPC is attacked"
+            zh-CN: "攻击该 NPC 时发送给插件 API 的事件名"
           x:
             en: "Entity X coordinate"
             zh-CN: "实体 X 坐标"

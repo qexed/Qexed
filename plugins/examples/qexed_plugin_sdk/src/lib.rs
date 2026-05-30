@@ -60,6 +60,10 @@ unsafe extern "C" {
         currency_len: i32,
         amount: i64,
     ) -> i64;
+    #[link_name = "lottery_roll"]
+    fn host_lottery_roll(entries_ptr: i32, entries_len: i32, out_ptr: i32, out_len: i32) -> i64;
+    #[link_name = "pathfinding_find"]
+    fn host_pathfinding_find(query_ptr: i32, query_len: i32, out_ptr: i32, out_len: i32) -> i64;
 }
 
 const HOST_READ_INITIAL_BYTES: usize = 4096;
@@ -233,6 +237,52 @@ pub fn economy_withdraw(player: &str, currency: &str, amount: i64) -> Option<i64
     economy_call(player, currency, |player_ptr, player_len, currency_ptr, currency_len| unsafe {
         host_economy_withdraw(player_ptr, player_len, currency_ptr, currency_len, amount)
     })
+}
+
+pub fn lottery_roll(entries: &[(&str, u64)]) -> Option<String> {
+    let mut encoded = String::new();
+    for (value, weight) in entries {
+        if *weight == 0 || value.trim().is_empty() {
+            continue;
+        }
+        encoded.push_str(&weight.to_string());
+        encoded.push('\t');
+        encoded.push_str(value.trim());
+        encoded.push('\n');
+    }
+    let encoded_len = i32_len(encoded.as_bytes())?;
+    let bytes = read_host_buffer(|out_ptr, out_len| unsafe {
+        host_lottery_roll(encoded.as_ptr() as i32, encoded_len, out_ptr, out_len)
+    })?;
+    String::from_utf8(bytes).ok()
+}
+
+pub fn pathfinding_find(
+    dimension: &str,
+    start: (i32, i32, i32),
+    goal: (i32, i32, i32),
+    max_nodes: usize,
+) -> Option<Vec<(i32, i32, i32)>> {
+    let query = format!(
+        "{} {} {} {} {} {} {} {}",
+        dimension, start.0, start.1, start.2, goal.0, goal.1, goal.2, max_nodes
+    );
+    let query_len = i32_len(query.as_bytes())?;
+    let bytes = read_host_buffer(|out_ptr, out_len| unsafe {
+        host_pathfinding_find(query.as_ptr() as i32, query_len, out_ptr, out_len)
+    })?;
+    let encoded = String::from_utf8(bytes).ok()?;
+    encoded
+        .split(';')
+        .map(|point| {
+            let mut parts = point.split(',');
+            Some((
+                parts.next()?.parse().ok()?,
+                parts.next()?.parse().ok()?,
+                parts.next()?.parse().ok()?,
+            ))
+        })
+        .collect()
 }
 
 pub unsafe fn payload_bytes<'a>(ptr: i32, len: i32) -> Option<&'a [u8]> {

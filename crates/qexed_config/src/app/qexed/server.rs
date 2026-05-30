@@ -71,6 +71,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.rate_limit_max_attempts")]
     pub rate_limit_max_attempts: u32,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.click_detection", sub)]
+    pub click_detection: ClickDetection,
+
     #[AutoDoc(key = "config.qexed.server.motd")]
     pub motd: Vec<String>,
 
@@ -152,6 +156,7 @@ impl Default for Server {
             proxy_token: nanoid::nanoid!(),
             rate_limit_window_secs: 60,
             rate_limit_max_attempts: 6,
+            click_detection: ClickDetection::default(),
             motd: vec![
                 t!("qexed_config.config.server.motd1").to_string(),
                 t!("qexed_config.config.server.motd2").to_string(),
@@ -1016,6 +1021,22 @@ pub struct Entity {
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.list.data")]
     pub data: i32,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.look_at_players")]
+    pub look_at_players: bool,
+
+    #[serde(default = "default_npc_main_hand_event")]
+    #[AutoDoc(key = "config.qexed.server.entities.list.main_hand_event")]
+    pub main_hand_event: String,
+
+    #[serde(default = "default_npc_off_hand_event")]
+    #[AutoDoc(key = "config.qexed.server.entities.list.off_hand_event")]
+    pub off_hand_event: String,
+
+    #[serde(default = "default_npc_attack_event")]
+    #[AutoDoc(key = "config.qexed.server.entities.list.attack_event")]
+    pub attack_event: String,
 }
 
 impl Default for Entity {
@@ -1036,6 +1057,10 @@ impl Default for Entity {
             pitch: 0.0,
             on_ground: true,
             data: 0,
+            look_at_players: false,
+            main_hand_event: default_npc_main_hand_event(),
+            off_hand_event: default_npc_off_hand_event(),
+            attack_event: default_npc_attack_event(),
         }
     }
 }
@@ -1051,6 +1076,60 @@ pub enum EntityKind {
 
 fn default_entity_type() -> String {
     "minecraft:armor_stand".to_string()
+}
+
+fn default_npc_main_hand_event() -> String {
+    "interact".to_string()
+}
+
+fn default_npc_off_hand_event() -> String {
+    "interact_off_hand".to_string()
+}
+
+fn default_npc_attack_event() -> String {
+    "attack".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct ClickDetection {
+    #[serde(default = "default_click_detection_enable")]
+    #[AutoDoc(key = "config.qexed.server.click_detection.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_click_detection_window_ms")]
+    #[AutoDoc(key = "config.qexed.server.click_detection.window_ms")]
+    pub window_ms: u64,
+
+    #[serde(default = "default_click_detection_max_clicks")]
+    #[AutoDoc(key = "config.qexed.server.click_detection.max_clicks")]
+    pub max_clicks: u32,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.click_detection.cancel_actions")]
+    pub cancel_actions: bool,
+}
+
+impl Default for ClickDetection {
+    fn default() -> Self {
+        Self {
+            enable: default_click_detection_enable(),
+            window_ms: default_click_detection_window_ms(),
+            max_clicks: default_click_detection_max_clicks(),
+            cancel_actions: false,
+        }
+    }
+}
+
+fn default_click_detection_enable() -> bool {
+    true
+}
+
+fn default_click_detection_window_ms() -> u64 {
+    1000
+}
+
+fn default_click_detection_max_clicks() -> u32 {
+    18
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -1672,6 +1751,10 @@ pub struct World {
 
     #[AutoDoc(key = "config.qexed.server.world.spawn", sub)]
     pub spawn: Spawn,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.world.instances", sub)]
+    pub instances: Vec<WorldInstance>,
 }
 
 impl Default for World {
@@ -1695,6 +1778,7 @@ impl Default for World {
             precompiled_chunks: PrecompiledChunks::default(),
             gpu: WorldGpu::default(),
             spawn: Spawn::default(),
+            instances: Vec::new(),
         }
     }
 }
@@ -1736,6 +1820,49 @@ fn default_chunk_update_delay_ms() -> u64 {
 
 fn default_spawn_protection_radius() -> i32 {
     16
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct WorldInstance {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.instances.id")]
+    pub id: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.instances.dimension")]
+    pub dimension: String,
+
+    #[serde(default = "default_world_instance_source_dimension")]
+    #[AutoDoc(key = "config.qexed.server.world.instances.source_dimension")]
+    pub source_dimension: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.instances.path")]
+    pub path: String,
+
+    #[serde(default = "default_world_instance_copy_on_write")]
+    #[AutoDoc(key = "config.qexed.server.world.instances.copy_on_write")]
+    pub copy_on_write: bool,
+}
+
+impl Default for WorldInstance {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            dimension: String::new(),
+            source_dimension: default_world_instance_source_dimension(),
+            path: String::new(),
+            copy_on_write: default_world_instance_copy_on_write(),
+        }
+    }
+}
+
+fn default_world_instance_source_dimension() -> String {
+    "minecraft:overworld".to_string()
+}
+
+fn default_world_instance_copy_on_write() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]

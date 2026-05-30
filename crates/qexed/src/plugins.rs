@@ -9,16 +9,16 @@ use wasmtime::Engine;
 
 mod event;
 mod files;
-mod host;
+pub(crate) mod host;
 mod instance;
 
 pub use qexed_plugin_api::{
     BlockDropPosition, BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition,
-    ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
-    NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
-    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerInputPayload,
-    PlayerMovePayload, PlayerPayloadOwned, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
+    ClickDetectedPayload, ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload,
+    NpcInteractPayload, NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext,
+    PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
+    PlayerInputPayload, PlayerMovePayload, PlayerPayloadOwned, PluginCommandDefinition,
+    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
 };
 
 use event::PluginEvent;
@@ -35,6 +35,7 @@ pub struct PluginManager {
     plugins: OnceLock<Mutex<Vec<PluginInstance>>>,
     initialized: Mutex<bool>,
     path: std::path::PathBuf,
+    services: Arc<host::PluginHostServices>,
 }
 
 impl PluginManager {
@@ -47,6 +48,7 @@ impl PluginManager {
             plugins: OnceLock::new(),
             initialized: Mutex::new(false),
             path: path.as_ref().to_path_buf(),
+            services: Arc::new(host::PluginHostServices::default()),
         }
     }
 
@@ -85,11 +87,11 @@ impl PluginManager {
 
     fn ensure_loaded(&self) -> &Mutex<Vec<PluginInstance>> {
         self.plugins
-            .get_or_init(|| Mutex::new(load_plugins(&self.path)))
+            .get_or_init(|| Mutex::new(load_plugins(&self.path, self.services.clone())))
     }
 }
 
-fn load_plugins(path: &Path) -> Vec<PluginInstance> {
+fn load_plugins(path: &Path, services: Arc<host::PluginHostServices>) -> Vec<PluginInstance> {
     if let Err(err) = fs::create_dir_all(path) {
         log::warn!(
             "plugin directory create failed: path={}, error={err}",
@@ -99,7 +101,6 @@ fn load_plugins(path: &Path) -> Vec<PluginInstance> {
     }
 
     let engine = Engine::default();
-    let services = Arc::new(host::PluginHostServices::default());
     let mut plugins = plugin_files(path)
         .into_iter()
         .filter_map(
@@ -368,16 +369,44 @@ impl PluginManager {
         result
     }
 
+    pub fn emit_click_detected(
+        &self,
+        player: &OnlinePlayer,
+        action: String,
+        clicks: u32,
+        window_ms: u64,
+    ) {
+        self.emit_encoded(
+            PluginEvent::ClickDetected,
+            &ClickDetectedPayload {
+                player: player_payload_owned(player),
+                dimension: player.dimension.clone(),
+                position: player_position_payload(player.position),
+                action,
+                clicks,
+                window_ms,
+            },
+        );
+    }
+
+    pub fn set_pathfinding_service(&self, service: Arc<dyn host::PathfindingService>) {
+        self.services.set_pathfinding(service);
+    }
+
     pub fn handle_npc_interact(
         &self,
         player: &OnlinePlayer,
         entity: NpcEntityPayload,
         action: &str,
+        hand: &str,
+        configured_event: &str,
     ) -> PluginCommandResponse {
         let payload = match encode_plugin_payload(&NpcInteractPayload {
             player: player_payload_owned(player),
             entity,
             action: action.to_string(),
+            hand: hand.to_string(),
+            configured_event: configured_event.to_string(),
         }) {
             Ok(payload) => payload,
             Err(err) => {
@@ -435,6 +464,7 @@ impl PluginManager {
             plugins,
             initialized: Mutex::new(true),
             path: std::path::PathBuf::new(),
+            services: Arc::new(host::PluginHostServices::default()),
         }
     }
 

@@ -262,6 +262,70 @@ impl EntityManager {
         self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
     }
 
+    pub fn update_look_at_npcs(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+    ) -> Result<()> {
+        let viewers = players.list_except(uuid::Uuid::nil());
+        if viewers.is_empty() {
+            return Ok(());
+        }
+
+        let mut updates = Vec::new();
+        {
+            let mut entities = self.entities.lock().expect("entity manager poisoned");
+            for entity in entities.iter_mut() {
+                if entity.kind != ManagedEntityKind::Npc || !entity.look_at_players {
+                    continue;
+                }
+                let Some(target) = viewers
+                    .iter()
+                    .filter(|player| player.dimension == entity.dimension)
+                    .filter(|player| {
+                        within_render_distance(
+                            entity.position,
+                            player.position,
+                            rendering.npc_distance,
+                        )
+                    })
+                    .min_by(|left, right| {
+                        horizontal_distance_sq(entity.position, left.position)
+                            .total_cmp(&horizontal_distance_sq(entity.position, right.position))
+                    })
+                else {
+                    continue;
+                };
+
+                let (yaw, pitch) = look_rotation(entity.position, target.position);
+                if (entity.position.yaw - yaw).abs() < 0.5
+                    && (entity.position.pitch - pitch).abs() < 0.5
+                {
+                    continue;
+                }
+                entity.position.yaw = yaw;
+                entity.position.pitch = pitch;
+                updates.push(entity.clone());
+            }
+        }
+
+        for entity in updates {
+            let packets = entity.position_packets()?;
+            for player in &viewers {
+                if player.dimension == entity.dimension
+                    && within_render_distance(
+                        entity.position,
+                        player.position,
+                        render_distance_for_entity(&entity, rendering),
+                    )
+                {
+                    players.send_packets_to(player.profile.uuid, packets.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn send_remove_to_rendered_viewers(
         &self,
         players: &crate::players::PlayerManager,
@@ -369,6 +433,10 @@ impl EntityManager {
             skin_textures: request.skin_textures,
             skin_signature: request.skin_signature,
             data: request.data,
+            look_at_players: request.look_at_players,
+            main_hand_event: normalized_npc_event(&request.main_hand_event, "interact"),
+            off_hand_event: normalized_npc_event(&request.off_hand_event, "interact_off_hand"),
+            attack_event: normalized_npc_event(&request.attack_event, "attack"),
         };
 
         let mut entities = self.entities.lock().expect("entity manager poisoned");
@@ -478,6 +546,10 @@ impl EntityManager {
             skin_textures: config.skin_textures.clone(),
             skin_signature: config.skin_signature.clone(),
             data: config.data,
+            look_at_players: config.look_at_players,
+            main_hand_event: normalized_npc_event(&config.main_hand_event, "interact"),
+            off_hand_event: normalized_npc_event(&config.off_hand_event, "interact_off_hand"),
+            attack_event: normalized_npc_event(&config.attack_event, "attack"),
         };
 
         let mut entities = self.entities.lock().expect("entity manager poisoned");
@@ -686,6 +758,31 @@ fn within_render_distance(entity: EntityPosition, viewer: EntityPosition, distan
     let dx = entity.x - viewer.x;
     let dz = entity.z - viewer.z;
     (dx * dx + dz * dz) <= distance * distance
+}
+
+fn horizontal_distance_sq(left: EntityPosition, right: EntityPosition) -> f64 {
+    let dx = left.x - right.x;
+    let dz = left.z - right.z;
+    dx * dx + dz * dz
+}
+
+fn look_rotation(from: EntityPosition, to: EntityPosition) -> (f32, f32) {
+    let dx = to.x - from.x;
+    let dy = (to.y + 1.62) - (from.y + 1.62);
+    let dz = to.z - from.z;
+    let horizontal = (dx * dx + dz * dz).sqrt().max(0.0001);
+    let yaw = (dz.atan2(dx).to_degrees() - 90.0) as f32;
+    let pitch = (-dy.atan2(horizontal).to_degrees()) as f32;
+    (yaw, pitch)
+}
+
+fn normalized_npc_event(value: &str, fallback: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        fallback.to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn simplify_stacked_entities(
