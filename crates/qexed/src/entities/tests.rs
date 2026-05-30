@@ -39,6 +39,7 @@ fn configured_entities_allocate_before_players() {
                 ..Default::default()
             },
         ],
+        spawning: Default::default(),
     };
 
     let manager = EntityManager::from_config(&config, entity_ids.clone()).unwrap();
@@ -64,6 +65,7 @@ fn configured_holograms_spawn_as_text_display_entities() {
             y: 67.0,
             ..Default::default()
         }],
+        spawning: Default::default(),
     };
 
     let manager = EntityManager::from_config(&config, entity_ids).unwrap();
@@ -160,6 +162,9 @@ fn runtime_entities_can_spawn_move_and_remove() {
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 data: 0,
+                ai: String::new(),
+                spawn_rule: String::new(),
+                custom_type: String::new(),
                 look_at_players: false,
                 main_hand_event: "interact".to_string(),
                 off_hand_event: "interact_off_hand".to_string(),
@@ -219,6 +224,9 @@ fn entity_view_simplifies_stacked_same_type_entities() {
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 data: 0,
+                ai: String::new(),
+                spawn_rule: String::new(),
+                custom_type: String::new(),
                 look_at_players: false,
                 main_hand_event: "interact".to_string(),
                 off_hand_event: "interact_off_hand".to_string(),
@@ -257,6 +265,155 @@ fn entity_view_simplifies_stacked_same_type_entities() {
 }
 
 #[test]
+fn spawn_rules_respect_caps_and_create_dynamic_entities() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Tester".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let spawning = qexed_config::app::qexed::server::EntitySpawning {
+        enable: true,
+        tick_interval_ms: 50,
+        ai_tick_interval_ms: 50,
+        global_cap: 2,
+        per_dimension_cap: 2,
+        per_type_cap: 2,
+        max_spawn_per_tick: 4,
+        player_activation_range: 16.0,
+        rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
+            id: "zombies".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            entity_type: "minecraft:zombie".to_string(),
+            cap: 2,
+            min_x: -1.0,
+            max_x: 1.0,
+            min_y: 64.0,
+            max_y: 64.0,
+            min_z: -1.0,
+            max_z: 1.0,
+            ..Default::default()
+        }],
+    };
+
+    let spawned = manager
+        .spawn_from_rules(
+            &players,
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            &spawning,
+            "minecraft:overworld",
+        )
+        .unwrap();
+
+    assert_eq!(spawned, 2);
+    let entities = manager.list_for_dimension("minecraft:overworld");
+    assert_eq!(entities.len(), 2);
+    assert!(entities.iter().all(|entity| entity.spawn_rule == "zombies"));
+    assert!(
+        manager
+            .spawn_from_rules(
+                &players,
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                &spawning,
+                "minecraft:overworld",
+            )
+            .unwrap()
+            <= 1
+    );
+}
+
+#[test]
+fn follow_nearest_player_ai_moves_entity_toward_player() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Target".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 10.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "follower".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Follower".to_string(),
+            display_name: "Follower".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+
+    let entity = manager.entity_by_key("follower").unwrap();
+    assert!(entity.position.x > 0.0);
+    assert_eq!(entity.position.z, 0.0);
+}
+
+#[test]
 fn npc_spawn_packets_include_display_name_in_player_info() {
     let entity = ManagedEntity {
         key: "shop".to_string(),
@@ -279,6 +436,9 @@ fn npc_spawn_packets_include_display_name_in_player_info() {
         skin_textures: String::new(),
         skin_signature: String::new(),
         data: 0,
+        ai: String::new(),
+        spawn_rule: String::new(),
+        custom_type: String::new(),
         look_at_players: true,
         main_hand_event: "right_click".to_string(),
         off_hand_event: "left_click".to_string(),
@@ -326,6 +486,9 @@ fn npc_spawn_packets_parse_json_display_name_component() {
         skin_textures: String::new(),
         skin_signature: String::new(),
         data: 0,
+        ai: String::new(),
+        spawn_rule: String::new(),
+        custom_type: String::new(),
         look_at_players: true,
         main_hand_event: "right_click".to_string(),
         off_hand_event: "left_click".to_string(),
@@ -363,6 +526,9 @@ fn hologram_spawn_packets_parse_json_display_name_component() {
         skin_textures: String::new(),
         skin_signature: String::new(),
         data: 0,
+        ai: String::new(),
+        spawn_rule: String::new(),
+        custom_type: String::new(),
         look_at_players: false,
         main_hand_event: "interact".to_string(),
         off_hand_event: "interact_off_hand".to_string(),
@@ -408,6 +574,9 @@ fn npc_spawn_packets_include_skin_textures_in_player_info() {
         skin_textures: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYWJjIn19fQ==".to_string(),
         skin_signature: "signed-by-mojang".to_string(),
         data: 0,
+        ai: String::new(),
+        spawn_rule: String::new(),
+        custom_type: String::new(),
         look_at_players: false,
         main_hand_event: "interact".to_string(),
         off_hand_event: "interact_off_hand".to_string(),

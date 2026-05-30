@@ -530,7 +530,7 @@ config:
           en: "Disconnect message used when a required resource pack is rejected or fails"
           zh-CN: "强制资源包被拒绝或下载失败时的断开提示"
       entities:
-        en: "Static entity and NPC settings. AI is not enabled for these entities."
+        en: "Entity, NPC, hologram, AI, and spawn settings."
         zh-CN: "静态实体与 NPC 设置。这些实体暂不启用 AI。"
         enable:
           en: "Enable configured static entities and NPCs"
@@ -598,6 +598,90 @@ config:
           data:
             en: "Spawn data value passed to the Add Entity packet"
             zh-CN: "传递给 Add Entity 数据包的生成数据值"
+          ai:
+            en: "Entity AI behavior: none, random_stroll, look_at_player, follow_nearest_player, or plugin:<id>"
+            zh-CN: "实体 AI 行为：none、random_stroll、look_at_player、follow_nearest_player 或 plugin:<id>"
+        spawning:
+          en: "Natural entity spawning and AI tick settings"
+          zh-CN: "自然实体刷怪和 AI tick 设置"
+          enable:
+            en: "Enable configured natural entity spawning"
+            zh-CN: "启用配置驱动的自然实体刷怪"
+          tick_interval_ms:
+            en: "Minimum interval between spawn attempts in milliseconds"
+            zh-CN: "刷怪尝试的最小间隔，单位毫秒"
+          ai_tick_interval_ms:
+            en: "Minimum interval between entity AI ticks in milliseconds"
+            zh-CN: "实体 AI tick 的最小间隔，单位毫秒"
+          global_cap:
+            en: "Global cap for entities spawned by spawn rules"
+            zh-CN: "刷怪规则生成实体的全局上限"
+          per_dimension_cap:
+            en: "Per-dimension cap for entities spawned by spawn rules"
+            zh-CN: "每个维度的刷怪实体上限"
+          per_type_cap:
+            en: "Per Minecraft entity type cap for spawned entities"
+            zh-CN: "每种 Minecraft 实体类型的刷怪上限"
+          max_spawn_per_tick:
+            en: "Maximum entities spawned during one spawn tick"
+            zh-CN: "每次刷怪 tick 的最大生成数量"
+          player_activation_range:
+            en: "A spawn rule runs only when a player is near its configured area"
+            zh-CN: "只有玩家靠近规则区域时才尝试刷怪"
+          rules:
+            en: "Weighted spawn rule list"
+            zh-CN: "带权重的刷怪规则列表"
+            id:
+              en: "Stable spawn rule identifier"
+              zh-CN: "稳定的刷怪规则标识"
+            enable:
+              en: "Enable this spawn rule"
+              zh-CN: "启用该刷怪规则"
+            dimension:
+              en: "Dimension where this rule spawns entities. Empty uses the server default play dimension."
+              zh-CN: "该规则生成实体的维度。为空时使用服务器默认进服维度。"
+            entity_type:
+              en: "Minecraft entity type or plugin custom entity id"
+              zh-CN: "Minecraft 实体类型或插件自定义实体 ID"
+            weight:
+              en: "Relative random weight for this rule"
+              zh-CN: "该规则的随机权重"
+            cap:
+              en: "Maximum live entities from this rule"
+              zh-CN: "该规则的存活实体上限"
+            name:
+              en: "Entity name used when display_name is empty"
+              zh-CN: "display_name 为空时使用的实体名称"
+            display_name:
+              en: "Custom display name for spawned entities"
+              zh-CN: "刷怪实体的自定义显示名"
+            ai:
+              en: "AI behavior for spawned entities: none, random_stroll, look_at_player, follow_nearest_player, or plugin:<id>"
+              zh-CN: "刷怪实体的 AI 行为：none、random_stroll、look_at_player、follow_nearest_player 或 plugin:<id>"
+            data:
+              en: "Spawn data value passed to the Add Entity packet"
+              zh-CN: "传递给 Add Entity 数据包的生成数据值"
+            on_ground:
+              en: "Whether spawned entities are initially on ground"
+              zh-CN: "刷怪实体初始是否在地面上"
+            min_x:
+              en: "Minimum spawn area X"
+              zh-CN: "刷怪区域最小 X"
+            max_x:
+              en: "Maximum spawn area X"
+              zh-CN: "刷怪区域最大 X"
+            min_y:
+              en: "Minimum spawn area Y"
+              zh-CN: "刷怪区域最小 Y"
+            max_y:
+              en: "Maximum spawn area Y"
+              zh-CN: "刷怪区域最大 Y"
+            min_z:
+              en: "Minimum spawn area Z"
+              zh-CN: "刷怪区域最小 Z"
+            max_z:
+              en: "Maximum spawn area Z"
+              zh-CN: "刷怪区域最大 Z"
       scoreboard:
         en: "Sidebar scoreboard settings"
         zh-CN: "侧边栏计分板设置"

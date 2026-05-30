@@ -316,6 +316,77 @@ pub struct NpcUpsert {
     pub attack_event: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CustomEntityDefinition {
+    pub id: String,
+    #[serde(default = "default_custom_entity_minecraft_type")]
+    pub entity_type: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub ai: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CustomEntityRegistryResponse {
+    #[serde(default)]
+    pub entities: Vec<CustomEntityDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityAiTickQuery {
+    pub entity: EntityAiEntityPayload,
+    #[serde(default)]
+    pub nearby_players: Vec<EntityAiPlayerPayload>,
+    pub tick_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityAiEntityPayload {
+    pub key: String,
+    pub entity_id: i32,
+    pub entity_type: String,
+    #[serde(default)]
+    pub custom_type: String,
+    #[serde(default)]
+    pub ai: String,
+    #[serde(default)]
+    pub spawn_rule: String,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityAiPlayerPayload {
+    pub player: PlayerPayloadOwned,
+    pub position: PlayerPositionPayload,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityAiTickResponse {
+    #[serde(default)]
+    pub operations: Vec<EntityAiOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EntityAiOperation {
+    MoveDelta {
+        x: f64,
+        y: f64,
+        z: f64,
+        #[serde(default)]
+        yaw: Option<f32>,
+        #[serde(default)]
+        pitch: Option<f32>,
+    },
+    LookAt {
+        x: f64,
+        y: f64,
+        z: f64,
+    },
+    Remove,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PlayerAction {
     SystemMessage {
@@ -432,4 +503,8 @@ fn default_npc_off_hand_event() -> String {
 
 fn default_npc_attack_event() -> String {
     "attack".to_string()
+}
+
+fn default_custom_entity_minecraft_type() -> String {
+    "minecraft:armor_stand".to_string()
 }

@@ -30,6 +30,7 @@ use qexed_config::{
     build,
     tool::{AppConfigTrait, AutoDocConfigTrait},
 };
+use qexed_plugin_api::PluginEvent;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -1823,6 +1824,12 @@ struct Args {
     /// 覆盖输出目录使用的 commit hash。
     #[arg(long)]
     commit: Option<String>,
+
+    /// 直接写入 Next.js app router 插件 API AutoDoc 页面目录。
+    ///
+    /// 目标目录应为官网仓库的 app/docs/plugin-api；生成器会写入 page.mdx 与 en/page.mdx。
+    #[arg(long)]
+    plugin_docs_out: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1912,6 +1919,1409 @@ struct DocField {
     pending_deprecated: Option<String>,
     deprecated: Option<String>,
     migration_notice: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluginCallKind {
+    Event,
+    Query,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PluginEventDoc {
+    event: PluginEvent,
+    kind: PluginCallKind,
+    payload: Option<&'static str>,
+    response: Option<&'static str>,
+    zh: &'static str,
+    en: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PluginStructDoc {
+    name: &'static str,
+    zh: &'static str,
+    en: &'static str,
+    fields: &'static [PluginFieldDoc],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PluginFieldDoc {
+    name: &'static str,
+    ty: &'static str,
+    default: &'static str,
+    zh: &'static str,
+    en: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PluginHostApiDoc {
+    name: &'static str,
+    signature: &'static str,
+    wrapper: &'static str,
+    zh: &'static str,
+    en: &'static str,
+}
+
+const PLUGIN_EVENT_DOCS: &[PluginEventDoc] = &[
+    PluginEventDoc {
+        event: PluginEvent::Init,
+        kind: PluginCallKind::Event,
+        payload: None,
+        response: None,
+        zh: "插件加载并完成实例化后调用一次。适合初始化配置、注册宿主资源或写入启动日志。",
+        en: "Called once after a plugin is loaded and instantiated. Use it for configuration bootstrap, host resource registration, or startup logs.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::PlayerJoin,
+        kind: PluginCallKind::Event,
+        payload: Some("PlayerPayload"),
+        response: None,
+        zh: "玩家进入服务器时触发。",
+        en: "Emitted when a player joins the server.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::PlayerLeave,
+        kind: PluginCallKind::Event,
+        payload: Some("PlayerPayload"),
+        response: None,
+        zh: "玩家离开服务器时触发。",
+        en: "Emitted when a player leaves the server.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::ChunkLoad,
+        kind: PluginCallKind::Event,
+        payload: Some("ChunkPayload"),
+        response: None,
+        zh: "区块进入服务端加载视野时触发。",
+        en: "Emitted when a chunk enters the server-side loaded view.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::ChunkUnload,
+        kind: PluginCallKind::Event,
+        payload: Some("ChunkPayload"),
+        response: None,
+        zh: "区块从服务端加载视野卸载时触发。",
+        en: "Emitted when a chunk leaves the server-side loaded view.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::ConfigReload,
+        kind: PluginCallKind::Event,
+        payload: Some("ConfigReloadPayload"),
+        response: None,
+        zh: "配置加载或重载后触发，payload 中包含配置路径。",
+        en: "Emitted after a config file is loaded or reloaded; the payload contains the config path.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::LanguageChange,
+        kind: PluginCallKind::Event,
+        payload: Some("LanguagePayload"),
+        response: None,
+        zh: "服务器运行语言变化后触发。",
+        en: "Emitted when the runtime language changes.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::MiningSpeed,
+        kind: PluginCallKind::Query,
+        payload: Some("MiningSpeedQuery"),
+        response: Some("MiningSpeedResponse"),
+        zh: "允许插件按方块、工具和附魔修改挖掘速度。",
+        en: "Lets plugins adjust mining speed by block, tool, and enchantments.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::BlockDrops,
+        kind: PluginCallKind::Query,
+        payload: Some("BlockDropQuery"),
+        response: Some("BlockDropResponse"),
+        zh: "允许插件替换或追加方块掉落物。",
+        en: "Lets plugins replace or append block drops.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::Commands,
+        kind: PluginCallKind::Query,
+        payload: None,
+        response: Some("PluginCommandDefinition"),
+        zh: "收集插件提供的玩家命令定义。",
+        en: "Collects player command definitions provided by plugins.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::CommandExecute,
+        kind: PluginCallKind::Query,
+        payload: Some("PluginCommandQuery"),
+        response: Some("PluginCommandResponse"),
+        zh: "玩家执行插件命令时调用，返回要执行的玩家动作。",
+        en: "Called when a player runs a plugin command and returns player actions.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::NpcMutations,
+        kind: PluginCallKind::Query,
+        payload: Some("NpcMutationQuery"),
+        response: Some("NpcMutationResponse"),
+        zh: "允许插件动态新增、更新或移除 NPC。",
+        en: "Lets plugins dynamically add, update, or remove NPCs.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::NpcInteract,
+        kind: PluginCallKind::Hybrid,
+        payload: Some("NpcInteractPayload"),
+        response: Some("PluginCommandResponse"),
+        zh: "玩家与 NPC 交互时触发，可按主手、副手和攻击事件返回动作。",
+        en: "Triggered when a player interacts with an NPC; it can return actions for main-hand, off-hand, and attack events.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::ProxyConnectResult,
+        kind: PluginCallKind::Event,
+        payload: Some("ProxyConnectResultPayload"),
+        response: None,
+        zh: "跨服代理连接完成或失败后回调。",
+        en: "Called after a proxy transfer succeeds or fails.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::Placeholders,
+        kind: PluginCallKind::Query,
+        payload: Some("PlaceholderQuery"),
+        response: Some("PlaceholderResponse"),
+        zh: "解析服务器文本中的插件占位符。",
+        en: "Resolves plugin placeholders in server text.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::PlayerBlockStep,
+        kind: PluginCallKind::Query,
+        payload: Some("BlockStepPayload"),
+        response: Some("PluginCommandResponse"),
+        zh: "玩家踩到方块时调用，适合跳板、区域触发器等逻辑。",
+        en: "Called when a player steps on a block; useful for jump pads, region triggers, and similar logic.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::PlayerMove,
+        kind: PluginCallKind::Query,
+        payload: Some("PlayerMovePayload"),
+        response: Some("PluginCommandResponse"),
+        zh: "玩家位置发生变化时调用。",
+        en: "Called when a player's position changes.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::PlayerInput,
+        kind: PluginCallKind::Query,
+        payload: Some("PlayerInputPayload"),
+        response: Some("PluginCommandResponse"),
+        zh: "玩家输入状态变化时调用，适合二段跳等玩法。",
+        en: "Called when a player's input state changes; useful for mechanics such as double jump.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::ClickDetected,
+        kind: PluginCallKind::Event,
+        payload: Some("ClickDetectedPayload"),
+        response: None,
+        zh: "连点检测命中后通知插件。",
+        en: "Notifies plugins when click detection reports a burst.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::Pathfinding,
+        kind: PluginCallKind::Query,
+        payload: Some("PathfindingQuery"),
+        response: Some("PathfindingResponse"),
+        zh: "预留的寻路查询事件；当前推荐使用宿主导入 qexed::pathfinding_find。",
+        en: "Reserved pathfinding query event; currently prefer the qexed::pathfinding_find host import.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::CustomEntities,
+        kind: PluginCallKind::Query,
+        payload: None,
+        response: Some("CustomEntityRegistryResponse"),
+        zh: "注册插件自定义实体类型及其默认 Minecraft 实体类型和 AI 标识。",
+        en: "Registers plugin-defined entity types with their backing Minecraft entity type and AI identifier.",
+    },
+    PluginEventDoc {
+        event: PluginEvent::EntityAiTick,
+        kind: PluginCallKind::Query,
+        payload: Some("EntityAiTickQuery"),
+        response: Some("EntityAiTickResponse"),
+        zh: "实体 AI tick 时调用，插件可返回移动、看向目标或移除实体等操作。",
+        en: "Called during an entity AI tick; plugins may return movement, look-at, or removal operations.",
+    },
+];
+
+const PLUGIN_STRUCT_DOCS: &[PluginStructDoc] = &[
+    PluginStructDoc {
+        name: "PlayerPayload",
+        zh: "玩家事件 payload。",
+        en: "Player event payload.",
+        fields: &[
+            field("uuid", "String", "", "玩家 UUID。", "Player UUID."),
+            field("username", "String", "", "玩家名。", "Username."),
+            field(
+                "entity_id",
+                "i32",
+                "",
+                "服务端实体 ID。",
+                "Server entity ID.",
+            ),
+            field(
+                "language",
+                "String",
+                "\"\"",
+                "玩家语言。",
+                "Player language.",
+            ),
+            field(
+                "dimension",
+                "String",
+                "\"minecraft:overworld\"",
+                "玩家所在维度。",
+                "Player dimension.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlayerPayloadOwned",
+        zh: "拥有所有字段的玩家 payload，用于需要嵌套保存的查询结构。",
+        en: "Owned player payload used by query structures that need nested player data.",
+        fields: &[
+            field("uuid", "String", "", "玩家 UUID。", "Player UUID."),
+            field("username", "String", "", "玩家名。", "Username."),
+            field(
+                "entity_id",
+                "i32",
+                "",
+                "服务端实体 ID。",
+                "Server entity ID.",
+            ),
+            field(
+                "language",
+                "String",
+                "\"\"",
+                "玩家语言。",
+                "Player language.",
+            ),
+            field(
+                "dimension",
+                "String",
+                "\"minecraft:overworld\"",
+                "玩家所在维度。",
+                "Player dimension.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "ChunkPayload",
+        zh: "区块加载/卸载事件 payload。",
+        en: "Chunk load/unload event payload.",
+        fields: &[
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field("chunk_x", "i32", "", "区块 X 坐标。", "Chunk X coordinate."),
+            field("chunk_z", "i32", "", "区块 Z 坐标。", "Chunk Z coordinate."),
+        ],
+    },
+    PluginStructDoc {
+        name: "ConfigReloadPayload",
+        zh: "配置重载事件 payload。",
+        en: "Config reload event payload.",
+        fields: &[field("path", "String", "", "配置路径。", "Config path.")],
+    },
+    PluginStructDoc {
+        name: "LanguagePayload",
+        zh: "语言变化事件 payload。",
+        en: "Language change event payload.",
+        fields: &[field(
+            "language",
+            "String",
+            "",
+            "当前语言。",
+            "Current language.",
+        )],
+    },
+    PluginStructDoc {
+        name: "ItemEnchantment",
+        zh: "原版附魔条目。",
+        en: "Vanilla enchantment entry.",
+        fields: &[
+            field(
+                "id",
+                "String",
+                "",
+                "附魔资源键。",
+                "Enchantment resource key.",
+            ),
+            field("level", "i32", "", "附魔等级。", "Enchantment level."),
+        ],
+    },
+    PluginStructDoc {
+        name: "PluginEnchantment",
+        zh: "插件自定义附魔条目。",
+        en: "Plugin-defined enchantment entry.",
+        fields: &[
+            field(
+                "id",
+                "String",
+                "",
+                "自定义附魔 ID。",
+                "Custom enchantment ID.",
+            ),
+            field("level", "i32", "", "附魔等级。", "Enchantment level."),
+        ],
+    },
+    PluginStructDoc {
+        name: "MiningSpeedQuery",
+        zh: "挖掘速度查询。",
+        en: "Mining speed query.",
+        fields: &[
+            field("block_state", "i32", "", "方块状态 ID。", "Block state ID."),
+            field(
+                "block_name",
+                "String",
+                "",
+                "方块资源键。",
+                "Block resource key.",
+            ),
+            field(
+                "item_id",
+                "Option<i32>",
+                "None",
+                "工具物品 ID。",
+                "Tool item ID.",
+            ),
+            field(
+                "enchantments",
+                "Vec<ItemEnchantment>",
+                "[]",
+                "原版附魔。",
+                "Vanilla enchantments.",
+            ),
+            field(
+                "plugin_enchantments",
+                "Vec<PluginEnchantment>",
+                "[]",
+                "插件附魔。",
+                "Plugin enchantments.",
+            ),
+            field(
+                "speed",
+                "f32",
+                "",
+                "当前挖掘速度。",
+                "Current mining speed.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "MiningSpeedResponse",
+        zh: "挖掘速度响应。",
+        en: "Mining speed response.",
+        fields: &[
+            field(
+                "speed",
+                "Option<f32>",
+                "None",
+                "直接覆盖速度。",
+                "Override speed.",
+            ),
+            field(
+                "multiplier",
+                "Option<f32>",
+                "None",
+                "乘法修正。",
+                "Multiplicative modifier.",
+            ),
+            field(
+                "add",
+                "Option<f32>",
+                "None",
+                "加法修正。",
+                "Additive modifier.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "BlockDropPosition",
+        zh: "方块坐标。",
+        en: "Block position.",
+        fields: &[
+            field("x", "i32", "", "X 坐标。", "X coordinate."),
+            field("y", "i32", "", "Y 坐标。", "Y coordinate."),
+            field("z", "i32", "", "Z 坐标。", "Z coordinate."),
+        ],
+    },
+    PluginStructDoc {
+        name: "BlockDropQuery",
+        zh: "方块掉落查询。",
+        en: "Block drop query.",
+        fields: &[
+            field("block_state", "i32", "", "方块状态 ID。", "Block state ID."),
+            field(
+                "block_name",
+                "String",
+                "",
+                "方块资源键。",
+                "Block resource key.",
+            ),
+            field(
+                "position",
+                "BlockDropPosition",
+                "",
+                "方块位置。",
+                "Block position.",
+            ),
+            field(
+                "tool_item_id",
+                "Option<i32>",
+                "None",
+                "工具物品 ID。",
+                "Tool item ID.",
+            ),
+            field(
+                "enchantments",
+                "Vec<ItemEnchantment>",
+                "[]",
+                "原版附魔。",
+                "Vanilla enchantments.",
+            ),
+            field(
+                "plugin_enchantments",
+                "Vec<PluginEnchantment>",
+                "[]",
+                "插件附魔。",
+                "Plugin enchantments.",
+            ),
+            field(
+                "default_item_id",
+                "Option<i32>",
+                "None",
+                "默认掉落物品 ID。",
+                "Default drop item ID.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "BlockDropResponse",
+        zh: "方块掉落响应。",
+        en: "Block drop response.",
+        fields: &[
+            field(
+                "replace",
+                "bool",
+                "false",
+                "是否替换默认掉落。",
+                "Whether to replace default drops.",
+            ),
+            field(
+                "items",
+                "Vec<BlockDropItem>",
+                "[]",
+                "要追加或替换的物品。",
+                "Items to append or replace with.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "BlockDropItem",
+        zh: "掉落物条目。",
+        en: "Drop item entry.",
+        fields: &[
+            field("item_id", "i32", "", "物品 ID。", "Item ID."),
+            field("count", "i32", "1", "数量。", "Count."),
+        ],
+    },
+    PluginStructDoc {
+        name: "BlockStepPosition",
+        zh: "玩家踩踏方块坐标。",
+        en: "Block position stepped on by a player.",
+        fields: &[
+            field("x", "i32", "", "X 坐标。", "X coordinate."),
+            field("y", "i32", "", "Y 坐标。", "Y coordinate."),
+            field("z", "i32", "", "Z 坐标。", "Z coordinate."),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlayerPositionPayload",
+        zh: "玩家或实体位置。",
+        en: "Player or entity position.",
+        fields: &[
+            field("x", "f64", "", "X 坐标。", "X coordinate."),
+            field("y", "f64", "", "Y 坐标。", "Y coordinate."),
+            field("z", "f64", "", "Z 坐标。", "Z coordinate."),
+            field("yaw", "f32", "", "水平朝向。", "Yaw."),
+            field("pitch", "f32", "", "俯仰角。", "Pitch."),
+            field(
+                "on_ground",
+                "bool",
+                "",
+                "是否在地面上。",
+                "Whether the entity is on the ground.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "BlockStepPayload",
+        zh: "玩家踩踏方块查询。",
+        en: "Player block-step query.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field("block_state", "i32", "", "方块状态 ID。", "Block state ID."),
+            field(
+                "block_name",
+                "String",
+                "",
+                "方块资源键。",
+                "Block resource key.",
+            ),
+            field(
+                "position",
+                "BlockStepPosition",
+                "",
+                "方块位置。",
+                "Block position.",
+            ),
+            field(
+                "player_position",
+                "PlayerPositionPayload",
+                "",
+                "玩家位置。",
+                "Player position.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlayerMovePayload",
+        zh: "玩家移动查询。",
+        en: "Player movement query.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field(
+                "previous_position",
+                "PlayerPositionPayload",
+                "",
+                "移动前位置。",
+                "Previous position.",
+            ),
+            field(
+                "position",
+                "PlayerPositionPayload",
+                "",
+                "当前位置。",
+                "Current position.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlayerInputState",
+        zh: "玩家输入状态。",
+        en: "Player input state.",
+        fields: &[
+            field("forward", "bool", "", "前进键。", "Forward key."),
+            field("backward", "bool", "", "后退键。", "Backward key."),
+            field("left", "bool", "", "左移键。", "Left key."),
+            field("right", "bool", "", "右移键。", "Right key."),
+            field("jump", "bool", "", "跳跃键。", "Jump key."),
+            field("shift", "bool", "", "潜行键。", "Sneak key."),
+            field("sprint", "bool", "", "疾跑键。", "Sprint key."),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlayerInputPayload",
+        zh: "玩家输入查询。",
+        en: "Player input query.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field(
+                "position",
+                "PlayerPositionPayload",
+                "",
+                "玩家位置。",
+                "Player position.",
+            ),
+            field(
+                "previous_input",
+                "PlayerInputState",
+                "",
+                "上一输入状态。",
+                "Previous input state.",
+            ),
+            field(
+                "input",
+                "PlayerInputState",
+                "",
+                "当前输入状态。",
+                "Current input state.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "ClickDetectedPayload",
+        zh: "连点检测事件 payload。",
+        en: "Click detection event payload.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field(
+                "position",
+                "PlayerPositionPayload",
+                "",
+                "玩家位置。",
+                "Player position.",
+            ),
+            field("action", "String", "", "点击动作。", "Click action."),
+            field(
+                "clicks",
+                "u32",
+                "",
+                "窗口内点击次数。",
+                "Clicks inside the window.",
+            ),
+            field(
+                "window_ms",
+                "u64",
+                "",
+                "统计窗口毫秒数。",
+                "Counting window in milliseconds.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PathfindingQuery",
+        zh: "寻路查询。",
+        en: "Pathfinding query.",
+        fields: &[
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field(
+                "start",
+                "BlockDropPosition",
+                "",
+                "起点。",
+                "Start position.",
+            ),
+            field("goal", "BlockDropPosition", "", "终点。", "Goal position."),
+            field(
+                "max_nodes",
+                "usize",
+                "0",
+                "最大搜索节点数。",
+                "Maximum searched node count.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PathfindingResponse",
+        zh: "寻路响应。",
+        en: "Pathfinding response.",
+        fields: &[
+            field(
+                "found",
+                "bool",
+                "false",
+                "是否找到路径。",
+                "Whether a path was found.",
+            ),
+            field(
+                "path",
+                "Vec<BlockDropPosition>",
+                "[]",
+                "路径节点。",
+                "Path nodes.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PluginCommandDefinition",
+        zh: "插件命令定义。",
+        en: "Plugin command definition.",
+        fields: &[
+            field(
+                "name",
+                "String",
+                "",
+                "命令名，不包含斜杠。",
+                "Command name without slash.",
+            ),
+            field(
+                "description_key",
+                "String",
+                "\"\"",
+                "命令说明翻译键。",
+                "Command description translation key.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PluginCommandQuery",
+        zh: "插件命令执行查询。",
+        en: "Plugin command execution query.",
+        fields: &[
+            field("command", "String", "", "命令名。", "Command name."),
+            field(
+                "argument",
+                "String",
+                "",
+                "原始参数文本。",
+                "Raw argument text.",
+            ),
+            field(
+                "player",
+                "PlayerPayloadOwned",
+                "",
+                "执行命令的玩家。",
+                "Player executing the command.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PluginCommandResponse",
+        zh: "插件动作响应。",
+        en: "Plugin action response.",
+        fields: &[
+            field(
+                "handled",
+                "bool",
+                "false",
+                "插件是否处理了该调用。",
+                "Whether the plugin handled the call.",
+            ),
+            field(
+                "actions",
+                "Vec<PlayerAction>",
+                "[]",
+                "服务端要执行的玩家动作。",
+                "Player actions for the server to run.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "ProxyConnectResultPayload",
+        zh: "跨服连接结果事件 payload。",
+        en: "Proxy connection result event payload.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "target_server",
+                "String",
+                "",
+                "目标子服。",
+                "Target server.",
+            ),
+            field(
+                "current_server",
+                "String",
+                "\"\"",
+                "当前子服。",
+                "Current server.",
+            ),
+            field(
+                "proxy_protocol",
+                "String",
+                "\"\"",
+                "代理协议。",
+                "Proxy protocol.",
+            ),
+            field("status_code", "i32", "", "状态码。", "Status code."),
+            field("status", "String", "", "状态文本。", "Status text."),
+            field(
+                "success",
+                "bool",
+                "",
+                "是否成功。",
+                "Whether the transfer succeeded.",
+            ),
+            field(
+                "message",
+                "String",
+                "\"\"",
+                "附加消息。",
+                "Additional message.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlaceholderQuery",
+        zh: "占位符解析查询。",
+        en: "Placeholder resolution query.",
+        fields: &[
+            field(
+                "player",
+                "Option<PlayerPayloadOwned>",
+                "None",
+                "可选玩家上下文。",
+                "Optional player context.",
+            ),
+            field("text", "String", "", "待解析文本。", "Text to resolve."),
+            field(
+                "context",
+                "Vec<PlaceholderContext>",
+                "[]",
+                "额外上下文。",
+                "Additional context.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlaceholderContext",
+        zh: "占位符上下文键值对。",
+        en: "Placeholder context key/value pair.",
+        fields: &[
+            field("key", "String", "", "上下文键。", "Context key."),
+            field("value", "String", "", "上下文值。", "Context value."),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlaceholderResponse",
+        zh: "占位符响应。",
+        en: "Placeholder response.",
+        fields: &[field(
+            "replacements",
+            "Vec<PlaceholderReplacement>",
+            "[]",
+            "替换项。",
+            "Replacements.",
+        )],
+    },
+    PluginStructDoc {
+        name: "PlaceholderReplacement",
+        zh: "占位符替换项。",
+        en: "Placeholder replacement.",
+        fields: &[
+            field("key", "String", "", "占位符键。", "Placeholder key."),
+            field("value", "String", "", "替换值。", "Replacement value."),
+        ],
+    },
+    PluginStructDoc {
+        name: "NpcInteractPayload",
+        zh: "NPC 交互 payload。",
+        en: "NPC interaction payload.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "entity",
+                "NpcEntityPayload",
+                "",
+                "NPC 实体。",
+                "NPC entity.",
+            ),
+            field("action", "String", "", "动作类型。", "Action type."),
+            field("hand", "String", "\"\"", "交互手。", "Interaction hand."),
+            field(
+                "configured_event",
+                "String",
+                "\"\"",
+                "配置中绑定的事件名。",
+                "Event name configured for the NPC.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "NpcEntityPayload",
+        zh: "NPC 实体 payload。",
+        en: "NPC entity payload.",
+        fields: &[
+            field("key", "String", "", "NPC 配置键。", "NPC config key."),
+            field(
+                "entity_id",
+                "i32",
+                "",
+                "服务端实体 ID。",
+                "Server entity ID.",
+            ),
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field("x", "f64", "", "X 坐标。", "X coordinate."),
+            field("y", "f64", "", "Y 坐标。", "Y coordinate."),
+            field("z", "f64", "", "Z 坐标。", "Z coordinate."),
+            field("yaw", "f32", "", "水平朝向。", "Yaw."),
+            field("pitch", "f32", "", "俯仰角。", "Pitch."),
+        ],
+    },
+    PluginStructDoc {
+        name: "NpcMutationQuery",
+        zh: "NPC 变更查询。",
+        en: "NPC mutation query.",
+        fields: &[field(
+            "reason",
+            "String",
+            "",
+            "触发原因。",
+            "Reason for the query.",
+        )],
+    },
+    PluginStructDoc {
+        name: "NpcMutationResponse",
+        zh: "NPC 变更响应。",
+        en: "NPC mutation response.",
+        fields: &[field(
+            "operations",
+            "Vec<NpcMutationOp>",
+            "[]",
+            "变更操作列表。",
+            "Mutation operations.",
+        )],
+    },
+    PluginStructDoc {
+        name: "NpcMutationOp",
+        zh: "NPC 变更操作枚举：Upsert 或 Remove。",
+        en: "NPC mutation operation enum: Upsert or Remove.",
+        fields: &[
+            field(
+                "Upsert { npc }",
+                "NpcUpsert",
+                "",
+                "新增或更新 NPC。",
+                "Adds or updates an NPC.",
+            ),
+            field(
+                "Remove { key }",
+                "String",
+                "",
+                "移除指定 NPC。",
+                "Removes an NPC by key.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "NpcUpsert",
+        zh: "NPC 新增/更新数据。",
+        en: "NPC upsert data.",
+        fields: &[
+            field("key", "String", "", "NPC 稳定键。", "Stable NPC key."),
+            field(
+                "dimension",
+                "String",
+                "\"minecraft:overworld\"",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field("x", "f64", "", "X 坐标。", "X coordinate."),
+            field("y", "f64", "", "Y 坐标。", "Y coordinate."),
+            field("z", "f64", "", "Z 坐标。", "Z coordinate."),
+            field("yaw", "f32", "0", "水平朝向。", "Yaw."),
+            field("pitch", "f32", "0", "俯仰角。", "Pitch."),
+            field("name", "String", "\"\"", "NPC 玩家名。", "NPC player name."),
+            field(
+                "display_name",
+                "String",
+                "\"\"",
+                "显示名称。",
+                "Display name.",
+            ),
+            field(
+                "skin_textures",
+                "String",
+                "\"\"",
+                "Mojang texture 属性。",
+                "Mojang texture property.",
+            ),
+            field(
+                "skin_signature",
+                "String",
+                "\"\"",
+                "Mojang texture 签名。",
+                "Mojang texture signature.",
+            ),
+            field(
+                "look_at_players",
+                "bool",
+                "false",
+                "是否看向附近玩家。",
+                "Whether the NPC looks at nearby players.",
+            ),
+            field(
+                "main_hand_event",
+                "String",
+                "\"interact\"",
+                "主手交互事件名。",
+                "Main-hand interaction event name.",
+            ),
+            field(
+                "off_hand_event",
+                "String",
+                "\"interact_off_hand\"",
+                "副手交互事件名。",
+                "Off-hand interaction event name.",
+            ),
+            field(
+                "attack_event",
+                "String",
+                "\"attack\"",
+                "攻击交互事件名。",
+                "Attack interaction event name.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "CustomEntityDefinition",
+        zh: "插件自定义实体定义。",
+        en: "Plugin-defined custom entity definition.",
+        fields: &[
+            field(
+                "id",
+                "String",
+                "",
+                "自定义实体 ID，例如 demo:patrol_guard。",
+                "Custom entity ID, for example demo:patrol_guard.",
+            ),
+            field(
+                "entity_type",
+                "String",
+                "\"minecraft:armor_stand\"",
+                "底层 Minecraft 实体类型。",
+                "Backing Minecraft entity type.",
+            ),
+            field(
+                "display_name",
+                "String",
+                "\"\"",
+                "默认显示名称。",
+                "Default display name.",
+            ),
+            field(
+                "ai",
+                "String",
+                "\"\"",
+                "默认 AI 标识，例如 plugin:demo_patrol。",
+                "Default AI identifier, for example plugin:demo_patrol.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "CustomEntityRegistryResponse",
+        zh: "自定义实体注册响应。",
+        en: "Custom entity registry response.",
+        fields: &[field(
+            "entities",
+            "Vec<CustomEntityDefinition>",
+            "[]",
+            "自定义实体定义列表。",
+            "Custom entity definitions.",
+        )],
+    },
+    PluginStructDoc {
+        name: "EntityAiTickQuery",
+        zh: "实体 AI tick 查询。",
+        en: "Entity AI tick query.",
+        fields: &[
+            field(
+                "entity",
+                "EntityAiEntityPayload",
+                "",
+                "当前实体。",
+                "Current entity.",
+            ),
+            field(
+                "nearby_players",
+                "Vec<EntityAiPlayerPayload>",
+                "[]",
+                "附近玩家。",
+                "Nearby players.",
+            ),
+            field(
+                "tick_ms",
+                "u64",
+                "",
+                "AI tick 间隔毫秒数。",
+                "AI tick interval in milliseconds.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "EntityAiEntityPayload",
+        zh: "AI tick 中的实体信息。",
+        en: "Entity information for an AI tick.",
+        fields: &[
+            field("key", "String", "", "实体稳定键。", "Stable entity key."),
+            field(
+                "entity_id",
+                "i32",
+                "",
+                "服务端实体 ID。",
+                "Server entity ID.",
+            ),
+            field(
+                "entity_type",
+                "String",
+                "",
+                "底层 Minecraft 实体类型。",
+                "Backing Minecraft entity type.",
+            ),
+            field(
+                "custom_type",
+                "String",
+                "\"\"",
+                "插件自定义实体类型。",
+                "Plugin custom entity type.",
+            ),
+            field("ai", "String", "\"\"", "AI 标识。", "AI identifier."),
+            field(
+                "spawn_rule",
+                "String",
+                "\"\"",
+                "产生该实体的刷怪规则。",
+                "Spawn rule that produced the entity.",
+            ),
+            field(
+                "dimension",
+                "String",
+                "",
+                "维度资源键。",
+                "Dimension resource key.",
+            ),
+            field(
+                "position",
+                "PlayerPositionPayload",
+                "",
+                "实体位置。",
+                "Entity position.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "EntityAiPlayerPayload",
+        zh: "AI tick 附近玩家信息。",
+        en: "Nearby player information for an AI tick.",
+        fields: &[
+            field("player", "PlayerPayloadOwned", "", "玩家。", "Player."),
+            field(
+                "position",
+                "PlayerPositionPayload",
+                "",
+                "玩家位置。",
+                "Player position.",
+            ),
+        ],
+    },
+    PluginStructDoc {
+        name: "EntityAiTickResponse",
+        zh: "实体 AI tick 响应。",
+        en: "Entity AI tick response.",
+        fields: &[field(
+            "operations",
+            "Vec<EntityAiOperation>",
+            "[]",
+            "AI 操作列表。",
+            "AI operations.",
+        )],
+    },
+    PluginStructDoc {
+        name: "EntityAiOperation",
+        zh: "实体 AI 操作枚举：MoveDelta、LookAt 或 Remove。",
+        en: "Entity AI operation enum: MoveDelta, LookAt, or Remove.",
+        fields: &[
+            field(
+                "MoveDelta { x, y, z, yaw, pitch }",
+                "f64 / Option<f32>",
+                "",
+                "按增量移动实体，可选更新朝向。",
+                "Moves the entity by a delta and optionally updates rotation.",
+            ),
+            field(
+                "LookAt { x, y, z }",
+                "f64",
+                "",
+                "让实体看向指定坐标。",
+                "Makes the entity look at a position.",
+            ),
+            field("Remove", "unit", "", "移除实体。", "Removes the entity."),
+        ],
+    },
+    PluginStructDoc {
+        name: "PlayerAction",
+        zh: "服务端对玩家执行的动作枚举。",
+        en: "Server-side action enum for a player.",
+        fields: &[
+            field(
+                "SystemMessage",
+                "{ text, translate, with, overlay }",
+                "",
+                "发送系统消息。",
+                "Sends a system message.",
+            ),
+            field(
+                "Teleport",
+                "{ dimension, x, y, z, yaw, pitch }",
+                "",
+                "传送玩家。",
+                "Teleports the player.",
+            ),
+            field(
+                "Transfer",
+                "{ host, port, message }",
+                "",
+                "使用客户端转移连接。",
+                "Transfers the client connection.",
+            ),
+            field(
+                "ProxyConnect",
+                "{ server, message }",
+                "",
+                "通过代理连接到子服。",
+                "Connects through the proxy to a backend server.",
+            ),
+            field(
+                "OpenMenu",
+                "{ menu }",
+                "",
+                "打开配置菜单。",
+                "Opens a configured menu.",
+            ),
+            field(
+                "SetPlayersVisible",
+                "{ visible }",
+                "",
+                "切换其他玩家可见性。",
+                "Toggles visibility of other players.",
+            ),
+            field(
+                "Velocity",
+                "{ x, y, z, additive }",
+                "",
+                "设置或叠加玩家速度。",
+                "Sets or adds player velocity.",
+            ),
+        ],
+    },
+];
+
+const PLUGIN_HOST_API_DOCS: &[PluginHostApiDoc] = &[
+    PluginHostApiDoc {
+        name: "log",
+        signature: "qexed::log(ptr: i32, len: i32)",
+        wrapper: "qexed_plugin_sdk::log(message)",
+        zh: "写入服务端插件日志。",
+        en: "Writes a server-side plugin log line.",
+    },
+    PluginHostApiDoc {
+        name: "config_exists",
+        signature: "qexed::config_exists(ptr: i32, len: i32) -> i32",
+        wrapper: "qexed_plugin_sdk::config_exists(path)",
+        zh: "检查插件配置文件是否存在。",
+        en: "Checks whether a plugin config file exists.",
+    },
+    PluginHostApiDoc {
+        name: "config_read",
+        signature: "qexed::config_read(path_ptr: i32, path_len: i32, out_ptr: i32, out_len: i32) -> i64",
+        wrapper: "qexed_plugin_sdk::config_read(path)",
+        zh: "读取插件配置文件。返回负数时表示输出缓冲区需要扩大。",
+        en: "Reads a plugin config file. A negative return value asks the caller to grow the output buffer.",
+    },
+    PluginHostApiDoc {
+        name: "config_write",
+        signature: "qexed::config_write(path_ptr: i32, path_len: i32, data_ptr: i32, data_len: i32) -> i32",
+        wrapper: "qexed_plugin_sdk::config_write(path, contents)",
+        zh: "写入插件配置文件。",
+        en: "Writes a plugin config file.",
+    },
+    PluginHostApiDoc {
+        name: "economy_register_currency",
+        signature: "qexed::economy_register_currency(id_ptr, id_len, name_ptr, name_len, symbol_ptr, symbol_len, fractional_digits) -> i32",
+        wrapper: "qexed_plugin_sdk::economy_register_currency(id, name, symbol, fractional_digits)",
+        zh: "注册经济货币。",
+        en: "Registers an economy currency.",
+    },
+    PluginHostApiDoc {
+        name: "economy_currency_info",
+        signature: "qexed::economy_currency_info(currency_ptr, currency_len, out_ptr, out_len) -> i64",
+        wrapper: "qexed_plugin_sdk::economy_currency_info(currency)",
+        zh: "读取经济货币信息。",
+        en: "Reads economy currency information.",
+    },
+    PluginHostApiDoc {
+        name: "economy_balance",
+        signature: "qexed::economy_balance(player_ptr, player_len, currency_ptr, currency_len) -> i64",
+        wrapper: "qexed_plugin_sdk::economy_balance(player, currency)",
+        zh: "读取玩家余额。",
+        en: "Reads a player's balance.",
+    },
+    PluginHostApiDoc {
+        name: "economy_set_balance",
+        signature: "qexed::economy_set_balance(player_ptr, player_len, currency_ptr, currency_len, amount) -> i64",
+        wrapper: "qexed_plugin_sdk::economy_set_balance(player, currency, amount)",
+        zh: "设置玩家余额。",
+        en: "Sets a player's balance.",
+    },
+    PluginHostApiDoc {
+        name: "economy_deposit",
+        signature: "qexed::economy_deposit(player_ptr, player_len, currency_ptr, currency_len, amount) -> i64",
+        wrapper: "qexed_plugin_sdk::economy_deposit(player, currency, amount)",
+        zh: "给玩家增加余额。",
+        en: "Deposits into a player's balance.",
+    },
+    PluginHostApiDoc {
+        name: "economy_withdraw",
+        signature: "qexed::economy_withdraw(player_ptr, player_len, currency_ptr, currency_len, amount) -> i64",
+        wrapper: "qexed_plugin_sdk::economy_withdraw(player, currency, amount)",
+        zh: "扣除玩家余额。",
+        en: "Withdraws from a player's balance.",
+    },
+    PluginHostApiDoc {
+        name: "lottery_roll",
+        signature: "qexed::lottery_roll(entries_ptr: i32, entries_len: i32, out_ptr: i32, out_len: i32) -> i64",
+        wrapper: "qexed_plugin_sdk::lottery_roll(entries)",
+        zh: "按权重随机抽取一个值。",
+        en: "Rolls one weighted random value.",
+    },
+    PluginHostApiDoc {
+        name: "pathfinding_find",
+        signature: "qexed::pathfinding_find(query_ptr: i32, query_len: i32, out_ptr: i32, out_len: i32) -> i64",
+        wrapper: "qexed_plugin_sdk::pathfinding_find(dimension, start, goal, max_nodes)",
+        zh: "请求服务端寻路服务返回路径节点。",
+        en: "Asks the server pathfinding service for path nodes.",
+    },
+];
+
+const fn field(
+    name: &'static str,
+    ty: &'static str,
+    default: &'static str,
+    zh: &'static str,
+    en: &'static str,
+) -> PluginFieldDoc {
+    PluginFieldDoc {
+        name,
+        ty,
+        default,
+        zh,
+        en,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -2101,6 +3511,9 @@ fn main() -> Result<()> {
     }
 
     write_manifest(&output_root, &bundle, &formats)?;
+    if let Some(plugin_docs_out) = args.plugin_docs_out {
+        write_plugin_api_next_app_docs(&plugin_docs_out, &commit, &langs)?;
+    }
 
     println!("generated config docs: {}", output_root.display());
     Ok(())
@@ -2701,6 +4114,27 @@ fn write_next_app_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
             let content = render_next_app_config_page(&bundle.commit, language_docs, app)?;
             fs::write(&path, content).with_context(|| format!("无法写入 {}", path.display()))?;
         }
+    }
+
+    Ok(())
+}
+
+fn write_plugin_api_next_app_docs(output_dir: &Path, commit: &str, langs: &[String]) -> Result<()> {
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("无法创建插件 API 文档目录 {}", output_dir.display()))?;
+
+    let langs = normalized_langs(langs.to_vec());
+    for lang in langs {
+        let path = if lang.to_ascii_lowercase().starts_with("zh") {
+            output_dir.join("page.mdx")
+        } else {
+            let lang_dir = output_dir.join("en");
+            fs::create_dir_all(&lang_dir)
+                .with_context(|| format!("无法创建插件 API 英文文档目录 {}", lang_dir.display()))?;
+            lang_dir.join("page.mdx")
+        };
+        fs::write(&path, render_plugin_api_mdx(commit, &lang))
+            .with_context(|| format!("无法写入 {}", path.display()))?;
     }
 
     Ok(())
@@ -3387,6 +4821,220 @@ fn render_next_app_language_index(commit: &str, language_docs: &LanguageDocs) ->
     out
 }
 
+fn render_plugin_api_mdx(commit: &str, lang: &str) -> String {
+    let zh = is_zh(lang);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# {}\n",
+        text(zh, "插件 API AutoDoc", "Plugin API AutoDoc")
+    ));
+    out.push_str("> AutoDoc: qexed_config_to_mdx\n\n");
+    out.push_str(&format!("- {}: `{}`\n", text(zh, "提交", "Commit"), commit));
+    out.push_str(&format!(
+        "- {}: `{}`\n",
+        text(zh, "ABI", "ABI"),
+        "wasm32-unknown-unknown"
+    ));
+    out.push_str(&format!(
+        "- {}: `{}`\n\n",
+        text(zh, "编码", "Encoding"),
+        "postcard"
+    ));
+
+    out.push_str(&format!("## {}\n\n", text(zh, "运行时 ABI", "Runtime ABI")));
+    out.push_str(&format!(
+        "{}\n\n",
+        text(
+            zh,
+            "插件需要导出线性内存和分配函数。除 `qexed_plugin_init()` 外，事件与查询函数都使用 `(ptr: i32, len: i32)` 读取 postcard payload；查询函数返回 `i64`，高 32 位是响应指针，低 32 位是响应长度。",
+            "Plugins must export linear memory and an allocator. Except for `qexed_plugin_init()`, event and query functions read postcard payloads through `(ptr: i32, len: i32)`. Query functions return an `i64` where the high 32 bits are the response pointer and the low 32 bits are the response length.",
+        )
+    ));
+    out.push_str("```rust\n");
+    out.push_str("qexed_plugin_sdk::qexed_plugin_memory!();\n\n");
+    out.push_str("#[unsafe(no_mangle)]\n");
+    out.push_str("pub extern \"C\" fn qexed_plugin_priority() -> i32 { 100 }\n");
+    out.push_str("```\n\n");
+    out.push_str(&format!(
+        "- `memory`: {}\n",
+        text(zh, "WASM 线性内存导出。", "WASM linear memory export.")
+    ));
+    out.push_str(&format!(
+        "- `qexed_plugin_alloc(len: i32) -> i32`: {}\n",
+        text(
+            zh,
+            "必需，宿主用它写入 payload。",
+            "Required; the host uses it to write payloads."
+        )
+    ));
+    out.push_str(&format!(
+        "- `qexed_plugin_dealloc(ptr: i32, len: i32)`: {}\n",
+        text(
+            zh,
+            "可选，用于释放宿主写入或插件返回的缓冲区。",
+            "Optional; releases buffers written by the host or returned by the plugin."
+        )
+    ));
+    out.push_str(&format!(
+        "- `qexed_plugin_priority() -> i32`: {}\n\n",
+        text(
+            zh,
+            "可选，数值越大越先执行。",
+            "Optional; larger values run earlier."
+        )
+    ));
+
+    out.push_str(&format!(
+        "## {}\n\n",
+        text(zh, "事件与查询", "Events And Queries")
+    ));
+    out.push_str(&format!(
+        "| {} | {} | {} | {} | {} |\n",
+        text(zh, "导出函数", "Export"),
+        text(zh, "类型", "Kind"),
+        "Payload",
+        "Response",
+        text(zh, "说明", "Description")
+    ));
+    out.push_str("| --- | --- | --- | --- | --- |\n");
+    for event in PLUGIN_EVENT_DOCS {
+        out.push_str(&format!(
+            "| `{}` | {} | {} | {} | {} |\n",
+            event.event.export_name(),
+            plugin_call_kind_label(event.kind, zh),
+            plugin_type_cell(event.payload),
+            plugin_type_cell(event.response),
+            escape_markdown_table(localized_plugin_text(zh, event.zh, event.en))
+        ));
+    }
+    out.push('\n');
+
+    out.push_str(&format!(
+        "## {}\n\n",
+        text(zh, "宿主导入 API", "Host Imports")
+    ));
+    out.push_str(&format!(
+        "{}\n\n",
+        text(
+            zh,
+            "这些函数由服务端注册在 `qexed` import module 中；优先通过 `qexed_plugin_sdk` 包装函数调用。",
+            "These functions are registered by the server under the `qexed` import module; prefer the wrappers provided by `qexed_plugin_sdk`.",
+        )
+    ));
+    out.push_str(&format!(
+        "| {} | {} | {} | {} |\n",
+        text(zh, "名称", "Name"),
+        text(zh, "宿主签名", "Host Signature"),
+        text(zh, "SDK 包装", "SDK Wrapper"),
+        text(zh, "说明", "Description")
+    ));
+    out.push_str("| --- | --- | --- | --- |\n");
+    for api in PLUGIN_HOST_API_DOCS {
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | {} |\n",
+            api.name,
+            escape_code_span(api.signature),
+            escape_code_span(api.wrapper),
+            escape_markdown_table(localized_plugin_text(zh, api.zh, api.en))
+        ));
+    }
+    out.push('\n');
+
+    out.push_str(&format!(
+        "## {}\n\n",
+        text(zh, "Payload 类型", "Payload Types")
+    ));
+    for structure in PLUGIN_STRUCT_DOCS {
+        out.push_str(&format!("### `{}`\n\n", structure.name));
+        out.push_str(localized_plugin_text(zh, structure.zh, structure.en));
+        out.push_str("\n\n");
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            text(zh, "字段/变体", "Field/Variant"),
+            text(zh, "类型", "Type"),
+            text(zh, "默认值", "Default"),
+            text(zh, "说明", "Description")
+        ));
+        out.push_str("| --- | --- | --- | --- |\n");
+        for field in structure.fields {
+            out.push_str(&format!(
+                "| `{}` | `{}` | {} | {} |\n",
+                escape_code_span(field.name),
+                escape_code_span(field.ty),
+                plugin_default_cell(field.default),
+                escape_markdown_table(localized_plugin_text(zh, field.zh, field.en))
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str(&format!(
+        "## {}\n\n",
+        text(zh, "最小示例", "Minimal Example")
+    ));
+    out.push_str("```rust\n");
+    out.push_str("use qexed_plugin_sdk::{PlayerPayload, decode_payload};\n\n");
+    out.push_str("qexed_plugin_sdk::qexed_plugin_memory!();\n\n");
+    out.push_str("#[unsafe(no_mangle)]\n");
+    out.push_str("pub extern \"C\" fn qexed_plugin_player_join(ptr: i32, len: i32) {\n");
+    out.push_str(
+        "    let Some(player) = (unsafe { decode_payload::<PlayerPayload>(ptr, len) }) else {\n",
+    );
+    out.push_str("        qexed_plugin_sdk::log(\"player_join decode failed\");\n");
+    out.push_str("        return;\n");
+    out.push_str("    };\n");
+    out.push_str("    qexed_plugin_sdk::log(&format!(\"{} joined\", player.username));\n");
+    out.push_str("}\n");
+    out.push_str("```\n\n");
+    out.push_str(&format!(
+        "{}\n",
+        text(
+            zh,
+            "更多完整示例见 `plugins/examples`，其中 `command_npc_demo` 覆盖命令、NPC、占位符、自定义实体和插件 AI。",
+            "See `plugins/examples` for complete examples. `command_npc_demo` covers commands, NPCs, placeholders, custom entities, and plugin AI.",
+        )
+    ));
+
+    out
+}
+
+fn plugin_call_kind_label(kind: PluginCallKind, zh: bool) -> &'static str {
+    match (kind, zh) {
+        (PluginCallKind::Event, true) => "事件",
+        (PluginCallKind::Event, false) => "Event",
+        (PluginCallKind::Query, true) => "查询",
+        (PluginCallKind::Query, false) => "Query",
+        (PluginCallKind::Hybrid, true) => "事件/查询",
+        (PluginCallKind::Hybrid, false) => "Event/Query",
+    }
+}
+
+fn plugin_type_cell(value: Option<&str>) -> String {
+    value
+        .map(|value| format!("`{}`", escape_code_span(value)))
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn plugin_default_cell(value: &str) -> String {
+    if value.is_empty() {
+        "-".to_string()
+    } else {
+        format!("`{}`", escape_code_span(value))
+    }
+}
+
+fn localized_plugin_text<'a>(zh: bool, zh_text: &'a str, en_text: &'a str) -> &'a str {
+    if zh { zh_text } else { en_text }
+}
+
+fn text<'a>(zh: bool, zh_text: &'a str, en_text: &'a str) -> &'a str {
+    localized_plugin_text(zh, zh_text, en_text)
+}
+
+fn is_zh(lang: &str) -> bool {
+    lang.to_ascii_lowercase().starts_with("zh")
+}
+
 fn escape_yaml(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -3449,9 +5097,11 @@ fn escape_mdx_text(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, Qexed, QexedWarden, collect_app,
-        collect_bundle, render_next_app_config_page, write_assets, write_next_app_docs,
+        DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, PLUGIN_EVENT_DOCS, Qexed,
+        QexedWarden, collect_app, collect_bundle, render_next_app_config_page,
+        render_plugin_api_mdx, write_assets, write_next_app_docs, write_plugin_api_next_app_docs,
     };
+    use qexed_plugin_api::PluginEvent;
 
     fn temp_output_dir(name: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
@@ -3563,6 +5213,50 @@ mod tests {
         assert!(client.contains("fileNameFromPath(configPath)"));
         assert!(page.contains("```python\\nprint(\\\"Hello world\\\")\\n```"));
         assert!(page.contains("fields={configFields}"));
+
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn plugin_api_docs_cover_all_plugin_events() {
+        for event in PluginEvent::ALL {
+            assert!(
+                PLUGIN_EVENT_DOCS.iter().any(|doc| doc.event == *event),
+                "missing plugin autodoc metadata for {event:?}"
+            );
+        }
+
+        let zh = render_plugin_api_mdx("test-commit", "zh-CN");
+        assert!(zh.contains("# 插件 API AutoDoc"));
+        assert!(zh.contains("qexed_plugin_custom_entities"));
+        assert!(zh.contains("qexed_plugin_entity_ai_tick"));
+        assert!(zh.contains("CustomEntityDefinition"));
+        assert!(zh.contains("EntityAiTickQuery"));
+        assert!(zh.contains("NpcInteractPayload"));
+        assert!(zh.contains("lottery_roll"));
+        assert!(zh.contains("pathfinding_find"));
+
+        let en = render_plugin_api_mdx("test-commit", "en");
+        assert!(en.contains("# Plugin API AutoDoc"));
+        assert!(en.contains("CustomEntityRegistryResponse"));
+        assert!(en.contains("EntityAiOperation"));
+    }
+
+    #[test]
+    fn plugin_api_docs_are_written_for_next_app_router() -> anyhow::Result<()> {
+        let dir = temp_output_dir("plugin_api_docs");
+
+        write_plugin_api_next_app_docs(
+            &dir,
+            "test-commit",
+            &["zh-CN".to_string(), "en".to_string()],
+        )?;
+
+        let zh = std::fs::read_to_string(dir.join("page.mdx"))?;
+        let en = std::fs::read_to_string(dir.join("en").join("page.mdx"))?;
+        assert!(zh.contains("插件 API AutoDoc"));
+        assert!(en.contains("Plugin API AutoDoc"));
 
         let _ = std::fs::remove_dir_all(dir);
         Ok(())

@@ -9,6 +9,7 @@ distributed = []
 
 [dependencies]
 qexed_config_macros.workspace = true
+qexed_plugin_api.workspace = true
 anyhow = {workspace = true}
 serde.workspace = true
 toml.workspace = true

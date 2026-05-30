@@ -356,7 +356,7 @@ name = "Guide"
     let entities = std::fs::read_to_string(&entities_path)?;
     let marker_count = entities.matches("# ======= AutoDoc =======").count();
     assert!(
-        marker_count <= 12,
+        marker_count <= 20,
         "unexpected duplicated AutoDoc markers in qexed_entity.toml: {marker_count}\n{entities}"
     );
 

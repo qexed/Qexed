@@ -102,6 +102,8 @@ impl ServerContext {
     pub fn ensure_plugins_initialized(&self) {
         self.plugin_startup_applied.get_or_init(|| {
             self.plugins.ensure_initialized(&self.config.language);
+            self.entities
+                .register_custom_entities(self.plugins.custom_entities());
             apply_plugin_npc_mutations(
                 &self.config.server.entity_rendering,
                 &self.plugins,
@@ -196,6 +198,9 @@ fn apply_plugin_npc_mutations(
                     skin_textures: npc.skin_textures,
                     skin_signature: npc.skin_signature,
                     data: 0,
+                    ai: String::new(),
+                    spawn_rule: String::new(),
+                    custom_type: String::new(),
                     look_at_players: npc.look_at_players,
                     main_hand_event: npc.main_hand_event,
                     off_hand_event: npc.off_hand_event,

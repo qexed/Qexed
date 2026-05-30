@@ -14,7 +14,9 @@ mod instance;
 
 pub use qexed_plugin_api::{
     BlockDropPosition, BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition,
-    ClickDetectedPayload, ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload,
+    ClickDetectedPayload, CustomEntityDefinition, CustomEntityRegistryResponse,
+    EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload, EntityAiTickQuery,
+    EntityAiTickResponse, ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload,
     NpcInteractPayload, NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext,
     PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
     PlayerInputPayload, PlayerMovePayload, PlayerPayloadOwned, PluginCommandDefinition,
@@ -271,6 +273,31 @@ impl PluginManager {
         let mut operations = Vec::new();
         for response in
             self.query_encoded::<_, NpcMutationResponse>(PluginEvent::NpcMutations, &query)
+        {
+            operations.extend(response.operations);
+        }
+        operations
+    }
+
+    pub fn custom_entities(&self) -> Vec<CustomEntityDefinition> {
+        let mut definitions = Vec::new();
+        for response in
+            self.query_empty_encoded::<CustomEntityRegistryResponse>(PluginEvent::CustomEntities)
+        {
+            definitions.extend(response.entities);
+        }
+        definitions.retain(|definition| {
+            !definition.id.trim().is_empty() && !definition.entity_type.trim().is_empty()
+        });
+        definitions.sort_by(|left, right| left.id.cmp(&right.id));
+        definitions.dedup_by(|left, right| left.id == right.id);
+        definitions
+    }
+
+    pub fn handle_entity_ai_tick(&self, query: EntityAiTickQuery) -> Vec<EntityAiOperation> {
+        let mut operations = Vec::new();
+        for response in
+            self.query_encoded::<_, EntityAiTickResponse>(PluginEvent::EntityAiTick, &query)
         {
             operations.extend(response.operations);
         }

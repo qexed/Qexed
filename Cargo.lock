@@ -4330,6 +4330,7 @@ dependencies = [
  "log",
  "nanoid",
  "qexed_config_macros",
+ "qexed_plugin_api",
  "rand 0.8.6",
  "rust-i18n",
  "serde",

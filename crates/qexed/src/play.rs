@@ -81,6 +81,7 @@ use util::{
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 const CHUNK_SEND_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
+const ENTITY_SERVICE_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
@@ -328,6 +329,9 @@ where
     let mut chunk_send_tick = tokio::time::interval(CHUNK_SEND_TICK_INTERVAL);
     chunk_send_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     chunk_send_tick.tick().await;
+    let mut entity_service_tick = tokio::time::interval(ENTITY_SERVICE_TICK_INTERVAL);
+    entity_service_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    entity_service_tick.tick().await;
     let mut survival_tick = tokio::time::interval(SURVIVAL_TICK_INTERVAL);
     survival_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     survival_tick.tick().await;
@@ -469,6 +473,21 @@ where
                 ).await? {
                     pending_dig = None;
                 }
+            }
+            _ = entity_service_tick.tick() => {
+                let spawning = &config.server.entities.spawning;
+                entities.spawn_from_rules(
+                    players,
+                    &config.server.entity_rendering,
+                    spawning,
+                    &config.world.default_play_dimension(),
+                )?;
+                entities.tick_ai(
+                    players,
+                    plugins,
+                    &config.server.entity_rendering,
+                    spawning.ai_tick_interval_ms,
+                )?;
             }
             _ = world_time_tick.tick() => {
                 let game_time = world_rules.tick_dimension_time(&play_dimension);

@@ -944,6 +944,10 @@ pub struct Entities {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[AutoDoc(key = "config.qexed.server.entities.list", sub)]
     pub list: Vec<Entity>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning", sub)]
+    pub spawning: EntitySpawning,
 }
 
 impl Default for Entities {
@@ -952,6 +956,7 @@ impl Default for Entities {
             enable: false,
             dimension: default_entities_dimension(),
             list: Vec::new(),
+            spawning: EntitySpawning::default(),
         }
     }
 }
@@ -1023,6 +1028,10 @@ pub struct Entity {
     pub data: i32,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.ai")]
+    pub ai: String,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.list.look_at_players")]
     pub look_at_players: bool,
 
@@ -1057,6 +1066,7 @@ impl Default for Entity {
             pitch: 0.0,
             on_ground: true,
             data: 0,
+            ai: String::new(),
             look_at_players: false,
             main_hand_event: default_npc_main_hand_event(),
             off_hand_event: default_npc_off_hand_event(),
@@ -1088,6 +1098,232 @@ fn default_npc_off_hand_event() -> String {
 
 fn default_npc_attack_event() -> String {
     "attack".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct EntitySpawning {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_entity_spawn_tick_interval_ms")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.tick_interval_ms")]
+    pub tick_interval_ms: u64,
+
+    #[serde(default = "default_entity_ai_tick_interval_ms")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.ai_tick_interval_ms")]
+    pub ai_tick_interval_ms: u64,
+
+    #[serde(default = "default_entity_spawn_global_cap")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.global_cap")]
+    pub global_cap: usize,
+
+    #[serde(default = "default_entity_spawn_per_dimension_cap")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.per_dimension_cap")]
+    pub per_dimension_cap: usize,
+
+    #[serde(default = "default_entity_spawn_per_type_cap")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.per_type_cap")]
+    pub per_type_cap: usize,
+
+    #[serde(default = "default_entity_spawn_max_per_tick")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.max_spawn_per_tick")]
+    pub max_spawn_per_tick: usize,
+
+    #[serde(default = "default_entity_spawn_player_activation_range")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.player_activation_range")]
+    pub player_activation_range: f64,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules", sub)]
+    pub rules: Vec<EntitySpawnRule>,
+}
+
+impl Default for EntitySpawning {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            tick_interval_ms: default_entity_spawn_tick_interval_ms(),
+            ai_tick_interval_ms: default_entity_ai_tick_interval_ms(),
+            global_cap: default_entity_spawn_global_cap(),
+            per_dimension_cap: default_entity_spawn_per_dimension_cap(),
+            per_type_cap: default_entity_spawn_per_type_cap(),
+            max_spawn_per_tick: default_entity_spawn_max_per_tick(),
+            player_activation_range: default_entity_spawn_player_activation_range(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct EntitySpawnRule {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.id")]
+    pub id: String,
+
+    #[serde(default = "default_entity_spawn_rule_enable")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.enable")]
+    pub enable: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.dimension")]
+    pub dimension: String,
+
+    #[serde(default = "default_entity_spawn_rule_entity_type")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.entity_type")]
+    pub entity_type: String,
+
+    #[serde(default = "default_entity_spawn_rule_weight")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.weight")]
+    pub weight: u32,
+
+    #[serde(default = "default_entity_spawn_rule_cap")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.cap")]
+    pub cap: usize,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.name")]
+    pub name: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.display_name")]
+    pub display_name: String,
+
+    #[serde(default = "default_entity_spawn_rule_ai")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.ai")]
+    pub ai: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.data")]
+    pub data: i32,
+
+    #[serde(default = "default_entity_spawn_rule_on_ground")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.on_ground")]
+    pub on_ground: bool,
+
+    #[serde(default = "default_entity_spawn_min_x")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_x")]
+    pub min_x: f64,
+
+    #[serde(default = "default_entity_spawn_max_x")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_x")]
+    pub max_x: f64,
+
+    #[serde(default = "default_entity_spawn_min_y")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_y")]
+    pub min_y: f64,
+
+    #[serde(default = "default_entity_spawn_max_y")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_y")]
+    pub max_y: f64,
+
+    #[serde(default = "default_entity_spawn_min_z")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_z")]
+    pub min_z: f64,
+
+    #[serde(default = "default_entity_spawn_max_z")]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_z")]
+    pub max_z: f64,
+}
+
+impl Default for EntitySpawnRule {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enable: default_entity_spawn_rule_enable(),
+            dimension: String::new(),
+            entity_type: default_entity_spawn_rule_entity_type(),
+            weight: default_entity_spawn_rule_weight(),
+            cap: default_entity_spawn_rule_cap(),
+            name: String::new(),
+            display_name: String::new(),
+            ai: default_entity_spawn_rule_ai(),
+            data: 0,
+            on_ground: default_entity_spawn_rule_on_ground(),
+            min_x: default_entity_spawn_min_x(),
+            max_x: default_entity_spawn_max_x(),
+            min_y: default_entity_spawn_min_y(),
+            max_y: default_entity_spawn_max_y(),
+            min_z: default_entity_spawn_min_z(),
+            max_z: default_entity_spawn_max_z(),
+        }
+    }
+}
+
+fn default_entity_spawn_tick_interval_ms() -> u64 {
+    1000
+}
+
+fn default_entity_ai_tick_interval_ms() -> u64 {
+    200
+}
+
+fn default_entity_spawn_global_cap() -> usize {
+    70
+}
+
+fn default_entity_spawn_per_dimension_cap() -> usize {
+    70
+}
+
+fn default_entity_spawn_per_type_cap() -> usize {
+    20
+}
+
+fn default_entity_spawn_max_per_tick() -> usize {
+    4
+}
+
+fn default_entity_spawn_player_activation_range() -> f64 {
+    64.0
+}
+
+fn default_entity_spawn_rule_enable() -> bool {
+    true
+}
+
+fn default_entity_spawn_rule_entity_type() -> String {
+    "minecraft:zombie".to_string()
+}
+
+fn default_entity_spawn_rule_weight() -> u32 {
+    100
+}
+
+fn default_entity_spawn_rule_cap() -> usize {
+    20
+}
+
+fn default_entity_spawn_rule_ai() -> String {
+    "random_stroll".to_string()
+}
+
+fn default_entity_spawn_rule_on_ground() -> bool {
+    true
+}
+
+fn default_entity_spawn_min_x() -> f64 {
+    -16.0
+}
+
+fn default_entity_spawn_max_x() -> f64 {
+    16.0
+}
+
+fn default_entity_spawn_min_y() -> f64 {
+    64.0
+}
+
+fn default_entity_spawn_max_y() -> f64 {
+    64.0
+}
+
+fn default_entity_spawn_min_z() -> f64 {
+    -16.0
+}
+
+fn default_entity_spawn_max_z() -> f64 {
+    16.0
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -2339,7 +2575,7 @@ impl std::str::FromStr for ForwardingMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentFilter, ContentFilterEngine, EntityKind, ForwardingMode, GameMode,
+        ContentFilter, ContentFilterEngine, Entities, EntityKind, ForwardingMode, GameMode,
         GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
         LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerAudit, PlayerAuditStorage,
         PlayerData, PlayerDataEngine, PlayerMessages, PrecompiledChunks, ResourcePack,
@@ -2894,6 +3130,56 @@ z = 0.0
         assert_eq!(server.entities.list[1].entity_type, "minecraft:armor_stand");
         assert_eq!(server.entities.list[2].kind, EntityKind::Hologram);
         assert_eq!(server.entities.list[2].name, "Welcome");
+    }
+
+    #[test]
+    fn parses_entity_spawning_settings() {
+        let entities: Entities = toml::from_str(
+            r#"
+enable = true
+dimension = "qexed:mine_a"
+
+[spawning]
+enable = true
+tick_interval_ms = 500
+ai_tick_interval_ms = 100
+global_cap = 30
+per_dimension_cap = 20
+per_type_cap = 8
+max_spawn_per_tick = 3
+player_activation_range = 48.0
+
+[[spawning.rules]]
+id = "mine_zombies"
+dimension = "qexed:mine_a"
+entity_type = "minecraft:zombie"
+weight = 80
+cap = 6
+name = "Mine Zombie"
+display_name = "{\"text\":\"Mine Zombie\"}"
+ai = "follow_nearest_player"
+min_x = -8.0
+max_x = 8.0
+min_y = 64.0
+max_y = 64.0
+min_z = -8.0
+max_z = 8.0
+"#,
+        )
+        .unwrap();
+
+        assert!(entities.spawning.enable);
+        assert_eq!(entities.spawning.tick_interval_ms, 500);
+        assert_eq!(entities.spawning.ai_tick_interval_ms, 100);
+        assert_eq!(entities.spawning.global_cap, 30);
+        assert_eq!(entities.spawning.per_dimension_cap, 20);
+        assert_eq!(entities.spawning.per_type_cap, 8);
+        assert_eq!(entities.spawning.max_spawn_per_tick, 3);
+        assert_eq!(entities.spawning.player_activation_range, 48.0);
+        assert_eq!(entities.spawning.rules.len(), 1);
+        assert_eq!(entities.spawning.rules[0].id, "mine_zombies");
+        assert_eq!(entities.spawning.rules[0].entity_type, "minecraft:zombie");
+        assert_eq!(entities.spawning.rules[0].ai, "follow_nearest_player");
     }
 
     #[test]

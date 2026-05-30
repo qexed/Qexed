@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginEvent {
     Init,
     PlayerJoin,
@@ -20,9 +20,36 @@ pub enum PluginEvent {
     PlayerInput,
     ClickDetected,
     Pathfinding,
+    CustomEntities,
+    EntityAiTick,
 }
 
 impl PluginEvent {
+    pub const ALL: &'static [Self] = &[
+        Self::Init,
+        Self::PlayerJoin,
+        Self::PlayerLeave,
+        Self::ChunkLoad,
+        Self::ChunkUnload,
+        Self::ConfigReload,
+        Self::LanguageChange,
+        Self::MiningSpeed,
+        Self::BlockDrops,
+        Self::Commands,
+        Self::CommandExecute,
+        Self::NpcMutations,
+        Self::NpcInteract,
+        Self::ProxyConnectResult,
+        Self::Placeholders,
+        Self::PlayerBlockStep,
+        Self::PlayerMove,
+        Self::PlayerInput,
+        Self::ClickDetected,
+        Self::Pathfinding,
+        Self::CustomEntities,
+        Self::EntityAiTick,
+    ];
+
     pub fn export_name(self) -> &'static str {
         match self {
             Self::Init => "qexed_plugin_init",
@@ -45,6 +72,8 @@ impl PluginEvent {
             Self::PlayerInput => "qexed_plugin_player_input",
             Self::ClickDetected => "qexed_plugin_click_detected",
             Self::Pathfinding => "qexed_plugin_pathfinding",
+            Self::CustomEntities => "qexed_plugin_custom_entities",
+            Self::EntityAiTick => "qexed_plugin_entity_ai_tick",
         }
     }
 }

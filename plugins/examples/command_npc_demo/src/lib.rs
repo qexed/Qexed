@@ -1,8 +1,10 @@
 use qexed_plugin_sdk::{
-    NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert, PlaceholderQuery,
-    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, ProxyConnectResultPayload, config_load_or_create,
-    config_read_to_string, economy_currency_info, economy_register_currency,
+    CustomEntityDefinition, CustomEntityRegistryResponse, EntityAiOperation, EntityAiTickQuery,
+    EntityAiTickResponse, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
+    PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
+    PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse, ProxyConnectResultPayload,
+    config_load_or_create, config_read_to_string, economy_currency_info,
+    economy_register_currency,
 };
 
 qexed_plugin_sdk::qexed_plugin_memory!();
@@ -33,6 +35,53 @@ pub extern "C" fn qexed_plugin_commands(_ptr: i32, _len: i32) -> i64 {
     qexed_plugin_sdk::response_ptr_len(&PluginCommandDefinition {
         name: "hub".to_string(),
         description_key: "commands.trigger.simple.success".to_string(),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_custom_entities(_ptr: i32, _len: i32) -> i64 {
+    qexed_plugin_sdk::response_ptr_len(&CustomEntityRegistryResponse {
+        entities: vec![CustomEntityDefinition {
+            id: "demo:patrol_guard".to_string(),
+            entity_type: "minecraft:villager".to_string(),
+            display_name: "{\"text\":\"Patrol Guard\",\"color\":\"gold\"}".to_string(),
+            ai: "plugin:demo_patrol".to_string(),
+        }],
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_entity_ai_tick(ptr: i32, len: i32) -> i64 {
+    let Some(payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<EntityAiTickQuery>(ptr, len) })
+    else {
+        return qexed_plugin_sdk::response_ptr_len(&EntityAiTickResponse::default());
+    };
+
+    if payload.entity.custom_type != "demo:patrol_guard"
+        || payload.entity.ai != "plugin:demo_patrol"
+    {
+        return qexed_plugin_sdk::response_ptr_len(&EntityAiTickResponse::default());
+    }
+
+    let direction = if payload.entity.position.x > 12.0 {
+        -1.0
+    } else if payload.entity.position.x < 4.0 {
+        1.0
+    } else if payload.entity.entity_id % 2 == 0 {
+        1.0
+    } else {
+        -1.0
+    };
+
+    qexed_plugin_sdk::response_ptr_len(&EntityAiTickResponse {
+        operations: vec![EntityAiOperation::MoveDelta {
+            x: 0.05 * direction,
+            y: 0.0,
+            z: 0.0,
+            yaw: Some(if direction > 0.0 { -90.0 } else { 90.0 }),
+            pitch: Some(0.0),
+        }],
     })
 }
 

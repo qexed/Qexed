@@ -24,6 +24,17 @@ pub struct EntityManager {
     entity_ids: Arc<EntityIdAllocator>,
     entities: Mutex<Vec<ManagedEntity>>,
     dropped_items: Mutex<Vec<DroppedItemEntity>>,
+    custom_entities: Mutex<HashMap<String, CustomEntityRegistration>>,
+    spawn_sequence: Mutex<u64>,
+    last_spawn_tick: Mutex<Option<Instant>>,
+    last_ai_tick: Mutex<Option<Instant>>,
+}
+
+#[derive(Debug, Clone)]
+struct CustomEntityRegistration {
+    entity_type: String,
+    display_name: String,
+    ai: String,
 }
 
 impl EntityManager {
@@ -35,6 +46,10 @@ impl EntityManager {
             entity_ids,
             entities: Mutex::new(Vec::new()),
             dropped_items: Mutex::new(Vec::new()),
+            custom_entities: Mutex::new(HashMap::new()),
+            spawn_sequence: Mutex::new(0),
+            last_spawn_tick: Mutex::new(None),
+            last_ai_tick: Mutex::new(None),
         };
 
         if !config.enable {
@@ -433,6 +448,9 @@ impl EntityManager {
             skin_textures: request.skin_textures,
             skin_signature: request.skin_signature,
             data: request.data,
+            ai: request.ai,
+            spawn_rule: request.spawn_rule,
+            custom_type: request.custom_type,
             look_at_players: request.look_at_players,
             main_hand_event: normalized_npc_event(&request.main_hand_event, "interact"),
             off_hand_event: normalized_npc_event(&request.off_hand_event, "interact_off_hand"),
@@ -546,6 +564,9 @@ impl EntityManager {
             skin_textures: config.skin_textures.clone(),
             skin_signature: config.skin_signature.clone(),
             data: config.data,
+            ai: config.ai.clone(),
+            spawn_rule: String::new(),
+            custom_type: String::new(),
             look_at_players: config.look_at_players,
             main_hand_event: normalized_npc_event(&config.main_hand_event, "interact"),
             off_hand_event: normalized_npc_event(&config.off_hand_event, "interact_off_hand"),
@@ -635,6 +656,254 @@ impl EntityManager {
             item,
             pickup_ready_at: Instant::now() + ITEM_PICKUP_DELAY,
         }
+    }
+
+    pub fn register_custom_entities(
+        &self,
+        definitions: impl IntoIterator<Item = crate::plugins::CustomEntityDefinition>,
+    ) {
+        let mut custom_entities = self
+            .custom_entities
+            .lock()
+            .expect("entity custom registry poisoned");
+        for definition in definitions {
+            let id = definition.id.trim();
+            let entity_type = definition.entity_type.trim();
+            if id.is_empty() || entity_type.is_empty() {
+                continue;
+            }
+            custom_entities.insert(
+                id.to_string(),
+                CustomEntityRegistration {
+                    entity_type: entity_type.to_string(),
+                    display_name: definition.display_name,
+                    ai: definition.ai,
+                },
+            );
+        }
+    }
+
+    pub fn spawn_from_rules(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        spawning: &qexed_config::app::qexed::server::EntitySpawning,
+        default_dimension: &str,
+    ) -> Result<usize> {
+        if !self.should_run_spawn_tick(spawning.tick_interval_ms) {
+            return Ok(0);
+        }
+        if !spawning.enable || spawning.max_spawn_per_tick == 0 || spawning.rules.is_empty() {
+            return Ok(0);
+        }
+
+        let viewers = players.list_except(uuid::Uuid::nil());
+        if viewers.is_empty() {
+            return Ok(0);
+        }
+
+        let mut spawned = 0usize;
+        for _ in 0..spawning.max_spawn_per_tick {
+            if self.dynamic_count(None, None, None) >= spawning.global_cap {
+                break;
+            }
+            let Some(rule) = pick_spawn_rule(spawning) else {
+                break;
+            };
+            let rule_id = spawn_rule_id(rule);
+            let dimension = spawn_rule_dimension(rule, default_dimension);
+            if self.dynamic_count(Some(dimension), None, None) >= spawning.per_dimension_cap {
+                continue;
+            }
+            let custom = self.custom_registration(&rule.entity_type);
+            let counted_entity_type = custom
+                .as_ref()
+                .map(|registration| registration.entity_type.as_str())
+                .unwrap_or(rule.entity_type.as_str());
+            if self.dynamic_count(Some(dimension), Some(counted_entity_type), None)
+                >= spawning.per_type_cap
+            {
+                continue;
+            }
+            if self.dynamic_count(Some(dimension), None, Some(&rule_id)) >= rule.cap {
+                continue;
+            }
+            if !spawn_rule_has_active_viewer(
+                rule,
+                dimension,
+                &viewers,
+                spawning.player_activation_range,
+            ) {
+                continue;
+            }
+
+            let entity = self.spawn_local(spawn_request_from_rule(
+                rule,
+                &rule_id,
+                dimension,
+                self.next_spawn_sequence(),
+                custom,
+            )?)?;
+            self.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
+            spawned += 1;
+        }
+
+        Ok(spawned)
+    }
+
+    pub fn tick_ai(
+        &self,
+        players: &crate::players::PlayerManager,
+        plugins: &crate::plugins::PluginManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        tick_ms: u64,
+    ) -> Result<()> {
+        if !self.should_run_ai_tick(tick_ms) {
+            return Ok(());
+        }
+        let viewers = players.list_except(uuid::Uuid::nil());
+        if viewers.is_empty() {
+            return Ok(());
+        }
+
+        let mut updates = Vec::new();
+        let mut removes = Vec::new();
+        {
+            let mut entities = self.entities.lock().expect("entity manager poisoned");
+            for entity in entities.iter_mut() {
+                if entity.kind != ManagedEntityKind::Entity {
+                    continue;
+                }
+
+                let previous = entity.position;
+                let mut remove = false;
+                match ai_kind(&entity.ai) {
+                    EntityAiKind::None => {}
+                    EntityAiKind::RandomStroll => {
+                        apply_random_stroll(entity, tick_ms);
+                    }
+                    EntityAiKind::LookAtPlayer => {
+                        apply_look_at_nearest_player(entity, &viewers, rendering.default_distance);
+                    }
+                    EntityAiKind::FollowNearestPlayer => {
+                        apply_follow_nearest_player(entity, &viewers, tick_ms);
+                    }
+                    EntityAiKind::Plugin => {
+                        for operation in plugins
+                            .handle_entity_ai_tick(entity_ai_query(entity, &viewers, tick_ms))
+                        {
+                            match operation {
+                                crate::plugins::EntityAiOperation::MoveDelta {
+                                    x,
+                                    y,
+                                    z,
+                                    yaw,
+                                    pitch,
+                                } => {
+                                    entity.position.x += finite_or_zero(x).clamp(-4.0, 4.0);
+                                    entity.position.y += finite_or_zero(y).clamp(-4.0, 4.0);
+                                    entity.position.z += finite_or_zero(z).clamp(-4.0, 4.0);
+                                    if let Some(yaw) = yaw.filter(|value| value.is_finite()) {
+                                        entity.position.yaw = yaw;
+                                    }
+                                    if let Some(pitch) = pitch.filter(|value| value.is_finite()) {
+                                        entity.position.pitch = pitch;
+                                    }
+                                }
+                                crate::plugins::EntityAiOperation::LookAt { x, y, z } => {
+                                    if x.is_finite() && y.is_finite() && z.is_finite() {
+                                        let target = EntityPosition {
+                                            x,
+                                            y,
+                                            z,
+                                            yaw: 0.0,
+                                            pitch: 0.0,
+                                            on_ground: true,
+                                        };
+                                        let (yaw, pitch) = look_rotation(entity.position, target);
+                                        entity.position.yaw = yaw;
+                                        entity.position.pitch = pitch;
+                                    }
+                                }
+                                crate::plugins::EntityAiOperation::Remove => {
+                                    remove = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if remove {
+                    removes.push(entity.key.clone());
+                } else if position_changed(previous, entity.position) {
+                    updates.push(entity.clone());
+                }
+            }
+        }
+
+        for entity in updates {
+            let packets = entity.position_packets()?;
+            for player in &viewers {
+                if player.dimension == entity.dimension
+                    && within_render_distance(
+                        entity.position,
+                        player.position,
+                        render_distance_for_entity(&entity, rendering),
+                    )
+                {
+                    players.send_packets_to(player.profile.uuid, packets.clone());
+                }
+            }
+        }
+
+        for key in removes {
+            if let Ok(entity) = self.remove_local(&key) {
+                self.send_remove_to_rendered_viewers(players, rendering, &entity)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn custom_registration(&self, id: &str) -> Option<CustomEntityRegistration> {
+        self.custom_entities
+            .lock()
+            .expect("entity custom registry poisoned")
+            .get(id.trim())
+            .cloned()
+    }
+
+    fn dynamic_count(
+        &self,
+        dimension: Option<&str>,
+        entity_type: Option<&str>,
+        spawn_rule: Option<&str>,
+    ) -> usize {
+        self.entities
+            .lock()
+            .expect("entity manager poisoned")
+            .iter()
+            .filter(|entity| !entity.spawn_rule.is_empty())
+            .filter(|entity| dimension.is_none_or(|dimension| entity.dimension == dimension))
+            .filter(|entity| {
+                entity_type.is_none_or(|entity_type| entity.entity_type == entity_type)
+            })
+            .filter(|entity| spawn_rule.is_none_or(|spawn_rule| entity.spawn_rule == spawn_rule))
+            .count()
+    }
+
+    fn next_spawn_sequence(&self) -> u64 {
+        let mut sequence = self.spawn_sequence.lock().expect("spawn sequence poisoned");
+        *sequence = sequence.saturating_add(1);
+        *sequence
+    }
+
+    fn should_run_spawn_tick(&self, interval_ms: u64) -> bool {
+        should_run_tick(&self.last_spawn_tick, interval_ms)
+    }
+
+    fn should_run_ai_tick(&self, interval_ms: u64) -> bool {
+        should_run_tick(&self.last_ai_tick, interval_ms)
     }
 }
 
@@ -782,6 +1051,306 @@ fn normalized_npc_event(value: &str, fallback: &str) -> String {
         fallback.to_string()
     } else {
         value.to_string()
+    }
+}
+
+fn should_run_tick(last_tick: &Mutex<Option<Instant>>, interval_ms: u64) -> bool {
+    let now = Instant::now();
+    let interval = Duration::from_millis(interval_ms.max(50));
+    let mut last_tick = last_tick.lock().expect("entity tick state poisoned");
+    if last_tick.is_some_and(|last_tick| now.duration_since(last_tick) < interval) {
+        return false;
+    }
+    *last_tick = Some(now);
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntityAiKind {
+    None,
+    RandomStroll,
+    LookAtPlayer,
+    FollowNearestPlayer,
+    Plugin,
+}
+
+fn ai_kind(value: &str) -> EntityAiKind {
+    let value = value.trim();
+    if value.is_empty() {
+        return EntityAiKind::None;
+    }
+    match value {
+        "none" => EntityAiKind::None,
+        "random_stroll" | "wander" => EntityAiKind::RandomStroll,
+        "look_at_player" | "look_at_players" => EntityAiKind::LookAtPlayer,
+        "follow_nearest_player" | "follow_player" => EntityAiKind::FollowNearestPlayer,
+        value if value.starts_with("plugin:") => EntityAiKind::Plugin,
+        _ => EntityAiKind::None,
+    }
+}
+
+fn apply_random_stroll(entity: &mut ManagedEntity, tick_ms: u64) {
+    let mut rng = rand::thread_rng();
+    if rand::Rng::gen_range(&mut rng, 0.0..1.0) > 0.35 {
+        return;
+    }
+    let yaw = rand::Rng::gen_range(&mut rng, -180.0..180.0);
+    let radians = f64::from(yaw).to_radians();
+    let tick_scale = (tick_ms as f64 / 200.0).clamp(0.25, 2.0);
+    let step = rand::Rng::gen_range(&mut rng, 0.08..0.22) * tick_scale;
+    entity.position.x += -radians.sin() * step;
+    entity.position.z += radians.cos() * step;
+    entity.position.yaw = yaw;
+}
+
+fn apply_look_at_nearest_player(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    range: f64,
+) {
+    let Some(target) = nearest_player(entity.position, &entity.dimension, viewers, range) else {
+        return;
+    };
+    let (yaw, pitch) = look_rotation(entity.position, target.position);
+    entity.position.yaw = yaw;
+    entity.position.pitch = pitch;
+}
+
+fn apply_follow_nearest_player(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_ms: u64,
+) {
+    const FOLLOW_RANGE: f64 = 32.0;
+    const STOP_DISTANCE: f64 = 2.0;
+    const BASE_STEP: f64 = 0.22;
+
+    let Some(target) = nearest_player(entity.position, &entity.dimension, viewers, FOLLOW_RANGE)
+    else {
+        return;
+    };
+    let dx = target.position.x - entity.position.x;
+    let dz = target.position.z - entity.position.z;
+    let horizontal = (dx * dx + dz * dz).sqrt();
+    let (yaw, pitch) = look_rotation(entity.position, target.position);
+    entity.position.yaw = yaw;
+    entity.position.pitch = pitch;
+    if horizontal <= STOP_DISTANCE {
+        return;
+    }
+    let tick_scale = (tick_ms as f64 / 200.0).clamp(0.25, 2.0);
+    let step = (BASE_STEP * tick_scale).min(horizontal - STOP_DISTANCE);
+    entity.position.x += dx / horizontal * step;
+    entity.position.z += dz / horizontal * step;
+}
+
+fn nearest_player<'a>(
+    position: EntityPosition,
+    dimension: &str,
+    viewers: &'a [crate::players::OnlinePlayer],
+    range: f64,
+) -> Option<&'a crate::players::OnlinePlayer> {
+    viewers
+        .iter()
+        .filter(|player| player.dimension == dimension)
+        .filter(|player| within_render_distance(position, player.position, range))
+        .min_by(|left, right| {
+            horizontal_distance_sq(position, left.position)
+                .total_cmp(&horizontal_distance_sq(position, right.position))
+        })
+}
+
+fn entity_ai_query(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_ms: u64,
+) -> crate::plugins::EntityAiTickQuery {
+    let nearby_players = viewers
+        .iter()
+        .filter(|player| player.dimension == entity.dimension)
+        .filter(|player| within_render_distance(entity.position, player.position, 64.0))
+        .map(|player| crate::plugins::EntityAiPlayerPayload {
+            player: qexed_plugin_api::player_payload_owned(player),
+            position: qexed_plugin_api::player_position_payload(player.position),
+        })
+        .collect();
+    crate::plugins::EntityAiTickQuery {
+        entity: crate::plugins::EntityAiEntityPayload {
+            key: entity.key.clone(),
+            entity_id: entity.entity_id,
+            entity_type: entity.entity_type.clone(),
+            custom_type: entity.custom_type.clone(),
+            ai: entity.ai.clone(),
+            spawn_rule: entity.spawn_rule.clone(),
+            dimension: entity.dimension.clone(),
+            position: qexed_plugin_api::player_position_payload(entity.position),
+        },
+        nearby_players,
+        tick_ms,
+    }
+}
+
+fn finite_or_zero(value: f64) -> f64 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn position_changed(left: EntityPosition, right: EntityPosition) -> bool {
+    (left.x - right.x).abs() > 0.0001
+        || (left.y - right.y).abs() > 0.0001
+        || (left.z - right.z).abs() > 0.0001
+        || (left.yaw - right.yaw).abs() > 0.1
+        || (left.pitch - right.pitch).abs() > 0.1
+        || left.on_ground != right.on_ground
+}
+
+fn pick_spawn_rule(
+    spawning: &qexed_config::app::qexed::server::EntitySpawning,
+) -> Option<&qexed_config::app::qexed::server::EntitySpawnRule> {
+    let candidates = spawning
+        .rules
+        .iter()
+        .filter(|rule| rule.enable && rule.weight > 0 && rule.cap > 0)
+        .collect::<Vec<_>>();
+    let total = candidates.iter().fold(0u64, |total, rule| {
+        total.saturating_add(u64::from(rule.weight))
+    });
+    if total == 0 {
+        return None;
+    }
+
+    let mut pick = rand::Rng::gen_range(&mut rand::thread_rng(), 0..total);
+    for rule in candidates {
+        let weight = u64::from(rule.weight);
+        if pick < weight {
+            return Some(rule);
+        }
+        pick -= weight;
+    }
+    None
+}
+
+fn spawn_rule_id(rule: &qexed_config::app::qexed::server::EntitySpawnRule) -> String {
+    let id = rule.id.trim();
+    if !id.is_empty() {
+        id.to_string()
+    } else {
+        rule.entity_type
+            .trim()
+            .trim_start_matches("minecraft:")
+            .replace([':', '/', '\\', ' '], "_")
+    }
+}
+
+fn spawn_rule_dimension<'a>(
+    rule: &'a qexed_config::app::qexed::server::EntitySpawnRule,
+    default_dimension: &'a str,
+) -> &'a str {
+    let dimension = rule.dimension.trim();
+    if dimension.is_empty() {
+        default_dimension
+    } else {
+        dimension
+    }
+}
+
+fn spawn_rule_has_active_viewer(
+    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    dimension: &str,
+    viewers: &[crate::players::OnlinePlayer],
+    activation_range: f64,
+) -> bool {
+    let activation_range = activation_range.max(0.0);
+    let min_x = rule.min_x.min(rule.max_x) - activation_range;
+    let max_x = rule.min_x.max(rule.max_x) + activation_range;
+    let min_z = rule.min_z.min(rule.max_z) - activation_range;
+    let max_z = rule.min_z.max(rule.max_z) + activation_range;
+    viewers.iter().any(|player| {
+        player.dimension == dimension
+            && player.position.x >= min_x
+            && player.position.x <= max_x
+            && player.position.z >= min_z
+            && player.position.z <= max_z
+    })
+}
+
+fn spawn_request_from_rule(
+    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+    rule_id: &str,
+    dimension: &str,
+    sequence: u64,
+    custom: Option<CustomEntityRegistration>,
+) -> Result<EntitySpawnRequest> {
+    let (entity_type, custom_type, default_display_name, default_ai) = match custom {
+        Some(custom) => (
+            custom.entity_type,
+            rule.entity_type.trim().to_string(),
+            custom.display_name,
+            custom.ai,
+        ),
+        None => (
+            rule.entity_type.trim().to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
+    };
+    let entity_type = if entity_type.trim().is_empty() {
+        "minecraft:zombie".to_string()
+    } else {
+        entity_type
+    };
+    let name = if rule.name.trim().is_empty() {
+        rule_id.to_string()
+    } else {
+        rule.name.clone()
+    };
+    let display_name = if !rule.display_name.trim().is_empty() {
+        rule.display_name.clone()
+    } else if !default_display_name.trim().is_empty() {
+        default_display_name
+    } else {
+        name.clone()
+    };
+    let ai = if !rule.ai.trim().is_empty() {
+        rule.ai.clone()
+    } else {
+        default_ai
+    };
+    Ok(EntitySpawnRequest {
+        key: format!("spawn:{rule_id}:{sequence}"),
+        kind: ManagedEntityKind::Entity,
+        entity_type,
+        dimension: dimension.to_string(),
+        position: EntityPosition {
+            x: random_between(rule.min_x, rule.max_x),
+            y: random_between(rule.min_y, rule.max_y),
+            z: random_between(rule.min_z, rule.max_z),
+            yaw: rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0),
+            pitch: 0.0,
+            on_ground: rule.on_ground,
+        },
+        name,
+        display_name,
+        skin_textures: String::new(),
+        skin_signature: String::new(),
+        data: rule.data,
+        ai,
+        spawn_rule: rule_id.to_string(),
+        custom_type,
+        look_at_players: false,
+        main_hand_event: "interact".to_string(),
+        off_hand_event: "interact_off_hand".to_string(),
+        attack_event: "attack".to_string(),
+    })
+}
+
+fn random_between(left: f64, right: f64) -> f64 {
+    let min = left.min(right);
+    let max = left.max(right);
+    if (max - min).abs() < f64::EPSILON {
+        min
+    } else {
+        rand::Rng::gen_range(&mut rand::thread_rng(), min..=max)
     }
 }
 
