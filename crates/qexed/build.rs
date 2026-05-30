@@ -1,10 +1,7 @@
-use shadow_rs::{BuildPattern, ShadowBuilder};
+use shadow_rs::ShadowBuilder;
 
 fn main() {
-    ShadowBuilder::builder()
-        .build_pattern(BuildPattern::RealTime)
-        .build()
-        .unwrap();
+    ShadowBuilder::builder().build().unwrap();
     if std::env::var("TARGET").unwrap().contains("windows") {
         let mut res = winres::WindowsResource::new();
         res.set_icon("logo.ico");

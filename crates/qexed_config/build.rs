@@ -1,4 +1,4 @@
-use shadow_rs::{BuildPattern, ShadowBuilder};
+use shadow_rs::ShadowBuilder;
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -6,10 +6,7 @@ use std::{
 };
 
 fn main() {
-    ShadowBuilder::builder()
-        .build_pattern(BuildPattern::RealTime)
-        .build()
-        .unwrap();
+    ShadowBuilder::builder().build().unwrap();
 
     if std::env::var("TARGET").unwrap().contains("windows") {
         compile_qexed_config_to_mdx_resource().expect("无法编译 Windows 资源文件");
