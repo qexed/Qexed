@@ -134,10 +134,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_plugin_api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "qexed_plugin_sdk"
 version = "0.1.0"
 dependencies = [
  "postcard",
+ "qexed_plugin_api",
  "serde",
 ]
 

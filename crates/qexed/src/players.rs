@@ -1,9 +1,2 @@
-mod manager;
-mod model;
-mod packets;
-
-pub use manager::PlayerManager;
-pub use model::{OnlinePlayer, PlayerEvent, PlayerSession};
-pub(crate) use packets::{packet_bytes, spawn_player_packets};
-
-use model::PlayerHandle;
+pub use qexed_player::{OnlinePlayer, PlayerEvent, PlayerManager, PlayerSession};
+pub(crate) use qexed_player::{packet_bytes, spawn_player_packets};

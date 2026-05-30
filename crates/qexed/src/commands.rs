@@ -1,154 +1,10 @@
-use std::{collections::HashSet, path::PathBuf, sync::OnceLock};
+use std::collections::HashSet;
 
-use anyhow::{Context, Result};
 use qexed_packet::net_types::VarInt;
-use qexed_protocol::{
-    to_client::play::commands::{BrigadierString, Commands, Node, Varies},
-    types::TextComponent,
-};
-use serde::{Deserialize, Serialize};
-
-const COMMAND_CONFIG_PATH: &str = "config/qexed_commands.toml";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandMessages {
-    #[serde(default = "default_help")]
-    pub help: String,
-
-    #[serde(default = "default_list")]
-    pub list: String,
-
-    #[serde(default = "default_unknown")]
-    pub unknown: String,
-
-    #[serde(default = "default_lobby")]
-    pub lobby: String,
-
-    #[serde(default = "default_lobby_unavailable")]
-    pub lobby_unavailable: String,
-
-    #[serde(default = "default_lobby_status")]
-    pub lobby_status: String,
-
-    #[serde(default = "default_spawn")]
-    pub spawn: String,
-
-    #[serde(default = "default_server_list")]
-    pub server_list: String,
-
-    #[serde(default = "default_server_missing")]
-    pub server_missing: String,
-}
-
-impl Default for CommandMessages {
-    fn default() -> Self {
-        Self {
-            help: default_help(),
-            list: default_list(),
-            unknown: default_unknown(),
-            lobby: default_lobby(),
-            lobby_unavailable: default_lobby_unavailable(),
-            lobby_status: default_lobby_status(),
-            spawn: default_spawn(),
-            server_list: default_server_list(),
-            server_missing: default_server_missing(),
-        }
-    }
-}
-
-impl CommandMessages {
-    pub fn load_or_create() -> Self {
-        match Self::load_or_create_inner() {
-            Ok(messages) => messages,
-            Err(err) => {
-                log::warn!("failed to load command messages, using defaults: {err:#}");
-                Self::default()
-            }
-        }
-    }
-
-    fn load_or_create_inner() -> Result<Self> {
-        let path = workspace_root().join(COMMAND_CONFIG_PATH);
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("create {}", parent.display()))?;
-            }
-            let content = toml::to_string_pretty(&Self::default())?;
-            std::fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
-        }
-
-        let content =
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        toml::from_str(&content).with_context(|| format!("parse {}", path.display()))
-    }
-
-    pub fn render_help(&self) -> TextComponent {
-        text_component(&self.help)
-    }
-
-    pub fn render_list(&self, online: usize, max: i32, names: &[String]) -> TextComponent {
-        text_component(
-            self.list
-                .replace("{online}", &online.to_string())
-                .replace("{max}", max_label(max).as_str())
-                .replace("{players}", &names.join(", ")),
-        )
-    }
-
-    pub fn render_unknown(&self, command: &str) -> TextComponent {
-        text_component(self.unknown.replace("{command}", command))
-    }
-
-    pub fn render_lobby(&self) -> TextComponent {
-        text_component(&self.lobby)
-    }
-
-    pub fn render_lobby_unavailable(&self) -> TextComponent {
-        text_component(&self.lobby_unavailable)
-    }
-
-    pub fn render_lobby_status(&self, summary: &str, servers: &[String]) -> TextComponent {
-        let servers = if servers.is_empty() {
-            "none".to_string()
-        } else {
-            servers.join(", ")
-        };
-        text_component(
-            self.lobby_status
-                .replace("{summary}", summary)
-                .replace("{servers}", &servers),
-        )
-    }
-
-    pub fn render_spawn(&self) -> TextComponent {
-        text_component(&self.spawn)
-    }
-
-    pub fn render_server_list(&self, servers: &[String]) -> TextComponent {
-        let servers = if servers.is_empty() {
-            "none".to_string()
-        } else {
-            servers.join(", ")
-        };
-        text_component(self.server_list.replace("{servers}", &servers))
-    }
-
-    pub fn render_server_missing(&self, server: &str) -> TextComponent {
-        text_component(self.server_missing.replace("{server}", server))
-    }
-}
+use qexed_protocol::to_client::play::commands::{BrigadierString, Commands, Node, Varies};
 
 pub fn command_tree() -> Commands {
-    command_tree_for(&[
-        "help",
-        "list",
-        "lobby",
-        "server",
-        "spawn",
-        "entity",
-        "structure",
-    ])
+    command_tree_for(builtin_command_literals())
 }
 
 pub fn command_tree_for(commands: &[&str]) -> Commands {
@@ -244,11 +100,7 @@ pub async fn visible_commands(
 ) -> anyhow::Result<Vec<&'static str>> {
     let mut commands = Vec::new();
     let mut seen = HashSet::new();
-    for command in builtin_command_literals()
-        .iter()
-        .chain(vanilla_command_literals().iter())
-        .copied()
-    {
+    for command in builtin_command_literals().iter().copied() {
         if !seen.insert(command) {
             continue;
         }
@@ -297,19 +149,10 @@ pub fn permission_node(command: &str) -> Option<String> {
 }
 
 pub fn command_names_for_suggestions() -> Vec<&'static str> {
-    let mut commands = builtin_command_literals()
-        .iter()
-        .chain(vanilla_command_literals().iter())
-        .copied()
-        .collect::<Vec<_>>();
+    let mut commands = builtin_command_literals().to_vec();
     commands.sort_unstable();
     commands.dedup();
     commands
-}
-
-pub fn messages() -> &'static CommandMessages {
-    static MESSAGES: OnceLock<CommandMessages> = OnceLock::new();
-    MESSAGES.get_or_init(CommandMessages::load_or_create)
 }
 
 fn executable_literal(name: &str) -> Node {
@@ -815,65 +658,193 @@ fn append_scoreboard_command_nodes(nodes: &mut Vec<Node>) -> i32 {
     root
 }
 
-fn default_help() -> String {
-    "---- Minecraft Help ----\n/list - Lists players on the server.\n/lobby - Opens the lobby menu.\n/lobby status - Shows lobby backend status.\n/lobby refresh - Refreshes lobby backend status.\n/server [id] - Lists or joins a backend server.\n/spawn - Returns to spawn.\n/entity list|spawn|move|remove - Manages runtime lobby entities.\n/structure list|place|locate - Manages built-in structures.".to_string()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandHelpEntry {
+    pub usage: String,
+    pub description: Option<String>,
 }
 
-fn default_list() -> String {
-    "There are {online} of a max of {max} players online: {players}".to_string()
+impl CommandHelpEntry {
+    fn new(usage: impl Into<String>, description: Option<String>) -> Self {
+        Self {
+            usage: usage.into(),
+            description,
+        }
+    }
 }
 
-fn default_unknown() -> String {
-    "Unknown or incomplete command, see below for error\n/{command}<--[HERE]".to_string()
+pub fn localized_builtin_help_entries(commands: &[&str], locale: &str) -> Vec<CommandHelpEntry> {
+    let locale = i18n_locale(locale);
+    let mut entries = commands
+        .iter()
+        .filter_map(|command| localized_builtin_help_entry(command, locale))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.usage.cmp(&right.usage));
+    entries
 }
 
-fn default_lobby() -> String {
-    "Opened lobby menu.".to_string()
+pub fn localized_plugin_help_entry(
+    command: &str,
+    description_key: &str,
+    locale: &str,
+) -> CommandHelpEntry {
+    let locale = i18n_locale(locale);
+    let description_key = description_key.trim();
+    let description = if description_key.is_empty() {
+        None
+    } else {
+        let translated = rust_i18n::t!(description_key, locale = locale).to_string();
+        (translated != description_key).then_some(translated)
+    };
+    CommandHelpEntry::new(format!("/{command}"), description)
 }
 
-fn default_lobby_unavailable() -> String {
-    "Lobby is not enabled on this server.".to_string()
+pub fn localized_server_help(locale: &str, entries: &[CommandHelpEntry]) -> String {
+    localized_help(
+        locale,
+        "qexed.command.help.header",
+        entries,
+        None::<&[CommandHelpEntry]>,
+    )
 }
 
-fn default_lobby_status() -> String {
-    "{summary}: {servers}".to_string()
+pub fn localized_console_help(locale: &str) -> String {
+    let locale_key = i18n_locale(locale);
+    let server_entries = localized_builtin_help_entries(builtin_command_literals(), locale_key);
+    let console_entries = [
+        CommandHelpEntry::new(
+            "help, ?",
+            Some(rust_i18n::t!("qexed.console.help.description", locale = locale_key).to_string()),
+        ),
+        CommandHelpEntry::new(
+            "status",
+            Some(
+                rust_i18n::t!("qexed.console.status.description", locale = locale_key).to_string(),
+            ),
+        ),
+        CommandHelpEntry::new(
+            "list, players",
+            Some(rust_i18n::t!("qexed.console.list.description", locale = locale_key).to_string()),
+        ),
+        CommandHelpEntry::new(
+            "say <message>",
+            Some(rust_i18n::t!("qexed.console.say.description", locale = locale_key).to_string()),
+        ),
+        CommandHelpEntry::new(
+            "stop, exit, quit",
+            Some(rust_i18n::t!("qexed.console.stop.description", locale = locale_key).to_string()),
+        ),
+    ];
+    localized_help(
+        locale_key,
+        "qexed.command.help.console_header",
+        &server_entries,
+        Some(console_entries.as_slice()),
+    )
 }
 
-fn default_spawn() -> String {
-    "Teleported to spawn.".to_string()
+pub fn localized_list(locale: &str, online: usize, max: i32, names: &[String]) -> String {
+    let locale = i18n_locale(locale);
+    rust_i18n::t!(
+        "qexed.command.list.message",
+        locale = locale,
+        online = online,
+        max = localized_max_label(locale, max),
+        players = names.join(", ")
+    )
+    .to_string()
 }
 
-fn default_server_list() -> String {
-    "Available servers: {servers}".to_string()
+pub fn localized_unimplemented(locale: &str, command: &str) -> String {
+    let locale = i18n_locale(locale);
+    rust_i18n::t!(
+        "qexed.command.unimplemented",
+        locale = locale,
+        command = command
+    )
+    .to_string()
 }
 
-fn default_server_missing() -> String {
-    "Server is unavailable: {server}".to_string()
-}
-
-fn max_label(max: i32) -> String {
+pub fn localized_max_label(locale: &str, max: i32) -> String {
     if max < 0 {
-        "unlimited".to_string()
+        rust_i18n::t!(
+            "qexed.command.max_players.unlimited",
+            locale = i18n_locale(locale)
+        )
+        .to_string()
     } else {
         max.to_string()
     }
 }
 
-fn text_component(text: impl Into<String>) -> TextComponent {
-    let mut map = std::collections::HashMap::new();
-    map.insert(
-        "text".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from(text.into())),
-    );
-    qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
+pub fn i18n_locale(locale: &str) -> &'static str {
+    let normalized = locale.trim().replace('_', "-").to_ascii_lowercase();
+    if normalized.starts_with("en") {
+        "en"
+    } else {
+        "zh-CN"
+    }
 }
 
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
+fn localized_help(
+    locale: &str,
+    header_key: &str,
+    entries: &[CommandHelpEntry],
+    console_entries: Option<&[CommandHelpEntry]>,
+) -> String {
+    let locale = i18n_locale(locale);
+    let mut lines = vec![rust_i18n::t!(header_key, locale = locale).to_string()];
+    lines.extend(entries.iter().map(localized_help_line));
+    if let Some(console_entries) = console_entries {
+        lines.push(String::new());
+        lines.push(rust_i18n::t!("qexed.console.header", locale = locale).to_string());
+        lines.extend(console_entries.iter().map(localized_help_line));
+    }
+    lines.join("\n")
+}
+
+fn localized_help_line(entry: &CommandHelpEntry) -> String {
+    match &entry.description {
+        Some(description) => format!("{} - {description}", entry.usage),
+        None => entry.usage.clone(),
+    }
+}
+
+fn localized_builtin_help_entry(command: &str, locale: &str) -> Option<CommandHelpEntry> {
+    let (usage, description_key) = match command {
+        "help" => ("/help", "qexed.command.help.description"),
+        "list" => ("/list", "qexed.command.list.description"),
+        "lobby" => ("/lobby [status|refresh]", "qexed.command.lobby.description"),
+        "server" => ("/server [id]", "qexed.command.server.description"),
+        "spawn" => ("/spawn", "qexed.command.spawn.description"),
+        "teleport" => (
+            "/teleport <target|location>",
+            "qexed.command.teleport.description",
+        ),
+        "tp" => ("/tp <target|location>", "qexed.command.tp.description"),
+        "time" => (
+            "/time set|add|query <dimension> ...",
+            "qexed.command.time.description",
+        ),
+        "gamerule" => (
+            "/gamerule <dimension> <rule> [value]",
+            "qexed.command.gamerule.description",
+        ),
+        "scoreboard" => ("/scoreboard ...", "qexed.command.scoreboard.description"),
+        "entity" => (
+            "/entity list|spawn|move|remove ...",
+            "qexed.command.entity.description",
+        ),
+        "structure" => (
+            "/structure list|place|locate ...",
+            "qexed.command.structure.description",
+        ),
+        _ => return None,
+    };
+    Some(CommandHelpEntry::new(
+        usage,
+        Some(rust_i18n::t!(description_key, locale = locale).to_string()),
+    ))
 }
 
 fn builtin_command_literals() -> &'static [&'static str] {
@@ -883,11 +854,13 @@ fn builtin_command_literals() -> &'static [&'static str] {
         "lobby",
         "server",
         "spawn",
-        "entity",
-        "structure",
         "teleport",
         "tp",
+        "time",
+        "gamerule",
         "scoreboard",
+        "entity",
+        "structure",
     ]
 }
 
@@ -990,7 +963,7 @@ mod tests {
     fn command_tree_contains_help_and_list() {
         let tree = super::command_tree();
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes[0].children.len(), 7);
+        assert_eq!(tree.nodes[0].children.len(), 12);
 
         let root_command_names = tree.nodes[0]
             .children
@@ -1007,6 +980,11 @@ mod tests {
         assert!(root_command_names.contains(&"lobby"));
         assert!(root_command_names.contains(&"server"));
         assert!(root_command_names.contains(&"spawn"));
+        assert!(root_command_names.contains(&"teleport"));
+        assert!(root_command_names.contains(&"tp"));
+        assert!(root_command_names.contains(&"time"));
+        assert!(root_command_names.contains(&"gamerule"));
+        assert!(root_command_names.contains(&"scoreboard"));
         assert!(root_command_names.contains(&"entity"));
         assert!(root_command_names.contains(&"structure"));
 
@@ -1140,21 +1118,25 @@ mod tests {
     }
 
     #[test]
-    fn command_messages_include_lobby_unavailable_default() {
-        let messages = super::CommandMessages::default();
-        assert_eq!(
-            messages.lobby_unavailable,
-            "Lobby is not enabled on this server."
-        );
-        let rendered = messages.render_lobby_unavailable();
-        let qexed_nbt::Tag::Compound(map) = rendered else {
-            panic!("expected text component compound");
-        };
-        assert_eq!(
-            map.get("text"),
-            Some(&qexed_nbt::Tag::String(std::sync::Arc::from(
-                "Lobby is not enabled on this server."
-            )))
-        );
+    fn localized_help_uses_requested_locale_without_pages() {
+        let entries = super::localized_builtin_help_entries(&["help", "list"], "zh_cn");
+        let help = super::localized_server_help("zh_cn", &entries);
+        assert!(help.contains("/help"));
+        assert!(help.contains("显示帮助"));
+        assert!(!help.contains("page"));
+        assert!(!help.contains("第"));
+
+        let entries = super::localized_builtin_help_entries(&["help", "list"], "en_us");
+        let help = super::localized_server_help("en_us", &entries);
+        assert!(help.contains("Shows this help"));
+    }
+
+    #[test]
+    fn suggestions_only_include_implemented_commands() {
+        let commands = super::command_names_for_suggestions();
+        assert!(commands.contains(&"help"));
+        assert!(commands.contains(&"time"));
+        assert!(commands.contains(&"gamerule"));
+        assert!(!commands.contains(&"reload"));
     }
 }

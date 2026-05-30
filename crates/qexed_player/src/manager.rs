@@ -4,16 +4,16 @@ use bytes::Bytes;
 use qexed_protocol::to_client::play::{add_entity::EntityPosition, set_equipment::Equipment};
 use tokio::sync::mpsc;
 
-use super::{OnlinePlayer, PlayerEvent, PlayerHandle, PlayerSession};
+use crate::{OnlinePlayer, PlayerEvent, PlayerSession, model::PlayerHandle};
 
 #[derive(Debug, Default)]
 pub struct PlayerManager {
-    entity_ids: std::sync::Arc<crate::entities::EntityIdAllocator>,
+    entity_ids: std::sync::Arc<qexed_entity::EntityIdAllocator>,
     players: Mutex<HashMap<uuid::Uuid, PlayerHandle>>,
 }
 
 impl PlayerManager {
-    pub fn new(entity_ids: std::sync::Arc<crate::entities::EntityIdAllocator>) -> Self {
+    pub fn new(entity_ids: std::sync::Arc<qexed_entity::EntityIdAllocator>) -> Self {
         Self {
             entity_ids,
             players: Mutex::new(HashMap::new()),

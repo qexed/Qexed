@@ -1,0 +1,12 @@
+[package]
+name = "qexed_entity"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+qexed_nbt.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+uuid.workspace = true

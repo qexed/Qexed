@@ -1,0 +1,13 @@
+[package]
+name = "qexed_plugin_api"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+server = ["dep:qexed_player", "dep:qexed_protocol"]
+
+[dependencies]
+qexed_player = { workspace = true, optional = true }
+qexed_protocol = { workspace = true, optional = true }
+serde.workspace = true

@@ -70,6 +70,10 @@ pub trait AppConfigTrait:
         &[]
     }
 
+    fn obsolete_root_paths() -> &'static [&'static str] {
+        &[]
+    }
+
     fn dynamic_split_config_files(
         _doc: &DocumentMut,
         _split_dir: &std::path::Path,
@@ -186,6 +190,7 @@ pub trait AppConfigTrait:
         );
         apply_sensitive_display_values(&mut doc, &effective_secrets, &sensitive_fields);
         write_secrets_doc(&secrets_path, &effective_secrets)?;
+        prune_obsolete_config_items(&mut doc, Self::obsolete_root_paths());
 
         // 5. ✅ 更新字段注释（原地）
         if effective_enable {
@@ -668,6 +673,12 @@ fn overlay_split_config_files<T: AppConfigTrait>(
 fn prune_split_config_items(doc: &mut DocumentMut, split_files: &[OwnedSplitConfigFile]) {
     for split_file in split_files {
         let _ = take_item_by_dotted_path(doc, &split_file.root_path);
+    }
+}
+
+fn prune_obsolete_config_items(doc: &mut DocumentMut, root_paths: &[&str]) {
+    for root_path in root_paths {
+        let _ = take_item_by_dotted_path(doc, root_path);
     }
 }
 

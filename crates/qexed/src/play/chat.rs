@@ -72,28 +72,21 @@ where
     let argument = parts.collect::<Vec<_>>().join(" ");
     match name.as_str() {
         "help" => {
-            let requested_page = parse_help_page(argument.trim());
-            send_help_messages(sink, permissions, plugins, profile, requested_page).await?;
+            let locale = player_locale(players, profile, &config.language);
+            send_help_messages(sink, permissions, plugins, profile, &locale).await?;
             Ok(CommandOutcome::default())
         }
         "list" => {
             let mut names = players.online_names();
             names.sort();
-            let joined = names.join(", ");
-            let max_players = if config.server.max_player < 0 {
-                translatable_component("effect.duration.infinite", Vec::new())
-            } else {
-                text_component(config.server.max_player.to_string())
-            };
+            let locale = player_locale(players, profile, &config.language);
             sink.send(SystemChat {
-                content: translatable_component(
-                    "commands.list.players",
-                    vec![
-                        text_component(players.online_count().to_string()),
-                        max_players,
-                        text_component(joined),
-                    ],
-                ),
+                content: text_component(crate::commands::localized_list(
+                    &locale,
+                    players.online_count(),
+                    config.server.max_player,
+                    &names,
+                )),
                 overlay: false,
             })
             .await?;
@@ -349,7 +342,8 @@ where
                 });
             }
             if crate::commands::is_known_vanilla_command(&name) {
-                send_unimplemented_command(sink, &name).await?;
+                let locale = player_locale(players, profile, &config.language);
+                send_unimplemented_command(sink, &locale, &name).await?;
                 return Ok(CommandOutcome::default());
             }
             send_unknown_or_incomplete_command(sink, command.to_string()).await?;
@@ -1927,15 +1921,14 @@ where
 
 async fn send_unimplemented_command<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
+    locale: &str,
     command: &str,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     sink.send(SystemChat {
-        content: text_component(format!(
-            "Command is reserved but not implemented yet: /{command}"
-        )),
+        content: text_component(crate::commands::localized_unimplemented(locale, command)),
         overlay: false,
     })
     .await?;
@@ -1947,30 +1940,17 @@ async fn send_help_messages<W>(
     permissions: &crate::permissions::PermissionManager,
     plugins: &crate::plugins::PluginManager,
     profile: &qexed_packet::net_types::GameProfile,
-    requested_page: Option<usize>,
+    locale: &str,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    const HELP_PAGE_SIZE: usize = 8;
-
     let mut entries = Vec::new();
     let visible_commands = crate::commands::visible_commands(permissions, profile).await?;
-    for command in visible_commands {
-        let description = match command {
-            "help" => Some("commands.help.usage"),
-            "list" => Some("commands.list.usage"),
-            "spawn" => Some("commands.spawnpoint.usage"),
-            "time" => Some("commands.time.set"),
-            "gamerule" => Some("commands.gamerule.set"),
-            _ => None,
-        };
-        entries.push(HelpEntry {
-            command: command.to_string(),
-            description_key: description.map(ToString::to_string),
-            color: None,
-        });
-    }
+    entries.extend(crate::commands::localized_builtin_help_entries(
+        &visible_commands,
+        locale,
+    ));
 
     for plugin_command in plugins.plugin_commands() {
         if !permissions
@@ -1979,121 +1959,32 @@ where
         {
             continue;
         }
-        entries.push(HelpEntry {
-            command: plugin_command.name.clone(),
-            description_key: (!plugin_command.description_key.trim().is_empty())
-                .then_some(plugin_command.description_key.clone()),
-            color: Some("gold".to_string()),
-        });
+        entries.push(crate::commands::localized_plugin_help_entry(
+            &plugin_command.name,
+            &plugin_command.description_key,
+            locale,
+        ));
     }
 
-    entries.sort_by(|left, right| left.command.cmp(&right.command));
-    let total_pages = entries.len().div_ceil(HELP_PAGE_SIZE).max(1);
-    let page = requested_page.unwrap_or(1);
-    if page == 0 || page > total_pages {
-        send_translatable(sink, "commands.help.failed", Vec::new()).await?;
-        return Ok(());
-    }
-
-    send_translatable(
-        sink,
-        "commands.help.header",
-        vec![
-            text_component(page.to_string()),
-            text_component(total_pages.to_string()),
-        ],
-    )
+    entries.sort_by(|left, right| left.usage.cmp(&right.usage));
+    sink.send(SystemChat {
+        content: text_component(crate::commands::localized_server_help(locale, &entries)),
+        overlay: false,
+    })
     .await?;
-
-    let start = (page - 1) * HELP_PAGE_SIZE;
-    let end = (start + HELP_PAGE_SIZE).min(entries.len());
-    for entry in &entries[start..end] {
-        sink.send(SystemChat {
-            content: help_line(
-                entry.command.as_str(),
-                entry.description_key.as_deref(),
-                entry.color.as_deref(),
-            ),
-            overlay: false,
-        })
-        .await?;
-    }
 
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct HelpEntry {
-    command: String,
-    description_key: Option<String>,
-    color: Option<String>,
-}
-
-fn parse_help_page(argument: &str) -> Option<usize> {
-    if argument.is_empty() {
-        return Some(1);
-    }
-    argument.parse::<usize>().ok()
-}
-
-fn help_line(
-    command: &str,
-    description_key: Option<&str>,
-    color: Option<&str>,
-) -> qexed_protocol::types::TextComponent {
-    let mut root = std::collections::HashMap::new();
-    root.insert(
-        "text".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from(format!("/{command}"))),
-    );
-    if let Some(color) = color {
-        root.insert(
-            "color".to_string(),
-            qexed_nbt::Tag::String(std::sync::Arc::from(color.to_string())),
-        );
-    }
-
-    let Some(description_key) = description_key else {
-        return qexed_nbt::Tag::Compound(std::sync::Arc::new(root));
-    };
-
-    let mut divider = std::collections::HashMap::new();
-    divider.insert(
-        "text".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from(" - ".to_string())),
-    );
-    divider.insert(
-        "color".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from("gray".to_string())),
-    );
-
-    let mut description = std::collections::HashMap::new();
-    description.insert(
-        "translate".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from(description_key.to_string())),
-    );
-    description.insert(
-        "color".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from("gray".to_string())),
-    );
-
-    root.insert(
-        "extra".to_string(),
-        qexed_nbt::Tag::List(
-            qexed_nbt::ListHeader {
-                tag_id: qexed_nbt::tag_id::COMPOUND,
-                length: 2,
-            },
-            std::sync::Arc::from(
-                vec![
-                    qexed_nbt::Tag::Compound(std::sync::Arc::new(divider)),
-                    qexed_nbt::Tag::Compound(std::sync::Arc::new(description)),
-                ]
-                .into_boxed_slice(),
-            ),
-        ),
-    );
-    qexed_nbt::Tag::Compound(std::sync::Arc::new(root))
+fn player_locale(
+    players: &PlayerManager,
+    profile: &qexed_packet::net_types::GameProfile,
+    fallback: &str,
+) -> String {
+    players
+        .player_by_uuid(profile.uuid)
+        .map(|player| player.language)
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 pub(super) async fn apply_plugin_action<W>(

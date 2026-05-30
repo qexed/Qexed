@@ -63,7 +63,7 @@ pub struct PlayerSession {
 }
 
 #[derive(Debug)]
-pub(super) struct PlayerHandle {
-    pub(super) player: OnlinePlayer,
-    pub(super) sender: mpsc::UnboundedSender<PlayerEvent>,
+pub(crate) struct PlayerHandle {
+    pub(crate) player: OnlinePlayer,
+    pub(crate) sender: mpsc::UnboundedSender<PlayerEvent>,
 }

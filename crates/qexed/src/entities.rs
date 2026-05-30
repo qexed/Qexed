@@ -1,12 +1,13 @@
-mod id;
 mod manager;
 mod model;
-mod packets;
 mod registry;
 
-pub use id::EntityIdAllocator;
 pub use manager::EntityManager;
-pub use model::{DroppedItemEntity, EntitySpawnRequest, ManagedEntity, ManagedEntityKind};
+#[cfg(test)]
+pub use qexed_entity::npc_profile_name;
+pub use qexed_entity::{
+    DroppedItemEntity, EntityIdAllocator, EntitySpawnRequest, ManagedEntity, ManagedEntityKind,
+};
 pub(crate) use registry::entity_type_id;
 
 #[cfg(test)]

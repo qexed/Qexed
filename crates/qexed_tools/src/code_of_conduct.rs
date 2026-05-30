@@ -236,14 +236,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_legacy_inline_text_and_writes_language_file() {
+    fn reads_server_text_and_writes_language_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("qexed.toml");
-        fs::write(
-            &path,
-            "language = \"zh-CN\"\n[server]\ncode_of_conduct = \"old\"\n",
-        )
-        .unwrap();
+        let server_path = dir.path().join("qexed_server.toml");
+        fs::write(&path, "language = \"zh-CN\"\n").unwrap();
+        fs::write(&server_path, "[server]\ncode_of_conduct = \"old\"\n").unwrap();
 
         assert!(is_enabled(&path).unwrap());
         assert_eq!(default_language_for_config(&path), "zh_cn");
@@ -253,7 +251,7 @@ mod tests {
 
         assert!(is_enabled(&path).unwrap());
         assert_eq!(read_language(&path, "zh-CN").unwrap(), "\u{00a7}cnew");
-        let saved_config = fs::read_to_string(&path).unwrap();
+        let saved_config = fs::read_to_string(&server_path).unwrap();
         assert!(saved_config.contains("code_of_conduct = true"));
     }
 
@@ -261,7 +259,12 @@ mod tests {
     fn can_disable_prompt_without_removing_text() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("qexed.toml");
-        fs::write(&path, "[server]\ncode_of_conduct = true\n").unwrap();
+        fs::write(&path, "language = \"en\"\n").unwrap();
+        fs::write(
+            dir.path().join("qexed_server.toml"),
+            "[server]\ncode_of_conduct = true\n",
+        )
+        .unwrap();
 
         save(&path, "en_us", "rules", false).unwrap();
 
@@ -270,22 +273,17 @@ mod tests {
     }
 
     #[test]
-    fn toggles_split_server_config_when_available() {
+    fn toggles_qexed_server_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("qexed.toml");
-        let split_dir = dir.path().join("qexed.d");
-        fs::create_dir(&split_dir).unwrap();
+        let server_path = dir.path().join("qexed_server.toml");
         fs::write(&path, "language = \"zh-CN\"\n").unwrap();
-        fs::write(
-            split_dir.join("server.toml"),
-            "[server]\ncode_of_conduct = false\n",
-        )
-        .unwrap();
+        fs::write(&server_path, "[server]\ncode_of_conduct = false\n").unwrap();
 
         set_enabled(&path, true).unwrap();
 
         let main = fs::read_to_string(&path).unwrap();
-        let server = fs::read_to_string(split_dir.join("server.toml")).unwrap();
+        let server = fs::read_to_string(server_path).unwrap();
         assert!(!main.contains("code_of_conduct"));
         assert!(server.contains("code_of_conduct = true"));
         assert!(is_enabled(&path).unwrap());
@@ -295,7 +293,12 @@ mod tests {
     fn lists_existing_language_files_as_normalized_locale_codes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("qexed.toml");
-        fs::write(&path, "[server]\ncode_of_conduct = true\n").unwrap();
+        fs::write(&path, "language = \"en\"\n").unwrap();
+        fs::write(
+            dir.path().join("qexed_server.toml"),
+            "[server]\ncode_of_conduct = true\n",
+        )
+        .unwrap();
         fs::create_dir(dir.path().join(DIR_NAME)).unwrap();
         fs::write(dir.path().join(DIR_NAME).join("zh-CN.txt"), "rules").unwrap();
         fs::write(dir.path().join(DIR_NAME).join("en_us.txt"), "rules").unwrap();

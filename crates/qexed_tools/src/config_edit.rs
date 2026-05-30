@@ -19,22 +19,17 @@ pub fn write_doc(path: &Path, doc: &DocumentMut) -> Result<()> {
 }
 
 fn server_config_path(config: &Path) -> PathBuf {
-    let split_path = split_dir_for(config).join("server.toml");
-    if split_path.exists() {
-        split_path
-    } else {
+    if config
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "qexed_server.toml")
+    {
         config.to_path_buf()
+    } else {
+        config
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("qexed_server.toml")
     }
-}
-
-fn split_dir_for(config: &Path) -> PathBuf {
-    let stem = config
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("qexed");
-    config
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-        .join(format!("{stem}.d"))
 }

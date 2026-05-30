@@ -6,7 +6,7 @@ use qexed_protocol::to_client::play::{
     set_equipment::SetEquipment,
 };
 
-use super::{OnlinePlayer, PlayerEvent};
+use crate::{OnlinePlayer, PlayerEvent};
 
 impl PlayerEvent {
     pub fn packets(
@@ -137,7 +137,7 @@ fn player_info_packet(player: &OnlinePlayer) -> anyhow::Result<Bytes> {
     })
 }
 
-pub(crate) fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {
+pub fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {
     let mut buf = BytesMut::new();
     let mut writer = qexed_packet::PacketWriter::new(&mut buf);
     qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;

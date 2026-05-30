@@ -1,6 +1,6 @@
 use super::{
     EntityIdAllocator, EntityManager, EntitySpawnRequest, ManagedEntity, ManagedEntityKind,
-    entity_type_id, packets::npc_profile_name,
+    entity_type_id, npc_profile_name,
 };
 use qexed_packet::Packet;
 use qexed_protocol::to_client::play::add_entity::EntityPosition;

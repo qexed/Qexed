@@ -55,13 +55,14 @@ pub(crate) fn spawn_ctrl_c_shutdown(shutdown: watch::Sender<bool>) {
             log::warn!("failed to listen for Ctrl+C: {err:#}");
             return;
         }
-        print_console("收到 Ctrl+C，正在关闭服务端...");
+        print_console(rust_i18n::t!("qexed.console.ctrl_c"));
         let _ = shutdown.send(true);
     });
 }
 
 async fn run(context: ServerContext, shutdown: watch::Sender<bool>) -> anyhow::Result<()> {
-    print_console("终端控制台已启用，输入 help 查看命令。");
+    let locale = crate::commands::i18n_locale(&context.config.language);
+    print_console(rust_i18n::t!("qexed.console.enabled", locale = locale));
     let stdin = io::BufReader::new(io::stdin());
     let mut lines = stdin.lines();
 
@@ -83,20 +84,23 @@ fn execute(
     context: &ServerContext,
     shutdown: &watch::Sender<bool>,
 ) -> anyhow::Result<bool> {
+    let locale = crate::commands::i18n_locale(&context.config.language);
     match command {
         ConsoleCommand::Empty => {}
-        ConsoleCommand::Help => print_help(),
+        ConsoleCommand::Help => print_help(context),
         ConsoleCommand::Status => print_status(context),
         ConsoleCommand::List => print_players(context),
         ConsoleCommand::Say(message) => broadcast_message(context, &message)?,
         ConsoleCommand::Stop => {
-            print_console("正在关闭服务端...");
+            print_console(rust_i18n::t!("qexed.console.shutdown", locale = locale));
             let _ = shutdown.send(true);
             return Ok(true);
         }
         ConsoleCommand::Unknown(command) => {
-            print_console(format!(
-                "未知控制台命令: {command}，输入 help 查看可用命令。"
+            print_console(rust_i18n::t!(
+                "qexed.console.unknown",
+                locale = locale,
+                command = command
             ));
         }
     }
@@ -104,52 +108,77 @@ fn execute(
     Ok(false)
 }
 
-fn print_help() {
-    print_console("可用命令:");
-    print_console("  help, ?             显示控制台帮助");
-    print_console("  status              显示服务端状态");
-    print_console("  list, players       显示在线玩家");
-    print_console("  say <message>       向在线玩家广播消息");
-    print_console("  stop, exit, quit    关闭服务端");
+fn print_help(context: &ServerContext) {
+    print_console(crate::commands::localized_console_help(
+        &context.config.language,
+    ));
 }
 
 fn print_status(context: &ServerContext) {
+    let locale = crate::commands::i18n_locale(&context.config.language);
     let online = context.players.online_count();
-    let max_player = max_player_label(context.config.server.max_player);
+    let max_player = crate::commands::localized_max_label(locale, context.config.server.max_player);
     let proxy = if context.config.server.proxy {
-        "启用"
+        rust_i18n::t!("qexed.console.enabled_value", locale = locale).to_string()
     } else {
-        "关闭"
+        rust_i18n::t!("qexed.console.disabled_value", locale = locale).to_string()
     };
-    print_console(format!("监听地址: {}", context.config.server.ip));
-    print_console(format!("在线玩家: {online}/{max_player}"));
-    print_console(format!("默认维度: {}", context.config.world.dimension));
-    print_console(format!(
-        "代理协议: {proxy} ({:?})",
-        context.config.server.proxy_protocol
+    print_console(rust_i18n::t!(
+        "qexed.console.status.listen",
+        locale = locale,
+        ip = &context.config.server.ip
+    ));
+    print_console(rust_i18n::t!(
+        "qexed.console.status.players",
+        locale = locale,
+        online = online,
+        max = max_player
+    ));
+    print_console(rust_i18n::t!(
+        "qexed.console.status.dimension",
+        locale = locale,
+        dimension = &context.config.world.dimension
+    ));
+    print_console(rust_i18n::t!(
+        "qexed.console.status.proxy",
+        locale = locale,
+        state = proxy,
+        protocol = format!("{:?}", context.config.server.proxy_protocol)
     ));
 }
 
 fn print_players(context: &ServerContext) {
+    let locale = crate::commands::i18n_locale(&context.config.language);
     let mut names = context.players.online_names();
     names.sort();
     if names.is_empty() {
-        print_console("当前没有玩家在线。");
+        print_console(rust_i18n::t!(
+            "qexed.console.players.empty",
+            locale = locale
+        ));
     } else {
-        print_console(format!("在线玩家: {}", names.join(", ")));
+        print_console(rust_i18n::t!(
+            "qexed.console.players.list",
+            locale = locale,
+            players = names.join(", ")
+        ));
     }
 }
 
 fn broadcast_message(context: &ServerContext, message: &str) -> anyhow::Result<()> {
+    let locale = crate::commands::i18n_locale(&context.config.language);
     let message = message.trim();
     if message.is_empty() {
-        print_console("用法: say <message>");
+        print_console(rust_i18n::t!("qexed.console.say.usage", locale = locale));
         return Ok(());
     }
 
     let online = context.players.online_count();
     if online == 0 {
-        print_console("当前没有在线玩家，消息未发送。");
+        print_console(rust_i18n::t!(
+            "qexed.console.say.no_players",
+            locale = locale
+        ));
         return Ok(());
     }
 
@@ -158,7 +187,11 @@ fn broadcast_message(context: &ServerContext, message: &str) -> anyhow::Result<(
         overlay: false,
     })?;
     context.players.broadcast_packets(vec![packet]);
-    print_console(format!("已向 {online} 名玩家广播消息。"));
+    print_console(rust_i18n::t!(
+        "qexed.console.say.sent",
+        locale = locale,
+        online = online
+    ));
     Ok(())
 }
 
@@ -179,16 +212,8 @@ fn text_component(text: impl Into<String>) -> TextComponent {
     qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
 }
 
-fn max_player_label(max_player: i32) -> String {
-    if max_player < 0 {
-        "无限制".to_string()
-    } else {
-        max_player.to_string()
-    }
-}
-
 fn print_console(message: impl AsRef<str>) {
-    println!("[控制台] {}", message.as_ref());
+    println!("[Console] {}", message.as_ref());
 }
 
 #[cfg(test)]

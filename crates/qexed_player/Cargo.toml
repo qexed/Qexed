@@ -1,0 +1,13 @@
+[package]
+name = "qexed_player"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+qexed_entity.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+tokio.workspace = true
+uuid.workspace = true

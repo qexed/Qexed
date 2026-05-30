@@ -56,8 +56,8 @@ autodoc:
       zh-CN: "%{file}: 世界存档、生成器、出生点、光照和 GPU 计算设置。"
     qexed:
       main:
-        en: "%{file}: Qexed main configuration. Keeps global switches and points to qexed.d module files."
-        zh-CN: "%{file}: Qexed 主配置。用于全局开关，其他模块拆分到 qexed.d 下。"
+        en: "%{file}: Qexed main configuration. Keeps global switches; runtime modules are separate qexed_* app config files."
+        zh-CN: "%{file}: Qexed 主配置。用于全局开关；运行时模块拆分为独立的 qexed_* 应用配置文件。"
       plugin_download:
         en: "%{file}: plugin download source and authentication settings."
         zh-CN: "%{file}: 插件下载源和认证设置。"

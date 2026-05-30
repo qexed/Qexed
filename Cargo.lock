@@ -4292,9 +4292,12 @@ dependencies = [
  "pollster",
  "postcard",
  "qexed_config",
+ "qexed_entity",
  "qexed_log",
  "qexed_nbt",
  "qexed_packet",
+ "qexed_player",
+ "qexed_plugin_api",
  "qexed_protocol",
  "qexed_tcp_connect",
  "rand 0.8.6",
@@ -4346,6 +4349,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "qexed_entity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "qexed_nbt",
+ "qexed_packet",
+ "qexed_protocol",
+ "uuid",
 ]
 
 [[package]]
@@ -4403,6 +4418,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "qexed_player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "qexed_entity",
+ "qexed_packet",
+ "qexed_protocol",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "qexed_plugin_api"
+version = "0.1.0"
+dependencies = [
+ "qexed_player",
+ "qexed_protocol",
+ "serde",
 ]
 
 [[package]]

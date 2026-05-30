@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-const DEFAULT_RULES_DIR: &str = "config/qexed.d/worlds";
+const DEFAULT_RULES_DIR: &str = "config/worlds";
 
 type DimensionRuleFile = qexed_config::app::qexed::world_rules::DimensionWorldRules;
 

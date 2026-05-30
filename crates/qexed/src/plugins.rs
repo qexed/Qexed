@@ -11,12 +11,8 @@ mod event;
 mod files;
 mod host;
 mod instance;
-mod payload;
 
-pub use event::PluginEvent;
-use files::{PLUGIN_DIR, plugin_files};
-use instance::PluginInstance;
-pub use payload::{
+pub use qexed_plugin_api::{
     BlockDropPosition, BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition,
     ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
     NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
@@ -24,7 +20,11 @@ pub use payload::{
     PlayerMovePayload, PlayerPayloadOwned, PluginCommandDefinition, PluginCommandQuery,
     PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
 };
-use payload::{
+
+use event::PluginEvent;
+use files::{PLUGIN_DIR, plugin_files};
+use instance::PluginInstance;
+use qexed_plugin_api::{
     ChunkPayload, ConfigReloadPayload, LanguagePayload, player_input_state, player_payload,
     player_payload_owned, player_position_payload,
 };

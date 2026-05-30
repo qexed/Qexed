@@ -9,7 +9,22 @@ use clap::{Parser, ValueEnum};
 use qexed_config::{
     app::{
         qexed::{Qexed, server::World},
+        qexed_content_filter::QexedContentFilter,
+        qexed_entity::QexedEntity,
+        qexed_entity_rendering::QexedEntityRendering,
         qexed_ip_connection_speed_test::QexedIpConnectionSpeedTest,
+        qexed_lan_discovery::QexedLanDiscovery,
+        qexed_lobby::QexedLobby,
+        qexed_menus::QexedMenus,
+        qexed_permissions::QexedPermissions,
+        qexed_placeholders::QexedPlaceholders,
+        qexed_player_audit::QexedPlayerAudit,
+        qexed_player_data::QexedPlayerData,
+        qexed_player_messages::QexedPlayerMessages,
+        qexed_plugin_download::QexedPluginDownload,
+        qexed_resource_pack::QexedResourcePack,
+        qexed_scoreboard::QexedScoreboard,
+        qexed_server::QexedServer,
         qexed_warden::QexedWarden,
     },
     build,
@@ -2156,7 +2171,81 @@ fn collect_bundle(commit: &str, langs: &[String]) -> Result<DocBundle> {
 fn collect_language_apps(lang: &str) -> Result<Vec<DocApp>> {
     let mut apps = Vec::new();
     apps.push(collect_app::<Qexed>("qexed", "qexed.toml", lang)?);
-    apps.extend(collect_split_apps::<Qexed>("qexed", lang)?);
+    apps.push(collect_app::<QexedPluginDownload>(
+        "qexed_plugin_download",
+        "qexed_plugin_download.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedServer>(
+        "qexed_server",
+        "qexed_server.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedLanDiscovery>(
+        "qexed_lan_discovery",
+        "qexed_lan_discovery.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedContentFilter>(
+        "qexed_content_filter",
+        "qexed_content_filter.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedEntity>(
+        "qexed_entity",
+        "qexed_entity.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedEntityRendering>(
+        "qexed_entity_rendering",
+        "qexed_entity_rendering.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedLobby>(
+        "qexed_lobby",
+        "qexed_lobby.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedMenus>(
+        "qexed_menus",
+        "qexed_menus.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedPermissions>(
+        "qexed_permissions",
+        "qexed_permissions.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedPlaceholders>(
+        "qexed_placeholders",
+        "qexed_placeholders.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedPlayerAudit>(
+        "qexed_player_audit",
+        "qexed_player_audit.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedPlayerData>(
+        "qexed_player_data",
+        "qexed_player_data.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedPlayerMessages>(
+        "qexed_player_messages",
+        "qexed_player_messages.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedResourcePack>(
+        "qexed_resource_pack",
+        "qexed_resource_pack.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedScoreboard>(
+        "qexed_scoreboard",
+        "qexed_scoreboard.toml",
+        lang,
+    )?);
     apps.push(collect_app::<World>("world", "world.toml", lang)?);
     apps.push(collect_app::<QexedWarden>(
         "qexed_warden",
@@ -2176,30 +2265,6 @@ where
     T: AppConfigTrait + AutoDocConfigTrait + Serialize + Default,
 {
     collect_app_with_scope::<T>(name, config_file, lang, None)
-}
-
-fn collect_split_apps<T>(owner_name: &str, lang: &str) -> Result<Vec<DocApp>>
-where
-    T: AppConfigTrait + AutoDocConfigTrait + Serialize + Default,
-{
-    let mut apps = Vec::new();
-    for split in T::split_config_files() {
-        let route = format!(
-            "{}_{}",
-            owner_name,
-            split
-                .file_name
-                .strip_suffix(".toml")
-                .unwrap_or(split.file_name)
-        );
-        apps.push(collect_app_with_scope::<T>(
-            &route,
-            split.file_name,
-            lang,
-            Some(split.root_path),
-        )?);
-    }
-    Ok(apps)
 }
 
 fn collect_app_with_scope<T>(
@@ -3510,12 +3575,12 @@ mod tests {
         let app = language_docs
             .apps
             .iter()
-            .find(|app| app.name == "qexed_entities")
-            .expect("qexed entities split doc must be generated");
+            .find(|app| app.name == "qexed_entity")
+            .expect("qexed entity app doc must be generated");
 
-        assert_eq!(app.config_path, "config/qexed.d/entities.toml");
-        assert_eq!(app.root_path.as_deref(), Some("server.entities"));
-        assert!(app.description.contains("entities.toml"));
+        assert_eq!(app.config_path, "config/qexed_entity.toml");
+        assert_eq!(app.root_path.as_deref(), None);
+        assert!(app.description.contains("qexed_entity.toml"));
         assert_eq!(field_type(app, "entities"), "object");
         assert_eq!(field_type(app, "entities.list"), "array");
         assert_eq!(field_type(app, "entities.list.id"), "string");
@@ -3554,9 +3619,9 @@ mod tests {
             .apps
             .iter()
             .find(|app| app.name == "qexed_menus")
-            .expect("qexed menus split doc must be generated");
+            .expect("qexed menus app doc must be generated");
 
-        assert_eq!(app.config_path, "config/qexed.d/menus.toml");
+        assert_eq!(app.config_path, "config/qexed_menus.toml");
         assert_eq!(field_type(app, "menus.chests.items.action"), "object");
         assert_eq!(field_type(app, "menus.chests.items.action.kind"), "string");
         assert!(

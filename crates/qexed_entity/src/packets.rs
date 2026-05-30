@@ -1,6 +1,9 @@
 use anyhow::Result;
-use bytes::Bytes;
-use qexed_packet::net_types::{GameProfile, ProfileProperty, VarInt};
+use bytes::{Bytes, BytesMut};
+use qexed_packet::{
+    Packet, PacketCodec,
+    net_types::{GameProfile, ProfileProperty, VarInt},
+};
 use qexed_protocol::{
     to_client::play::{
         add_entity::{AddEntity, EntityPositionSync, PlayerInfoRemove, RemoveEntities, RotateHead},
@@ -11,7 +14,7 @@ use qexed_protocol::{
     types::{EntityMetadata, EntityMetadataEnum, EntityMetadataSub},
 };
 
-use super::{DroppedItemEntity, ManagedEntity, ManagedEntityKind};
+use crate::{DroppedItemEntity, ManagedEntity, ManagedEntityKind};
 
 const ITEM_ENTITY_METADATA_ITEM_INDEX: u8 = 8;
 const DISPLAY_BILLBOARD_METADATA_INDEX: u8 = 15;
@@ -33,8 +36,8 @@ impl ManagedEntity {
     pub fn spawn_packets(&self) -> Result<Vec<Bytes>> {
         let mut packets = Vec::new();
         if self.kind == ManagedEntityKind::Npc {
-            let display_name = self.display_name().map(|n| text_component(n));
-            packets.push(crate::players::packet_bytes(PlayerInfoUpdate {
+            let display_name = self.display_name().map(text_component);
+            packets.push(packet_bytes(PlayerInfoUpdate {
                 actions: PlayerInfoActions::player_initializing(),
                 entries: vec![npc_player_info_entry(&self.profile(), 0, display_name)],
             })?);
@@ -56,8 +59,8 @@ impl ManagedEntity {
                 self.data,
             )
         };
-        packets.push(crate::players::packet_bytes(add_entity)?);
-        packets.push(crate::players::packet_bytes(RotateHead::new(
+        packets.push(packet_bytes(add_entity)?);
+        packets.push(packet_bytes(RotateHead::new(
             self.entity_id,
             self.position.yaw,
         ))?);
@@ -69,7 +72,7 @@ impl ManagedEntity {
             }
         };
         if let Some(metadata) = metadata {
-            packets.push(crate::players::packet_bytes(SetEntityData {
+            packets.push(packet_bytes(SetEntityData {
                 entity_id: VarInt(self.entity_id),
                 metadata,
             })?);
@@ -79,24 +82,20 @@ impl ManagedEntity {
     }
 
     pub fn remove_packets(&self) -> Result<Vec<Bytes>> {
-        let mut packets = vec![crate::players::packet_bytes(RemoveEntities::one(
-            self.entity_id,
-        ))?];
+        let mut packets = vec![packet_bytes(RemoveEntities::one(self.entity_id))?];
         if self.kind == ManagedEntityKind::Npc {
-            packets.push(crate::players::packet_bytes(PlayerInfoRemove::one(
-                self.uuid,
-            ))?);
+            packets.push(packet_bytes(PlayerInfoRemove::one(self.uuid))?);
         }
         Ok(packets)
     }
 
     pub fn position_packets(&self) -> Result<Vec<Bytes>> {
         Ok(vec![
-            crate::players::packet_bytes(EntityPositionSync::from_position(
+            packet_bytes(EntityPositionSync::from_position(
                 self.entity_id,
                 self.position,
             ))?,
-            crate::players::packet_bytes(RotateHead::new(self.entity_id, self.position.yaw))?,
+            packet_bytes(RotateHead::new(self.entity_id, self.position.yaw))?,
         ])
     }
 
@@ -138,6 +137,36 @@ impl ManagedEntity {
                 }
             },
         }]
+    }
+}
+
+impl DroppedItemEntity {
+    pub fn spawn_packets(&self, entity_type_id: i32) -> Result<Vec<Bytes>> {
+        Ok(vec![
+            packet_bytes(AddEntity::new(
+                self.entity_id,
+                self.uuid,
+                entity_type_id,
+                self.position,
+                0,
+            ))?,
+            packet_bytes(SetEntityData {
+                entity_id: VarInt(self.entity_id),
+                metadata: item_entity_metadata(self.item.clone()),
+            })?,
+        ])
+    }
+
+    pub fn pickup_packets(&self, collector_entity_id: i32) -> Result<Vec<Bytes>> {
+        let amount = self.item.item_count.0.max(1);
+        Ok(vec![
+            packet_bytes(TakeItemEntity {
+                item_id: VarInt(self.entity_id),
+                player_id: VarInt(collector_entity_id),
+                amount: VarInt(amount),
+            })?,
+            packet_bytes(RemoveEntities::one(self.entity_id))?,
+        ])
     }
 }
 
@@ -194,36 +223,6 @@ fn hologram_metadata(text: Option<&str>) -> EntityMetadata {
     }
 }
 
-impl DroppedItemEntity {
-    pub fn spawn_packets(&self, entity_type_id: i32) -> Result<Vec<Bytes>> {
-        Ok(vec![
-            crate::players::packet_bytes(AddEntity::new(
-                self.entity_id,
-                self.uuid,
-                entity_type_id,
-                self.position,
-                0,
-            ))?,
-            crate::players::packet_bytes(SetEntityData {
-                entity_id: VarInt(self.entity_id),
-                metadata: item_entity_metadata(self.item.clone()),
-            })?,
-        ])
-    }
-
-    pub fn pickup_packets(&self, collector_entity_id: i32) -> Result<Vec<Bytes>> {
-        let amount = self.item.item_count.0.max(1);
-        Ok(vec![
-            crate::players::packet_bytes(TakeItemEntity {
-                item_id: VarInt(self.entity_id),
-                player_id: VarInt(collector_entity_id),
-                amount: VarInt(amount),
-            })?,
-            crate::players::packet_bytes(RemoveEntities::one(self.entity_id))?,
-        ])
-    }
-}
-
 fn npc_player_info_entry(
     profile: &GameProfile,
     game_mode: i32,
@@ -235,7 +234,7 @@ fn npc_player_info_entry(
     entry
 }
 
-pub(super) fn npc_profile_name(name: &str) -> String {
+pub fn npc_profile_name(name: &str) -> String {
     let mut username = name
         .trim()
         .chars()
@@ -291,4 +290,12 @@ fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextCompone
         qexed_nbt::Tag::String(std::sync::Arc::from(text.into())),
     );
     qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
+}
+
+fn packet_bytes<T: Packet>(packet: T) -> Result<Bytes> {
+    let mut buf = BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+    qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;
+    packet.serialize(&mut writer)?;
+    Ok(buf.freeze())
 }

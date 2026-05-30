@@ -1,6 +1,141 @@
 _fallback_language: zh-CN
 _version: 2
 qexed:
+  command:
+    help:
+      header:
+        en: "---- Qexed Help ----"
+        zh-CN: "---- Qexed 帮助 ----"
+      console_header:
+        en: "---- Qexed Server Commands ----"
+        zh-CN: "---- Qexed 服务器命令 ----"
+      description:
+        en: "Shows this help."
+        zh-CN: "显示帮助。"
+    list:
+      description:
+        en: "Lists online players."
+        zh-CN: "显示在线玩家。"
+      message:
+        en: "There are %{online} of a max of %{max} players online: %{players}"
+        zh-CN: "当前在线玩家 %{online}/%{max}: %{players}"
+    lobby:
+      description:
+        en: "Opens the lobby menu, shows status, or refreshes backend status."
+        zh-CN: "打开大厅菜单、查看状态或刷新后端状态。"
+    server:
+      description:
+        en: "Lists backend servers or transfers to the specified server."
+        zh-CN: "列出后端服务器或切换到指定服务器。"
+    spawn:
+      description:
+        en: "Returns to the configured spawn position."
+        zh-CN: "传送回配置的出生点。"
+    teleport:
+      description:
+        en: "Teleports to a player, dimension, or location."
+        zh-CN: "传送到玩家、维度或坐标。"
+    tp:
+      description:
+        en: "Alias of /teleport."
+        zh-CN: "/teleport 的别名。"
+    time:
+      description:
+        en: "Sets, adds, or queries world time."
+        zh-CN: "设置、增加或查询世界时间。"
+    gamerule:
+      description:
+        en: "Reads or changes a world rule."
+        zh-CN: "读取或修改世界规则。"
+    scoreboard:
+      description:
+        en: "Manages scoreboard objectives, scores, and sidebar display."
+        zh-CN: "管理计分板目标、分数和侧边栏显示。"
+    entity:
+      description:
+        en: "Lists or manages runtime entities and NPCs."
+        zh-CN: "列出或管理运行时实体和 NPC。"
+    structure:
+      description:
+        en: "Lists, places, or locates built-in structures."
+        zh-CN: "列出、放置或定位内置结构。"
+    max_players:
+      unlimited:
+        en: "unlimited"
+        zh-CN: "无限制"
+    unimplemented:
+      en: "Command is reserved but not implemented yet: /%{command}"
+      zh-CN: "该命令已保留但尚未实现：/%{command}"
+  console:
+    enabled:
+      en: "Terminal console enabled. Type help to view commands."
+      zh-CN: "终端控制台已启用，输入 help 查看命令。"
+    ctrl_c:
+      en: "Ctrl+C received, shutting down the server..."
+      zh-CN: "收到 Ctrl+C，正在关闭服务器..."
+    shutdown:
+      en: "Shutting down the server..."
+      zh-CN: "正在关闭服务器..."
+    unknown:
+      en: "Unknown console command: %{command}. Type help to view available commands."
+      zh-CN: "未知控制台命令：%{command}。输入 help 查看可用命令。"
+    header:
+      en: "Console-only commands:"
+      zh-CN: "控制台专用命令："
+    enabled_value:
+      en: "enabled"
+      zh-CN: "启用"
+    disabled_value:
+      en: "disabled"
+      zh-CN: "关闭"
+    help:
+      description:
+        en: "Shows console help."
+        zh-CN: "显示控制台帮助。"
+    status:
+      description:
+        en: "Shows server status."
+        zh-CN: "显示服务器状态。"
+      listen:
+        en: "Listen address: %{ip}"
+        zh-CN: "监听地址：%{ip}"
+      players:
+        en: "Online players: %{online}/%{max}"
+        zh-CN: "在线玩家：%{online}/%{max}"
+      dimension:
+        en: "Default dimension: %{dimension}"
+        zh-CN: "默认维度：%{dimension}"
+      proxy:
+        en: "Proxy protocol: %{state} (%{protocol})"
+        zh-CN: "代理协议：%{state}（%{protocol}）"
+    list:
+      description:
+        en: "Lists online players."
+        zh-CN: "显示在线玩家。"
+    players:
+      empty:
+        en: "No players are currently online."
+        zh-CN: "当前没有玩家在线。"
+      list:
+        en: "Online players: %{players}"
+        zh-CN: "在线玩家：%{players}"
+    say:
+      description:
+        en: "Broadcasts a message to online players."
+        zh-CN: "向在线玩家广播消息。"
+      usage:
+        en: "Usage: say <message>"
+        zh-CN: "用法：say <message>"
+      no_players:
+        en: "No online players; message was not sent."
+        zh-CN: "当前没有在线玩家，消息未发送。"
+      sent:
+        en: "Broadcasted message to %{online} players."
+        zh-CN: "已向 %{online} 名玩家广播消息。"
+    stop:
+      description:
+        en: "Shuts down the server."
+        zh-CN: "关闭服务器。"
   system_running:
     en: Running %{system} %{version}(%{arch})
     zh-CN: "运行在 %{system} %{version}(%{arch})"

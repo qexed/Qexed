@@ -1,16 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use crate::players::OnlinePlayer;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct PlayerPayload {
-    pub(super) uuid: String,
-    pub(super) username: String,
-    pub(super) entity_id: i32,
+pub struct PlayerPayload {
+    pub uuid: String,
+    pub username: String,
+    pub entity_id: i32,
     #[serde(default)]
-    pub(super) language: String,
+    pub language: String,
     #[serde(default = "default_dimension")]
-    pub(super) dimension: String,
+    pub dimension: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,20 +23,20 @@ pub struct PlayerPayloadOwned {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ChunkPayload {
-    pub(super) dimension: String,
-    pub(super) chunk_x: i32,
-    pub(super) chunk_z: i32,
+pub struct ChunkPayload {
+    pub dimension: String,
+    pub chunk_x: i32,
+    pub chunk_z: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ConfigReloadPayload {
-    pub(super) path: String,
+pub struct ConfigReloadPayload {
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct LanguagePayload {
-    pub(super) language: String,
+pub struct LanguagePayload {
+    pub language: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -63,7 +61,7 @@ pub struct MiningSpeedQuery {
     pub speed: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MiningSpeedResponse {
     pub speed: Option<f32>,
     pub multiplier: Option<f32>,
@@ -88,7 +86,7 @@ pub struct BlockDropQuery {
     pub default_item_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockDropResponse {
     #[serde(default)]
     pub replace: bool,
@@ -158,7 +156,7 @@ pub struct PlayerInputPayload {
     pub input: PlayerInputState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginCommandDefinition {
     pub name: String,
     #[serde(default)]
@@ -172,7 +170,7 @@ pub struct PluginCommandQuery {
     pub player: PlayerPayloadOwned,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginCommandResponse {
     #[serde(default)]
     pub handled: bool,
@@ -209,7 +207,7 @@ pub struct PlaceholderContext {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PlaceholderResponse {
     #[serde(default)]
     pub replacements: Vec<PlaceholderReplacement>,
@@ -245,7 +243,7 @@ pub struct NpcMutationQuery {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NpcMutationResponse {
     #[serde(default)]
     pub operations: Vec<NpcMutationOp>,
@@ -328,7 +326,8 @@ pub enum PlayerAction {
     },
 }
 
-pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload {
+#[cfg(feature = "server")]
+pub fn player_payload(player: &qexed_player::OnlinePlayer) -> PlayerPayload {
     PlayerPayload {
         uuid: player.profile.uuid.to_string(),
         username: player.profile.username.clone(),
@@ -338,7 +337,8 @@ pub(super) fn player_payload(player: &OnlinePlayer) -> PlayerPayload {
     }
 }
 
-pub(super) fn player_payload_owned(player: &OnlinePlayer) -> PlayerPayloadOwned {
+#[cfg(feature = "server")]
+pub fn player_payload_owned(player: &qexed_player::OnlinePlayer) -> PlayerPayloadOwned {
     PlayerPayloadOwned {
         uuid: player.profile.uuid.to_string(),
         username: player.profile.username.clone(),
@@ -348,11 +348,8 @@ pub(super) fn player_payload_owned(player: &OnlinePlayer) -> PlayerPayloadOwned 
     }
 }
 
-fn one() -> i32 {
-    1
-}
-
-pub(super) fn player_position_payload(
+#[cfg(feature = "server")]
+pub fn player_position_payload(
     position: qexed_protocol::to_client::play::add_entity::EntityPosition,
 ) -> PlayerPositionPayload {
     PlayerPositionPayload {
@@ -365,7 +362,8 @@ pub(super) fn player_position_payload(
     }
 }
 
-pub(super) fn player_input_state(flags: u8) -> PlayerInputState {
+#[cfg(feature = "server")]
+pub fn player_input_state(flags: u8) -> PlayerInputState {
     PlayerInputState {
         forward: flags & qexed_protocol::to_server::play::player_input::FORWARD != 0,
         backward: flags & qexed_protocol::to_server::play::player_input::BACKWARD != 0,
@@ -379,4 +377,8 @@ pub(super) fn player_input_state(flags: u8) -> PlayerInputState {
 
 fn default_dimension() -> String {
     "minecraft:overworld".to_string()
+}
+
+fn one() -> i32 {
+    1
 }

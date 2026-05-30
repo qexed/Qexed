@@ -63,22 +63,17 @@ mod tests {
     }
 
     #[test]
-    fn updates_split_server_config_when_available() {
+    fn updates_qexed_server_config() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("qexed.toml");
-        let split_dir = dir.path().join("qexed.d");
-        fs::create_dir(&split_dir).unwrap();
+        let server_path = dir.path().join("qexed_server.toml");
         fs::write(&config, "version = 0\n").unwrap();
-        fs::write(
-            split_dir.join("server.toml"),
-            "[server]\nfavicon = \"old\"\n",
-        )
-        .unwrap();
+        fs::write(&server_path, "[server]\nfavicon = \"old\"\n").unwrap();
 
         update_config(&config, "data:image/png;base64,abc").unwrap();
 
         let main = fs::read_to_string(&config).unwrap();
-        let server = fs::read_to_string(split_dir.join("server.toml")).unwrap();
+        let server = fs::read_to_string(server_path).unwrap();
         assert!(!main.contains("data:image/png;base64,abc"));
         assert!(server.contains("favicon = \"data:image/png;base64,abc\""));
     }
