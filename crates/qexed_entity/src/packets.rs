@@ -13,6 +13,7 @@ use qexed_protocol::{
     },
     types::{EntityMetadata, EntityMetadataEnum, EntityMetadataSub},
 };
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{DroppedItemEntity, ManagedEntity, ManagedEntityKind};
 
@@ -36,7 +37,7 @@ impl ManagedEntity {
     pub fn spawn_packets(&self) -> Result<Vec<Bytes>> {
         let mut packets = Vec::new();
         if self.kind == ManagedEntityKind::Npc {
-            let display_name = self.display_name().map(text_component);
+            let display_name = self.display_name().map(text_component_or_json);
             packets.push(packet_bytes(PlayerInfoUpdate {
                 actions: PlayerInfoActions::player_initializing(),
                 entries: vec![npc_player_info_entry(&self.profile(), 0, display_name)],
@@ -100,10 +101,13 @@ impl ManagedEntity {
     }
 
     fn profile(&self) -> GameProfile {
-        let profile_name = self.display_name().unwrap_or(self.name.as_str());
+        let profile_name = self
+            .display_name()
+            .map(display_name_profile_text)
+            .unwrap_or_else(|| self.name.clone());
         GameProfile {
             uuid: self.uuid,
-            username: npc_profile_name(profile_name),
+            username: npc_profile_name(&profile_name),
             properties: self.skin_properties(),
         }
     }
@@ -191,7 +195,7 @@ fn hologram_metadata(text: Option<&str>) -> EntityMetadata {
             },
             EntityMetadataSub {
                 index: TEXT_DISPLAY_TEXT_METADATA_INDEX,
-                data: Some(EntityMetadataEnum::TextComponent(text_component(
+                data: Some(EntityMetadataEnum::TextComponent(text_component_or_json(
                     text.unwrap_or_default(),
                 ))),
             },
@@ -253,7 +257,7 @@ fn named_entity_metadata(name: &str) -> EntityMetadata {
             EntityMetadataSub {
                 index: 2,
                 data: Some(EntityMetadataEnum::OptionTextComponent(Some(
-                    text_component(name),
+                    text_component_or_json(name),
                 ))),
             },
             EntityMetadataSub {
@@ -284,12 +288,151 @@ fn item_entity_metadata(item: qexed_protocol::types::Slot) -> EntityMetadata {
 }
 
 fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextComponent {
-    let mut map = std::collections::HashMap::new();
+    let mut map = HashMap::new();
     map.insert(
         "text".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from(text.into())),
+        qexed_nbt::Tag::String(Arc::from(text.into())),
     );
-    qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
+    qexed_nbt::Tag::Compound(Arc::new(map))
+}
+
+fn text_component_or_json(text: &str) -> qexed_protocol::types::TextComponent {
+    json_text_component(text).unwrap_or_else(|| text_component(text))
+}
+
+fn display_name_profile_text(text: &str) -> String {
+    json_component_plain_text(text).unwrap_or_else(|| text.to_string())
+}
+
+fn json_component_plain_text(text: &str) -> Option<String> {
+    let text = text.trim();
+    if !(text.starts_with('{') || text.starts_with('[')) {
+        return None;
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    let mut output = String::new();
+    append_component_plain_text(&value, &mut output);
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
+}
+
+fn append_component_plain_text(value: &serde_json::Value, output: &mut String) {
+    match value {
+        serde_json::Value::String(text) => output.push_str(text),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                append_component_plain_text(value, output);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            if let Some(text) = values.get("text").and_then(serde_json::Value::as_str) {
+                output.push_str(text);
+            } else if let Some(translate) = values
+                .get("translate")
+                .and_then(serde_json::Value::as_str)
+                .filter(|_| output.is_empty())
+            {
+                output.push_str(translate);
+            }
+
+            if let Some(extra) = values.get("extra") {
+                append_component_plain_text(extra, output);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+fn json_text_component(text: &str) -> Option<qexed_protocol::types::TextComponent> {
+    let text = text.trim();
+    if !(text.starts_with('{') || text.starts_with('[')) {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(text).ok()?;
+    Some(json_to_nbt(&value))
+}
+
+fn json_to_nbt(value: &serde_json::Value) -> qexed_nbt::Tag {
+    match value {
+        serde_json::Value::Null => qexed_nbt::Tag::End,
+        serde_json::Value::Bool(value) => qexed_nbt::Tag::Byte(i8::from(*value)),
+        serde_json::Value::Number(value) => json_number_to_nbt(value),
+        serde_json::Value::String(value) => qexed_nbt::Tag::String(Arc::from(value.as_str())),
+        serde_json::Value::Array(values) => json_array_to_nbt(values),
+        serde_json::Value::Object(values) => {
+            let mut map = HashMap::new();
+            for (key, value) in values {
+                map.insert(key.clone(), json_to_nbt(value));
+            }
+            qexed_nbt::Tag::Compound(Arc::new(map))
+        }
+    }
+}
+
+fn json_number_to_nbt(value: &serde_json::Number) -> qexed_nbt::Tag {
+    if let Some(value) = value.as_i64() {
+        if (i32::MIN as i64..=i32::MAX as i64).contains(&value) {
+            qexed_nbt::Tag::Int(value as i32)
+        } else {
+            qexed_nbt::Tag::Long(value)
+        }
+    } else if let Some(value) = value.as_u64() {
+        if value <= i32::MAX as u64 {
+            qexed_nbt::Tag::Int(value as i32)
+        } else if value <= i64::MAX as u64 {
+            qexed_nbt::Tag::Long(value as i64)
+        } else {
+            qexed_nbt::Tag::String(Arc::from(value.to_string()))
+        }
+    } else if let Some(value) = value.as_f64() {
+        qexed_nbt::Tag::Float(value as f32)
+    } else {
+        qexed_nbt::Tag::String(Arc::from(value.to_string()))
+    }
+}
+
+fn json_array_to_nbt(values: &[serde_json::Value]) -> qexed_nbt::Tag {
+    if values.is_empty() {
+        return qexed_nbt::Tag::List(
+            qexed_nbt::ListHeader {
+                tag_id: qexed_nbt::tag_id::END,
+                length: 0,
+            },
+            Arc::from([]),
+        );
+    }
+
+    let items = values.iter().map(json_to_nbt).collect::<Vec<_>>();
+    let tag_id = items[0].tag_id();
+    if items.iter().all(|item| item.tag_id() == tag_id) {
+        qexed_nbt::Tag::List(
+            qexed_nbt::ListHeader {
+                tag_id,
+                length: items.len() as i32,
+            },
+            Arc::from(items),
+        )
+    } else {
+        let wrapped = items
+            .into_iter()
+            .map(|item| {
+                let mut map = HashMap::new();
+                map.insert("value".to_string(), item);
+                qexed_nbt::Tag::Compound(Arc::new(map))
+            })
+            .collect::<Vec<_>>();
+        qexed_nbt::Tag::List(
+            qexed_nbt::ListHeader {
+                tag_id: qexed_nbt::tag_id::COMPOUND,
+                length: wrapped.len() as i32,
+            },
+            Arc::from(wrapped),
+        )
+    }
 }
 
 fn packet_bytes<T: Packet>(packet: T) -> Result<Bytes> {

@@ -1,6 +1,6 @@
 use super::{
     ChunkSendState, can_modify_world, chunk_coord, chunk_load_parallelism_limit,
-    dimension_type_holder_id, keep_alive_id, player_ability_flags,
+    dimension_type_holder_id, keep_alive_id, login_dimension_names, player_ability_flags,
 };
 use qexed_config::app::qexed::server::GameMode;
 use qexed_packet::net_types::Position;
@@ -21,6 +21,25 @@ fn chunk_coord_uses_floor_division() {
 fn dimension_type_holder_id_matches_registry_order_plus_one() {
     assert_eq!(dimension_type_holder_id("minecraft:overworld"), 1);
     assert_eq!(dimension_type_holder_id("minecraft:the_nether"), 4);
+}
+
+#[test]
+fn login_dimension_names_use_configured_worlds_without_forcing_overworld() {
+    let mut world = qexed_config::app::qexed::server::World::default();
+    world.default_dimension = "qexed:mine_a".to_string();
+    world.dimension = String::new();
+    world.worlds = vec![qexed_config::app::qexed::server::WorldStorage {
+        id: "mine_a".to_string(),
+        dimension: "qexed:mine_a".to_string(),
+        dimension_type: "minecraft:overworld".to_string(),
+        path: "worlds/mine_a".to_string(),
+    }];
+    world.instances.clear();
+
+    assert_eq!(
+        login_dimension_names(&world, "qexed:mine_a"),
+        vec!["qexed:mine_a".to_string()]
+    );
 }
 
 #[test]

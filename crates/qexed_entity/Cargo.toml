@@ -9,4 +9,5 @@ bytes.workspace = true
 qexed_nbt.workspace = true
 qexed_packet.workspace = true
 qexed_protocol.workspace = true
+serde_json.workspace = true
 uuid.workspace = true

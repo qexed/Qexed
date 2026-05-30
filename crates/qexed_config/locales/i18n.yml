@@ -232,6 +232,24 @@ config:
         path:
           en: "World save directory"
           zh-CN: "世界存档目录"
+        default_dimension:
+          en: "Dimension used when a player joins without saved player data. It may point to any configured dimension; minecraft:overworld is not required."
+          zh-CN: "玩家没有存档时默认进入的维度。可以指向任意已配置维度，不要求存在 minecraft:overworld。"
+        worlds:
+          en: "World storage entries. Each entry maps one dimension to its own save folder."
+          zh-CN: "世界存储项。每个条目将一个维度映射到独立存档目录。"
+          id:
+            en: "Stable world storage id"
+            zh-CN: "稳定的世界存储标识"
+          dimension:
+            en: "Dimension resource key served by this world storage"
+            zh-CN: "该世界存储服务的维度资源键"
+          dimension_type:
+            en: "Dimension type resource key used when entering this dimension"
+            zh-CN: "进入该维度时使用的维度类型资源键"
+          path:
+            en: "Save folder for this dimension"
+            zh-CN: "该维度的存档目录"
         read_only:
           en: "Enable read-only world mode. Player world edits are rejected and not written."
           zh-CN: "启用只读世界模式。玩家世界修改会被拒绝，不会写入世界。"

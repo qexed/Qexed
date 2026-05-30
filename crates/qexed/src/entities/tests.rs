@@ -2,8 +2,15 @@ use super::{
     EntityIdAllocator, EntityManager, EntitySpawnRequest, ManagedEntity, ManagedEntityKind,
     entity_type_id, npc_profile_name,
 };
+use bytes::{Bytes, BytesMut};
 use qexed_packet::Packet;
-use qexed_protocol::to_client::play::add_entity::EntityPosition;
+use qexed_protocol::{
+    to_client::play::{
+        add_entity::EntityPosition, player_info_update::PlayerInfoUpdate,
+        set_entity_data::SetEntityData,
+    },
+    types::EntityMetadataEnum,
+};
 
 #[test]
 fn entity_type_id_is_loaded_from_current_report() {
@@ -297,6 +304,88 @@ fn npc_spawn_packets_include_display_name_in_player_info() {
 }
 
 #[test]
+fn npc_spawn_packets_parse_json_display_name_component() {
+    let entity = ManagedEntity {
+        key: "shop".to_string(),
+        entity_id: 1,
+        uuid: uuid::Uuid::new_v4(),
+        kind: ManagedEntityKind::Npc,
+        entity_type: "minecraft:player".to_string(),
+        entity_type_id: 155,
+        dimension: "minecraft:overworld".to_string(),
+        position: EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        name: "shop_001".to_string(),
+        display_name: "{\"text\":\"Shop\",\"color\":\"gold\"}".to_string(),
+        skin_textures: String::new(),
+        skin_signature: String::new(),
+        data: 0,
+        look_at_players: true,
+        main_hand_event: "right_click".to_string(),
+        off_hand_event: "left_click".to_string(),
+        attack_event: "attack".to_string(),
+    };
+
+    let packets = entity.spawn_packets().unwrap();
+    let player_info = decode_clientbound_packet::<PlayerInfoUpdate>(&packets[0]);
+    let entry = player_info.entries.first().unwrap();
+    assert_eq!(entry.profile_name, "Shop");
+    assert_text_component_field(entry.display_name.as_ref().unwrap(), "text", "Shop");
+    assert_text_component_field(entry.display_name.as_ref().unwrap(), "color", "gold");
+}
+
+#[test]
+fn hologram_spawn_packets_parse_json_display_name_component() {
+    let entity = ManagedEntity {
+        key: "mine_tip".to_string(),
+        entity_id: 3,
+        uuid: uuid::Uuid::new_v4(),
+        kind: ManagedEntityKind::Hologram,
+        entity_type: "minecraft:text_display".to_string(),
+        entity_type_id: 131,
+        dimension: "minecraft:overworld".to_string(),
+        position: EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: false,
+        },
+        name: "mine tip".to_string(),
+        display_name: "{\"text\":\"Mine tip\",\"color\":\"aqua\"}".to_string(),
+        skin_textures: String::new(),
+        skin_signature: String::new(),
+        data: 0,
+        look_at_players: false,
+        main_hand_event: "interact".to_string(),
+        off_hand_event: "interact_off_hand".to_string(),
+        attack_event: "attack".to_string(),
+    };
+
+    let packets = entity.spawn_packets().unwrap();
+    let set_entity_data = decode_clientbound_packet::<SetEntityData>(&packets[2]);
+    let text_component = set_entity_data
+        .metadata
+        .data
+        .iter()
+        .find_map(|metadata| match &metadata.data {
+            Some(EntityMetadataEnum::TextComponent(component)) => Some(component),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_text_component_field(text_component, "text", "Mine tip");
+    assert_text_component_field(text_component, "color", "aqua");
+}
+
+#[test]
 fn npc_spawn_packets_include_skin_textures_in_player_info() {
     let entity = ManagedEntity {
         key: "skin-npc".to_string(),
@@ -351,4 +440,24 @@ fn npc_profile_name_is_minecraft_safe() {
         npc_profile_name("Guide_0123456789012345"),
         "Guide_0123456789"
     );
+}
+
+fn decode_clientbound_packet<T>(packet: &Bytes) -> T
+where
+    T: Packet + Default,
+{
+    let mut payload = BytesMut::from(packet.as_ref());
+    let packet_id = crate::connection::read_packet_id(&mut payload).unwrap();
+    assert_eq!(packet_id, T::ID);
+    crate::connection::decode_payload::<T>(&mut payload).unwrap()
+}
+
+fn assert_text_component_field(component: &qexed_nbt::Tag, key: &str, expected: &str) {
+    let qexed_nbt::Tag::Compound(fields) = component else {
+        panic!("text component should be an NBT compound, got {component:?}");
+    };
+    let Some(qexed_nbt::Tag::String(value)) = fields.get(key) else {
+        panic!("text component should contain string field {key:?}, got {component:?}");
+    };
+    assert_eq!(&**value, expected);
 }

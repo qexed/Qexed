@@ -4360,6 +4360,7 @@ dependencies = [
  "qexed_nbt",
  "qexed_packet",
  "qexed_protocol",
+ "serde_json",
  "uuid",
 ]
 

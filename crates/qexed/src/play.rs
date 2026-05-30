@@ -120,11 +120,12 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let world_config = &config.world;
+    let default_dimension = world_config.default_play_dimension();
     let mut saved_player = player_data
-        .load_or_default(profile, &world_config.dimension, &world_config.spawn)
+        .load_or_default(profile, &default_dimension, &world_config.spawn)
         .await;
     let play_dimension = if saved_player.dimension.is_empty() {
-        world_config.dimension.clone()
+        default_dimension
     } else {
         saved_player.dimension.clone()
     };
@@ -174,7 +175,7 @@ where
     sink.send(Login {
         entity_id: session.player.entity_id,
         is_hardcore: false,
-        dimension_names: login_dimension_names(&play_dimension),
+        dimension_names: login_dimension_names(world_config, &play_dimension),
         max_player: VarInt(config.server.max_player.max(0)),
         view_distance: VarInt(view_distance),
         simulation_distance: VarInt(simulation_distance),
@@ -2149,13 +2150,14 @@ fn default_dimension_suggestions() -> Vec<String> {
     ]
 }
 
-fn login_dimension_names(primary: &str) -> Vec<String> {
-    let mut dimensions = vec![
-        primary.to_string(),
-        "minecraft:overworld".to_string(),
-        "minecraft:the_nether".to_string(),
-        "minecraft:the_end".to_string(),
-    ];
+fn login_dimension_names(
+    world_config: &qexed_config::app::qexed::server::World,
+    primary: &str,
+) -> Vec<String> {
+    let mut dimensions = world_config.configured_dimension_names();
+    if !dimensions.iter().any(|dimension| dimension == primary) {
+        dimensions.push(primary.to_string());
+    }
     dimensions.sort();
     dimensions.dedup();
     dimensions

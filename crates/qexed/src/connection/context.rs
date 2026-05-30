@@ -46,6 +46,7 @@ impl ServerContext {
             config.world.read_only,
             world_generator,
         )
+        .with_worlds(&config.world.worlds)
         .with_instances(&config.world.instances)
         .with_precompiled_chunks(crate::world::PrecompiledChunkSettings::from(
             &config.world.precompiled_chunks,

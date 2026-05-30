@@ -1686,6 +1686,15 @@ impl Default for LanDiscovery {
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
 pub struct World {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.default_dimension")]
+    pub default_dimension: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.world.worlds", sub)]
+    pub worlds: Vec<WorldStorage>,
+
+    #[serde(default = "default_world_path")]
     #[AutoDoc(key = "config.qexed.server.world.path")]
     pub path: String,
 
@@ -1713,9 +1722,11 @@ pub struct World {
     #[AutoDoc(key = "config.qexed.server.world.spawn_protection_radius")]
     pub spawn_protection_radius: i32,
 
+    #[serde(default = "default_world_default_dimension")]
     #[AutoDoc(key = "config.qexed.server.world.dimension")]
     pub dimension: String,
 
+    #[serde(default = "default_world_dimension_type")]
     #[AutoDoc(key = "config.qexed.server.world.dimension_type")]
     pub dimension_type: String,
 
@@ -1760,15 +1771,17 @@ pub struct World {
 impl Default for World {
     fn default() -> Self {
         Self {
-            path: "world".to_string(),
+            default_dimension: default_world_default_dimension(),
+            worlds: vec![WorldStorage::default()],
+            path: default_world_path(),
             read_only: false,
             generator: WorldGenerator::default(),
             generator_preset: default_world_generator_preset(),
             seed: 0,
             game_mode: GameMode::default(),
             spawn_protection_radius: default_spawn_protection_radius(),
-            dimension: "minecraft:overworld".to_string(),
-            dimension_type: "minecraft:overworld".to_string(),
+            dimension: default_world_default_dimension(),
+            dimension_type: default_world_dimension_type(),
             view_distance: 3,
             chunk_load_parallelism: default_chunk_load_parallelism(),
             chunk_update_delay_ms: default_chunk_update_delay_ms(),
@@ -1780,6 +1793,70 @@ impl Default for World {
             spawn: Spawn::default(),
             instances: Vec::new(),
         }
+    }
+}
+
+impl World {
+    pub fn default_play_dimension(&self) -> String {
+        let default_dimension = self.default_dimension.trim();
+        if !default_dimension.is_empty() {
+            return default_dimension.to_string();
+        }
+        let legacy_dimension = self.dimension.trim();
+        if !legacy_dimension.is_empty() {
+            return legacy_dimension.to_string();
+        }
+        self.worlds
+            .iter()
+            .find_map(|world| {
+                let dimension = world.dimension.trim();
+                (!dimension.is_empty()).then(|| dimension.to_string())
+            })
+            .unwrap_or_else(default_world_default_dimension)
+    }
+
+    pub fn configured_dimension_names(&self) -> Vec<String> {
+        let mut dimensions = Vec::new();
+        push_unique_dimension(&mut dimensions, self.default_play_dimension());
+        for world in &self.worlds {
+            push_unique_dimension(&mut dimensions, world.dimension.trim());
+        }
+        if self.worlds.is_empty() {
+            push_unique_dimension(&mut dimensions, self.dimension.trim());
+        }
+        for instance in &self.instances {
+            push_unique_dimension(&mut dimensions, instance.dimension.trim());
+        }
+        dimensions
+    }
+
+    pub fn dimension_type_for(&self, dimension: &str) -> Option<String> {
+        let dimension = dimension.trim();
+        if dimension.is_empty() {
+            return None;
+        }
+        for world in &self.worlds {
+            if world.dimension.trim() == dimension {
+                let dimension_type = world.dimension_type.trim();
+                if !dimension_type.is_empty() {
+                    return Some(dimension_type.to_string());
+                }
+            }
+        }
+        if self.worlds.is_empty() && self.dimension.trim() == dimension {
+            let dimension_type = self.dimension_type.trim();
+            if !dimension_type.is_empty() {
+                return Some(dimension_type.to_string());
+            }
+        }
+        None
+    }
+}
+
+fn push_unique_dimension(dimensions: &mut Vec<String>, dimension: impl AsRef<str>) {
+    let dimension = dimension.as_ref().trim();
+    if !dimension.is_empty() && !dimensions.iter().any(|existing| existing == dimension) {
+        dimensions.push(dimension.to_string());
     }
 }
 
@@ -1810,6 +1887,18 @@ fn default_world_generator_preset() -> String {
     "minecraft:classic_flat".to_string()
 }
 
+fn default_world_path() -> String {
+    "world".to_string()
+}
+
+fn default_world_default_dimension() -> String {
+    "minecraft:overworld".to_string()
+}
+
+fn default_world_dimension_type() -> String {
+    "minecraft:overworld".to_string()
+}
+
 fn default_chunk_load_parallelism() -> usize {
     4
 }
@@ -1820,6 +1909,36 @@ fn default_chunk_update_delay_ms() -> u64 {
 
 fn default_spawn_protection_radius() -> i32 {
     16
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct WorldStorage {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.worlds.id")]
+    pub id: String,
+
+    #[serde(default = "default_world_default_dimension")]
+    #[AutoDoc(key = "config.qexed.server.world.worlds.dimension")]
+    pub dimension: String,
+
+    #[serde(default = "default_world_dimension_type")]
+    #[AutoDoc(key = "config.qexed.server.world.worlds.dimension_type")]
+    pub dimension_type: String,
+
+    #[serde(default = "default_world_path")]
+    #[AutoDoc(key = "config.qexed.server.world.worlds.path")]
+    pub path: String,
+}
+
+impl Default for WorldStorage {
+    fn default() -> Self {
+        Self {
+            id: "overworld".to_string(),
+            dimension: default_world_default_dimension(),
+            dimension_type: default_world_dimension_type(),
+            path: default_world_path(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -2390,6 +2509,62 @@ pitch = 0.0
                 max_cached_packet_bytes: 8_388_608,
                 block_state_cache_limit: 4096,
             }
+        );
+    }
+
+    #[test]
+    fn parses_multi_world_storage_without_required_overworld() {
+        let world: World = toml::from_str(
+            r#"
+default_dimension = "qexed:mine_a"
+path = "worlds"
+generator = "vanilla_noise"
+generator_preset = "minecraft:overworld"
+seed = 20260530
+game_mode = "creative"
+spawn_protection_radius = 0
+dimension = "qexed:mine_a"
+dimension_type = "minecraft:overworld"
+view_distance = 4
+chunk_load_parallelism = 4
+simulation_distance = 4
+light = "static"
+light_algorithm = "fast"
+
+[spawn]
+x = 8.5
+y = 80.0
+z = 8.5
+yaw = 180.0
+pitch = 0.0
+
+[[worlds]]
+id = "mine_template"
+dimension = "qexed:mine_template"
+dimension_type = "minecraft:overworld"
+path = "worlds/mine_template"
+
+[[instances]]
+id = "mine_a"
+dimension = "qexed:mine_a"
+source_dimension = "qexed:mine_template"
+path = "worlds/mine_a"
+copy_on_write = true
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(world.default_play_dimension(), "qexed:mine_a");
+        assert_eq!(
+            world.configured_dimension_names(),
+            vec![
+                "qexed:mine_a".to_string(),
+                "qexed:mine_template".to_string()
+            ]
+        );
+        assert_eq!(
+            world.dimension_type_for("qexed:mine_template").as_deref(),
+            Some("minecraft:overworld")
         );
     }
 

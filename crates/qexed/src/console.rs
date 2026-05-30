@@ -137,7 +137,7 @@ fn print_status(context: &ServerContext) {
     print_console(rust_i18n::t!(
         "qexed.console.status.dimension",
         locale = locale,
-        dimension = &context.config.world.dimension
+        dimension = context.config.world.default_play_dimension()
     ));
     print_console(rust_i18n::t!(
         "qexed.console.status.proxy",

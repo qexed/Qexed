@@ -305,6 +305,124 @@ fn world_instance_copy_on_write_reads_source_and_overlays_written_chunks() {
 }
 
 #[test]
+fn world_manager_routes_configured_worlds_to_separate_paths() {
+    let first_dir = tempfile::tempdir().unwrap();
+    let second_dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new("unused").with_worlds(&[
+        qexed_config::app::qexed::server::WorldStorage {
+            id: "mine_a".to_string(),
+            dimension: "qexed:mine_a".to_string(),
+            dimension_type: "minecraft:overworld".to_string(),
+            path: first_dir.path().to_string_lossy().into_owned(),
+        },
+        qexed_config::app::qexed::server::WorldStorage {
+            id: "mine_b".to_string(),
+            dimension: "qexed:mine_b".to_string(),
+            dimension_type: "minecraft:overworld".to_string(),
+            path: second_dir.path().to_string_lossy().into_owned(),
+        },
+    ]);
+
+    manager
+        .write_region_chunk(
+            "qexed:mine_a",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"mine-a").unwrap(),
+        )
+        .unwrap();
+    manager
+        .write_region_chunk(
+            "qexed:mine_b",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"mine-b").unwrap(),
+        )
+        .unwrap();
+
+    assert!(first_dir.path().join("region/r.0.0.mca").exists());
+    assert!(second_dir.path().join("region/r.0.0.mca").exists());
+    assert_eq!(
+        manager
+            .load_region_chunk("qexed:mine_a", 0, 0)
+            .unwrap()
+            .unwrap()
+            .decompress()
+            .unwrap(),
+        b"mine-a"
+    );
+    assert_eq!(
+        manager
+            .load_region_chunk("qexed:mine_b", 0, 0)
+            .unwrap()
+            .unwrap()
+            .decompress()
+            .unwrap(),
+        b"mine-b"
+    );
+}
+
+#[test]
+fn configured_world_path_is_dimension_root_without_vanilla_subdirectory() {
+    let nether_dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new("unused").with_worlds(&[
+        qexed_config::app::qexed::server::WorldStorage {
+            id: "nether".to_string(),
+            dimension: "minecraft:the_nether".to_string(),
+            dimension_type: "minecraft:the_nether".to_string(),
+            path: nether_dir.path().to_string_lossy().into_owned(),
+        },
+    ]);
+
+    manager
+        .write_region_chunk(
+            "minecraft:the_nether",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"nether").unwrap(),
+        )
+        .unwrap();
+
+    assert!(nether_dir.path().join("region/r.0.0.mca").exists());
+    assert!(!nether_dir.path().join("DIM-1/region/r.0.0.mca").exists());
+}
+
+#[test]
+fn world_instance_copy_on_write_uses_configured_source_world_path() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let instance_dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new("unused")
+        .with_worlds(&[qexed_config::app::qexed::server::WorldStorage {
+            id: "mine_template".to_string(),
+            dimension: "qexed:mine_template".to_string(),
+            dimension_type: "minecraft:overworld".to_string(),
+            path: source_dir.path().to_string_lossy().into_owned(),
+        }])
+        .with_instances(&[qexed_config::app::qexed::server::WorldInstance {
+            id: "mine_a".to_string(),
+            dimension: "qexed:mine_a".to_string(),
+            source_dimension: "qexed:mine_template".to_string(),
+            path: instance_dir.path().to_string_lossy().into_owned(),
+            copy_on_write: true,
+        }]);
+
+    manager
+        .write_region_chunk(
+            "qexed:mine_template",
+            0,
+            0,
+            super::region::ChunkData::zlib(b"template").unwrap(),
+        )
+        .unwrap();
+
+    let inherited = manager
+        .load_region_chunk("qexed:mine_a", 0, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(inherited.decompress().unwrap(), b"template");
+}
+
+#[test]
 fn world_manager_loads_block_state_from_saved_region() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::new(dir.path());

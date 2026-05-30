@@ -58,7 +58,10 @@ impl WorldRulesManager {
                 manager.inner.base_dir.display()
             )
         })?;
-        manager.ensure_loaded(&world.dimension)?;
+        for dimension in world.configured_dimension_names() {
+            manager.ensure_loaded(&dimension)?;
+        }
+        manager.ensure_loaded(&world.default_play_dimension())?;
         Ok(manager)
     }
 
@@ -249,11 +252,21 @@ impl WorldRulesManager {
         let rule_dir = self.dimension_rules_dir_path(dimension)?;
         let mut rule =
             DimensionRuleFile::load_or_create_default(None, Some(false), Some(rule_dir))?;
-        if rule.dimension.trim().is_empty() {
+        if rule.dimension.trim().is_empty() || rule.dimension == default_world_dimension() {
             rule.dimension = dimension.to_string();
         }
         if rule.dimension_type.trim().is_empty() {
-            rule.dimension_type = default_dimension_type(dimension);
+            rule.dimension_type = self
+                .inner
+                .default_world
+                .dimension_type_for(dimension)
+                .unwrap_or_else(|| default_dimension_type(dimension));
+        } else if rule.dimension == dimension
+            && rule.dimension_type == default_world_dimension_type()
+        {
+            if let Some(dimension_type) = self.inner.default_world.dimension_type_for(dimension) {
+                rule.dimension_type = dimension_type;
+            }
         }
         if rule.tick_step_invalid() {
             rule.time.tick_step = 1;
@@ -287,6 +300,14 @@ fn default_dimension_type(dimension: &str) -> String {
     }
 }
 
+fn default_world_dimension() -> String {
+    "minecraft:overworld".to_string()
+}
+
+fn default_world_dimension_type() -> String {
+    "minecraft:overworld".to_string()
+}
+
 trait DimensionRuleExt {
     fn from_world_defaults(world: &World, dimension: &str) -> Self;
     fn tick_step_invalid(&self) -> bool;
@@ -296,7 +317,9 @@ impl DimensionRuleExt for DimensionRuleFile {
     fn from_world_defaults(world: &World, dimension: &str) -> Self {
         Self {
             dimension: dimension.to_string(),
-            dimension_type: default_dimension_type(dimension),
+            dimension_type: world
+                .dimension_type_for(dimension)
+                .unwrap_or_else(|| default_dimension_type(dimension)),
             read_only: world.read_only,
             block_updates: true,
             light: world.light.clone(),
@@ -382,5 +405,32 @@ mod tests {
             .set_daylight_cycle("minecraft:overworld", false)
             .unwrap();
         assert_eq!(manager.tick_dimension_time("minecraft:overworld"), 4000);
+    }
+
+    #[test]
+    fn world_rules_load_default_dimension_without_overworld_world() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut world = default_world();
+        world.default_dimension = "qexed:mine_a".to_string();
+        world.worlds = vec![qexed_config::app::qexed::server::WorldStorage {
+            id: "mine_a".to_string(),
+            dimension: "qexed:mine_a".to_string(),
+            dimension_type: "minecraft:overworld".to_string(),
+            path: temp.path().join("mine_a").to_string_lossy().into_owned(),
+        }];
+        world.instances.clear();
+        let manager = WorldRulesManager {
+            inner: Arc::new(WorldRulesInner {
+                base_dir: temp.path().join("worlds"),
+                default_world: world,
+                states: RwLock::new(HashMap::new()),
+            }),
+        };
+
+        manager.ensure_loaded("qexed:mine_a").unwrap();
+        let snapshot = manager.snapshot("qexed:mine_a");
+
+        assert_eq!(snapshot.dimension, "qexed:mine_a");
+        assert_eq!(snapshot.dimension_type, "minecraft:overworld");
     }
 }

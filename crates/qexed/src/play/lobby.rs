@@ -993,8 +993,12 @@ mod tests {
     use std::collections::HashMap;
 
     use qexed_config::app::qexed::server::{
-        LobbyAction, LobbyActionKind, LobbyHealthCheck, LobbyMenuItem, LobbyNavigator, LobbyServer,
+        ForwardingMode, LobbyAction, LobbyActionKind, LobbyHealthCheck, LobbyMenuItem,
+        LobbyNavigator, LobbyServer,
     };
+    use qexed_packet::Packet;
+    use qexed_protocol::to_client::play::{custom_payload::CustomPayload, system_chat::SystemChat};
+    use tokio::io::duplex;
 
     #[test]
     fn navigator_item_overwrites_configured_hotbar_slot() {
@@ -1417,5 +1421,111 @@ mod tests {
             ),
             qexed_protocol::to_client::play::boss_event::BossBarOverlay::Notched10
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_lobby_transfer_sends_proxy_connect_payload() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
+            enable: true,
+            servers: vec![LobbyServer {
+                id: "prison".to_string(),
+                enable: true,
+                host: "127.0.0.1".to_string(),
+                port,
+                ..LobbyServer::default()
+            }],
+            ..Default::default()
+        });
+        let mut server_config = qexed_config::app::qexed::server::Server::default();
+        server_config.proxy = true;
+        server_config.proxy_protocol = ForwardingMode::Velocity;
+        server_config.proxy_server_id = "lobby-1".to_string();
+        server_config.lobby = qexed_config::app::qexed::server::Lobby {
+            health_check: LobbyHealthCheck {
+                timeout_ms: 50,
+                ..LobbyHealthCheck::default()
+            },
+            servers: vec![LobbyServer {
+                id: "prison".to_string(),
+                enable: true,
+                host: "127.0.0.1".to_string(),
+                port,
+                ..LobbyServer::default()
+            }],
+            ..Default::default()
+        };
+        let players = crate::players::PlayerManager::default();
+        let player = players.join(
+            qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::from_u128(1),
+                username: "Player".to_string(),
+                properties: Vec::new(),
+            },
+            qexed_protocol::to_client::play::add_entity::EntityPosition::default(),
+            "minecraft:overworld".to_string(),
+            Vec::new(),
+            "en-US".to_string(),
+        );
+        let plugin_dir = tempfile::tempdir().unwrap();
+        let plugins = crate::plugins::PluginManager::from_dir(plugin_dir.path());
+        let proxy_context = super::ProxyConnectContext {
+            server_config: &server_config,
+            plugins: &plugins,
+            players: &players,
+            actor: player.player.profile.uuid,
+        };
+        let mut servers = HashMap::new();
+        servers.insert("prison".to_string(), super::LobbyServerStatus::Online);
+        let status = super::LobbyStatusSnapshot { servers };
+        let (server_io, client_io) = duplex(16 * 1024);
+        let (_, server_writer) = tokio::io::split(server_io);
+        let (client_reader, _) = tokio::io::split(client_io);
+        let mut sink = qexed_tcp_connect::PacketSink::new(server_writer);
+        let mut packets = qexed_tcp_connect::PacketStream::new(client_reader);
+
+        lobby
+            .transfer_to_server(&mut sink, "prison", &status, Some(&proxy_context))
+            .await
+            .unwrap();
+        sink.flush().await.unwrap();
+
+        let first = read_packet(&mut packets).await;
+        assert_eq!(first.0, SystemChat::ID);
+        let (packet_id, mut payload) = read_packet(&mut packets).await;
+        assert_eq!(packet_id, CustomPayload::ID);
+        let payload = crate::connection::decode_payload::<CustomPayload>(&mut payload).unwrap();
+        assert_eq!(payload.channel, "bungeecord:main");
+        assert!(
+            payload
+                .data
+                .0
+                .windows("Connect".len())
+                .any(|window| window == "Connect".as_bytes())
+        );
+        assert!(
+            payload
+                .data
+                .0
+                .windows("prison".len())
+                .any(|window| window == "prison".as_bytes())
+        );
+
+        accept_task.await.unwrap();
+    }
+
+    async fn read_packet<R>(
+        packets: &mut qexed_tcp_connect::PacketStream<R>,
+    ) -> (i32, bytes::BytesMut)
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        let mut payload = packets.read_packet().await.unwrap().unwrap();
+        let id = crate::connection::read_packet_id(&mut payload).unwrap();
+        (id, payload)
     }
 }

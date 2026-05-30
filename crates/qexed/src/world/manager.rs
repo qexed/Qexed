@@ -20,6 +20,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct WorldManager {
     save_path: std::path::PathBuf,
+    worlds: Arc<std::collections::HashMap<String, WorldStorage>>,
     instances: Arc<std::collections::HashMap<String, WorldInstanceStorage>>,
     read_only: bool,
     light_mode: WorldLightMode,
@@ -409,6 +410,7 @@ impl WorldManager {
     ) -> Self {
         Self {
             save_path: save_path.into(),
+            worlds: Default::default(),
             instances: Default::default(),
             read_only,
             light_mode,
@@ -444,6 +446,20 @@ impl WorldManager {
                 .iter()
                 .filter_map(|instance| WorldInstanceStorage::from_config(&self.save_path, instance))
                 .map(|instance| (instance.dimension.clone(), instance))
+                .collect(),
+        );
+        self
+    }
+
+    pub fn with_worlds(
+        mut self,
+        worlds: &[qexed_config::app::qexed::server::WorldStorage],
+    ) -> Self {
+        self.worlds = Arc::new(
+            worlds
+                .iter()
+                .filter_map(WorldStorage::from_config)
+                .map(|world| (world.dimension.clone(), world))
                 .collect(),
         );
         self
@@ -862,7 +878,7 @@ impl WorldManager {
         chunk_z: i32,
     ) -> Result<Option<region::ChunkData>> {
         let source_region_path = instance
-            .source_region_path(&self.save_path)
+            .source_region_path(self)
             .join(region_file_name(chunk_x, chunk_z));
         if !source_region_path.exists() {
             return Ok(None);
@@ -1000,7 +1016,10 @@ impl WorldManager {
         &self,
         world: &qexed_config::app::qexed::server::World,
     ) -> Result<()> {
-        self.ensure_storage(&world.dimension)?;
+        for dimension in world.configured_dimension_names() {
+            self.ensure_storage(&dimension)?;
+        }
+        self.ensure_storage(&world.default_play_dimension())?;
         for instance in &world.instances {
             let dimension = instance.dimension.trim();
             if !dimension.is_empty() {
@@ -1416,10 +1435,17 @@ impl WorldManager {
 
     fn dimension_region_path(&self, dimension: &str) -> std::path::PathBuf {
         if let Some(instance) = self.instances.get(dimension) {
-            return vanilla_dimension_region_path(&instance.path, dimension);
+            return configured_world_region_path(&instance.path);
+        }
+        if let Some(world) = self.worlds.get(dimension) {
+            return configured_world_region_path(&world.path);
         }
         vanilla_dimension_region_path(&self.save_path, dimension)
     }
+}
+
+fn configured_world_region_path(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("region")
 }
 
 fn vanilla_dimension_region_path(root: &std::path::Path, dimension: &str) -> std::path::PathBuf {
@@ -1436,6 +1462,29 @@ fn region_file_name(chunk_x: i32, chunk_z: i32) -> String {
         floor_div(chunk_x, 32),
         floor_div(chunk_z, 32)
     )
+}
+
+#[derive(Clone, Debug)]
+struct WorldStorage {
+    dimension: String,
+    path: std::path::PathBuf,
+}
+
+impl WorldStorage {
+    fn from_config(config: &qexed_config::app::qexed::server::WorldStorage) -> Option<Self> {
+        let dimension = config.dimension.trim();
+        if dimension.is_empty() {
+            return None;
+        }
+        let path = config.path.trim();
+        if path.is_empty() {
+            return None;
+        }
+        Some(Self {
+            dimension: dimension.to_string(),
+            path: std::path::PathBuf::from(path),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1470,9 +1519,12 @@ impl WorldInstanceStorage {
         })
     }
 
-    fn source_region_path(&self, default_save_path: &std::path::Path) -> std::path::PathBuf {
+    fn source_region_path(&self, world: &WorldManager) -> std::path::PathBuf {
+        if let Some(source_world) = world.worlds.get(&self.source_dimension) {
+            return configured_world_region_path(&source_world.path);
+        }
         let source_root = if self.source_path.as_os_str().is_empty() {
-            default_save_path
+            world.save_path.as_path()
         } else {
             &self.source_path
         };
