@@ -1,5 +1,6 @@
 mod event;
 mod payload;
+mod placeholders;
 
 pub use event::PluginEvent;
 pub use payload::{
@@ -10,9 +11,13 @@ pub use payload::{
     LanguagePayload, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
     NpcMutationOp, NpcMutationQuery, NpcMutationResponse, NpcUpsert, PathfindingQuery,
     PathfindingResponse, PlaceholderContext, PlaceholderQuery, PlaceholderReplacement,
-    PlaceholderResponse, PlayerAction, PlayerInputPayload, PlayerInputState, PlayerMovePayload,
-    PlayerPayload, PlayerPayloadOwned, PlayerPositionPayload, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
+    PlaceholderResponse, PlayerAction, PlayerInputPayload, PlayerInputState, PlayerItemPickupQuery,
+    PlayerItemPickupResponse, PlayerMovePayload, PlayerPayload, PlayerPayloadOwned,
+    PlayerPositionPayload, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
+    PluginEnchantment, ProxyConnectResultPayload,
+};
+pub use placeholders::{
+    NATIVE_PLACEHOLDER_DOCS, PlaceholderDoc, PlaceholderScope, native_placeholder_docs,
 };
 
 #[cfg(feature = "server")]

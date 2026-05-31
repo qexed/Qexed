@@ -1,3 +1,5 @@
+use qexed_plugin_api::{NATIVE_PLACEHOLDER_DOCS, PlaceholderScope};
+
 use crate::{players::OnlinePlayer, plugins::PluginManager};
 
 #[derive(Debug, Clone)]
@@ -64,32 +66,50 @@ pub fn apply_native_placeholders(
     text: &str,
     context: &PlaceholderContext,
 ) -> String {
-    let mut rendered = text
-        .replace("%online_players%", &context.online_players.to_string())
-        .replace("%max_players%", &context.max_players_label(player))
-        .replace(
-            "%lobby_online_servers%",
-            &context.lobby_online_servers.to_string(),
-        )
-        .replace(
-            "%lobby_total_servers%",
-            &context.lobby_total_servers.to_string(),
-        )
-        .replace("%lobby_servers%", &context.lobby_servers)
-        .replace(
-            "{online_servers}",
-            &context.lobby_online_servers.to_string(),
-        )
-        .replace("{total_servers}", &context.lobby_total_servers.to_string())
-        .replace("{servers}", &context.lobby_servers);
-    if let Some(player) = player {
-        rendered = rendered
-            .replace("%player_name%", &player.profile.username)
-            .replace("%player_uuid%", &player.profile.uuid.to_string())
-            .replace("%player_language%", &player.language)
-            .replace("%player_dimension%", &player.dimension);
+    let mut rendered = text.to_string();
+    for doc in NATIVE_PLACEHOLDER_DOCS {
+        let Some(value) = native_placeholder_value(doc.token, doc.scope, player, context) else {
+            continue;
+        };
+        rendered = rendered.replace(doc.token, &value);
+        for alias in doc.aliases {
+            rendered = rendered.replace(alias, &value);
+        }
     }
     rendered
+}
+
+fn native_placeholder_value(
+    token: &str,
+    scope: PlaceholderScope,
+    player: Option<&OnlinePlayer>,
+    context: &PlaceholderContext,
+) -> Option<String> {
+    if scope == PlaceholderScope::Player && player.is_none() {
+        return None;
+    }
+
+    let value = match token {
+        "%online_players%" => context.online_players.to_string(),
+        "%max_players%" => context.max_players_label(player),
+        "%lobby_online_servers%" => context.lobby_online_servers.to_string(),
+        "%lobby_total_servers%" => context.lobby_total_servers.to_string(),
+        "%lobby_servers%" => context.lobby_servers.clone(),
+        "%player_name%" => player
+            .map(|player| player.profile.username.clone())
+            .unwrap_or_default(),
+        "%player_uuid%" => player
+            .map(|player| player.profile.uuid.to_string())
+            .unwrap_or_default(),
+        "%player_language%" => player
+            .map(|player| player.language.clone())
+            .unwrap_or_default(),
+        "%player_dimension%" => player
+            .map(|player| player.dimension.clone())
+            .unwrap_or_default(),
+        _ => return None,
+    };
+    Some(value)
 }
 
 fn player_payload_owned(player: &OnlinePlayer) -> crate::plugins::PlayerPayloadOwned {

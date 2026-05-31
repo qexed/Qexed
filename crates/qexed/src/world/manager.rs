@@ -28,6 +28,7 @@ pub struct WorldManager {
     light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
     generator: Arc<dyn generator::WorldChunkGenerator>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, PendingBlock>>>,
+    edit_regions: Arc<Mutex<Vec<RuntimeEditRegion>>>,
     region_chunk_cache: Arc<Mutex<RegionChunkCache>>,
     precompiled_chunk_cache: Arc<Mutex<PrecompiledChunkCache>>,
     block_state_cache: Arc<Mutex<BlockStateCache>>,
@@ -418,6 +419,7 @@ impl WorldManager {
             light_gpu,
             generator,
             placed_blocks: Default::default(),
+            edit_regions: Default::default(),
             region_chunk_cache: Default::default(),
             precompiled_chunk_cache: Default::default(),
             block_state_cache: Default::default(),
@@ -434,6 +436,14 @@ impl WorldManager {
 
     pub fn with_precompiled_chunks(mut self, settings: PrecompiledChunkSettings) -> Self {
         self.precompiled_chunks = settings;
+        self
+    }
+
+    pub fn with_edit_regions(
+        self,
+        regions: &[qexed_config::app::qexed::server::WorldEditRegion],
+    ) -> Self {
+        self.replace_edit_regions(regions.iter().cloned());
         self
     }
 
@@ -1045,25 +1055,85 @@ impl WorldManager {
             return;
         }
 
-        let pending = PendingBlock {
-            block_state,
-            revision: self.next_block_write_revision(),
-        };
-        self.placed_blocks
-            .lock()
-            .expect("world block store poisoned")
-            .insert(BlockKey::new(dimension, &position), pending);
-        self.mark_chunk_dirty_for_block_change(dimension, &position);
+        let pending = self.remember_block_overlay(dimension, &position, block_state);
         self.queue_block_persist(dimension.to_string(), position.clone(), pending);
-        self.mark_placed_block_light_dampening(
-            dimension,
-            &position,
-            if block_state == AIR_BLOCK_STATE_ID {
-                0
-            } else {
-                15
-            },
-        );
+    }
+
+    pub fn set_runtime_block(
+        &self,
+        dimension: &str,
+        position: qexed_packet::net_types::Position,
+        block_state: i32,
+    ) {
+        self.remember_block_overlay(dimension, &position, block_state);
+    }
+
+    pub fn register_edit_region(&self, region: RuntimeEditRegion) {
+        let mut regions = self
+            .edit_regions
+            .lock()
+            .expect("world edit region store poisoned");
+        if !region.id.is_empty()
+            && let Some(existing) = regions.iter_mut().find(|existing| existing.id == region.id)
+        {
+            *existing = region;
+            return;
+        }
+        regions.push(region);
+    }
+
+    pub fn replace_edit_regions(
+        &self,
+        regions: impl IntoIterator<Item = qexed_config::app::qexed::server::WorldEditRegion>,
+    ) {
+        let regions = regions
+            .into_iter()
+            .map(RuntimeEditRegion::from)
+            .collect::<Vec<_>>();
+        *self
+            .edit_regions
+            .lock()
+            .expect("world edit region store poisoned") = regions;
+    }
+
+    pub fn editable_region_for_player_break(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<RuntimeEditRegion> {
+        self.editable_region(dimension, position, |region| region.allow_player_break)
+    }
+
+    pub fn editable_region_for_player_place(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<RuntimeEditRegion> {
+        self.editable_region(dimension, position, |region| region.allow_player_place)
+    }
+
+    pub fn editable_region_for_plugin_write(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<RuntimeEditRegion> {
+        self.editable_region(dimension, position, |region| region.allow_plugin_write)
+    }
+
+    fn editable_region(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+        allowed: impl Fn(&RuntimeEditRegion) -> bool,
+    ) -> Option<RuntimeEditRegion> {
+        self.edit_regions
+            .lock()
+            .expect("world edit region store poisoned")
+            .iter()
+            .find(|region| {
+                allowed(region) && region.contains(dimension, position.x, position.y, position.z)
+            })
+            .cloned()
     }
 
     pub fn place_blocks(
@@ -1121,6 +1191,33 @@ impl WorldManager {
         }
 
         Ok(updates)
+    }
+
+    fn remember_block_overlay(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+        block_state: i32,
+    ) -> PendingBlock {
+        let pending = PendingBlock {
+            block_state,
+            revision: self.next_block_write_revision(),
+        };
+        self.placed_blocks
+            .lock()
+            .expect("world block store poisoned")
+            .insert(BlockKey::new(dimension, position), pending);
+        self.mark_chunk_dirty_for_block_change(dimension, position);
+        self.mark_placed_block_light_dampening(
+            dimension,
+            position,
+            if block_state == AIR_BLOCK_STATE_ID {
+                0
+            } else {
+                15
+            },
+        );
+        pending
     }
 
     fn queue_block_persist(
@@ -1918,6 +2015,56 @@ struct BlockKey {
 struct PendingBlock {
     block_state: i32,
     revision: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeEditRegion {
+    pub id: String,
+    pub dimension: String,
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_y: i32,
+    pub max_y: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub allow_player_break: bool,
+    pub allow_player_place: bool,
+    pub allow_plugin_write: bool,
+    pub runtime_only: bool,
+}
+
+impl RuntimeEditRegion {
+    pub fn contains(&self, dimension: &str, x: i32, y: i32, z: i32) -> bool {
+        self.dimension.trim() == dimension.trim()
+            && contains_axis(x, self.min_x, self.max_x)
+            && contains_axis(y, self.min_y, self.max_y)
+            && contains_axis(z, self.min_z, self.max_z)
+    }
+}
+
+impl From<qexed_config::app::qexed::server::WorldEditRegion> for RuntimeEditRegion {
+    fn from(region: qexed_config::app::qexed::server::WorldEditRegion) -> Self {
+        Self {
+            id: region.id,
+            dimension: region.dimension,
+            min_x: region.min_x,
+            max_x: region.max_x,
+            min_y: region.min_y,
+            max_y: region.max_y,
+            min_z: region.min_z,
+            max_z: region.max_z,
+            allow_player_break: region.allow_player_break,
+            allow_player_place: region.allow_player_place,
+            allow_plugin_write: region.allow_plugin_write,
+            runtime_only: region.runtime_only,
+        }
+    }
+}
+
+fn contains_axis(value: i32, first: i32, second: i32) -> bool {
+    let min = first.min(second);
+    let max = first.max(second);
+    (min..=max).contains(&value)
 }
 
 impl BlockKey {

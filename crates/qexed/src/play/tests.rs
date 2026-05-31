@@ -1,6 +1,7 @@
 use super::{
-    ChunkSendState, can_modify_world, chunk_coord, chunk_load_parallelism_limit,
+    ChunkSendState, WorldEditKind, can_modify_world, chunk_coord, chunk_load_parallelism_limit,
     dimension_type_holder_id, keep_alive_id, login_dimension_names, player_ability_flags,
+    world_write_mode,
 };
 use qexed_config::app::qexed::server::GameMode;
 use qexed_packet::net_types::Position;
@@ -98,6 +99,72 @@ fn world_edit_rules_apply_read_only_and_spawn_protection() {
 
     world.game_mode = GameMode::Spectator;
     assert!(!can_modify_world(&world, &outside_spawn));
+}
+
+#[test]
+fn read_only_world_allows_runtime_edit_regions() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut world = qexed_config::app::qexed::server::World {
+        read_only: true,
+        spawn_protection_radius: 0,
+        ..Default::default()
+    };
+    world
+        .edit_regions
+        .push(qexed_config::app::qexed::server::WorldEditRegion {
+            id: "mine".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            min_x: 10,
+            max_x: 20,
+            min_y: 0,
+            max_y: 80,
+            min_z: -5,
+            max_z: 5,
+            allow_player_break: true,
+            allow_player_place: false,
+            allow_plugin_write: true,
+            runtime_only: true,
+        });
+    let rules = crate::world::WorldRulesManager::from_world_config_for_tests(
+        &world,
+        temp.path().join("rules"),
+    )
+    .unwrap();
+    let manager = crate::world::WorldManager::new(temp.path().join("world"))
+        .with_edit_regions(&world.edit_regions);
+    rules.set_read_only("minecraft:overworld", true).unwrap();
+
+    let inside = Position { x: 12, y: 64, z: 0 };
+    let outside = Position { x: 30, y: 64, z: 0 };
+    let break_mode = world_write_mode(
+        &manager,
+        &world,
+        &rules,
+        "minecraft:overworld",
+        &inside,
+        WorldEditKind::Break,
+    );
+    let place_mode = world_write_mode(
+        &manager,
+        &world,
+        &rules,
+        "minecraft:overworld",
+        &inside,
+        WorldEditKind::Place,
+    );
+    let outside_mode = world_write_mode(
+        &manager,
+        &world,
+        &rules,
+        "minecraft:overworld",
+        &outside,
+        WorldEditKind::Break,
+    );
+
+    assert!(break_mode.allowed);
+    assert!(break_mode.runtime_only);
+    assert!(!place_mode.allowed);
+    assert!(!outside_mode.allowed);
 }
 
 #[test]

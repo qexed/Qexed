@@ -9,7 +9,9 @@ use super::{
         PluginHostServices, host_config_exists, host_config_read, host_config_write,
         host_economy_balance, host_economy_currency_info, host_economy_deposit,
         host_economy_register_currency, host_economy_set_balance, host_economy_withdraw, host_log,
-        host_lottery_roll, host_pathfinding_find,
+        host_lottery_roll, host_pathfinding_find, host_random_pool_roll, host_storage_delete,
+        host_storage_exists, host_storage_get, host_storage_set, host_world_break_block,
+        host_world_register_edit_region, host_world_set_block,
     },
 };
 
@@ -36,6 +38,18 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap("qexed", "config_write", host_config_write)
         .context("register plugin config_write API")?;
+    linker
+        .func_wrap("qexed", "storage_exists", host_storage_exists)
+        .context("register plugin storage_exists API")?;
+    linker
+        .func_wrap("qexed", "storage_get", host_storage_get)
+        .context("register plugin storage_get API")?;
+    linker
+        .func_wrap("qexed", "storage_set", host_storage_set)
+        .context("register plugin storage_set API")?;
+    linker
+        .func_wrap("qexed", "storage_delete", host_storage_delete)
+        .context("register plugin storage_delete API")?;
     linker
         .func_wrap(
             "qexed",
@@ -64,6 +78,22 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap("qexed", "pathfinding_find", host_pathfinding_find)
         .context("register plugin pathfinding_find API")?;
+    linker
+        .func_wrap("qexed", "world_set_block", host_world_set_block)
+        .context("register plugin world_set_block API")?;
+    linker
+        .func_wrap("qexed", "world_break_block", host_world_break_block)
+        .context("register plugin world_break_block API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "world_register_edit_region",
+            host_world_register_edit_region,
+        )
+        .context("register plugin world_register_edit_region API")?;
+    linker
+        .func_wrap("qexed", "random_pool_roll", host_random_pool_roll)
+        .context("register plugin random_pool_roll API")?;
     Ok(())
 }
 

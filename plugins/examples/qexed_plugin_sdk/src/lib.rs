@@ -12,6 +12,14 @@ unsafe extern "C" {
     fn host_config_read(path_ptr: i32, path_len: i32, out_ptr: i32, out_len: i32) -> i64;
     #[link_name = "config_write"]
     fn host_config_write(path_ptr: i32, path_len: i32, data_ptr: i32, data_len: i32) -> i32;
+    #[link_name = "storage_exists"]
+    fn host_storage_exists(key_ptr: i32, key_len: i32) -> i32;
+    #[link_name = "storage_get"]
+    fn host_storage_get(key_ptr: i32, key_len: i32, out_ptr: i32, out_len: i32) -> i64;
+    #[link_name = "storage_set"]
+    fn host_storage_set(key_ptr: i32, key_len: i32, data_ptr: i32, data_len: i32) -> i32;
+    #[link_name = "storage_delete"]
+    fn host_storage_delete(key_ptr: i32, key_len: i32) -> i32;
     #[link_name = "economy_register_currency"]
     fn host_economy_register_currency(
         id_ptr: i32,
@@ -64,6 +72,19 @@ unsafe extern "C" {
     fn host_lottery_roll(entries_ptr: i32, entries_len: i32, out_ptr: i32, out_len: i32) -> i64;
     #[link_name = "pathfinding_find"]
     fn host_pathfinding_find(query_ptr: i32, query_len: i32, out_ptr: i32, out_len: i32) -> i64;
+    #[link_name = "world_set_block"]
+    fn host_world_set_block(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "world_break_block"]
+    fn host_world_break_block(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "world_register_edit_region"]
+    fn host_world_register_edit_region(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "random_pool_roll"]
+    fn host_random_pool_roll(
+        request_ptr: i32,
+        request_len: i32,
+        out_ptr: i32,
+        out_len: i32,
+    ) -> i64;
 }
 
 const HOST_READ_INITIAL_BYTES: usize = 4096;
@@ -170,6 +191,55 @@ pub fn config_load_or_create(path: &str, default_contents: &str) -> String {
     }
     let _ = config_write(path, default_contents);
     default_contents.to_string()
+}
+
+pub fn storage_exists(key: &str) -> bool {
+    let Some(key_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_storage_exists(key.as_ptr() as i32, key_len) == 1 }
+}
+
+pub fn storage_get(key: &str) -> Option<Vec<u8>> {
+    let key_len = i32_len(key.as_bytes())?;
+    read_host_buffer(|out_ptr, out_len| unsafe {
+        host_storage_get(key.as_ptr() as i32, key_len, out_ptr, out_len)
+    })
+}
+
+pub fn storage_set(key: &str, value: &[u8]) -> bool {
+    let Some(key_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    let Some(value_len) = i32_len(value) else {
+        return false;
+    };
+    unsafe {
+        host_storage_set(
+            key.as_ptr() as i32,
+            key_len,
+            value.as_ptr() as i32,
+            value_len,
+        ) == 0
+    }
+}
+
+pub fn storage_delete(key: &str) -> bool {
+    let Some(key_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_storage_delete(key.as_ptr() as i32, key_len) == 0 }
+}
+
+pub fn storage_get_typed<T: DeserializeOwned>(key: &str) -> Option<T> {
+    postcard::from_bytes(&storage_get(key)?).ok()
+}
+
+pub fn storage_set_typed<T: Serialize>(key: &str, value: &T) -> bool {
+    let Ok(bytes) = postcard::to_allocvec(value) else {
+        return false;
+    };
+    storage_set(key, &bytes)
 }
 
 pub fn economy_register_currency(
@@ -285,6 +355,120 @@ pub fn pathfinding_find(
         .collect()
 }
 
+pub fn world_set_block(dimension: &str, position: (i32, i32, i32), block: &str) -> bool {
+    if block.trim().is_empty() {
+        return false;
+    }
+    let query = format!(
+        "{} {} {} {} {}",
+        dimension, position.0, position.1, position.2, block
+    );
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_world_set_block(query.as_ptr() as i32, query_len) == 0 }
+}
+
+pub fn world_break_block(dimension: &str, position: (i32, i32, i32)) -> bool {
+    let query = format!("{} {} {} {}", dimension, position.0, position.1, position.2);
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_world_break_block(query.as_ptr() as i32, query_len) == 0 }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldEditRegion<'a> {
+    pub id: &'a str,
+    pub dimension: &'a str,
+    pub min: (i32, i32, i32),
+    pub max: (i32, i32, i32),
+    pub allow_player_break: bool,
+    pub allow_player_place: bool,
+    pub allow_plugin_write: bool,
+    pub runtime_only: bool,
+}
+
+pub fn world_register_edit_region(region: &WorldEditRegion<'_>) -> bool {
+    if region.id.trim().is_empty() || region.dimension.trim().is_empty() {
+        return false;
+    }
+    let query = format!(
+        "{} {} {} {} {} {} {} {} {} {} {} {}",
+        region.id.trim(),
+        region.dimension.trim(),
+        region.min.0,
+        region.max.0,
+        region.min.1,
+        region.max.1,
+        region.min.2,
+        region.max.2,
+        bool_flag(region.allow_player_break),
+        bool_flag(region.allow_player_place),
+        bool_flag(region.allow_plugin_write),
+        bool_flag(region.runtime_only),
+    );
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_world_register_edit_region(query.as_ptr() as i32, query_len) == 0 }
+}
+
+pub fn random_block_pool_roll(
+    pool_id: &str,
+    entries: &[(&str, u64)],
+    precompute_count: usize,
+) -> Option<String> {
+    random_pool_roll("block", pool_id, entries, precompute_count)
+}
+
+pub fn random_item_pool_roll(
+    pool_id: &str,
+    entries: &[(&str, u64)],
+    precompute_count: usize,
+) -> Option<String> {
+    random_pool_roll("item", pool_id, entries, precompute_count)
+}
+
+pub fn random_chest_item_pool_roll(
+    pool_id: &str,
+    entries: &[(&str, u64)],
+    precompute_count: usize,
+) -> Option<String> {
+    random_pool_roll("chest_item", pool_id, entries, precompute_count)
+}
+
+pub fn random_pool_roll(
+    kind: &str,
+    pool_id: &str,
+    entries: &[(&str, u64)],
+    precompute_count: usize,
+) -> Option<String> {
+    if kind.trim().is_empty() || pool_id.trim().is_empty() {
+        return None;
+    }
+    let mut encoded = format!(
+        "{}\t{}\t{}\n",
+        pool_id.trim(),
+        kind.trim(),
+        precompute_count
+    );
+    for (value, weight) in entries {
+        if *weight == 0 || value.trim().is_empty() {
+            continue;
+        }
+        encoded.push_str(&weight.to_string());
+        encoded.push('\t');
+        encoded.push_str(value.trim());
+        encoded.push('\n');
+    }
+    let encoded_len = i32_len(encoded.as_bytes())?;
+    let bytes = read_host_buffer(|out_ptr, out_len| unsafe {
+        host_random_pool_roll(encoded.as_ptr() as i32, encoded_len, out_ptr, out_len)
+    })?;
+    String::from_utf8(bytes).ok()
+}
+
 pub unsafe fn payload_bytes<'a>(ptr: i32, len: i32) -> Option<&'a [u8]> {
     if len == 0 {
         return Some(&[]);
@@ -354,6 +538,10 @@ fn required_host_buffer_len(ret: i64) -> Option<usize> {
         return None;
     }
     usize::try_from(-ret - 1).ok()
+}
+
+fn bool_flag(value: bool) -> &'static str {
+    if value { "1" } else { "0" }
 }
 
 fn economy_call(

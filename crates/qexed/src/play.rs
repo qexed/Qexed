@@ -74,8 +74,8 @@ use survival::{
 #[cfg(test)]
 use util::player_ability_flags;
 use util::{
-    can_modify_world, chunk_coord, dimension_type_holder_id, keep_alive_id, text_component,
-    translatable_component,
+    can_attempt_world_edit, can_modify_world, chunk_coord, dimension_type_holder_id, keep_alive_id,
+    text_component, translatable_component,
 };
 
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
@@ -106,6 +106,7 @@ pub async fn initialize<R, W>(
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
+    ore_pits: &crate::world::OrePitManager,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     player_data: &PlayerDataManager,
@@ -247,11 +248,11 @@ where
     .await?;
     next_teleport_id += 1;
 
-    sink.send(SystemChat {
-        content: text_component("Qexed: loading world"),
-        overlay: false,
-    })
-    .await?;
+    // sink.send(SystemChat {
+    //     content: text_component("Qexed: loading world"),
+    //     overlay: false,
+    // })
+    // .await?;
 
     let mut chunk_state = ChunkSendState::new(
         play_dimension.clone(),
@@ -270,6 +271,7 @@ where
         authenticator,
         world,
         world_rules,
+        ore_pits,
         players,
         player_data,
         entities,
@@ -299,6 +301,7 @@ async fn wait_for_play_packets<R, W>(
     authenticator: &crate::auth::Authenticator,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
+    ore_pits: &crate::world::OrePitManager,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
     entities: &crate::entities::EntityManager,
@@ -490,6 +493,8 @@ where
                     &config.server.entity_rendering,
                     spawning.ai_tick_interval_ms,
                 )?;
+                let ore_updates = ore_pits.tick(world, Instant::now());
+                broadcast_ore_pit_updates(world, world_rules, players, ore_updates)?;
             }
             _ = world_time_tick.tick() => {
                 let game_time = world_rules.tick_dimension_time(&play_dimension);
@@ -1007,6 +1012,7 @@ where
                                     sink,
                                     world,
                                     world_rules,
+                                    ore_pits,
                                     players,
                                     entities,
                                     plugins,
@@ -1030,6 +1036,7 @@ where
                                 pending_dig = begin_destroy_block(
                                     sink,
                                     world,
+                                    ore_pits,
                                     plugins,
                                     world_config.game_mode,
                                     &play_dimension,
@@ -1046,6 +1053,7 @@ where
                             let can_destroy = can_finish_destroy_block(
                                 sink,
                                 world,
+                                ore_pits,
                                 world_config.game_mode,
                                 &play_dimension,
                                 &action.location,
@@ -1059,6 +1067,7 @@ where
                                     sink,
                                     world,
                                     world_rules,
+                                    ore_pits,
                                     players,
                                     entities,
                                     plugins,
@@ -1084,13 +1093,26 @@ where
                                 if !survival.is_dead() && was_destroyed {
                                     collect_nearby_drops(
                                         sink,
+                                        world,
+                                        world_rules,
+                                        &config.server,
+                                        world_config,
                                         players,
+                                        plugins,
                                         entities,
-                                        &play_dimension,
                                         profile.uuid,
                                         session.player.entity_id,
-                                        position,
+                                        &chunk_sender,
+                                        &mut chunk_state,
+                                        &mut position,
+                                        &mut next_teleport_id,
+                                        &mut play_dimension,
+                                        &menus,
+                                        &mut active_config_menu,
+                                        &mut players_hidden,
+                                        &mut visible_player_entities,
                                         &mut inventory,
+                                        config.server.entity_rendering.player_distance,
                                     )
                                     .await?;
                                 }
@@ -1524,13 +1546,26 @@ where
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
                             players,
+                            plugins,
                             entities,
-                            &play_dimension,
                             profile.uuid,
                             session.player.entity_id,
-                            position,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
                             &mut inventory,
+                            config.server.entity_rendering.player_distance,
                         )
                         .await?;
                     }
@@ -1637,13 +1672,26 @@ where
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
                             players,
+                            plugins,
                             entities,
-                            &play_dimension,
                             profile.uuid,
                             session.player.entity_id,
-                            position,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
                             &mut inventory,
+                            config.server.entity_rendering.player_distance,
                         )
                         .await?;
                     }
@@ -1731,13 +1779,26 @@ where
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
                             players,
+                            plugins,
                             entities,
-                            &play_dimension,
                             profile.uuid,
                             session.player.entity_id,
-                            position,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
                             &mut inventory,
+                            config.server.entity_rendering.player_distance,
                         )
                         .await?;
                     }
@@ -1823,13 +1884,26 @@ where
                     if !survival.is_dead() {
                         collect_nearby_drops(
                             sink,
+                            world,
+                            world_rules,
+                            &config.server,
+                            world_config,
                             players,
+                            plugins,
                             entities,
-                            &play_dimension,
                             profile.uuid,
                             session.player.entity_id,
-                            position,
+                            &chunk_sender,
+                            &mut chunk_state,
+                            &mut position,
+                            &mut next_teleport_id,
+                            &mut play_dimension,
+                            &menus,
+                            &mut active_config_menu,
+                            &mut players_hidden,
+                            &mut visible_player_entities,
                             &mut inventory,
+                            config.server.entity_rendering.player_distance,
                         )
                         .await?;
                     }
@@ -2345,13 +2419,10 @@ where
     )
     .await?;
     for item in drops {
-        let Some(drop) = entities
+        for update in entities
             .drop_item_with_rendering(players, actor, dimension, position, item, rendering)?
-        else {
-            continue;
-        };
-        for packet in drop.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)? {
-            sink.send_raw(packet).await?;
+        {
+            send_dropped_item_update(sink, update).await?;
         }
     }
     Ok(())
@@ -3632,6 +3703,7 @@ where
             actor,
             target.clone(),
             block_state,
+            WorldEditKind::Place,
         )
         .await?;
         if !placed_lower {
@@ -3647,6 +3719,7 @@ where
             actor,
             upper.clone(),
             upper_state,
+            WorldEditKind::Place,
         )
         .await?;
         let mut placed = vec![PlacedBlockChange {
@@ -3672,6 +3745,7 @@ where
         actor,
         target.clone(),
         block_state,
+        WorldEditKind::Place,
     )
     .await?;
     if !placed {
@@ -3687,6 +3761,7 @@ async fn destroy_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
+    ore_pits: &crate::world::OrePitManager,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
@@ -3704,6 +3779,10 @@ where
         .block_state_at(dimension, &position)
         .unwrap_or_else(crate::inventory::air_block_state);
     if crate::inventory::is_air_block_state(current) {
+        send_block_rollback(sink, world, dimension, position).await?;
+        return Ok(None);
+    }
+    if !ore_pits.permits_player_break(dimension, &position, current) {
         send_block_rollback(sink, world, dimension, position).await?;
         return Ok(None);
     }
@@ -3726,6 +3805,7 @@ where
         actor,
         position.clone(),
         crate::inventory::air_block_state(),
+        WorldEditKind::Break,
     )
     .await?;
     if destroyed {
@@ -3740,6 +3820,7 @@ where
                 actor,
                 paired_position,
                 crate::inventory::air_block_state(),
+                WorldEditKind::Break,
             )
             .await?;
         }
@@ -3787,19 +3868,15 @@ where
 
     let drop_position = mining::drop_position(position);
     for item in mining::default_block_drops(block_state, position, held_item, plugins) {
-        let Some(drop) = entities.drop_item_with_rendering(
+        for update in entities.drop_item_with_rendering(
             players,
             actor,
             dimension,
             drop_position,
             item,
             rendering,
-        )?
-        else {
-            continue;
-        };
-        for packet in drop.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)? {
-            sink.send_raw(packet).await?;
+        )? {
+            send_dropped_item_update(sink, update).await?;
         }
     }
     Ok(())
@@ -3807,22 +3884,90 @@ where
 
 async fn collect_nearby_drops<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
     players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
     entities: &crate::entities::EntityManager,
-    dimension: &str,
     actor: uuid::Uuid,
     collector_entity_id: i32,
-    position: EntityPosition,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
     inventory: &mut crate::inventory::PlayerInventory,
+    render_distance: f64,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let Some((items, changes)) =
-        drops::collect_dropped_items(entities, dimension, position, inventory)?
-    else {
+    let collection_dimension = play_dimension.clone();
+    let items = drops::collect_dropped_items(entities, &collection_dimension, *position)?;
+    if items.is_empty() {
         return Ok(());
+    }
+
+    let mut picked = Vec::new();
+    let mut changes = Vec::new();
+    let mut player = match players.player_by_uuid(actor) {
+        Some(player) => player,
+        None => return Ok(()),
     };
+    player.position = *position;
+    player.dimension = play_dimension.clone();
+
+    for item in items {
+        let response = plugins.handle_player_item_pickup(&player, &item);
+        let mut cancelled = response.cancel;
+        for action in response.actions {
+            let viewer_position = *position;
+            let handled = chat::apply_plugin_action(
+                sink,
+                Some(server_config),
+                world,
+                world_rules,
+                world_config,
+                players,
+                plugins,
+                actor,
+                chunk_sender,
+                chunk_state,
+                position,
+                next_teleport_id,
+                play_dimension,
+                menus,
+                active_config_menu,
+                players_hidden,
+                visible_player_entities,
+                viewer_position,
+                render_distance,
+                action,
+            )
+            .await?;
+            cancelled |= handled;
+        }
+        if cancelled {
+            entities.restore_dropped_item(item);
+            continue;
+        }
+        if let Some(mut item_changes) = inventory.add_item_stack(&item.item) {
+            changes.append(&mut item_changes);
+            picked.push(item);
+        } else {
+            entities.restore_dropped_item(item);
+        }
+    }
+
+    if picked.is_empty() {
+        return Ok(());
+    }
 
     sync_inventory_changes(
         sink,
@@ -3834,7 +3979,7 @@ where
     )
     .await?;
 
-    for item in items {
+    for item in picked {
         let packets = item.pickup_packets(collector_entity_id)?;
         for packet in &packets {
             sink.send_raw(packet.clone()).await?;
@@ -3863,17 +4008,14 @@ where
         return Ok(());
     };
     let drop_position = dropped_item_position(position);
-    let Some(drop) = entities.drop_item_with_rendering(
+    let updates = entities.drop_item_with_rendering(
         players,
         actor,
         dimension,
         drop_position,
         held,
         rendering,
-    )?
-    else {
-        return Ok(());
-    };
+    )?;
     sync_inventory_changes(
         sink,
         players,
@@ -3886,7 +4028,26 @@ where
         }],
     )
     .await?;
-    for packet in drop.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)? {
+    for update in updates {
+        send_dropped_item_update(sink, update).await?;
+    }
+    Ok(())
+}
+
+async fn send_dropped_item_update<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    update: crate::entities::DroppedItemUpdate,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let packets = match update {
+        crate::entities::DroppedItemUpdate::Spawned(entity) => {
+            entity.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)?
+        }
+        crate::entities::DroppedItemUpdate::Merged(entity) => entity.metadata_packets()?,
+    };
+    for packet in packets {
         sink.send_raw(packet).await?;
     }
     Ok(())
@@ -3911,6 +4072,7 @@ fn dropped_item_position(position: EntityPosition) -> EntityPosition {
 async fn begin_destroy_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    ore_pits: &crate::world::OrePitManager,
     plugins: &crate::plugins::PluginManager,
     game_mode: GameMode,
     dimension: &str,
@@ -3935,6 +4097,10 @@ where
         send_block_rollback(sink, world, dimension, position.clone()).await?;
         return Ok(None);
     }
+    if !ore_pits.permits_player_break(dimension, position, block_state) {
+        send_block_rollback(sink, world, dimension, position.clone()).await?;
+        return Ok(None);
+    }
 
     let required = mining::required_break_duration(block_state, held_item, plugins);
     Ok(Some(mining::PendingDig::new(
@@ -3948,6 +4114,7 @@ where
 async fn can_finish_destroy_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
+    ore_pits: &crate::world::OrePitManager,
     game_mode: GameMode,
     dimension: &str,
     position: &BlockPosition,
@@ -3968,6 +4135,10 @@ where
     let block_state = world
         .block_state_at(dimension, position)
         .unwrap_or_else(crate::inventory::air_block_state);
+    if !ore_pits.permits_player_break(dimension, position, block_state) {
+        send_block_rollback(sink, world, dimension, position.clone()).await?;
+        return Ok(false);
+    }
     let Some(pending) = pending else {
         send_block_rollback(sink, world, dimension, position.clone()).await?;
         return Ok(false);
@@ -4083,11 +4254,20 @@ async fn apply_block_change<W>(
     actor: uuid::Uuid,
     position: BlockPosition,
     block_state: i32,
+    edit_kind: WorldEditKind,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    if !can_modify_world_with_dimension_rules(world_config, world_rules, dimension, &position) {
+    let write_mode = world_write_mode(
+        world,
+        world_config,
+        world_rules,
+        dimension,
+        &position,
+        edit_kind,
+    );
+    if !write_mode.allowed {
         log::debug!(
             "blocked world edit: read_only={}, spawn_protection_radius={}, position=({}, {}, {})",
             world_config.read_only,
@@ -4100,7 +4280,11 @@ where
         return Ok(false);
     }
 
-    world.place_block(dimension, position.clone(), block_state);
+    if write_mode.runtime_only {
+        world.set_runtime_block(dimension, position.clone(), block_state);
+    } else {
+        world.place_block(dimension, position.clone(), block_state);
+    }
     sink.send(crate::inventory::block_update(
         position.clone(),
         block_state,
@@ -4126,17 +4310,99 @@ where
     Ok(true)
 }
 
-fn can_modify_world_with_dimension_rules(
+fn broadcast_ore_pit_updates(
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    updates: Vec<crate::world::OrePitBlockUpdate>,
+) -> Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+
+    let mut light_chunks = HashSet::new();
+    for update in updates {
+        let chunk_x = update.position.x.div_euclid(16);
+        let chunk_z = update.position.z.div_euclid(16);
+        let light_update = if world.dynamic_light_enabled()
+            && light_chunks.insert((update.dimension.clone(), chunk_x, chunk_z))
+            && matches!(
+                world_rules.snapshot(&update.dimension).light,
+                qexed_config::app::qexed::server::LightMode::Dynamic
+            ) {
+            let packet = world.light_update(&update.dimension, chunk_x, chunk_z);
+            Some(qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(packet)?)
+        } else {
+            None
+        };
+        players.broadcast_block_changed(
+            uuid::Uuid::nil(),
+            &update.dimension,
+            update.position,
+            update.block_state,
+            light_update,
+        );
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorldEditKind {
+    Break,
+    Place,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorldWriteMode {
+    allowed: bool,
+    runtime_only: bool,
+}
+
+fn world_write_mode(
+    world: &WorldManager,
     world_config: &qexed_config::app::qexed::server::World,
     world_rules: &crate::world::WorldRulesManager,
     dimension: &str,
     position: &BlockPosition,
-) -> bool {
-    if !can_modify_world(world_config, position) {
-        return false;
+    edit_kind: WorldEditKind,
+) -> WorldWriteMode {
+    if !can_attempt_world_edit(world_config) {
+        return WorldWriteMode {
+            allowed: false,
+            runtime_only: false,
+        };
     }
+
     let rule = world_rules.snapshot(dimension);
-    !rule.read_only && rule.block_updates
+    if !rule.block_updates {
+        return WorldWriteMode {
+            allowed: false,
+            runtime_only: false,
+        };
+    }
+
+    if can_modify_world(world_config, position) && !rule.read_only {
+        return WorldWriteMode {
+            allowed: true,
+            runtime_only: false,
+        };
+    }
+
+    let region = match edit_kind {
+        WorldEditKind::Break => world.editable_region_for_player_break(dimension, position),
+        WorldEditKind::Place => world.editable_region_for_player_place(dimension, position),
+    };
+    let Some(region) = region else {
+        return WorldWriteMode {
+            allowed: false,
+            runtime_only: false,
+        };
+    };
+
+    WorldWriteMode {
+        allowed: true,
+        runtime_only: region.runtime_only || world_config.read_only || rule.read_only,
+    }
 }
 
 async fn send_block_rollback<W>(

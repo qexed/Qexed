@@ -634,7 +634,7 @@ fn item_stack_capacity(hotbar: &[Slot], item: &Slot) -> i32 {
         .sum()
 }
 
-fn same_stack_kind(left: &Slot, right: &Slot) -> bool {
+pub fn same_stack_kind(left: &Slot, right: &Slot) -> bool {
     left.item_count.0 > 0
         && right.item_count.0 > 0
         && left.item_id == right.item_id

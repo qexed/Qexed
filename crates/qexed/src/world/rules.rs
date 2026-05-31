@@ -45,9 +45,13 @@ struct WorldRulesInner {
 
 impl WorldRulesManager {
     pub fn from_world_config(world: &World) -> Result<Self> {
+        Self::from_world_config_with_base_dir(world, PathBuf::from(DEFAULT_RULES_DIR))
+    }
+
+    fn from_world_config_with_base_dir(world: &World, base_dir: PathBuf) -> Result<Self> {
         let manager = Self {
             inner: Arc::new(WorldRulesInner {
-                base_dir: PathBuf::from(DEFAULT_RULES_DIR),
+                base_dir,
                 default_world: world.clone(),
                 states: RwLock::new(HashMap::new()),
             }),
@@ -63,6 +67,11 @@ impl WorldRulesManager {
         }
         manager.ensure_loaded(&world.default_play_dimension())?;
         Ok(manager)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_world_config_for_tests(world: &World, base_dir: PathBuf) -> Result<Self> {
+        Self::from_world_config_with_base_dir(world, base_dir)
     }
 
     pub fn snapshot(&self, dimension: &str) -> DimensionRuleSnapshot {

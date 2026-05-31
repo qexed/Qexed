@@ -19,8 +19,9 @@ pub use qexed_plugin_api::{
     EntityAiTickResponse, ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload,
     NpcInteractPayload, NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext,
     PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
-    PlayerInputPayload, PlayerMovePayload, PlayerPayloadOwned, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, ProxyConnectResultPayload,
+    PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse, PlayerMovePayload,
+    PlayerPayloadOwned, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
+    PluginEnchantment, ProxyConnectResultPayload,
 };
 
 use event::PluginEvent;
@@ -416,8 +417,43 @@ impl PluginManager {
         );
     }
 
+    pub fn handle_player_item_pickup(
+        &self,
+        player: &OnlinePlayer,
+        item: &crate::entities::DroppedItemEntity,
+    ) -> PlayerItemPickupResponse {
+        let item_id = item.item.item_id.as_ref().map(|id| id.0);
+        let item_name = item_id
+            .and_then(|id| crate::inventory::item_id_name_map().get(&id).cloned())
+            .unwrap_or_default();
+        let query = PlayerItemPickupQuery {
+            player: player_payload_owned(player),
+            dimension: item.dimension.clone(),
+            position: player_position_payload(player.position),
+            item_entity_id: item.entity_id,
+            item_id,
+            item_name,
+            count: item.item.item_count.0,
+        };
+        let mut result = PlayerItemPickupResponse {
+            cancel: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PlayerItemPickupResponse>(PluginEvent::PlayerItemPickup, &query)
+        {
+            result.cancel |= response.cancel;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
     pub fn set_pathfinding_service(&self, service: Arc<dyn host::PathfindingService>) {
         self.services.set_pathfinding(service);
+    }
+
+    pub fn set_world_edit_service(&self, service: Arc<dyn host::WorldEditService>) {
+        self.services.set_world_edit(service);
     }
 
     pub fn handle_npc_interact(

@@ -19,6 +19,8 @@ use super::{
 const ITEM_PICKUP_DELAY: Duration = Duration::from_millis(500);
 const ITEM_PICKUP_RADIUS_XZ: f64 = 1.5;
 const ITEM_PICKUP_RADIUS_Y: f64 = 1.5;
+const DEFAULT_ITEM_MERGE_RADIUS: f64 = 2.0;
+const DEFAULT_ITEM_MERGE_MAX_STACK: i32 = 64;
 const ENTITY_PHYSICS_WIDTH: f64 = 0.6;
 const ENTITY_PHYSICS_HEIGHT: f64 = 1.95;
 const ENTITY_GRAVITY_PER_TICK: f64 = 0.08;
@@ -94,6 +96,12 @@ struct EntityMotionTickUpdate {
     key: String,
     previous: EntityPosition,
     next: EntityMotion,
+}
+
+#[derive(Debug, Clone)]
+pub enum DroppedItemUpdate {
+    Spawned(DroppedItemEntity),
+    Merged(DroppedItemEntity),
 }
 
 #[derive(Debug, Default)]
@@ -384,19 +392,21 @@ impl EntityManager {
         dimension: &str,
         position: EntityPosition,
         item: qexed_protocol::types::Slot,
-    ) -> Result<Option<DroppedItemEntity>> {
+    ) -> Result<Vec<DroppedItemUpdate>> {
         if item.item_count.0 <= 0 {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
-        let entity = self.create_dropped_item(dimension, position, item);
-        let packets = entity.spawn_packets(entity_type_id("minecraft:item")?)?;
-        self.dropped_items
-            .lock()
-            .expect("entity manager dropped items poisoned")
-            .push(entity.clone());
+        let updates = self.drop_item_local_with_limits(
+            dimension,
+            position,
+            item,
+            DEFAULT_ITEM_MERGE_RADIUS,
+            DEFAULT_ITEM_MERGE_MAX_STACK,
+        )?;
+        let packets = dropped_item_update_packets(&updates)?;
         players.broadcast_packets_except(actor, packets);
-        Ok(Some(entity))
+        Ok(updates)
     }
 
     pub fn drop_item_with_rendering(
@@ -407,11 +417,18 @@ impl EntityManager {
         position: EntityPosition,
         item: qexed_protocol::types::Slot,
         rendering: &qexed_config::app::qexed::server::EntityRendering,
-    ) -> Result<Option<DroppedItemEntity>> {
-        let Some(entity) = self.drop_item_local(dimension, position, item)? else {
-            return Ok(None);
-        };
-        let packets = entity.spawn_packets(entity_type_id("minecraft:item")?)?;
+    ) -> Result<Vec<DroppedItemUpdate>> {
+        let updates = self.drop_item_local_with_limits(
+            dimension,
+            position,
+            item,
+            rendering.item_merge_radius,
+            rendering.item_merge_max_stack,
+        )?;
+        if updates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let packets = dropped_item_update_packets(&updates)?;
         for player in players.list_except(actor) {
             if player.dimension == dimension
                 && within_render_distance(player.position, position, rendering.item_distance)
@@ -419,7 +436,7 @@ impl EntityManager {
                 players.send_packets_to(player.profile.uuid, packets.clone());
             }
         }
-        Ok(Some(entity))
+        Ok(updates)
     }
 
     pub fn send_spawn_to_rendered_viewers(
@@ -554,22 +571,75 @@ impl EntityManager {
         self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
     }
 
+    #[cfg(test)]
     pub fn drop_item_local(
         &self,
         dimension: &str,
         position: EntityPosition,
         item: qexed_protocol::types::Slot,
-    ) -> Result<Option<DroppedItemEntity>> {
+    ) -> Result<Vec<DroppedItemUpdate>> {
+        self.drop_item_local_with_limits(
+            dimension,
+            position,
+            item,
+            DEFAULT_ITEM_MERGE_RADIUS,
+            DEFAULT_ITEM_MERGE_MAX_STACK,
+        )
+    }
+
+    fn drop_item_local_with_limits(
+        &self,
+        dimension: &str,
+        position: EntityPosition,
+        mut item: qexed_protocol::types::Slot,
+        merge_radius: f64,
+        max_stack: i32,
+    ) -> Result<Vec<DroppedItemUpdate>> {
         if item.item_count.0 <= 0 {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
-        let entity = self.create_dropped_item(dimension, position, item);
-        self.dropped_items
+        let mut updates = Vec::new();
+        let merge_radius_sq = merge_radius.max(0.0) * merge_radius.max(0.0);
+        let max_stack = max_stack.max(1);
+        let mut dropped_items = self
+            .dropped_items
             .lock()
-            .expect("entity manager dropped items poisoned")
-            .push(entity.clone());
-        Ok(Some(entity))
+            .expect("entity manager dropped items poisoned");
+        if merge_radius > 0.0 {
+            for existing in dropped_items.iter_mut() {
+                if item.item_count.0 <= 0 {
+                    break;
+                }
+                if existing.dimension != dimension
+                    || !crate::inventory::same_stack_kind(&existing.item, &item)
+                    || existing.item.item_count.0 >= max_stack
+                    || distance_sq(existing.position, position) > merge_radius_sq
+                {
+                    continue;
+                }
+                let moved = (max_stack - existing.item.item_count.0).min(item.item_count.0);
+                if moved <= 0 {
+                    continue;
+                }
+                existing.item.item_count.0 += moved;
+                item.item_count.0 -= moved;
+                updates.push(DroppedItemUpdate::Merged(existing.clone()));
+            }
+        }
+
+        if item.item_count.0 > 0 {
+            while item.item_count.0 > 0 {
+                let count = item.item_count.0.min(max_stack);
+                let mut stack = item.clone();
+                stack.item_count.0 = count;
+                item.item_count.0 -= count;
+                let entity = self.create_dropped_item(dimension, position, stack);
+                dropped_items.push(entity.clone());
+                updates.push(DroppedItemUpdate::Spawned(entity));
+            }
+        }
+        Ok(updates)
     }
 
     pub fn collect_reachable_items(
@@ -1668,6 +1738,29 @@ fn can_reach_item(collector: EntityPosition, item: EntityPosition) -> bool {
     (collector.x - item.x).abs() <= ITEM_PICKUP_RADIUS_XZ
         && (collector.y + 0.9 - item.y).abs() <= ITEM_PICKUP_RADIUS_Y
         && (collector.z - item.z).abs() <= ITEM_PICKUP_RADIUS_XZ
+}
+
+fn dropped_item_update_packets(updates: &[DroppedItemUpdate]) -> Result<Vec<Bytes>> {
+    let item_entity_type = entity_type_id("minecraft:item")?;
+    let mut packets = Vec::new();
+    for update in updates {
+        match update {
+            DroppedItemUpdate::Spawned(entity) => {
+                packets.extend(entity.spawn_packets(item_entity_type)?);
+            }
+            DroppedItemUpdate::Merged(entity) => {
+                packets.extend(entity.metadata_packets()?);
+            }
+        }
+    }
+    Ok(packets)
+}
+
+fn distance_sq(left: EntityPosition, right: EntityPosition) -> f64 {
+    let dx = left.x - right.x;
+    let dy = left.y - right.y;
+    let dz = left.z - right.z;
+    dx * dx + dy * dy + dz * dz
 }
 
 fn render_distance_for_entity(

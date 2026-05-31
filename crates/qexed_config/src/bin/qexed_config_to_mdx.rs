@@ -31,7 +31,7 @@ use qexed_config::{
     build,
     tool::{AppConfigTrait, AutoDocConfigTrait},
 };
-use qexed_plugin_api::PluginEvent;
+use qexed_plugin_api::{PlaceholderDoc, PlaceholderScope, PluginEvent, native_placeholder_docs};
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -1831,6 +1831,16 @@ struct Args {
     /// 目标目录应为官网仓库的 app/docs/plugin-api；生成器会写入 page.mdx 与 en/page.mdx。
     #[arg(long)]
     plugin_docs_out: Option<PathBuf>,
+
+    /// 直接写入 Next.js app router Placeholder AutoDoc 页面目录。
+    ///
+    /// 目标目录应为官网仓库的 app/docs/placeholders；生成器会写入版本化页面与 versions.json。
+    #[arg(long)]
+    placeholder_docs_out: Option<PathBuf>,
+
+    /// 只生成 Placeholder 文档，跳过配置文档收集。
+    #[arg(long)]
+    placeholders_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1963,6 +1973,19 @@ struct PluginHostApiDoc {
     wrapper: &'static str,
     zh: &'static str,
     en: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaceholderDocsVersion {
+    channel: String,
+    id: String,
+    label: String,
+    source_ref: String,
+    source_sha: String,
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_date: Option<String>,
 }
 
 const PLUGIN_EVENT_DOCS: &[PluginEventDoc] = &[
@@ -3497,40 +3520,49 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| build::COMMIT_HASH.to_string());
 
     let output_root = args.out.join(&commit);
-    fs::create_dir_all(&output_root)
-        .with_context(|| format!("无法创建输出目录 {}", output_root.display()))?;
+    if !args.placeholders_only {
+        fs::create_dir_all(&output_root)
+            .with_context(|| format!("无法创建输出目录 {}", output_root.display()))?;
 
-    let bundle = collect_bundle(&commit, &langs)?;
-    write_assets(&output_root)?;
+        let bundle = collect_bundle(&commit, &langs)?;
+        write_assets(&output_root)?;
 
-    if formats.contains(&OutputFormat::Markdown) {
-        write_markdown_docs(&output_root, &bundle, false)?;
-    }
-    if formats.contains(&OutputFormat::Mdx) {
-        write_markdown_docs(&output_root, &bundle, true)?;
-    }
-    if formats.contains(&OutputFormat::NextApp) {
-        write_next_app_docs(&output_root, &bundle)?;
-    }
-    if formats.contains(&OutputFormat::NextPages) {
-        write_next_pages_docs(&output_root, &bundle)?;
-    }
-    if formats.contains(&OutputFormat::Mkdocs) {
-        write_mkdocs_docs(&output_root, &bundle)?;
-    }
-    if formats.contains(&OutputFormat::Mdbook) {
-        write_mdbook_docs(&output_root, &bundle)?;
-    }
-    if formats.contains(&OutputFormat::Json) {
-        write_json_docs(&output_root, &bundle)?;
-    }
+        if formats.contains(&OutputFormat::Markdown) {
+            write_markdown_docs(&output_root, &bundle, false)?;
+        }
+        if formats.contains(&OutputFormat::Mdx) {
+            write_markdown_docs(&output_root, &bundle, true)?;
+        }
+        if formats.contains(&OutputFormat::NextApp) {
+            write_next_app_docs(&output_root, &bundle)?;
+        }
+        if formats.contains(&OutputFormat::NextPages) {
+            write_next_pages_docs(&output_root, &bundle)?;
+        }
+        if formats.contains(&OutputFormat::Mkdocs) {
+            write_mkdocs_docs(&output_root, &bundle)?;
+        }
+        if formats.contains(&OutputFormat::Mdbook) {
+            write_mdbook_docs(&output_root, &bundle)?;
+        }
+        if formats.contains(&OutputFormat::Json) {
+            write_json_docs(&output_root, &bundle)?;
+        }
 
-    write_manifest(&output_root, &bundle, &formats)?;
+        write_manifest(&output_root, &bundle, &formats)?;
+    }
     if let Some(plugin_docs_out) = args.plugin_docs_out {
         write_plugin_api_next_app_docs(&plugin_docs_out, &commit, &langs)?;
     }
+    if let Some(placeholder_docs_out) = args.placeholder_docs_out {
+        write_placeholder_next_app_docs(&placeholder_docs_out, &commit, &langs)?;
+    }
 
-    println!("generated config docs: {}", output_root.display());
+    if args.placeholders_only {
+        println!("generated placeholder docs");
+    } else {
+        println!("generated config docs: {}", output_root.display());
+    }
     Ok(())
 }
 
@@ -4158,6 +4190,112 @@ fn write_plugin_api_next_app_docs(output_dir: &Path, commit: &str, langs: &[Stri
     }
 
     Ok(())
+}
+
+fn write_placeholder_next_app_docs(
+    output_dir: &Path,
+    commit: &str,
+    langs: &[String],
+) -> Result<()> {
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("无法创建 Placeholder 文档目录 {}", output_dir.display()))?;
+
+    let version_id = short_commit(commit);
+    let version_dir = output_dir.join("dev").join(&version_id);
+    fs::create_dir_all(&version_dir)
+        .with_context(|| format!("无法创建 Placeholder 版本目录 {}", version_dir.display()))?;
+
+    let langs = normalized_langs(langs.to_vec());
+    for lang in langs {
+        let lang_dir = version_dir.join(&lang);
+        fs::create_dir_all(&lang_dir)
+            .with_context(|| format!("无法创建 Placeholder 语言目录 {}", lang_dir.display()))?;
+        fs::write(
+            lang_dir.join("page.mdx"),
+            render_placeholder_mdx(commit, &lang),
+        )
+        .with_context(|| format!("无法写入 Placeholder {}", lang_dir.display()))?;
+    }
+
+    fs::write(
+        version_dir.join("page.mdx"),
+        render_placeholder_version_index(commit, &version_id),
+    )
+    .with_context(|| format!("无法写入 Placeholder 版本首页 {}", version_dir.display()))?;
+    fs::write(
+        output_dir.join("page.mdx"),
+        render_placeholder_root_index(&version_id),
+    )
+    .with_context(|| format!("无法写入 Placeholder 首页 {}", output_dir.display()))?;
+    let stable_dir = output_dir.join("stable");
+    fs::create_dir_all(&stable_dir)
+        .with_context(|| format!("无法创建 Placeholder stable 目录 {}", stable_dir.display()))?;
+    fs::write(
+        stable_dir.join("page.mdx"),
+        render_placeholder_empty_channel(true),
+    )
+    .with_context(|| "无法写入 Placeholder stable 页面")?;
+
+    let beta_dir = output_dir.join("beta");
+    fs::create_dir_all(&beta_dir)
+        .with_context(|| format!("无法创建 Placeholder beta 目录 {}", beta_dir.display()))?;
+    fs::write(
+        beta_dir.join("page.mdx"),
+        render_placeholder_empty_channel(false),
+    )
+    .with_context(|| "无法写入 Placeholder beta 页面")?;
+
+    update_placeholder_versions(output_dir, commit, &version_id)?;
+    Ok(())
+}
+
+fn update_placeholder_versions(output_dir: &Path, commit: &str, version_id: &str) -> Result<()> {
+    let path = output_dir.join("versions.json");
+    let mut versions = read_placeholder_versions(&path)?;
+    let dev_versions = versions
+        .as_object_mut()
+        .and_then(|value| value.get_mut("dev"))
+        .and_then(|value| value.as_array_mut())
+        .ok_or_else(|| anyhow!("Placeholder versions.json 缺少 dev 数组"))?;
+
+    let source_sha = commit.to_string();
+    let exists = dev_versions.iter().any(|value| {
+        value
+            .get("id")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|id| id == version_id)
+    });
+
+    if !exists {
+        let entry = PlaceholderDocsVersion {
+            channel: "dev".to_string(),
+            id: version_id.to_string(),
+            label: version_id.to_string(),
+            source_ref: "v4".to_string(),
+            source_sha,
+            title: "Placeholder AutoDoc".to_string(),
+            source_date: git_source_date(),
+        };
+        dev_versions.insert(0, serde_json::to_value(entry)?);
+    }
+
+    fs::write(&path, serde_json::to_string_pretty(&versions)?)
+        .with_context(|| format!("无法写入 {}", path.display()))?;
+    Ok(())
+}
+
+fn read_placeholder_versions(path: &Path) -> Result<JsonValue> {
+    if path.exists() {
+        let text =
+            fs::read_to_string(path).with_context(|| format!("无法读取 {}", path.display()))?;
+        return serde_json::from_str(&text).with_context(|| format!("无法解析 {}", path.display()));
+    }
+
+    Ok(json!({
+        "stable": [],
+        "beta": [],
+        "dev": []
+    }))
 }
 
 fn write_mkdocs_docs(output_root: &Path, bundle: &DocBundle) -> Result<()> {
@@ -5018,6 +5156,144 @@ fn render_plugin_api_mdx(commit: &str, lang: &str) -> String {
     out
 }
 
+fn render_placeholder_mdx(commit: &str, lang: &str) -> String {
+    let zh = is_zh(lang);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# {}\n\n",
+        text(zh, "Placeholder AutoDoc", "Placeholder AutoDoc")
+    ));
+    out.push_str("> AutoDoc: qexed_config_to_mdx\n\n");
+    out.push_str(&format!("- {}: `{}`\n", text(zh, "提交", "Commit"), commit));
+    out.push_str(&format!("- {}: `{}`\n", text(zh, "语言", "Language"), lang));
+    out.push_str(&format!(
+        "- {}: `{}`\n\n",
+        text(zh, "占位符数量", "Placeholder count"),
+        native_placeholder_docs().len()
+    ));
+
+    out.push_str(&format!(
+        "{}\n\n",
+        text(
+            zh,
+            "本页列出 Qexed 运行时内置占位符。启用 `qexed_placeholders.toml` 后，计分板、菜单、NPC、广播等服务端文本可使用这些占位符。",
+            "This page lists Qexed runtime built-in placeholders. When `qexed_placeholders.toml` is enabled, server-side text such as scoreboards, menus, NPCs, and broadcasts can use these placeholders.",
+        )
+    ));
+
+    out.push_str(&format!(
+        "| {} | {} | {} | {} | {} | {} |\n",
+        text(zh, "占位符", "Placeholder"),
+        text(zh, "别名", "Aliases"),
+        text(zh, "作用域", "Scope"),
+        text(zh, "开始版本", "Since"),
+        text(zh, "示例值", "Example"),
+        text(zh, "说明", "Description")
+    ));
+    out.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    for doc in native_placeholder_docs() {
+        out.push_str(&format!(
+            "| `{}` | {} | {} | `{}` | `{}` | {} |\n",
+            escape_code_span(doc.token),
+            placeholder_alias_cell(doc.aliases),
+            placeholder_scope_label(doc.scope, zh),
+            escape_code_span(doc.since),
+            escape_code_span(doc.example),
+            escape_markdown_table(localized_placeholder_text(zh, doc))
+        ));
+    }
+    out.push('\n');
+
+    out.push_str(&format!(
+        "## {}\n\n",
+        text(zh, "插件占位符", "Plugin Placeholders")
+    ));
+    out.push_str(&format!(
+        "{}\n\n",
+        text(
+            zh,
+            "插件可导出 `qexed_plugin_placeholders` 动态返回占位符。返回项的 `key` 可写成 `example` 或 `%example%`；运行时会同时替换 `%example%` 和 `{example}`。",
+            "Plugins can export `qexed_plugin_placeholders` to return dynamic placeholders. A returned `key` may be `example` or `%example%`; runtime replaces both `%example%` and `{example}`.",
+        )
+    ));
+    out.push_str("```rust\n");
+    out.push_str("use qexed_plugin_sdk::{PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse};\n\n");
+    out.push_str("#[unsafe(no_mangle)]\n");
+    out.push_str("pub extern \"C\" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {\n");
+    out.push_str("    qexed_plugin_sdk::query(ptr, len, |query: PlaceholderQuery| {\n");
+    out.push_str("        PlaceholderResponse {\n");
+    out.push_str("            replacements: vec![PlaceholderReplacement {\n");
+    out.push_str("                key: \"rank\".to_string(),\n");
+    out.push_str("                value: query.player.map(|p| p.username).unwrap_or_default(),\n");
+    out.push_str("            }],\n");
+    out.push_str("        }\n");
+    out.push_str("    })\n");
+    out.push_str("}\n");
+    out.push_str("```\n");
+    out
+}
+
+fn render_placeholder_version_index(commit: &str, version_id: &str) -> String {
+    format!(
+        "# Placeholder AutoDoc\n\n- 提交: `{commit}`\n- 版本: `{version_id}`\n\n- [zh-CN](./zh-CN)\n- [en](./en)\n"
+    )
+}
+
+fn render_placeholder_root_index(version_id: &str) -> String {
+    format!(
+        "# Placeholder AutoDoc\n\n- [稳定版](./stable)\n- [测试版](./beta)\n- [开发版 {version_id}](./dev/{version_id}/zh-CN)\n- [Stable](./stable)\n- [Beta](./beta)\n- [Dev {version_id}](./dev/{version_id}/en)\n"
+    )
+}
+
+fn render_placeholder_empty_channel(stable: bool) -> String {
+    if stable {
+        "# 稳定版 Placeholder AutoDoc\n\nQexed 暂未发布稳定版占位符文档。\n".to_string()
+    } else {
+        "# 测试版 Placeholder AutoDoc\n\nQexed 暂未发布测试版占位符文档。\n".to_string()
+    }
+}
+
+fn placeholder_alias_cell(aliases: &[&str]) -> String {
+    if aliases.is_empty() {
+        return "-".to_string();
+    }
+    aliases
+        .iter()
+        .map(|alias| format!("`{}`", escape_code_span(alias)))
+        .collect::<Vec<_>>()
+        .join("<br />")
+}
+
+fn placeholder_scope_label(scope: PlaceholderScope, zh: bool) -> &'static str {
+    match (scope, zh) {
+        (PlaceholderScope::Global, true) => "全局",
+        (PlaceholderScope::Global, false) => "Global",
+        (PlaceholderScope::Lobby, true) => "大厅",
+        (PlaceholderScope::Lobby, false) => "Lobby",
+        (PlaceholderScope::Player, true) => "玩家",
+        (PlaceholderScope::Player, false) => "Player",
+    }
+}
+
+fn localized_placeholder_text(zh: bool, doc: &PlaceholderDoc) -> &'static str {
+    if zh { doc.zh } else { doc.en }
+}
+
+fn short_commit(commit: &str) -> String {
+    commit.chars().take(12).collect()
+}
+
+fn git_source_date() -> Option<String> {
+    std::process::Command::new("git")
+        .args(["show", "-s", "--format=%cs", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn plugin_call_kind_label(kind: PluginCallKind, zh: bool) -> &'static str {
     match (kind, zh) {
         (PluginCallKind::Event, true) => "事件",
@@ -5119,7 +5395,8 @@ mod tests {
     use super::{
         DocApp, DocBundle, DocField, LOGO_BYTES, LanguageDocs, PLUGIN_EVENT_DOCS, Qexed,
         QexedWarden, collect_app, collect_bundle, render_next_app_config_page,
-        render_plugin_api_mdx, write_assets, write_next_app_docs, write_plugin_api_next_app_docs,
+        render_placeholder_mdx, render_plugin_api_mdx, write_assets, write_next_app_docs,
+        write_placeholder_next_app_docs, write_plugin_api_next_app_docs,
     };
     use qexed_plugin_api::PluginEvent;
 
@@ -5264,6 +5541,18 @@ mod tests {
     }
 
     #[test]
+    fn placeholder_docs_include_native_and_plugin_sections() {
+        let zh = render_placeholder_mdx("test-commit", "zh-CN");
+        assert!(zh.contains("%online_players%"));
+        assert!(zh.contains("%player_dimension%"));
+        assert!(zh.contains("qexed_plugin_placeholders"));
+
+        let en = render_placeholder_mdx("test-commit", "en");
+        assert!(en.contains("Current online player count."));
+        assert!(en.contains("Plugin Placeholders"));
+    }
+
+    #[test]
     fn plugin_api_docs_are_written_for_next_app_router() -> anyhow::Result<()> {
         let dir = temp_output_dir("plugin_api_docs");
 
@@ -5277,6 +5566,28 @@ mod tests {
         let en = std::fs::read_to_string(dir.join("en").join("page.mdx"))?;
         assert!(zh.contains("插件 API AutoDoc"));
         assert!(en.contains("Plugin API AutoDoc"));
+
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn placeholder_docs_are_written_for_next_app_router() -> anyhow::Result<()> {
+        let dir = temp_output_dir("placeholder_docs");
+
+        write_placeholder_next_app_docs(
+            &dir,
+            "1234567890abcdef",
+            &["zh-CN".to_string(), "en".to_string()],
+        )?;
+
+        assert!(dir.join("versions.json").exists());
+        assert!(dir.join("dev/1234567890ab/zh-CN/page.mdx").exists());
+        assert!(dir.join("dev/1234567890ab/en/page.mdx").exists());
+        assert!(dir.join("page.mdx").exists());
+
+        let versions = std::fs::read_to_string(dir.join("versions.json"))?;
+        assert!(versions.contains("1234567890ab"));
 
         let _ = std::fs::remove_dir_all(dir);
         Ok(())

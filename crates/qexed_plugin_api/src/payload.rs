@@ -169,6 +169,27 @@ pub struct ClickDetectedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerItemPickupQuery {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub item_entity_id: i32,
+    #[serde(default)]
+    pub item_id: Option<i32>,
+    #[serde(default)]
+    pub item_name: String,
+    pub count: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlayerItemPickupResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathfindingQuery {
     pub dimension: String,
     pub start: BlockDropPosition,

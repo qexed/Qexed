@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, VecDeque},
     fs,
     path::{Component, Path, PathBuf},
     sync::Mutex,
@@ -14,16 +14,30 @@ const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
 const MAX_HOST_PATH_BYTES: usize = 1024;
 const MAX_HOST_CONFIG_BYTES: usize = 256 * 1024;
 const MAX_HOST_PATHFINDING_BYTES: usize = 16 * 1024;
+const MAX_HOST_WORLD_EDIT_BYTES: usize = 8 * 1024;
+const MAX_HOST_RANDOM_POOL_BYTES: usize = 256 * 1024;
+const MAX_HOST_STORAGE_KEY_BYTES: usize = 512;
+const MAX_HOST_STORAGE_VALUE_BYTES: usize = 1024 * 1024;
+const MAX_RANDOM_POOL_PRECOMPUTE_COUNT: usize = 4096;
+const RANDOM_POOL_REFILL_BATCH: usize = 16;
 const DEFAULT_CURRENCY: &str = "qexed:coin";
 
 #[derive(Debug, Default)]
 pub(super) struct PluginHostServices {
     economy: Mutex<EconomyState>,
     pathfinding: Mutex<Option<std::sync::Arc<dyn PathfindingService>>>,
+    world_edit: Mutex<Option<std::sync::Arc<dyn WorldEditService>>>,
+    random_pools: Mutex<RandomPoolState>,
 }
 
 pub(crate) trait PathfindingService: Send + Sync + std::fmt::Debug {
     fn find_path(&self, query: &str) -> Option<String>;
+}
+
+pub(crate) trait WorldEditService: Send + Sync + std::fmt::Debug {
+    fn set_block(&self, query: &str) -> i32;
+    fn break_block(&self, query: &str) -> i32;
+    fn register_region(&self, query: &str) -> i32;
 }
 
 impl PluginHostServices {
@@ -41,12 +55,201 @@ impl PluginHostServices {
             .as_ref()
             .and_then(|service| service.find_path(query))
     }
+
+    pub(super) fn set_world_edit(&self, world_edit: std::sync::Arc<dyn WorldEditService>) {
+        *self.world_edit.lock().expect("world edit service poisoned") = Some(world_edit);
+    }
+
+    fn set_block(&self, query: &str) -> i32 {
+        self.world_edit
+            .lock()
+            .expect("world edit service poisoned")
+            .as_ref()
+            .map(|service| service.set_block(query))
+            .unwrap_or(-1)
+    }
+
+    fn break_block(&self, query: &str) -> i32 {
+        self.world_edit
+            .lock()
+            .expect("world edit service poisoned")
+            .as_ref()
+            .map(|service| service.break_block(query))
+            .unwrap_or(-1)
+    }
+
+    fn register_region(&self, query: &str) -> i32 {
+        self.world_edit
+            .lock()
+            .expect("world edit service poisoned")
+            .as_ref()
+            .map(|service| service.register_region(query))
+            .unwrap_or(-1)
+    }
 }
 
 #[derive(Debug)]
 struct EconomyState {
     currencies: BTreeMap<String, CurrencyInfo>,
     balances: BTreeMap<(String, String), i64>,
+}
+
+#[derive(Debug, Default)]
+struct RandomPoolState {
+    pools: HashMap<String, RandomPool>,
+}
+
+#[derive(Debug, Clone)]
+struct RandomPool {
+    precompute_count: usize,
+    entries: Vec<RandomPoolEntry>,
+    cached: VecDeque<String>,
+    signature: String,
+}
+
+#[derive(Debug, Clone)]
+struct RandomPoolEntry {
+    weight: u64,
+    value: String,
+}
+
+impl RandomPoolState {
+    fn roll(&mut self, request: &str) -> Option<String> {
+        let request = RandomPoolRequest::parse(request)?;
+        let signature = request.signature();
+        let pool = self
+            .pools
+            .entry(request.key())
+            .and_modify(|pool| {
+                if pool.signature != signature {
+                    *pool = RandomPool::new(&request, &signature);
+                }
+            })
+            .or_insert_with(|| RandomPool::new(&request, &signature));
+        pool.roll()
+    }
+}
+
+impl RandomPool {
+    fn new(request: &RandomPoolRequest, signature: &str) -> Self {
+        Self {
+            precompute_count: request
+                .precompute_count
+                .min(MAX_RANDOM_POOL_PRECOMPUTE_COUNT),
+            entries: request.entries.clone(),
+            cached: VecDeque::new(),
+            signature: signature.to_string(),
+        }
+    }
+
+    fn roll(&mut self) -> Option<String> {
+        if self.precompute_count == 0 {
+            return weighted_pick(&self.entries);
+        }
+        let refilled_empty_cache = self.cached.is_empty();
+        if refilled_empty_cache {
+            self.refill();
+        }
+        let value = self.cached.pop_front();
+        if !refilled_empty_cache && self.cached.len() < self.precompute_count / 2 {
+            self.refill();
+        }
+        value
+    }
+
+    fn refill(&mut self) {
+        let missing = self.precompute_count.saturating_sub(self.cached.len());
+        let count = missing.min(RANDOM_POOL_REFILL_BATCH);
+        for _ in 0..count {
+            let Some(value) = weighted_pick(&self.entries) else {
+                break;
+            };
+            self.cached.push_back(value);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RandomPoolRequest {
+    id: String,
+    kind: String,
+    precompute_count: usize,
+    entries: Vec<RandomPoolEntry>,
+}
+
+impl RandomPoolRequest {
+    fn parse(request: &str) -> Option<Self> {
+        let mut lines = request.lines();
+        let header = lines.next()?.trim();
+        let mut parts = header.split('\t');
+        let id = parts.next()?.trim().to_string();
+        let kind = parts.next()?.trim().to_string();
+        let precompute_count = parts.next()?.trim().parse::<usize>().ok()?;
+        if id.is_empty() || kind.is_empty() {
+            return None;
+        }
+
+        let mut entries = Vec::new();
+        for line in lines {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Some((weight, value)) = line.split_once('\t') else {
+                continue;
+            };
+            let Ok(weight) = weight.trim().parse::<u64>() else {
+                continue;
+            };
+            let value = value.trim();
+            if weight == 0 || value.is_empty() {
+                continue;
+            }
+            entries.push(RandomPoolEntry {
+                weight,
+                value: value.to_string(),
+            });
+        }
+        (!entries.is_empty()).then_some(Self {
+            id,
+            kind,
+            precompute_count,
+            entries,
+        })
+    }
+
+    fn key(&self) -> String {
+        format!("{}\t{}", self.kind, self.id)
+    }
+
+    fn signature(&self) -> String {
+        let mut signature = format!("{}\t{}\t{}", self.id, self.kind, self.precompute_count);
+        for entry in &self.entries {
+            signature.push('\n');
+            signature.push_str(&entry.weight.to_string());
+            signature.push('\t');
+            signature.push_str(&entry.value);
+        }
+        signature
+    }
+}
+
+fn weighted_pick(entries: &[RandomPoolEntry]) -> Option<String> {
+    let total = entries
+        .iter()
+        .fold(0u64, |total, entry| total.saturating_add(entry.weight));
+    if total == 0 {
+        return None;
+    }
+
+    let mut pick = rand::Rng::gen_range(&mut rand::thread_rng(), 0..total);
+    for entry in entries {
+        if pick < entry.weight {
+            return Some(entry.value.clone());
+        }
+        pick -= entry.weight;
+    }
+    None
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -231,6 +434,90 @@ pub(super) fn host_config_write(
         return -1;
     }
     0
+}
+
+pub(super) fn host_storage_exists(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) -> i32 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, ptr, len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    match plugin_storage_path(&plugin_name, &key) {
+        Some(path) => i32::from(path.is_file()),
+        None => -1,
+    }
+}
+
+pub(super) fn host_storage_get(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    let Some(path) = plugin_storage_path(&plugin_name, &key) else {
+        return -1;
+    };
+    let Ok(bytes) = fs::read(path) else {
+        return -1;
+    };
+    if bytes.len() > MAX_HOST_STORAGE_VALUE_BYTES {
+        return -1;
+    }
+    write_host_response(&mut caller, out_ptr, out_len, &bytes)
+}
+
+pub(super) fn host_storage_set(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+    data_ptr: i32,
+    data_len: i32,
+) -> i32 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    let Some(bytes) = host_memory_bytes(
+        &mut caller,
+        data_ptr,
+        data_len,
+        MAX_HOST_STORAGE_VALUE_BYTES,
+    ) else {
+        return -1;
+    };
+    let Some(path) = plugin_storage_path(&plugin_name, &key) else {
+        return -1;
+    };
+    let Some(parent) = path.parent() else {
+        return -1;
+    };
+    if fs::create_dir_all(parent).is_err() || fs::write(path, bytes).is_err() {
+        return -1;
+    }
+    0
+}
+
+pub(super) fn host_storage_delete(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+) -> i32 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    let Some(path) = plugin_storage_path(&plugin_name, &key) else {
+        return -1;
+    };
+    match fs::remove_file(path) {
+        Ok(()) => 0,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(_) => -1,
+    }
 }
 
 pub(super) fn host_economy_register_currency(
@@ -461,6 +748,70 @@ pub(super) fn host_pathfinding_find(
     write_host_response(&mut caller, out_ptr, out_len, response.as_bytes())
 }
 
+pub(super) fn host_world_set_block(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(&mut caller, query_ptr, query_len, MAX_HOST_WORLD_EDIT_BYTES)
+    else {
+        return -1;
+    };
+    caller.data().services.set_block(&query)
+}
+
+pub(super) fn host_world_break_block(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(&mut caller, query_ptr, query_len, MAX_HOST_WORLD_EDIT_BYTES)
+    else {
+        return -1;
+    };
+    caller.data().services.break_block(&query)
+}
+
+pub(super) fn host_world_register_edit_region(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(&mut caller, query_ptr, query_len, MAX_HOST_WORLD_EDIT_BYTES)
+    else {
+        return -1;
+    };
+    caller.data().services.register_region(&query)
+}
+
+pub(super) fn host_random_pool_roll(
+    mut caller: Caller<'_, PluginState>,
+    request_ptr: i32,
+    request_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(request) = host_string(
+        &mut caller,
+        request_ptr,
+        request_len,
+        MAX_HOST_RANDOM_POOL_BYTES,
+    ) else {
+        return -1;
+    };
+    let value = caller
+        .data()
+        .services
+        .random_pools
+        .lock()
+        .expect("plugin random pool state poisoned")
+        .roll(&request);
+    let Some(value) = value else {
+        return -1;
+    };
+    write_host_response(&mut caller, out_ptr, out_len, value.as_bytes())
+}
+
 fn host_memory_bytes<'a>(
     caller: &'a mut Caller<'_, PluginState>,
     ptr: i32,
@@ -578,6 +929,54 @@ fn plugin_config_path(plugin_name: &str, requested: &str) -> Option<PathBuf> {
     )
 }
 
+fn plugin_storage_path(plugin_name: &str, key: &str) -> Option<PathBuf> {
+    let clean = clean_storage_key(key)?;
+    Some(
+        std::env::current_dir()
+            .ok()?
+            .join("config")
+            .join("plugins")
+            .join(plugin_name)
+            .join("storage")
+            .join(clean),
+    )
+}
+
+fn clean_storage_key(key: &str) -> Option<PathBuf> {
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let mut clean = PathBuf::new();
+    for segment in key.split('/') {
+        let segment = segment.trim();
+        if segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('\\')
+            || segment.contains(':')
+        {
+            return None;
+        }
+        let safe = segment
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        if safe.is_empty() {
+            return None;
+        }
+        clean.push(safe);
+    }
+    clean.set_extension("bin");
+    Some(clean)
+}
+
 fn economy_storage_path() -> Option<PathBuf> {
     Some(
         std::env::current_dir()
@@ -659,4 +1058,48 @@ fn economy_update(
     };
     economy.save();
     new_balance
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_pool_rolls_realtime_entries() {
+        let mut state = RandomPoolState::default();
+        let value = state
+            .roll("ore\tblock\t0\n1\tminecraft:stone\n")
+            .expect("random pool value");
+
+        assert_eq!(value, "minecraft:stone");
+    }
+
+    #[test]
+    fn random_pool_refills_precomputed_entries_lazily() {
+        let mut state = RandomPoolState::default();
+        let request = "ore\tblock\t32\n1\tminecraft:stone\n";
+
+        assert_eq!(state.roll(request).as_deref(), Some("minecraft:stone"));
+        let pool = state
+            .pools
+            .get("block\tore")
+            .expect("pool should be retained");
+
+        assert_eq!(pool.precompute_count, 32);
+        assert!(pool.cached.len() < RANDOM_POOL_REFILL_BATCH);
+    }
+
+    #[test]
+    fn random_pool_replaces_cache_when_entries_change() {
+        let mut state = RandomPoolState::default();
+
+        assert_eq!(
+            state.roll("ore\tblock\t4\n1\tminecraft:stone\n").as_deref(),
+            Some("minecraft:stone")
+        );
+        assert_eq!(
+            state.roll("ore\tblock\t4\n1\tminecraft:dirt\n").as_deref(),
+            Some("minecraft:dirt")
+        );
+    }
 }

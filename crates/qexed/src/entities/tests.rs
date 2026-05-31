@@ -130,7 +130,7 @@ fn dropped_items_are_collected_once_when_reachable() {
         on_ground: true,
     };
 
-    manager
+    let updates = manager
         .drop_item(
             &players,
             uuid::Uuid::new_v4(),
@@ -139,6 +139,7 @@ fn dropped_items_are_collected_once_when_reachable() {
             crate::inventory::simple_item(1, 1),
         )
         .unwrap();
+    assert_eq!(updates.len(), 1);
 
     std::thread::sleep(std::time::Duration::from_millis(550));
     let collected = manager
@@ -151,6 +152,65 @@ fn dropped_items_are_collected_once_when_reachable() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn dropped_items_merge_until_configured_stack_limit() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let position = EntityPosition {
+        x: 0.5,
+        y: 64.0,
+        z: 0.5,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: true,
+    };
+    let rendering = qexed_config::app::qexed::server::EntityRendering {
+        item_merge_radius: 3.0,
+        item_merge_max_stack: 64,
+        ..Default::default()
+    };
+
+    let first = manager
+        .drop_item_with_rendering(
+            &players,
+            uuid::Uuid::new_v4(),
+            "minecraft:overworld",
+            position,
+            crate::inventory::simple_item(1, 32),
+            &rendering,
+        )
+        .unwrap();
+    let second = manager
+        .drop_item_with_rendering(
+            &players,
+            uuid::Uuid::new_v4(),
+            "minecraft:overworld",
+            position,
+            crate::inventory::simple_item(1, 40),
+            &rendering,
+        )
+        .unwrap();
+
+    assert!(matches!(
+        first.as_slice(),
+        [crate::entities::DroppedItemUpdate::Spawned(_)]
+    ));
+    assert_eq!(second.len(), 2);
+    assert!(matches!(
+        &second[0],
+        crate::entities::DroppedItemUpdate::Merged(entity) if entity.item.item_count.0 == 64
+    ));
+    assert!(matches!(
+        &second[1],
+        crate::entities::DroppedItemUpdate::Spawned(entity) if entity.item.item_count.0 == 8
+    ));
 }
 
 #[test]

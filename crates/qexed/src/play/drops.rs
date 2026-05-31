@@ -45,31 +45,8 @@ pub(super) fn collect_dropped_items(
     entities: &crate::entities::EntityManager,
     dimension: &str,
     position: EntityPosition,
-    inventory: &mut crate::inventory::PlayerInventory,
-) -> anyhow::Result<
-    Option<(
-        Vec<crate::entities::DroppedItemEntity>,
-        Vec<crate::inventory::InventorySlotChange>,
-    )>,
-> {
-    let collected = entities.collect_reachable_items(dimension, position)?;
-    let mut picked = Vec::new();
-    let mut changes = Vec::new();
-
-    for item in collected {
-        if let Some(mut item_changes) = inventory.add_item_stack(&item.item) {
-            picked.push(item);
-            changes.append(&mut item_changes);
-        } else {
-            entities.restore_dropped_item(item);
-        }
-    }
-
-    if picked.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some((picked, changes)))
-    }
+) -> anyhow::Result<Vec<crate::entities::DroppedItemEntity>> {
+    entities.collect_reachable_items(dimension, position)
 }
 
 #[cfg(test)]

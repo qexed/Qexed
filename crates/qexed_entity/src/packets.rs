@@ -184,6 +184,13 @@ impl DroppedItemEntity {
             packet_bytes(RemoveEntities::one(self.entity_id))?,
         ])
     }
+
+    pub fn metadata_packets(&self) -> Result<Vec<Bytes>> {
+        Ok(vec![packet_bytes(SetEntityData {
+            entity_id: VarInt(self.entity_id),
+            metadata: item_entity_metadata(self.item.clone()),
+        })?])
+    }
 }
 
 fn hologram_metadata(text: Option<&str>) -> EntityMetadata {

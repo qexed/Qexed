@@ -1,4 +1,4 @@
-use qexed_config::app::qexed::server::{GameMode, Spawn};
+use qexed_config::app::qexed::server::{GameMode, Spawn, World};
 use qexed_protocol::to_client::play::player_abilities::PlayerAbilities;
 
 pub(super) fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextComponent {
@@ -71,7 +71,7 @@ pub(super) fn player_ability_flags(game_mode: GameMode) -> u8 {
 }
 
 pub(super) fn can_modify_world(
-    world_config: &qexed_config::app::qexed::server::World,
+    world_config: &World,
     position: &qexed_packet::net_types::Position,
 ) -> bool {
     matches!(
@@ -83,6 +83,13 @@ pub(super) fn can_modify_world(
             world_config.spawn_protection_radius,
             position,
         )
+}
+
+pub(super) fn can_attempt_world_edit(world_config: &World) -> bool {
+    matches!(
+        world_config.game_mode,
+        GameMode::Survival | GameMode::Creative
+    )
 }
 
 fn is_spawn_protected(

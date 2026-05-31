@@ -721,6 +721,14 @@ pub struct EntityRendering {
     #[AutoDoc(key = "config.qexed.server.entity_rendering.item_distance")]
     pub item_distance: f64,
 
+    #[serde(default = "default_item_merge_radius")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.item_merge_radius")]
+    pub item_merge_radius: f64,
+
+    #[serde(default = "default_item_merge_max_stack")]
+    #[AutoDoc(key = "config.qexed.server.entity_rendering.item_merge_max_stack")]
+    pub item_merge_max_stack: i32,
+
     #[serde(default = "default_entity_stack_threshold")]
     #[AutoDoc(key = "config.qexed.server.entity_rendering.stack_threshold")]
     pub stack_threshold: usize,
@@ -738,6 +746,8 @@ impl Default for EntityRendering {
             npc_distance: default_npc_render_distance(),
             hologram_distance: default_hologram_render_distance(),
             item_distance: default_item_render_distance(),
+            item_merge_radius: default_item_merge_radius(),
+            item_merge_max_stack: default_item_merge_max_stack(),
             stack_threshold: default_entity_stack_threshold(),
             stack_radius: default_entity_stack_radius(),
         }
@@ -778,6 +788,14 @@ fn default_hologram_render_distance() -> f64 {
 
 fn default_item_render_distance() -> f64 {
     32.0
+}
+
+fn default_item_merge_radius() -> f64 {
+    2.0
+}
+
+fn default_item_merge_max_stack() -> i32 {
+    64
 }
 
 fn default_entity_stack_threshold() -> usize {
@@ -2203,6 +2221,14 @@ pub struct World {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[AutoDoc(key = "config.qexed.server.world.instances", sub)]
     pub instances: Vec<WorldInstance>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits", sub)]
+    pub ore_pits: Vec<WorldOrePit>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions", sub)]
+    pub edit_regions: Vec<WorldEditRegion>,
 }
 
 impl Default for World {
@@ -2229,6 +2255,8 @@ impl Default for World {
             gpu: WorldGpu::default(),
             spawn: Spawn::default(),
             instances: Vec::new(),
+            ore_pits: Vec::new(),
+            edit_regions: Vec::new(),
         }
     }
 }
@@ -2418,6 +2446,237 @@ fn default_world_instance_source_dimension() -> String {
 }
 
 fn default_world_instance_copy_on_write() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct WorldOrePit {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.id")]
+    pub id: String,
+
+    #[serde(default = "default_world_ore_pit_enable")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_world_default_dimension")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.dimension")]
+    pub dimension: String,
+
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.min_x")]
+    pub min_x: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_x")]
+    pub max_x: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.min_y")]
+    pub min_y: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_y")]
+    pub max_y: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.min_z")]
+    pub min_z: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_z")]
+    pub max_z: i32,
+
+    #[serde(default = "default_world_ore_pit_tick_interval_ms")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.tick_interval_ms")]
+    pub tick_interval_ms: u64,
+
+    #[serde(default = "default_world_ore_pit_max_blocks_per_tick")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_blocks_per_tick")]
+    pub max_blocks_per_tick: usize,
+
+    #[serde(default = "default_world_ore_pit_replace_air")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.replace_air")]
+    pub replace_air: bool,
+
+    #[serde(default = "default_world_ore_pit_replace_generated")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.replace_generated")]
+    pub replace_generated: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.only_break_generated")]
+    pub only_break_generated: bool,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.blocks", sub)]
+    pub blocks: Vec<WorldOrePitBlock>,
+}
+
+impl Default for WorldOrePit {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enable: default_world_ore_pit_enable(),
+            dimension: default_world_default_dimension(),
+            min_x: 0,
+            max_x: 0,
+            min_y: 0,
+            max_y: 0,
+            min_z: 0,
+            max_z: 0,
+            tick_interval_ms: default_world_ore_pit_tick_interval_ms(),
+            max_blocks_per_tick: default_world_ore_pit_max_blocks_per_tick(),
+            replace_air: default_world_ore_pit_replace_air(),
+            replace_generated: default_world_ore_pit_replace_generated(),
+            only_break_generated: false,
+            blocks: Vec::new(),
+        }
+    }
+}
+
+impl WorldOrePit {
+    pub fn contains(&self, dimension: &str, x: i32, y: i32, z: i32) -> bool {
+        self.dimension.trim() == dimension.trim()
+            && contains_axis(x, self.min_x, self.max_x)
+            && contains_axis(y, self.min_y, self.max_y)
+            && contains_axis(z, self.min_z, self.max_z)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct WorldOrePitBlock {
+    #[serde(default = "default_world_ore_pit_block")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.blocks.block")]
+    pub block: String,
+
+    #[serde(default = "default_world_ore_pit_block_weight")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.blocks.weight")]
+    pub weight: u32,
+}
+
+impl Default for WorldOrePitBlock {
+    fn default() -> Self {
+        Self {
+            block: default_world_ore_pit_block(),
+            weight: default_world_ore_pit_block_weight(),
+        }
+    }
+}
+
+fn default_world_ore_pit_enable() -> bool {
+    true
+}
+
+fn default_world_ore_pit_tick_interval_ms() -> u64 {
+    300_000
+}
+
+fn default_world_ore_pit_max_blocks_per_tick() -> usize {
+    64
+}
+
+fn default_world_ore_pit_replace_air() -> bool {
+    true
+}
+
+fn default_world_ore_pit_replace_generated() -> bool {
+    true
+}
+
+fn default_world_ore_pit_block() -> String {
+    "minecraft:stone".to_string()
+}
+
+fn default_world_ore_pit_block_weight() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct WorldEditRegion {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.id")]
+    pub id: String,
+
+    #[serde(default = "default_world_default_dimension")]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.dimension")]
+    pub dimension: String,
+
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.min_x")]
+    pub min_x: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.max_x")]
+    pub max_x: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.min_y")]
+    pub min_y: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.max_y")]
+    pub max_y: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.min_z")]
+    pub min_z: i32,
+
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.max_z")]
+    pub max_z: i32,
+
+    #[serde(default = "default_world_edit_region_allow_player_break")]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.allow_player_break")]
+    pub allow_player_break: bool,
+
+    #[serde(default = "default_world_edit_region_allow_player_place")]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.allow_player_place")]
+    pub allow_player_place: bool,
+
+    #[serde(default = "default_world_edit_region_allow_plugin_write")]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.allow_plugin_write")]
+    pub allow_plugin_write: bool,
+
+    #[serde(default = "default_world_edit_region_runtime_only")]
+    #[AutoDoc(key = "config.qexed.server.world.edit_regions.runtime_only")]
+    pub runtime_only: bool,
+}
+
+impl Default for WorldEditRegion {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            dimension: default_world_default_dimension(),
+            min_x: 0,
+            max_x: 0,
+            min_y: 0,
+            max_y: 0,
+            min_z: 0,
+            max_z: 0,
+            allow_player_break: default_world_edit_region_allow_player_break(),
+            allow_player_place: default_world_edit_region_allow_player_place(),
+            allow_plugin_write: default_world_edit_region_allow_plugin_write(),
+            runtime_only: default_world_edit_region_runtime_only(),
+        }
+    }
+}
+
+impl WorldEditRegion {
+    pub fn contains(&self, dimension: &str, x: i32, y: i32, z: i32) -> bool {
+        self.dimension.trim() == dimension.trim()
+            && contains_axis(x, self.min_x, self.max_x)
+            && contains_axis(y, self.min_y, self.max_y)
+            && contains_axis(z, self.min_z, self.max_z)
+    }
+}
+
+fn contains_axis(value: i32, first: i32, second: i32) -> bool {
+    let min = first.min(second);
+    let max = first.max(second);
+    (min..=max).contains(&value)
+}
+
+fn default_world_edit_region_allow_player_break() -> bool {
+    true
+}
+
+fn default_world_edit_region_allow_player_place() -> bool {
+    true
+}
+
+fn default_world_edit_region_allow_plugin_write() -> bool {
+    true
+}
+
+fn default_world_edit_region_runtime_only() -> bool {
     true
 }
 
@@ -2778,9 +3037,10 @@ mod tests {
     use super::{
         ContentFilter, ContentFilterEngine, Entities, EntityKind, ForwardingMode, GameMode,
         GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
-        LobbyBossBarOverlay, PermissionEngine, Permissions, PlayerAudit, PlayerAuditStorage,
-        PlayerData, PlayerDataEngine, PlayerMessages, PrecompiledChunks, ResourcePack,
-        ResourcePackObjectStorageProvider, ResourcePackSource, Server, World, WorldGenerator,
+        LobbyBossBarOverlay, MenuActionKind, Npcs, PermissionEngine, Permissions, PlayerAudit,
+        PlayerAuditStorage, PlayerData, PlayerDataEngine, PlayerMessages, PrecompiledChunks,
+        ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource, Server, World,
+        WorldGenerator,
     };
 
     #[test]
@@ -3003,6 +3263,112 @@ copy_on_write = true
             world.dimension_type_for("qexed:mine_template").as_deref(),
             Some("minecraft:overworld")
         );
+    }
+
+    #[test]
+    fn parses_world_edit_regions() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+read_only = true
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+
+[spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+
+[[edit_regions]]
+id = "mine_a"
+dimension = "minecraft:overworld"
+min_x = -32
+max_x = -1
+min_y = 8
+max_y = 16
+min_z = -32
+max_z = -1
+allow_player_break = true
+allow_player_place = false
+allow_plugin_write = true
+runtime_only = true
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(world.edit_regions.len(), 1);
+        let region = &world.edit_regions[0];
+        assert_eq!(region.id, "mine_a");
+        assert!(region.allow_player_break);
+        assert!(!region.allow_player_place);
+        assert!(region.allow_plugin_write);
+        assert!(region.runtime_only);
+        assert!(region.contains("minecraft:overworld", -32, 8, -32));
+        assert!(region.contains("minecraft:overworld", -1, 16, -1));
+        assert!(!region.contains("minecraft:overworld", 0, 16, -1));
+    }
+
+    #[test]
+    fn parses_world_ore_pits() {
+        let world: World = toml::from_str(
+            r#"
+path = "world"
+read_only = true
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+simulation_distance = 3
+light = "static"
+
+[spawn]
+x = 0.0
+y = 64.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+
+[[ore_pits]]
+id = "mine_a"
+dimension = "qexed:mine_a"
+min_x = 36
+max_x = 54
+min_y = -50
+max_y = -30
+min_z = 6
+max_z = 24
+tick_interval_ms = 500
+max_blocks_per_tick = 512
+replace_air = true
+replace_generated = true
+only_break_generated = true
+
+[[ore_pits.blocks]]
+block = "minecraft:stone"
+weight = 60
+
+[[ore_pits.blocks]]
+block = "minecraft:diamond_ore"
+weight = 1
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(world.ore_pits.len(), 1);
+        let pit = &world.ore_pits[0];
+        assert_eq!(pit.id, "mine_a");
+        assert_eq!(pit.dimension, "qexed:mine_a");
+        assert_eq!(pit.max_blocks_per_tick, 512);
+        assert!(pit.only_break_generated);
+        assert_eq!(pit.blocks.len(), 2);
+        assert!(pit.contains("qexed:mine_a", 36, -50, 6));
+        assert!(!pit.contains("qexed:mine_b", 36, -50, 6));
     }
 
     #[test]
@@ -3711,6 +4077,8 @@ player_distance = 32.0
 npc_distance = 64.0
 hologram_distance = 96.0
 item_distance = 16.0
+item_merge_radius = 3.5
+item_merge_max_stack = 32
 stack_threshold = 12
 stack_radius = 6.5
 "#,
@@ -3722,6 +4090,8 @@ stack_radius = 6.5
         assert_eq!(rendering.npc_distance, 64.0);
         assert_eq!(rendering.hologram_distance, 96.0);
         assert_eq!(rendering.item_distance, 16.0);
+        assert_eq!(rendering.item_merge_radius, 3.5);
+        assert_eq!(rendering.item_merge_max_stack, 32);
         assert_eq!(rendering.stack_threshold, 12);
         assert_eq!(rendering.stack_radius, 6.5);
     }

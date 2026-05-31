@@ -81,6 +81,14 @@ pub(crate) fn default_block_state_id(name: &str) -> i32 {
     default_block_state(name).id
 }
 
+pub(crate) fn default_block_state_id_if_known(name: &str) -> Option<i32> {
+    let name = normalize_identifier(name);
+    block_state_registry()
+        .default_state_by_name
+        .get(&name)
+        .map(|state| state.id)
+}
+
 pub(super) fn biome_registry() -> &'static BiomeRegistry {
     static REGISTRY: OnceLock<BiomeRegistry> = OnceLock::new();
     REGISTRY.get_or_init(|| {

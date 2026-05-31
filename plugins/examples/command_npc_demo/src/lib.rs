@@ -2,15 +2,18 @@ use qexed_plugin_sdk::{
     CustomEntityDefinition, CustomEntityRegistryResponse, EntityAiOperation, EntityAiTickQuery,
     EntityAiTickResponse, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
     PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
-    PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse, ProxyConnectResultPayload,
-    config_load_or_create, config_read_to_string, economy_currency_info,
-    economy_register_currency,
+    PlayerItemPickupQuery, PlayerItemPickupResponse, PluginCommandDefinition, PluginCommandQuery,
+    PluginCommandResponse, ProxyConnectResultPayload, config_load_or_create,
+    config_read_to_string, economy_currency_info, economy_register_currency, storage_get_typed,
+    storage_set_typed,
 };
+use serde::{Deserialize, Serialize};
 
 qexed_plugin_sdk::qexed_plugin_memory!();
 
 const NPC_KEY: &str = "plugin_hub_npc";
 const DEFAULT_TARGET_SERVER: &str = "survival_1";
+const DIAMOND_ITEM_ID: i32 = 889;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_priority() -> i32 {
@@ -232,6 +235,43 @@ pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_player_item_pickup(ptr: i32, len: i32) -> i64 {
+    let Some(payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<PlayerItemPickupQuery>(ptr, len) })
+    else {
+        return qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse::default());
+    };
+
+    let is_diamond = payload.item_id == Some(DIAMOND_ITEM_ID)
+        || payload.item_name == "minecraft:diamond"
+        || payload.item_name == "minecraft:diamond_ore";
+    if !is_diamond {
+        return qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse::default());
+    }
+
+    let key = format!("pickup/{}", payload.player.uuid);
+    let mut stats = storage_get_typed::<PickupStats>(&key).unwrap_or_default();
+    stats.blocked_pickups = stats.blocked_pickups.saturating_add(1);
+    stats.blocked_items = stats
+        .blocked_items
+        .saturating_add(payload.count.max(0) as u64);
+    let _ = storage_set_typed(&key, &stats);
+
+    qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse {
+        cancel: true,
+        actions: vec![PlayerAction::SystemMessage {
+            text: format!(
+                "插件已拦截钻石拾取，本地记录 {} 次。",
+                stats.blocked_pickups
+            ),
+            translate: String::new(),
+            with: Vec::new(),
+            overlay: false,
+        }],
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_proxy_connect_result(ptr: i32, len: i32) {
     let Some(payload) =
         (unsafe { qexed_plugin_sdk::decode_payload::<ProxyConnectResultPayload>(ptr, len) })
@@ -251,6 +291,12 @@ pub extern "C" fn qexed_plugin_proxy_connect_result(ptr: i32, len: i32) {
         payload.success,
         payload.message
     ));
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PickupStats {
+    blocked_pickups: u64,
+    blocked_items: u64,
 }
 
 fn hub_teleport_response(message: &str) -> PluginCommandResponse {

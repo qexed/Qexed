@@ -24,7 +24,7 @@ use nbt::{
 #[allow(unused_imports)]
 pub(crate) use registry::{
     BlockStateDefinition, block_state, block_state_entry, default_block_state,
-    default_block_state_id,
+    default_block_state_id, default_block_state_id_if_known,
 };
 use registry::{
     biome_registry, block_entity_type_id, block_state_registry, has_fluid, is_air_block,

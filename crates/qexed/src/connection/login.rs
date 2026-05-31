@@ -72,6 +72,7 @@ where
         &context.authenticator,
         &context.world,
         &context.world_rules,
+        &context.ore_pits,
         &context.players,
         &context.entities,
         &context.player_data,

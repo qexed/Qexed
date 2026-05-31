@@ -12,6 +12,7 @@ pub struct ServerContext {
     pub authenticator: Arc<Authenticator>,
     pub world: Arc<crate::world::WorldManager>,
     pub world_rules: Arc<crate::world::WorldRulesManager>,
+    pub ore_pits: Arc<crate::world::OrePitManager>,
     pub players: Arc<crate::players::PlayerManager>,
     pub entities: Arc<crate::entities::EntityManager>,
     pub player_data: Arc<crate::player_data::PlayerDataManager>,
@@ -52,10 +53,12 @@ impl ServerContext {
         )
         .with_worlds(&config.world.worlds)
         .with_instances(&config.world.instances)
+        .with_edit_regions(&config.world.edit_regions)
         .with_precompiled_chunks(crate::world::PrecompiledChunkSettings::from(
             &config.world.precompiled_chunks,
         ));
         world.ensure_configured_storage(&config.world)?;
+        let ore_pits = crate::world::OrePitManager::from_config(&config.world.ore_pits);
         plugins.set_pathfinding_service(Arc::new(ServerPathfindingService {
             world: Arc::new(world.clone()),
             cache: Mutex::new(PathfindingCache::default()),
@@ -73,6 +76,10 @@ impl ServerContext {
             crate::content_filter::ContentFilter::from_config(&config.server.content_filter)?;
         let entity_ids = Arc::new(crate::entities::EntityIdAllocator::default());
         let players = Arc::new(crate::players::PlayerManager::new(entity_ids.clone()));
+        plugins.set_world_edit_service(Arc::new(ServerWorldEditService {
+            world: Arc::new(world.clone()),
+            players: players.clone(),
+        }));
         let entities = crate::entities::EntityManager::from_config_with_skin_lookup(
             &config.server.entities,
             entity_ids.clone(),
@@ -91,6 +98,7 @@ impl ServerContext {
             authenticator: Arc::new(Authenticator::new()?),
             world: Arc::new(world),
             world_rules: Arc::new(world_rules),
+            ore_pits: Arc::new(ore_pits),
             players,
             entities: Arc::new(entities),
             player_data: Arc::new(player_data),
@@ -157,6 +165,208 @@ impl crate::plugins::host::PathfindingService for ServerPathfindingService {
             .expect("pathfinding cache poisoned")
             .insert(key, path.clone(), Instant::now());
         path
+    }
+}
+
+#[derive(Debug)]
+struct ServerWorldEditService {
+    world: Arc<crate::world::WorldManager>,
+    players: Arc<crate::players::PlayerManager>,
+}
+
+impl crate::plugins::host::WorldEditService for ServerWorldEditService {
+    fn set_block(&self, query: &str) -> i32 {
+        let Some(request) = ParsedWorldEditQuery::parse_set(query) else {
+            return -1;
+        };
+        let Some(region) = self
+            .world
+            .editable_region_for_plugin_write(&request.dimension, &request.position)
+        else {
+            return 1;
+        };
+        self.write_block(
+            &request.dimension,
+            request.position.clone(),
+            request.block_state,
+            region.runtime_only,
+        );
+        self.broadcast_change(&request.dimension, request.position, request.block_state);
+        0
+    }
+
+    fn break_block(&self, query: &str) -> i32 {
+        let Some(request) = ParsedWorldEditQuery::parse_break(query) else {
+            return -1;
+        };
+        let Some(region) = self
+            .world
+            .editable_region_for_plugin_write(&request.dimension, &request.position)
+        else {
+            return 1;
+        };
+        let air = crate::inventory::air_block_state();
+        self.write_block(
+            &request.dimension,
+            request.position.clone(),
+            air,
+            region.runtime_only,
+        );
+        self.broadcast_change(&request.dimension, request.position, air);
+        0
+    }
+
+    fn register_region(&self, query: &str) -> i32 {
+        let Some(region) = ParsedWorldEditRegion::parse(query) else {
+            return -1;
+        };
+        self.world.register_edit_region(region);
+        0
+    }
+}
+
+impl ServerWorldEditService {
+    fn write_block(
+        &self,
+        dimension: &str,
+        position: qexed_packet::net_types::Position,
+        block_state: i32,
+        runtime_only: bool,
+    ) {
+        if runtime_only || self.world.read_only() {
+            self.world
+                .set_runtime_block(dimension, position, block_state);
+        } else {
+            self.world.place_block(dimension, position, block_state);
+        }
+    }
+
+    fn broadcast_change(
+        &self,
+        dimension: &str,
+        position: qexed_packet::net_types::Position,
+        block_state: i32,
+    ) {
+        let light_update = if self.world.dynamic_light_enabled() {
+            let update = self.world.light_update(
+                dimension,
+                position.x.div_euclid(16),
+                position.z.div_euclid(16),
+            );
+            qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(update).ok()
+        } else {
+            None
+        };
+        self.players.broadcast_block_changed(
+            uuid::Uuid::nil(),
+            dimension,
+            position,
+            block_state,
+            light_update,
+        );
+    }
+}
+
+#[derive(Debug)]
+struct ParsedWorldEditQuery {
+    dimension: String,
+    position: qexed_packet::net_types::Position,
+    block_state: i32,
+}
+
+#[derive(Debug)]
+struct ParsedWorldEditRegion;
+
+impl ParsedWorldEditRegion {
+    fn parse(query: &str) -> Option<crate::world::RuntimeEditRegion> {
+        let mut parts = query.split_whitespace();
+        let id = parts.next()?.to_string();
+        let dimension = parts.next()?.to_string();
+        let min_x = parts.next()?.parse().ok()?;
+        let max_x = parts.next()?.parse().ok()?;
+        let min_y = parts.next()?.parse().ok()?;
+        let max_y = parts.next()?.parse().ok()?;
+        let min_z = parts.next()?.parse().ok()?;
+        let max_z = parts.next()?.parse().ok()?;
+        let allow_player_break = parse_bool_flag(parts.next()?)?;
+        let allow_player_place = parse_bool_flag(parts.next()?)?;
+        let allow_plugin_write = parse_bool_flag(parts.next()?)?;
+        let runtime_only = parse_bool_flag(parts.next()?)?;
+        if id.trim().is_empty() || dimension.trim().is_empty() {
+            return None;
+        }
+        Some(crate::world::RuntimeEditRegion {
+            id,
+            dimension,
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            min_z,
+            max_z,
+            allow_player_break,
+            allow_player_place,
+            allow_plugin_write,
+            runtime_only,
+        })
+    }
+}
+
+fn parse_bool_flag(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+impl ParsedWorldEditQuery {
+    fn parse_set(query: &str) -> Option<Self> {
+        let mut parts = query.split_whitespace();
+        let dimension = parts.next()?.to_string();
+        let position = qexed_packet::net_types::Position {
+            x: parts.next()?.parse().ok()?,
+            y: parts.next()?.parse().ok()?,
+            z: parts.next()?.parse().ok()?,
+        };
+        let block = parts.next()?;
+        let block_state = parse_plugin_block_state(block)?;
+        Some(Self {
+            dimension,
+            position,
+            block_state,
+        })
+    }
+
+    fn parse_break(query: &str) -> Option<Self> {
+        let mut parts = query.split_whitespace();
+        let dimension = parts.next()?.to_string();
+        let position = qexed_packet::net_types::Position {
+            x: parts.next()?.parse().ok()?,
+            y: parts.next()?.parse().ok()?,
+            z: parts.next()?.parse().ok()?,
+        };
+        Some(Self {
+            dimension,
+            position,
+            block_state: crate::inventory::air_block_state(),
+        })
+    }
+}
+
+fn parse_plugin_block_state(block: &str) -> Option<i32> {
+    block.parse::<i32>().ok().or_else(|| {
+        let block = normalize_plugin_resource_key(block);
+        crate::world::chunk_nbt::default_block_state_id_if_known(&block)
+    })
+}
+
+fn normalize_plugin_resource_key(value: &str) -> String {
+    let value = value.trim();
+    if value.contains(':') {
+        value.to_string()
+    } else {
+        format!("minecraft:{value}")
     }
 }
 

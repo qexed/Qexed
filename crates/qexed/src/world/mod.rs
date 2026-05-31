@@ -47,6 +47,7 @@ mod gpu_worldgen {
 }
 mod light;
 mod manager;
+mod ore_pits;
 pub mod region;
 mod rules;
 mod vanilla_noise;
@@ -60,7 +61,8 @@ pub(crate) use light::{
     sky_light_from_neighbourhood, write_empty_section, write_fixed_long_array,
 };
 pub use light::{WorldLightAlgorithm, WorldLightMode, light_gpu_from_config};
-pub use manager::{PrecompiledChunkSettings, WorldManager, WorldSession};
+pub use manager::{PrecompiledChunkSettings, RuntimeEditRegion, WorldManager, WorldSession};
+pub use ore_pits::{OrePitBlockUpdate, OrePitManager};
 pub use rules::WorldRulesManager;
 
 const OVERWORLD_HEIGHT: i32 = 384;

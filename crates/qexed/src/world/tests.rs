@@ -759,6 +759,102 @@ fn read_only_world_rejects_region_writes_and_block_changes() {
 }
 
 #[test]
+fn runtime_block_change_overlays_read_only_world_without_persisting() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::with_light_mode(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        true,
+    );
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let position = qexed_packet::net_types::Position { x: 1, y: 64, z: 1 };
+
+    manager.set_runtime_block("minecraft:overworld", position.clone(), stone);
+    manager.flush_block_writes();
+
+    assert_eq!(
+        manager.block_state_at("minecraft:overworld", &position),
+        Some(stone)
+    );
+    assert!(!dir.path().join("region/r.0.0.mca").exists());
+
+    let reloaded = WorldManager::with_light_mode(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        true,
+    );
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &position),
+        None
+    );
+}
+
+#[test]
+fn runtime_block_change_invalidates_runtime_caches() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::with_light_mode(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        true,
+    );
+    let epoch = manager.cache_epoch();
+
+    manager.set_runtime_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 1, y: 64, z: 1 },
+        1,
+    );
+
+    assert!(manager.cache_epoch() > epoch);
+}
+
+#[test]
+fn runtime_edit_regions_can_be_registered_and_replaced() {
+    let manager = WorldManager::new("world");
+    let position = qexed_packet::net_types::Position { x: 3, y: 64, z: 4 };
+    let mut region = super::RuntimeEditRegion {
+        id: "mine".to_string(),
+        dimension: "minecraft:overworld".to_string(),
+        min_x: 0,
+        max_x: 10,
+        min_y: 60,
+        max_y: 70,
+        min_z: 0,
+        max_z: 10,
+        allow_player_break: true,
+        allow_player_place: false,
+        allow_plugin_write: true,
+        runtime_only: true,
+    };
+
+    manager.register_edit_region(region.clone());
+    assert!(
+        manager
+            .editable_region_for_player_break("minecraft:overworld", &position)
+            .is_some()
+    );
+    assert!(
+        manager
+            .editable_region_for_player_place("minecraft:overworld", &position)
+            .is_none()
+    );
+
+    region.allow_player_place = true;
+    manager.register_edit_region(region);
+    assert!(
+        manager
+            .editable_region_for_player_place("minecraft:overworld", &position)
+            .is_some()
+    );
+}
+
+#[test]
 fn precompiled_read_only_world_skips_full_region_chunk_cache() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::with_generator(
