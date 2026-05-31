@@ -16,6 +16,7 @@ use qexed_config::{
         qexed_lan_discovery::QexedLanDiscovery,
         qexed_lobby::QexedLobby,
         qexed_menus::QexedMenus,
+        qexed_npc::QexedNpc,
         qexed_permissions::QexedPermissions,
         qexed_placeholders::QexedPlaceholders,
         qexed_player_audit::QexedPlayerAudit,
@@ -3021,6 +3022,13 @@ const PLUGIN_STRUCT_DOCS: &[PluginStructDoc] = &[
                 "默认 AI 标识，例如 plugin:demo_patrol。",
                 "Default AI identifier, for example plugin:demo_patrol.",
             ),
+            field(
+                "ai_params",
+                "BTreeMap<String, serde_json::Value>",
+                "{}",
+                "Structured plugin AI parameters.",
+                "Structured plugin AI parameters.",
+            ),
         ],
     },
     PluginStructDoc {
@@ -3097,6 +3105,13 @@ const PLUGIN_STRUCT_DOCS: &[PluginStructDoc] = &[
                 "\"\"",
                 "产生该实体的刷怪规则。",
                 "Spawn rule that produced the entity.",
+            ),
+            field(
+                "ai_params",
+                "BTreeMap<String, serde_json::Value>",
+                "{}",
+                "Structured plugin AI parameters.",
+                "Structured plugin AI parameters.",
             ),
             field(
                 "dimension",
@@ -3607,6 +3622,11 @@ fn collect_language_apps(lang: &str) -> Result<Vec<DocApp>> {
     apps.push(collect_app::<QexedEntity>(
         "qexed_entity",
         "qexed_entity.toml",
+        lang,
+    )?);
+    apps.push(collect_app::<QexedNpc>(
+        "qexed_npc",
+        "qexed_npc.toml",
         lang,
     )?);
     apps.push(collect_app::<QexedEntityRendering>(
@@ -5279,6 +5299,12 @@ mod tests {
         assert_eq!(field_type(app, "entities.list"), "array");
         assert_eq!(field_type(app, "entities.list.id"), "string");
         assert_eq!(field_type(app, "entities.list.kind"), "string");
+        assert!(
+            !app.fields
+                .iter()
+                .any(|field| field.path == "entities.list.main_hand_event"),
+            "NPC click events belong to qexed_npc docs"
+        );
         assert_eq!(field_type(app, "entities.list.x"), "number");
         assert_eq!(field_type(app, "entities.list.data"), "integer");
         assert_eq!(field_type(app, "entities.list.on_ground"), "boolean");

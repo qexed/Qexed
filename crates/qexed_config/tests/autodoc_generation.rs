@@ -8,6 +8,7 @@ use qexed_config::{
         qexed_lan_discovery::QexedLanDiscovery,
         qexed_lobby::QexedLobby,
         qexed_menus::QexedMenus,
+        qexed_npc::QexedNpc,
         qexed_permissions::QexedPermissions,
         qexed_placeholders::QexedPlaceholders,
         qexed_player_audit::QexedPlayerAudit,
@@ -44,6 +45,7 @@ fn create_qexed_app_configs(dir: &std::path::Path) -> anyhow::Result<()> {
     QexedLanDiscovery::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedContentFilter::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedEntity::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
+    QexedNpc::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedEntityRendering::load_or_create_default(
         lang.clone(),
         Some(true),
@@ -291,6 +293,7 @@ fn module_configs_are_serialized_as_independent_apps() -> anyhow::Result<()> {
     let qexed = std::fs::read_to_string(dir.join("qexed.toml"))?;
     let server = std::fs::read_to_string(dir.join("qexed_server.toml"))?;
     let entities = std::fs::read_to_string(dir.join("qexed_entity.toml"))?;
+    let npcs = std::fs::read_to_string(dir.join("qexed_npc.toml"))?;
     let lobby = std::fs::read_to_string(dir.join("qexed_lobby.toml"))?;
     let menus = std::fs::read_to_string(dir.join("qexed_menus.toml"))?;
     let entity_rendering = std::fs::read_to_string(dir.join("qexed_entity_rendering.toml"))?;
@@ -302,6 +305,10 @@ fn module_configs_are_serialized_as_independent_apps() -> anyhow::Result<()> {
     assert!(entities.contains("[entities]"));
     assert!(entities.contains("dimension = \"minecraft:overworld\""));
     assert!(!entities.contains("list = []"));
+    assert!(!entities.contains("skin_player_id"));
+    assert!(!entities.contains("main_hand_event"));
+    assert!(npcs.contains("[npcs]"));
+    assert!(npcs.contains("dimension = \"minecraft:overworld\""));
     assert!(lobby.contains("[lobby]"));
     assert!(menus.contains("[menus]"));
     assert!(entity_rendering.contains("[entity_rendering]"));
@@ -346,7 +353,7 @@ dimension = "minecraft:overworld"
 # =======================
 [[entities.list]]
 id = "guide"
-kind = "npc"
+kind = "hologram"
 name = "Guide"
 "#,
     )?;

@@ -91,10 +91,22 @@ impl ManagedEntity {
     }
 
     pub fn position_packets(&self) -> Result<Vec<Bytes>> {
+        self.position_packets_with_velocity(0.0, 0.0, 0.0)
+    }
+
+    pub fn position_packets_with_velocity(
+        &self,
+        velocity_x: f64,
+        velocity_y: f64,
+        velocity_z: f64,
+    ) -> Result<Vec<Bytes>> {
         Ok(vec![
-            packet_bytes(EntityPositionSync::from_position(
+            packet_bytes(EntityPositionSync::from_position_with_velocity(
                 self.entity_id,
                 self.position,
+                velocity_x,
+                velocity_y,
+                velocity_z,
             ))?,
             packet_bytes(RotateHead::new(self.entity_id, self.position.yaw))?,
         ])
@@ -441,4 +453,62 @@ fn packet_bytes<T: Packet>(packet: T) -> Result<Bytes> {
     qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;
     packet.serialize(&mut writer)?;
     Ok(buf.freeze())
+}
+
+#[cfg(test)]
+mod tests {
+    use qexed_packet::{Packet, PacketCodec};
+    use qexed_protocol::to_client::play::add_entity::{EntityPosition, EntityPositionSync};
+
+    use super::*;
+
+    #[test]
+    fn position_packets_include_velocity() {
+        let entity = ManagedEntity {
+            key: "zombie".to_string(),
+            entity_id: 7,
+            uuid: uuid::Uuid::new_v4(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id: 1,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 1.0,
+                y: 64.0,
+                z: 2.0,
+                yaw: 90.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Zombie".to_string(),
+            display_name: String::new(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: String::new(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        };
+
+        let packets = entity
+            .position_packets_with_velocity(0.12, 0.0, -0.04)
+            .unwrap();
+        let mut payload = packets[0].clone();
+        let mut reader = qexed_packet::PacketReader::new(&mut payload);
+        let mut packet_id = VarInt::default();
+        packet_id.deserialize(&mut reader).unwrap();
+        let mut sync = EntityPositionSync::default();
+        sync.deserialize(&mut reader).unwrap();
+
+        assert_eq!(packet_id.0, EntityPositionSync::ID);
+        assert_eq!(sync.velocity_x, 0.12);
+        assert_eq!(sync.velocity_y, 0.0);
+        assert_eq!(sync.velocity_z, -0.04);
+    }
 }

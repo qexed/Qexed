@@ -1165,8 +1165,8 @@ where
                         continue;
                     }
                     if !survival.is_dead() {
+                        let hand = npc_interact_hand(&interact);
                         let plugin_outcome = {
-                            let hand = npc_interact_hand(&interact);
                             let viewer_position = position;
                             handle_plugin_npc_interact(
                                 sink,
@@ -1195,29 +1195,33 @@ where
                             )
                             .await?
                         };
-                        let outcome = if plugin_outcome.handled {
-                            lobby::LobbyInteractionOutcome::default()
-                        } else {
-                            let proxy_context = lobby::ProxyConnectContext {
-                                server_config: &config.server,
-                                plugins,
+                        let mut config_outcome = NpcConfigActionOutcome::default();
+                        if !plugin_outcome.handled {
+                            config_outcome = run_config_npc_action(
+                                sink,
+                                config,
+                                entities,
+                                interact.entity_id.0,
+                                hand.action,
+                                &menus,
                                 players,
-                                actor: profile.uuid,
-                            };
-                            lobby
-                                .handle_entity_interact(
-                                    sink,
-                                    entities,
-                                    interact,
-                                    &lobby_status,
-                                    Some(&proxy_context),
-                                )
-                                .await?
-                        };
-                        if outcome.opened_menu {
-                            lobby_menu_open = true;
+                                &mut players_hidden,
+                                &mut visible_player_entities,
+                                profile.uuid,
+                                &play_dimension,
+                                position,
+                                config.server.entity_rendering.player_distance,
+                                Some(&config.server),
+                                plugins,
+                                &lobby,
+                                &lobby_status,
+                            )
+                            .await?;
                         }
-                        if plugin_outcome.handled || outcome.handled {
+                        if config_outcome.opened_menu {
+                            active_config_menu = config_outcome.opened_menu_id;
+                        }
+                        if plugin_outcome.handled || config_outcome.handled {
                             pending_dig = None;
                             sink.flush().await?;
                         }
@@ -1268,6 +1272,34 @@ where
                         if plugin_outcome.handled {
                             pending_dig = None;
                             sink.flush().await?;
+                        } else {
+                            let config_outcome = run_config_npc_action(
+                                sink,
+                                config,
+                                entities,
+                                attack.entity_id.0,
+                                "attack",
+                                &menus,
+                                players,
+                                &mut players_hidden,
+                                &mut visible_player_entities,
+                                profile.uuid,
+                                &play_dimension,
+                                position,
+                                config.server.entity_rendering.player_distance,
+                                Some(&config.server),
+                                plugins,
+                                &lobby,
+                                &lobby_status,
+                            )
+                            .await?;
+                            if config_outcome.opened_menu {
+                                active_config_menu = config_outcome.opened_menu_id;
+                            }
+                            if config_outcome.handled {
+                                pending_dig = None;
+                                sink.flush().await?;
+                            }
                         }
                     }
                     if survival.is_dead() {
@@ -2711,6 +2743,83 @@ struct MenuActionOutcome {
     opened_menu_id: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct NpcConfigActionOutcome {
+    handled: bool,
+    opened_menu: bool,
+    opened_menu_id: Option<String>,
+}
+
+async fn run_config_npc_action<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    config: &crate::config::RuntimeConfig,
+    entities: &crate::entities::EntityManager,
+    entity_id: i32,
+    action_name: &str,
+    menus: &menus::MenuRuntime,
+    players: &PlayerManager,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    actor: uuid::Uuid,
+    dimension: &str,
+    viewer_position: EntityPosition,
+    render_distance: f64,
+    server_config: Option<&qexed_config::app::qexed::server::Server>,
+    plugins: &crate::plugins::PluginManager,
+    lobby: &lobby::LobbyRuntime,
+    lobby_status: &lobby::LobbyStatusSnapshot,
+) -> Result<NpcConfigActionOutcome>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Some(entity) = entities.entity_by_runtime_id(entity_id) else {
+        return Ok(NpcConfigActionOutcome::default());
+    };
+    if entity.kind != crate::entities::ManagedEntityKind::Npc {
+        return Ok(NpcConfigActionOutcome::default());
+    }
+    let Some(npc) = config
+        .npcs
+        .list
+        .iter()
+        .find(|npc| npc.id.trim() == entity.key)
+    else {
+        return Ok(NpcConfigActionOutcome::default());
+    };
+    let action = match action_name {
+        "interact" => npc.actions.main_hand.clone(),
+        "interact_off_hand" => npc.actions.off_hand.clone(),
+        "attack" => npc.actions.attack.clone(),
+        _ => qexed_config::app::qexed::server::MenuAction::default(),
+    };
+    if action.kind == qexed_config::app::qexed::server::MenuActionKind::None {
+        return Ok(NpcConfigActionOutcome::default());
+    }
+
+    let outcome = run_menu_action(
+        sink,
+        menus,
+        players,
+        players_hidden,
+        visible_player_entities,
+        actor,
+        dimension,
+        viewer_position,
+        render_distance,
+        server_config,
+        plugins,
+        lobby,
+        lobby_status,
+        action,
+    )
+    .await?;
+    Ok(NpcConfigActionOutcome {
+        handled: true,
+        opened_menu: outcome.opened_menu,
+        opened_menu_id: outcome.opened_menu_id,
+    })
+}
+
 async fn run_menu_action<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     menus: &menus::MenuRuntime,
@@ -2744,7 +2853,7 @@ where
             if target.is_empty() {
                 return Ok(MenuActionOutcome::default());
             }
-            if lobby.enabled() {
+            if lobby.enabled() && lobby.has_server(target) {
                 let proxy_context = server_config.map(|server_config| lobby::ProxyConnectContext {
                     server_config,
                     plugins,

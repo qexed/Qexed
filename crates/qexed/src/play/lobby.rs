@@ -16,7 +16,7 @@ use qexed_protocol::{
         system_chat::SystemChat,
         transfer::Transfer,
     },
-    to_server::play::{container_click::ContainerClick, interact::Interact},
+    to_server::play::container_click::ContainerClick,
     types::{ComponentsToAdd, Slot, minecraft},
 };
 
@@ -35,14 +35,7 @@ pub(super) const MENU_WINDOW_ID: i32 = LOBBY_MENU_WINDOW_ID;
 #[derive(Debug, Clone)]
 pub(super) struct LobbyRuntime {
     config: Lobby,
-    npc_actions: HashMap<String, LobbyAction>,
     servers: HashMap<String, LobbyServer>,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(super) struct LobbyInteractionOutcome {
-    pub handled: bool,
-    pub opened_menu: bool,
 }
 
 pub(super) struct ProxyConnectContext<'a> {
@@ -56,12 +49,6 @@ impl LobbyRuntime {
     pub(super) fn new(config: &Lobby) -> Self {
         Self {
             config: config.clone(),
-            npc_actions: config
-                .npc_actions
-                .iter()
-                .filter(|action| !action.entity.trim().is_empty())
-                .map(|action| (action.entity.trim().to_string(), action.action.clone()))
-                .collect(),
             servers: config
                 .servers
                 .iter()
@@ -73,6 +60,10 @@ impl LobbyRuntime {
 
     pub(super) fn enabled(&self) -> bool {
         self.config.enable
+    }
+
+    pub(super) fn has_server(&self, server_id: &str) -> bool {
+        self.servers.contains_key(server_id.trim())
     }
 
     pub(super) fn protect_world(&self) -> bool {
@@ -378,34 +369,6 @@ impl LobbyRuntime {
         self.run_action(sink, &item.action, status, proxy_context)
             .await?;
         Ok(true)
-    }
-
-    pub(super) async fn handle_entity_interact<W>(
-        &self,
-        sink: &mut qexed_tcp_connect::PacketSink<W>,
-        entities: &crate::entities::EntityManager,
-        interact: Interact,
-        status: &LobbyStatusSnapshot,
-        proxy_context: Option<&ProxyConnectContext<'_>>,
-    ) -> Result<LobbyInteractionOutcome>
-    where
-        W: tokio::io::AsyncWrite + Unpin,
-    {
-        if !self.enabled() || !is_primary_interact(&interact) {
-            return Ok(LobbyInteractionOutcome::default());
-        }
-
-        let Some(entity) = entities.entity_by_runtime_id(interact.entity_id.0) else {
-            return Ok(LobbyInteractionOutcome::default());
-        };
-        let Some(action) = self.npc_actions.get(&entity.key) else {
-            return Ok(LobbyInteractionOutcome::default());
-        };
-        self.run_action(sink, action, status, proxy_context).await?;
-        Ok(LobbyInteractionOutcome {
-            handled: true,
-            opened_menu: action_opens_menu(action),
-        })
     }
 
     async fn run_action<W>(
@@ -908,14 +871,6 @@ fn menu_type_for_rows(rows: u8) -> i32 {
     (GENERIC_9X1_MENU_TYPE + i32::from(rows.saturating_sub(1))).min(GENERIC_9X6_MENU_TYPE)
 }
 
-pub(super) fn is_primary_interact(interact: &Interact) -> bool {
-    interact.hand.0 == 0
-}
-
-fn action_opens_menu(action: &LobbyAction) -> bool {
-    action.kind == LobbyActionKind::OpenMenu
-}
-
 fn display_server_name(server: &LobbyServer) -> Option<&str> {
     let name = server.name.trim();
     (!name.is_empty()).then_some(name)
@@ -1069,25 +1024,6 @@ mod tests {
             LobbyActionKind::Transfer
         );
         assert!(lobby.menu_item_for_slot(14).is_none());
-    }
-
-    #[test]
-    fn only_open_menu_actions_mark_lobby_menu_open() {
-        assert!(super::action_opens_menu(&LobbyAction {
-            kind: LobbyActionKind::OpenMenu,
-            target: String::new(),
-            message: String::new(),
-        }));
-        assert!(!super::action_opens_menu(&LobbyAction {
-            kind: LobbyActionKind::Message,
-            target: String::new(),
-            message: String::new(),
-        }));
-        assert!(!super::action_opens_menu(&LobbyAction {
-            kind: LobbyActionKind::Transfer,
-            target: "survival".to_string(),
-            message: String::new(),
-        }));
     }
 
     #[test]

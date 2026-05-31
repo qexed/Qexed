@@ -1398,6 +1398,7 @@ impl WorldManager {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) {
+        self.invalidate_runtime_caches();
         if !self.precompiled_chunk_packets_enabled() {
             return;
         }
@@ -1837,12 +1838,16 @@ impl WorldManager {
             && self.active_sessions.load(Ordering::Acquire) > 0
     }
 
+    fn invalidate_runtime_caches(&self) {
+        self.cache_epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
     fn end_session(&self) {
         if self.active_sessions.fetch_sub(1, Ordering::AcqRel) != 1 {
             return;
         }
 
-        self.cache_epoch.fetch_add(1, Ordering::AcqRel);
+        self.invalidate_runtime_caches();
         let cleared = if self.precompiled_chunk_packets_enabled() {
             0
         } else {

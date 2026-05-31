@@ -46,6 +46,13 @@ pub extern "C" fn qexed_plugin_custom_entities(_ptr: i32, _len: i32) -> i64 {
             entity_type: "minecraft:villager".to_string(),
             display_name: "{\"text\":\"Patrol Guard\",\"color\":\"gold\"}".to_string(),
             ai: "plugin:demo_patrol".to_string(),
+            ai_params: [
+                ("iq".to_string(), serde_json::json!(80)),
+                ("patrol_min_x".to_string(), serde_json::json!(4.0)),
+                ("patrol_max_x".to_string(), serde_json::json!(12.0)),
+            ]
+            .into_iter()
+            .collect(),
         }],
     })
 }
@@ -64,9 +71,40 @@ pub extern "C" fn qexed_plugin_entity_ai_tick(ptr: i32, len: i32) -> i64 {
         return qexed_plugin_sdk::response_ptr_len(&EntityAiTickResponse::default());
     }
 
-    let direction = if payload.entity.position.x > 12.0 {
+    let patrol_min_x = payload
+        .entity
+        .ai_params
+        .get("patrol_min_x")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(4.0);
+    let patrol_max_x = payload
+        .entity
+        .ai_params
+        .get("patrol_max_x")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(12.0);
+    let speed = payload
+        .entity
+        .ai_params
+        .get("speed")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.05)
+        .clamp(0.0, 0.5);
+    if let Some(iq) = payload
+        .entity
+        .ai_params
+        .get("iq")
+        .and_then(serde_json::Value::as_i64)
+    {
+        qexed_plugin_sdk::log(&format!(
+            "demo patrol ai params: key={}, iq={iq}",
+            payload.entity.key
+        ));
+    }
+
+    let direction = if payload.entity.position.x > patrol_max_x {
         -1.0
-    } else if payload.entity.position.x < 4.0 {
+    } else if payload.entity.position.x < patrol_min_x {
         1.0
     } else if payload.entity.entity_id % 2 == 0 {
         1.0
@@ -76,7 +114,7 @@ pub extern "C" fn qexed_plugin_entity_ai_tick(ptr: i32, len: i32) -> i64 {
 
     qexed_plugin_sdk::response_ptr_len(&EntityAiTickResponse {
         operations: vec![EntityAiOperation::MoveDelta {
-            x: 0.05 * direction,
+            x: speed * direction,
             y: 0.0,
             z: 0.0,
             yaw: Some(if direction > 0.0 { -90.0 } else { 90.0 }),

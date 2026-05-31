@@ -7,6 +7,7 @@ use qexed_config::{
         qexed_lan_discovery::QexedLanDiscovery,
         qexed_lobby::QexedLobby,
         qexed_menus::QexedMenus,
+        qexed_npc::QexedNpc,
         qexed_permissions::QexedPermissions,
         qexed_placeholders::QexedPlaceholders,
         qexed_player_audit::QexedPlayerAudit,
@@ -24,6 +25,7 @@ use qexed_config::{
 pub struct RuntimeConfig {
     pub qexed: Qexed,
     pub world: World,
+    pub npcs: qexed_config::app::qexed::server::Npcs,
 }
 
 impl RuntimeConfig {
@@ -50,8 +52,23 @@ impl RuntimeConfig {
             QexedPermissions::load_or_create_default(language.clone(), None, None)?.permissions;
         qexed.server.resource_pack =
             QexedResourcePack::load_or_create_default(language.clone(), None, None)?.resource_pack;
-        qexed.server.entities =
-            QexedEntity::load_or_create_default(language.clone(), None, None)?.entities;
+        qexed.server.entities = QexedEntity::load_or_create_default(language.clone(), None, None)?
+            .entities
+            .into();
+        let npcs = QexedNpc::load_or_create_default(language.clone(), None, None)?.npcs;
+        if npcs.enable {
+            qexed.server.entities.enable = true;
+            qexed
+                .server
+                .entities
+                .list
+                .retain(|entity| entity.kind != qexed_config::app::qexed::server::EntityKind::Npc);
+            qexed
+                .server
+                .entities
+                .list
+                .extend(npcs.list.iter().cloned().map(npc_to_entity));
+        }
         qexed.server.entity_rendering =
             QexedEntityRendering::load_or_create_default(language.clone(), None, None)?
                 .entity_rendering;
@@ -65,15 +82,41 @@ impl RuntimeConfig {
             QexedLobby::load_or_create_default(language.clone(), None, None)?.lobby;
         let world = World::load_or_create_default(language, None, None)?;
         qexed.server.world = world.clone();
-        Ok(Self { qexed, world })
+        Ok(Self { qexed, world, npcs })
+    }
+}
+
+fn npc_to_entity(
+    npc: qexed_config::app::qexed::server::Npc,
+) -> qexed_config::app::qexed::server::Entity {
+    qexed_config::app::qexed::server::Entity {
+        id: npc.id,
+        kind: qexed_config::app::qexed::server::EntityKind::Npc,
+        name: npc.name,
+        display_name: npc.display_name,
+        skin_textures: npc.skin_textures,
+        skin_signature: npc.skin_signature,
+        skin_player_id: npc.skin_player_id,
+        x: npc.x,
+        y: npc.y,
+        z: npc.z,
+        yaw: npc.yaw,
+        pitch: npc.pitch,
+        on_ground: npc.on_ground,
+        look_at_players: npc.look_at_players,
+        main_hand_event: npc.main_hand_event,
+        off_hand_event: npc.off_hand_event,
+        attack_event: npc.attack_event,
+        ..qexed_config::app::qexed::server::Entity::default()
     }
 }
 
 impl From<Qexed> for RuntimeConfig {
     fn from(mut qexed: Qexed) -> Self {
         let world = qexed.server.world.clone();
+        let npcs = qexed_config::app::qexed::server::Npcs::default();
         qexed.server.world = world.clone();
-        Self { qexed, world }
+        Self { qexed, world, npcs }
     }
 }
 

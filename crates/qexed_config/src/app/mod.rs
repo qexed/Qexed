@@ -6,6 +6,7 @@ pub mod qexed_ip_connection_speed_test;
 pub mod qexed_lan_discovery;
 pub mod qexed_lobby;
 pub mod qexed_menus;
+pub mod qexed_npc;
 pub mod qexed_permissions;
 pub mod qexed_placeholders;
 pub mod qexed_player_audit;

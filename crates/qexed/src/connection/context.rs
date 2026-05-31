@@ -1,4 +1,8 @@
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 use crate::auth::Authenticator;
 
@@ -52,8 +56,9 @@ impl ServerContext {
             &config.world.precompiled_chunks,
         ));
         world.ensure_configured_storage(&config.world)?;
-        plugins.set_pathfinding_service(std::sync::Arc::new(ServerPathfindingService {
-            world: std::sync::Arc::new(world.clone()),
+        plugins.set_pathfinding_service(Arc::new(ServerPathfindingService {
+            world: Arc::new(world.clone()),
+            cache: Mutex::new(PathfindingCache::default()),
         }));
         let player_data = crate::player_data::PlayerDataManager::from_config(
             config.world.path.clone(),
@@ -116,40 +121,163 @@ impl ServerContext {
 
 #[derive(Debug)]
 struct ServerPathfindingService {
-    world: std::sync::Arc<crate::world::WorldManager>,
+    world: Arc<crate::world::WorldManager>,
+    cache: Mutex<PathfindingCache>,
 }
 
 impl crate::plugins::host::PathfindingService for ServerPathfindingService {
     fn find_path(&self, query: &str) -> Option<String> {
-        let mut parts = query.split_whitespace();
-        let dimension = parts.next()?;
-        let start = qexed_packet::net_types::Position {
-            x: parts.next()?.parse().ok()?,
-            y: parts.next()?.parse().ok()?,
-            z: parts.next()?.parse().ok()?,
-        };
-        let goal = qexed_packet::net_types::Position {
-            x: parts.next()?.parse().ok()?,
-            y: parts.next()?.parse().ok()?,
-            z: parts.next()?.parse().ok()?,
-        };
-        let max_nodes = parts
-            .next()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(4096);
+        let query = ParsedPathQuery::parse(query)?;
+        let key = PathfindingCacheKey::new(self.world.cache_epoch(), &query);
+        let now = Instant::now();
+        if let Some(cached) = self
+            .cache
+            .lock()
+            .expect("pathfinding cache poisoned")
+            .get(&key, now)
+        {
+            return cached;
+        }
+
         let path = crate::play::pathfinding::find_path(crate::play::pathfinding::PathQuery {
             world: &self.world,
-            dimension,
-            start,
-            goal,
-            max_nodes,
-        })?;
-        Some(
+            dimension: &query.dimension,
+            start: query.start,
+            goal: query.goal,
+            max_nodes: query.max_nodes,
+        })
+        .map(|path| {
             path.into_iter()
                 .map(|position| format!("{},{},{}", position.x, position.y, position.z))
                 .collect::<Vec<_>>()
-                .join(";"),
-        )
+                .join(";")
+        });
+        self.cache
+            .lock()
+            .expect("pathfinding cache poisoned")
+            .insert(key, path.clone(), Instant::now());
+        path
+    }
+}
+
+const PATHFINDING_CACHE_TTL: Duration = Duration::from_millis(1000);
+const PATHFINDING_CACHE_LIMIT: usize = 512;
+
+#[derive(Debug, Clone)]
+struct ParsedPathQuery {
+    dimension: String,
+    start: qexed_packet::net_types::Position,
+    goal: qexed_packet::net_types::Position,
+    max_nodes: usize,
+}
+
+impl ParsedPathQuery {
+    fn parse(query: &str) -> Option<Self> {
+        let mut parts = query.split_whitespace();
+        Some(Self {
+            dimension: parts.next()?.to_string(),
+            start: qexed_packet::net_types::Position {
+                x: parts.next()?.parse().ok()?,
+                y: parts.next()?.parse().ok()?,
+                z: parts.next()?.parse().ok()?,
+            },
+            goal: qexed_packet::net_types::Position {
+                x: parts.next()?.parse().ok()?,
+                y: parts.next()?.parse().ok()?,
+                z: parts.next()?.parse().ok()?,
+            },
+            max_nodes: parts
+                .next()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(4096),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct PathfindingCacheKey {
+    epoch: u64,
+    dimension: String,
+    start_x: i32,
+    start_y: i32,
+    start_z: i32,
+    goal_x: i32,
+    goal_y: i32,
+    goal_z: i32,
+    max_nodes: usize,
+}
+
+impl PathfindingCacheKey {
+    fn new(epoch: u64, query: &ParsedPathQuery) -> Self {
+        Self {
+            epoch,
+            dimension: query.dimension.clone(),
+            start_x: query.start.x,
+            start_y: query.start.y,
+            start_z: query.start.z,
+            goal_x: query.goal.x,
+            goal_y: query.goal.y,
+            goal_z: query.goal.z,
+            max_nodes: query.max_nodes,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedPath {
+    value: Option<String>,
+    cached_at: Instant,
+}
+
+#[derive(Debug, Default)]
+struct PathfindingCache {
+    entries: HashMap<PathfindingCacheKey, CachedPath>,
+    order: VecDeque<PathfindingCacheKey>,
+}
+
+impl PathfindingCache {
+    fn get(&mut self, key: &PathfindingCacheKey, now: Instant) -> Option<Option<String>> {
+        match self.entries.get(key) {
+            Some(entry) if now.duration_since(entry.cached_at) <= PATHFINDING_CACHE_TTL => {
+                let value = entry.value.clone();
+                self.touch(key.clone());
+                Some(value)
+            }
+            Some(_) => {
+                self.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn insert(&mut self, key: PathfindingCacheKey, value: Option<String>, now: Instant) {
+        self.entries.insert(
+            key.clone(),
+            CachedPath {
+                value,
+                cached_at: now,
+            },
+        );
+        self.touch(key.clone());
+        while self.entries.len() > PATHFINDING_CACHE_LIMIT {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if oldest != key {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+
+    fn remove(&mut self, key: &PathfindingCacheKey) {
+        self.entries.remove(key);
+        self.order.retain(|existing| existing != key);
+    }
+
+    fn touch(&mut self, key: PathfindingCacheKey) {
+        self.order.retain(|existing| existing != &key);
+        self.order.push_back(key);
     }
 }
 
@@ -199,6 +327,8 @@ fn apply_plugin_npc_mutations(
                     skin_signature: npc.skin_signature,
                     data: 0,
                     ai: String::new(),
+                    ai_params: Default::default(),
+                    auto_jump: false,
                     spawn_rule: String::new(),
                     custom_type: String::new(),
                     look_at_players: npc.look_at_players,

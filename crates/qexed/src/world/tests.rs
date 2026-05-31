@@ -886,6 +886,28 @@ fn block_change_invalidates_precompiled_chunk_packet_and_block_state_cache() {
 }
 
 #[test]
+fn block_change_advances_runtime_cache_epoch_without_precompiled_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::with_generator(
+        dir.path(),
+        WorldLightMode::Static,
+        WorldLightAlgorithm::Fast,
+        None,
+        false,
+        Arc::new(generator::EmptyWorldGenerator),
+    );
+    let epoch = manager.cache_epoch();
+
+    manager.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 1, y: 64, z: 0 },
+        1,
+    );
+
+    assert!(manager.cache_epoch() > epoch);
+}
+
+#[test]
 fn dirty_precompiled_chunk_is_not_recached_before_persist_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::with_generator(

@@ -176,6 +176,8 @@ fn runtime_entities_can_spawn_move_and_remove() {
                 skin_signature: String::new(),
                 data: 0,
                 ai: String::new(),
+                ai_params: Default::default(),
+                auto_jump: false,
                 spawn_rule: String::new(),
                 custom_type: String::new(),
                 look_at_players: false,
@@ -238,6 +240,8 @@ fn entity_view_simplifies_stacked_same_type_entities() {
                 skin_signature: String::new(),
                 data: 0,
                 ai: String::new(),
+                ai_params: Default::default(),
+                auto_jump: false,
                 spawn_rule: String::new(),
                 custom_type: String::new(),
                 look_at_players: false,
@@ -448,6 +452,95 @@ fn spawn_rules_apply_rule_conditions_and_position_checks() {
 }
 
 #[test]
+fn spawn_rules_merge_custom_entity_ai_params() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    manager.register_custom_entities([crate::plugins::CustomEntityDefinition {
+        id: "demo:patrol_guard".to_string(),
+        entity_type: "minecraft:villager".to_string(),
+        display_name: "Guard".to_string(),
+        ai: "plugin:demo_patrol".to_string(),
+        ai_params: [
+            ("iq".to_string(), serde_json::json!(100)),
+            ("patrol_min_x".to_string(), serde_json::json!(4.0)),
+        ]
+        .into_iter()
+        .collect(),
+    }]);
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Tester".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let spawning = qexed_config::app::qexed::server::EntitySpawning {
+        enable: true,
+        tick_interval_ms: 50,
+        ai_tick_interval_ms: 50,
+        global_cap: 1,
+        per_dimension_cap: 1,
+        per_type_cap: 1,
+        max_spawn_per_tick: 1,
+        player_activation_range: 16.0,
+        rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
+            id: "guards".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            entity_type: "demo:patrol_guard".to_string(),
+            cap: 1,
+            require_ground: false,
+            require_air: false,
+            ai_params: [("iq".to_string(), serde_json::json!(114514))]
+                .into_iter()
+                .collect(),
+            min_x: 0.0,
+            max_x: 0.0,
+            min_y: 64.0,
+            max_y: 64.0,
+            min_z: 0.0,
+            max_z: 0.0,
+            ..Default::default()
+        }],
+    };
+
+    let world = empty_world();
+    let spawned = manager
+        .spawn_from_rules(
+            &players,
+            &world,
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            &spawning,
+            "minecraft:overworld",
+        )
+        .unwrap();
+
+    assert_eq!(spawned, 1);
+    let entity = manager.list_for_dimension("minecraft:overworld").remove(0);
+    assert_eq!(entity.entity_type, "minecraft:villager");
+    assert_eq!(entity.custom_type, "demo:patrol_guard");
+    assert_eq!(entity.ai, "plugin:demo_patrol");
+    assert_eq!(entity.ai_params["iq"], 114514);
+    assert_eq!(entity.ai_params["patrol_min_x"], 4.0);
+}
+
+#[test]
 fn follow_nearest_player_ai_moves_entity_toward_player() {
     let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
     let manager = EntityManager::from_config(
@@ -501,6 +594,8 @@ fn follow_nearest_player_ai_moves_entity_toward_player() {
             skin_signature: String::new(),
             data: 0,
             ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
             spawn_rule: "test".to_string(),
             custom_type: String::new(),
             look_at_players: false,
@@ -523,6 +618,99 @@ fn follow_nearest_player_ai_moves_entity_toward_player() {
     let entity = manager.entity_by_key("follower").unwrap();
     assert!(entity.position.x > 0.0);
     assert_eq!(entity.position.z, 0.0);
+}
+
+#[test]
+fn follow_nearest_player_ai_accelerates_smoothly() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Target".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 10.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    for x in 0..=3 {
+        world.place_block(
+            "minecraft:overworld",
+            qexed_packet::net_types::Position { x, y: 63, z: 0 },
+            stone_block_state(),
+        );
+    }
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "smooth_follower".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Smooth".to_string(),
+            display_name: "Smooth".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+    let first = manager.entity_by_key("smooth_follower").unwrap().position.x;
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+    let second = manager.entity_by_key("smooth_follower").unwrap().position.x;
+
+    assert!(first > 0.0);
+    assert!(second - first > first);
 }
 
 #[test]
@@ -586,6 +774,8 @@ fn entity_ai_applies_gravity_and_horizontal_collision() {
             skin_signature: String::new(),
             data: 0,
             ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
             spawn_rule: "test".to_string(),
             custom_type: String::new(),
             look_at_players: false,
@@ -613,6 +803,95 @@ fn entity_ai_applies_gravity_and_horizontal_collision() {
 }
 
 #[test]
+fn entity_ai_auto_jump_starts_jump_when_horizontal_step_is_blocked() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Target".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 4.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    for x in -1..=4 {
+        world.place_block(
+            "minecraft:overworld",
+            qexed_packet::net_types::Position { x, y: 63, z: 0 },
+            stone_block_state(),
+        );
+    }
+    world.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 1, y: 64, z: 0 },
+        stone_block_state(),
+    );
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "jumper".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.65,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Jumper".to_string(),
+            display_name: "Jumper".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: true,
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    for _ in 0..5 {
+        manager
+            .tick_ai(
+                &players,
+                &world,
+                &crate::plugins::PluginManager::empty_for_tests(),
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                50,
+            )
+            .unwrap();
+    }
+
+    let entity = manager.entity_by_key("jumper").unwrap();
+    assert!(entity.position.y > 64.0);
+    assert!(!entity.position.on_ground);
+}
+
+#[test]
 fn npc_spawn_packets_include_display_name_in_player_info() {
     let entity = ManagedEntity {
         key: "shop".to_string(),
@@ -636,6 +915,8 @@ fn npc_spawn_packets_include_display_name_in_player_info() {
         skin_signature: String::new(),
         data: 0,
         ai: String::new(),
+        ai_params: Default::default(),
+        auto_jump: false,
         spawn_rule: String::new(),
         custom_type: String::new(),
         look_at_players: true,
@@ -686,6 +967,8 @@ fn npc_spawn_packets_parse_json_display_name_component() {
         skin_signature: String::new(),
         data: 0,
         ai: String::new(),
+        ai_params: Default::default(),
+        auto_jump: false,
         spawn_rule: String::new(),
         custom_type: String::new(),
         look_at_players: true,
@@ -726,6 +1009,8 @@ fn hologram_spawn_packets_parse_json_display_name_component() {
         skin_signature: String::new(),
         data: 0,
         ai: String::new(),
+        ai_params: Default::default(),
+        auto_jump: false,
         spawn_rule: String::new(),
         custom_type: String::new(),
         look_at_players: false,
@@ -774,6 +1059,8 @@ fn npc_spawn_packets_include_skin_textures_in_player_info() {
         skin_signature: "signed-by-mojang".to_string(),
         data: 0,
         ai: String::new(),
+        ai_params: Default::default(),
+        auto_jump: false,
         spawn_rule: String::new(),
         custom_type: String::new(),
         look_at_players: false,

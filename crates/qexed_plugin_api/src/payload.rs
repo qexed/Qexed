@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,6 +327,8 @@ pub struct CustomEntityDefinition {
     pub display_name: String,
     #[serde(default)]
     pub ai: String,
+    #[serde(default)]
+    pub ai_params: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -352,6 +356,8 @@ pub struct EntityAiEntityPayload {
     pub ai: String,
     #[serde(default)]
     pub spawn_rule: String,
+    #[serde(default)]
+    pub ai_params: BTreeMap<String, serde_json::Value>,
     pub dimension: String,
     pub position: PlayerPositionPayload,
 }

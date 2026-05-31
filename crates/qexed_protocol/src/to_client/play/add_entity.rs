@@ -179,14 +179,24 @@ pub struct EntityPositionSync {
 
 impl EntityPositionSync {
     pub fn from_position(entity_id: i32, position: EntityPosition) -> Self {
+        Self::from_position_with_velocity(entity_id, position, 0.0, 0.0, 0.0)
+    }
+
+    pub fn from_position_with_velocity(
+        entity_id: i32,
+        position: EntityPosition,
+        velocity_x: f64,
+        velocity_y: f64,
+        velocity_z: f64,
+    ) -> Self {
         Self {
             entity_id: VarInt(entity_id),
             x: position.x,
             y: position.y,
             z: position.z,
-            velocity_x: 0.0,
-            velocity_y: 0.0,
-            velocity_z: 0.0,
+            velocity_x,
+            velocity_y,
+            velocity_z,
             yaw: position.yaw,
             pitch: position.pitch,
             on_ground: position.on_ground,
@@ -385,7 +395,7 @@ fn unpack_lp_value(value: u64) -> f64 {
 mod tests {
     use qexed_packet::Packet;
 
-    use super::{AddEntity, EntityPosition, TeleportEntity};
+    use super::{AddEntity, EntityPosition, EntityPositionSync, TeleportEntity};
 
     #[test]
     fn player_add_entity_roundtrips() {
@@ -434,6 +444,34 @@ mod tests {
         let mut bytes = buf.freeze();
         let mut reader = qexed_packet::PacketReader::new(&mut bytes);
         let mut decoded = TeleportEntity::default();
+        decoded.deserialize(&mut reader).unwrap();
+
+        assert_eq!(decoded, packet);
+    }
+
+    #[test]
+    fn entity_position_sync_roundtrips_velocity() {
+        let packet = EntityPositionSync::from_position_with_velocity(
+            7,
+            EntityPosition {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                yaw: 90.0,
+                pitch: 45.0,
+                on_ground: true,
+            },
+            0.12,
+            -0.08,
+            0.04,
+        );
+        let mut buf = bytes::BytesMut::new();
+        let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+        packet.serialize(&mut writer).unwrap();
+
+        let mut bytes = buf.freeze();
+        let mut reader = qexed_packet::PacketReader::new(&mut bytes);
+        let mut decoded = EntityPositionSync::default();
         decoded.deserialize(&mut reader).unwrap();
 
         assert_eq!(decoded, packet);

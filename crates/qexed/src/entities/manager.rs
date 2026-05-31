@@ -24,6 +24,18 @@ const ENTITY_PHYSICS_HEIGHT: f64 = 1.95;
 const ENTITY_GRAVITY_PER_TICK: f64 = 0.08;
 const ENTITY_TERMINAL_VELOCITY: f64 = -3.92;
 const ENTITY_GROUND_SNAP: f64 = 0.05;
+const ENTITY_AUTO_JUMP_VELOCITY: f64 = 0.42;
+const ENTITY_HORIZONTAL_ACCELERATION: f64 = 0.12;
+const ENTITY_HORIZONTAL_FRICTION: f64 = 0.72;
+const ENTITY_MAX_HORIZONTAL_SPEED: f64 = 0.28;
+const ENTITY_MAX_YAW_TURN_PER_TICK: f32 = 18.0;
+const ENTITY_MAX_PITCH_TURN_PER_TICK: f32 = 12.0;
+const COLLISION_BLOCK_CACHE_LIMIT: usize = 16_384;
+const COLLISION_AABB_CACHE_LIMIT: usize = 8_192;
+const ENTITY_TARGET_RESELECT_INTERVAL: Duration = Duration::from_millis(750);
+const ENTITY_TARGET_RESELECT_JITTER_MS: u64 = 350;
+const ENTITY_TARGET_SWITCH_ADVANTAGE: f64 = 0.65;
+const ENTITY_TARGET_RESELECTS_PER_TICK: usize = 16;
 
 #[derive(Debug)]
 pub struct EntityManager {
@@ -36,6 +48,8 @@ pub struct EntityManager {
     last_ai_tick: Mutex<Option<Instant>>,
     last_rule_spawn_tick: Mutex<HashMap<String, Instant>>,
     entity_motion: Mutex<HashMap<String, EntityMotion>>,
+    entity_targets: Mutex<HashMap<String, EntityTargetMemory>>,
+    collision_cache: Mutex<CollisionCache>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,11 +57,20 @@ struct CustomEntityRegistration {
     entity_type: String,
     display_name: String,
     ai: String,
+    ai_params: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct EntityMotion {
+    velocity_x: f64,
     velocity_y: f64,
+    velocity_z: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EntityTargetMemory {
+    player_id: uuid::Uuid,
+    selected_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -55,6 +78,47 @@ struct EntityMovement {
     x: f64,
     y: f64,
     z: f64,
+}
+
+#[derive(Debug)]
+struct EntityAiTickUpdate {
+    key: String,
+    previous: EntityPosition,
+    next: EntityPosition,
+    motion: Option<EntityMotion>,
+}
+
+#[derive(Debug)]
+struct EntityMotionTickUpdate {
+    key: String,
+    previous: EntityPosition,
+    next: EntityMotion,
+}
+
+#[derive(Debug, Default)]
+struct CollisionCache {
+    world_epoch: u64,
+    blocks: HashMap<CollisionBlockKey, bool>,
+    aabbs: HashMap<CollisionAabbKey, bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CollisionBlockKey {
+    dimension: String,
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CollisionAabbKey {
+    dimension: String,
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
+    max_y: i32,
+    min_z: i32,
+    max_z: i32,
 }
 
 impl EntityManager {
@@ -72,6 +136,8 @@ impl EntityManager {
             last_ai_tick: Mutex::new(None),
             last_rule_spawn_tick: Mutex::new(HashMap::new()),
             entity_motion: Mutex::new(HashMap::new()),
+            entity_targets: Mutex::new(HashMap::new()),
+            collision_cache: Mutex::new(CollisionCache::default()),
         };
 
         if !config.enable {
@@ -334,7 +400,8 @@ impl EntityManager {
                     continue;
                 };
 
-                let (yaw, pitch) = look_rotation(entity.position, target.position);
+                let (target_yaw, target_pitch) = look_rotation(entity.position, target.position);
+                let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, 50);
                 if (entity.position.yaw - yaw).abs() < 0.5
                     && (entity.position.pitch - pitch).abs() < 0.5
                 {
@@ -347,7 +414,18 @@ impl EntityManager {
         }
 
         for entity in updates {
-            let packets = entity.position_packets()?;
+            let motion = self
+                .entity_motion
+                .lock()
+                .expect("entity motion state poisoned")
+                .get(&entity.key)
+                .copied()
+                .unwrap_or_default();
+            let packets = entity.position_packets_with_velocity(
+                motion.velocity_x,
+                motion.velocity_y,
+                motion.velocity_z,
+            )?;
             for player in &viewers {
                 if player.dimension == entity.dimension
                     && within_render_distance(
@@ -471,6 +549,8 @@ impl EntityManager {
             skin_signature: request.skin_signature,
             data: request.data,
             ai: request.ai,
+            ai_params: request.ai_params,
+            auto_jump: request.auto_jump,
             spawn_rule: request.spawn_rule,
             custom_type: request.custom_type,
             look_at_players: request.look_at_players,
@@ -538,6 +618,10 @@ impl EntityManager {
             .lock()
             .expect("entity motion state poisoned")
             .remove(&entity.key);
+        self.entity_targets
+            .lock()
+            .expect("entity target state poisoned")
+            .remove(&entity.key);
         Ok(entity)
     }
 
@@ -597,6 +681,8 @@ impl EntityManager {
             skin_signature: config.skin_signature.clone(),
             data: config.data,
             ai: config.ai.clone(),
+            ai_params: config.ai_params.clone(),
+            auto_jump: config.auto_jump,
             spawn_rule: String::new(),
             custom_type: String::new(),
             look_at_players: config.look_at_players,
@@ -710,6 +796,7 @@ impl EntityManager {
                     entity_type: entity_type.to_string(),
                     display_name: definition.display_name,
                     ai: definition.ai,
+                    ai_params: definition.ai_params,
                 },
             );
         }
@@ -772,7 +859,7 @@ impl EntityManager {
                 continue;
             }
 
-            let Some(position) = spawn_position_for_rule(rule, dimension, world) else {
+            let Some(position) = self.spawn_position_for_rule(rule, dimension, world) else {
                 continue;
             };
 
@@ -810,31 +897,71 @@ impl EntityManager {
 
         let mut updates = Vec::new();
         let mut removes = Vec::new();
+        let mut tick_updates = Vec::new();
+        let mut motion_updates = Vec::new();
+        let now = Instant::now();
+        let snapshot = self
+            .entities
+            .lock()
+            .expect("entity manager poisoned")
+            .iter()
+            .filter(|entity| entity.kind == ManagedEntityKind::Entity)
+            .cloned()
+            .collect::<Vec<_>>();
         {
-            let mut entities = self.entities.lock().expect("entity manager poisoned");
-            for entity in entities.iter_mut() {
-                if entity.kind != ManagedEntityKind::Entity {
-                    continue;
-                }
-
+            let mut motion = self
+                .entity_motion
+                .lock()
+                .expect("entity motion state poisoned")
+                .clone();
+            let mut target_memory = self
+                .entity_targets
+                .lock()
+                .expect("entity target state poisoned")
+                .clone();
+            let mut collision_cache = std::mem::take(
+                &mut *self
+                    .collision_cache
+                    .lock()
+                    .expect("entity collision cache poisoned"),
+            );
+            collision_cache.sync_world_epoch(world.cache_epoch());
+            let mut target_reselects = 0usize;
+            for mut entity in snapshot {
                 let previous = entity.position;
                 let mut movement = EntityMovement::default();
                 let mut remove = false;
                 let ai = ai_kind(&entity.ai);
                 match ai {
-                    EntityAiKind::None => {}
+                    EntityAiKind::None => {
+                        target_memory.remove(&entity.key);
+                    }
                     EntityAiKind::RandomStroll => {
-                        movement = apply_random_stroll(entity, tick_ms);
+                        target_memory.remove(&entity.key);
+                        movement = apply_random_stroll(&mut entity, tick_ms);
                     }
                     EntityAiKind::LookAtPlayer => {
-                        apply_look_at_nearest_player(entity, &viewers, rendering.default_distance);
+                        target_memory.remove(&entity.key);
+                        apply_look_at_nearest_player(
+                            &mut entity,
+                            &viewers,
+                            rendering.default_distance,
+                        );
                     }
                     EntityAiKind::FollowNearestPlayer => {
-                        movement = apply_follow_nearest_player(entity, &viewers, tick_ms);
+                        movement = apply_follow_nearest_player(
+                            &mut entity,
+                            &viewers,
+                            tick_ms,
+                            &mut target_memory,
+                            &mut target_reselects,
+                            now,
+                        );
                     }
                     EntityAiKind::Plugin => {
+                        target_memory.remove(&entity.key);
                         for operation in plugins
-                            .handle_entity_ai_tick(entity_ai_query(entity, &viewers, tick_ms))
+                            .handle_entity_ai_tick(entity_ai_query(&entity, &viewers, tick_ms))
                         {
                             match operation {
                                 crate::plugins::EntityAiOperation::MoveDelta {
@@ -877,25 +1004,113 @@ impl EntityManager {
                     }
                 }
 
-                if !remove && should_apply_entity_physics(entity, ai) {
-                    let mut motion = self
-                        .entity_motion
-                        .lock()
-                        .expect("entity motion state poisoned");
-                    let motion = motion.entry(entity.key.clone()).or_default();
-                    apply_entity_physics(entity, world, motion, movement, tick_ms);
+                if remove {
+                    target_memory.remove(&entity.key);
+                    removes.push(entity.key.clone());
+                    continue;
                 }
 
-                if remove {
-                    removes.push(entity.key.clone());
-                } else if position_changed(previous, entity.position) {
-                    updates.push(entity.clone());
+                let next_motion = if should_apply_entity_physics(&entity, ai) {
+                    let motion = motion.entry(entity.key.clone()).or_default();
+                    apply_entity_physics(
+                        &mut entity,
+                        world,
+                        &mut collision_cache,
+                        motion,
+                        movement,
+                        tick_ms,
+                    );
+                    let next_motion = *motion;
+                    motion_updates.push(EntityMotionTickUpdate {
+                        key: entity.key.clone(),
+                        previous,
+                        next: next_motion,
+                    });
+                    Some(next_motion)
+                } else {
+                    None
+                };
+
+                if position_changed(previous, entity.position) {
+                    tick_updates.push(EntityAiTickUpdate {
+                        key: entity.key.clone(),
+                        previous,
+                        next: entity.position,
+                        motion: next_motion,
+                    });
+                }
+            }
+            *self
+                .collision_cache
+                .lock()
+                .expect("entity collision cache poisoned") = collision_cache;
+            *self
+                .entity_targets
+                .lock()
+                .expect("entity target state poisoned") = target_memory;
+        }
+
+        if !tick_updates.is_empty() {
+            let mut entities = self.entities.lock().expect("entity manager poisoned");
+            let mut motion = self
+                .entity_motion
+                .lock()
+                .expect("entity motion state poisoned");
+            for tick_update in tick_updates {
+                let Some(entity) = entities
+                    .iter_mut()
+                    .find(|entity| entity.key == tick_update.key)
+                else {
+                    continue;
+                };
+                if entity.kind != ManagedEntityKind::Entity
+                    || position_changed(entity.position, tick_update.previous)
+                {
+                    continue;
+                }
+                entity.position = tick_update.next;
+                if let Some(next_motion) = tick_update.motion {
+                    motion.insert(entity.key.clone(), next_motion);
+                }
+                updates.push(entity.clone());
+            }
+        }
+        if !motion_updates.is_empty() {
+            let entities = self.entities.lock().expect("entity manager poisoned");
+            let mut motion = self
+                .entity_motion
+                .lock()
+                .expect("entity motion state poisoned");
+            for motion_update in motion_updates {
+                let Some(entity) = entities
+                    .iter()
+                    .find(|entity| entity.key == motion_update.key)
+                else {
+                    continue;
+                };
+                if entity.kind == ManagedEntityKind::Entity
+                    && !position_changed(entity.position, motion_update.previous)
+                {
+                    motion.insert(motion_update.key, motion_update.next);
                 }
             }
         }
 
+        let motion_snapshot = self
+            .entity_motion
+            .lock()
+            .expect("entity motion state poisoned")
+            .clone();
         for entity in updates {
-            let packets = entity.position_packets()?;
+            let motion = motion_snapshot
+                .get(&entity.key)
+                .copied()
+                .unwrap_or_default();
+            let packets = entity.position_packets_with_velocity(
+                motion.velocity_x,
+                motion.velocity_y,
+                motion.velocity_z,
+            )?;
             for player in &viewers {
                 if player.dimension == entity.dimension
                     && within_render_distance(
@@ -984,6 +1199,120 @@ impl EntityManager {
             .expect("entity rule spawn state poisoned")
             .insert(rule_id.to_string(), Instant::now());
     }
+
+    fn spawn_position_for_rule(
+        &self,
+        rule: &qexed_config::app::qexed::server::EntitySpawnRule,
+        dimension: &str,
+        world: &crate::world::WorldManager,
+    ) -> Option<EntityPosition> {
+        let attempts = if rule.require_air || rule.require_ground {
+            rule.position_attempts.max(1).min(64)
+        } else {
+            1
+        };
+        let mut collision_cache = self
+            .collision_cache
+            .lock()
+            .expect("entity collision cache poisoned");
+        collision_cache.sync_world_epoch(world.cache_epoch());
+        for _ in 0..attempts {
+            let position = EntityPosition {
+                x: random_between(rule.min_x, rule.max_x),
+                y: random_spawn_y(rule),
+                z: random_between(rule.min_z, rule.max_z),
+                yaw: rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0),
+                pitch: 0.0,
+                on_ground: rule.on_ground,
+            };
+            if spawn_position_passes(rule, dimension, world, &mut collision_cache, position) {
+                return Some(position);
+            }
+        }
+        None
+    }
+}
+
+impl CollisionCache {
+    fn sync_world_epoch(&mut self, world_epoch: u64) {
+        if self.world_epoch == world_epoch {
+            return;
+        }
+        self.world_epoch = world_epoch;
+        self.blocks.clear();
+        self.aabbs.clear();
+    }
+
+    fn block_has_collision(
+        &mut self,
+        world: &crate::world::WorldManager,
+        dimension: &str,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> bool {
+        let key = CollisionBlockKey {
+            dimension: dimension.to_string(),
+            x,
+            y,
+            z,
+        };
+        if let Some(collides) = self.blocks.get(&key) {
+            return *collides;
+        }
+        let position = BlockPosition { x, y, z };
+        let collides = world
+            .block_state_at(dimension, &position)
+            .map(crate::inventory::block_has_collision)
+            .unwrap_or(false);
+        if self.blocks.len() >= COLLISION_BLOCK_CACHE_LIMIT {
+            self.blocks.clear();
+        }
+        self.blocks.insert(key, collides);
+        collides
+    }
+
+    fn aabb_intersects_solid(
+        &mut self,
+        world: &crate::world::WorldManager,
+        dimension: &str,
+        min_x: i32,
+        max_x: i32,
+        min_y: i32,
+        max_y: i32,
+        min_z: i32,
+        max_z: i32,
+    ) -> bool {
+        let key = CollisionAabbKey {
+            dimension: dimension.to_string(),
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            min_z,
+            max_z,
+        };
+        if let Some(collides) = self.aabbs.get(&key) {
+            return *collides;
+        }
+
+        let mut collides = false;
+        'blocks: for block_x in min_x..=max_x {
+            for block_y in min_y..=max_y {
+                for block_z in min_z..=max_z {
+                    if self.block_has_collision(world, dimension, block_x, block_y, block_z) {
+                        collides = true;
+                        break 'blocks;
+                    }
+                }
+            }
+        }
+        if self.aabbs.len() >= COLLISION_AABB_CACHE_LIMIT {
+            self.aabbs.clear();
+        }
+        self.aabbs.insert(key, collides);
+        collides
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1061,7 +1390,15 @@ fn normalize_uuid(input: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_uuid;
+    use super::{
+        EntityTargetMemory, normalize_uuid, preferred_follow_target, target_reselect_interval,
+    };
+    use std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    };
+
+    use qexed_protocol::to_client::play::add_entity::EntityPosition;
 
     #[test]
     fn normalize_uuid_accepts_dashed_and_compact() {
@@ -1079,6 +1416,134 @@ mod tests {
     fn normalize_uuid_rejects_invalid_input() {
         assert_eq!(normalize_uuid(""), None);
         assert_eq!(normalize_uuid("not-a-uuid"), None);
+    }
+
+    #[test]
+    fn preferred_follow_target_keeps_recent_target() {
+        let entity = test_entity("steady_follower", 0.0);
+        let current = test_player("Current", 10.0);
+        let nearer = test_player("Nearer", -1.0);
+        let now = Instant::now();
+        let mut target_memory = HashMap::from([(
+            entity.key.clone(),
+            EntityTargetMemory {
+                player_id: current.profile.uuid,
+                selected_at: now,
+            },
+        )]);
+        let mut target_reselects = 0;
+        let viewers = [current.clone(), nearer];
+
+        let selected = preferred_follow_target(
+            &entity,
+            &viewers,
+            &mut target_memory,
+            &mut target_reselects,
+            now + Duration::from_millis(200),
+            32.0,
+        )
+        .expect("target");
+
+        assert_eq!(selected.profile.uuid, current.profile.uuid);
+        assert_eq!(target_reselects, 0);
+        assert_eq!(
+            target_memory
+                .get(&entity.key)
+                .map(|memory| memory.player_id),
+            Some(current.profile.uuid)
+        );
+    }
+
+    #[test]
+    fn preferred_follow_target_limits_reselects_per_tick() {
+        let entity = test_entity("steady_follower", 0.0);
+        let current = test_player("Current", 10.0);
+        let nearer = test_player("Nearer", -1.0);
+        let now = Instant::now();
+        let mut target_memory = HashMap::from([(
+            entity.key.clone(),
+            EntityTargetMemory {
+                player_id: current.profile.uuid,
+                selected_at: now - target_reselect_interval(&entity.key),
+            },
+        )]);
+        let mut target_reselects = super::ENTITY_TARGET_RESELECTS_PER_TICK;
+        let viewers = [current.clone(), nearer];
+
+        let selected = preferred_follow_target(
+            &entity,
+            &viewers,
+            &mut target_memory,
+            &mut target_reselects,
+            now,
+            32.0,
+        )
+        .expect("target");
+
+        assert_eq!(selected.profile.uuid, current.profile.uuid);
+        assert_eq!(target_reselects, super::ENTITY_TARGET_RESELECTS_PER_TICK);
+        assert_eq!(
+            target_memory
+                .get(&entity.key)
+                .map(|memory| memory.player_id),
+            Some(current.profile.uuid)
+        );
+    }
+
+    fn test_entity(key: &str, x: f64) -> super::ManagedEntity {
+        super::ManagedEntity {
+            key: key.to_string(),
+            entity_id: 1,
+            uuid: uuid::Uuid::new_v4(),
+            kind: super::ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id: 1,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: key.to_string(),
+            display_name: key.to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        }
+    }
+
+    fn test_player(username: &str, x: f64) -> crate::players::OnlinePlayer {
+        crate::players::OnlinePlayer {
+            profile: qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::new_v4(),
+                username: username.to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 1,
+            position: EntityPosition {
+                x,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: "en_us".to_string(),
+        }
     }
 }
 
@@ -1122,6 +1587,39 @@ fn look_rotation(from: EntityPosition, to: EntityPosition) -> (f32, f32) {
     let yaw = (dz.atan2(dx).to_degrees() - 90.0) as f32;
     let pitch = (-dy.atan2(horizontal).to_degrees()) as f32;
     (yaw, pitch)
+}
+
+fn smooth_rotation(
+    from: EntityPosition,
+    target_yaw: f32,
+    target_pitch: f32,
+    tick_ms: u64,
+) -> (f32, f32) {
+    let tick_scale = (tick_ms as f32 / 50.0).clamp(0.25, 4.0);
+    (
+        rotate_toward(
+            from.yaw,
+            target_yaw,
+            ENTITY_MAX_YAW_TURN_PER_TICK * tick_scale,
+        ),
+        rotate_toward(
+            from.pitch,
+            target_pitch,
+            ENTITY_MAX_PITCH_TURN_PER_TICK * tick_scale,
+        ),
+    )
+}
+
+fn rotate_toward(current: f32, target: f32, max_delta: f32) -> f32 {
+    current + angle_delta(current, target).clamp(-max_delta, max_delta)
+}
+
+fn angle_delta(current: f32, target: f32) -> f32 {
+    let mut delta = (target - current).rem_euclid(360.0);
+    if delta > 180.0 {
+        delta -= 360.0;
+    }
+    delta
 }
 
 fn normalized_npc_event(value: &str, fallback: &str) -> String {
@@ -1177,15 +1675,15 @@ fn apply_random_stroll(entity: &mut ManagedEntity, tick_ms: u64) -> EntityMoveme
     if rand::Rng::gen_range(&mut rng, 0.0..1.0) > 0.35 {
         return EntityMovement::default();
     }
-    let yaw = rand::Rng::gen_range(&mut rng, -180.0..180.0);
+    let target_yaw = rand::Rng::gen_range(&mut rng, -180.0..180.0);
+    let (yaw, _) = smooth_rotation(entity.position, target_yaw, entity.position.pitch, tick_ms);
     let radians = f64::from(yaw).to_radians();
-    let tick_scale = (tick_ms as f64 / 200.0).clamp(0.25, 2.0);
-    let step = rand::Rng::gen_range(&mut rng, 0.08..0.22) * tick_scale;
+    let speed = rand::Rng::gen_range(&mut rng, 0.10..0.20);
     entity.position.yaw = yaw;
     EntityMovement {
-        x: -radians.sin() * step,
+        x: -radians.sin() * speed,
         y: 0.0,
-        z: radians.cos() * step,
+        z: radians.cos() * speed,
     }
 }
 
@@ -1197,7 +1695,8 @@ fn apply_look_at_nearest_player(
     let Some(target) = nearest_player(entity.position, &entity.dimension, viewers, range) else {
         return;
     };
-    let (yaw, pitch) = look_rotation(entity.position, target.position);
+    let (target_yaw, target_pitch) = look_rotation(entity.position, target.position);
+    let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, 50);
     entity.position.yaw = yaw;
     entity.position.pitch = pitch;
 }
@@ -1206,31 +1705,113 @@ fn apply_follow_nearest_player(
     entity: &mut ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
     tick_ms: u64,
+    target_memory: &mut HashMap<String, EntityTargetMemory>,
+    target_reselects: &mut usize,
+    now: Instant,
 ) -> EntityMovement {
     const FOLLOW_RANGE: f64 = 32.0;
     const STOP_DISTANCE: f64 = 2.0;
     const BASE_STEP: f64 = 0.22;
 
-    let Some(target) = nearest_player(entity.position, &entity.dimension, viewers, FOLLOW_RANGE)
-    else {
+    let Some(target) = preferred_follow_target(
+        entity,
+        viewers,
+        target_memory,
+        target_reselects,
+        now,
+        FOLLOW_RANGE,
+    ) else {
+        target_memory.remove(&entity.key);
         return EntityMovement::default();
     };
     let dx = target.position.x - entity.position.x;
     let dz = target.position.z - entity.position.z;
     let horizontal = (dx * dx + dz * dz).sqrt();
-    let (yaw, pitch) = look_rotation(entity.position, target.position);
+    let (target_yaw, target_pitch) = look_rotation(entity.position, target.position);
+    let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, tick_ms);
     entity.position.yaw = yaw;
     entity.position.pitch = pitch;
     if horizontal <= STOP_DISTANCE {
         return EntityMovement::default();
     }
-    let tick_scale = (tick_ms as f64 / 200.0).clamp(0.25, 2.0);
-    let step = (BASE_STEP * tick_scale).min(horizontal - STOP_DISTANCE);
+    let speed = BASE_STEP.min(horizontal - STOP_DISTANCE);
     EntityMovement {
-        x: dx / horizontal * step,
+        x: dx / horizontal * speed,
         y: 0.0,
-        z: dz / horizontal * step,
+        z: dz / horizontal * speed,
     }
+}
+
+fn preferred_follow_target<'a>(
+    entity: &ManagedEntity,
+    viewers: &'a [crate::players::OnlinePlayer],
+    target_memory: &mut HashMap<String, EntityTargetMemory>,
+    target_reselects: &mut usize,
+    now: Instant,
+    range: f64,
+) -> Option<&'a crate::players::OnlinePlayer> {
+    let remembered = target_memory.get(&entity.key).copied();
+    let current = remembered.and_then(|memory| {
+        viewers.iter().find(|player| {
+            player.profile.uuid == memory.player_id
+                && player.dimension == entity.dimension
+                && within_render_distance(entity.position, player.position, range)
+        })
+    });
+    let should_reselect = current.is_none()
+        || remembered.is_none_or(|memory| {
+            now.duration_since(memory.selected_at) >= target_reselect_interval(&entity.key)
+        });
+
+    if !should_reselect {
+        return current;
+    }
+    if current.is_some() && *target_reselects >= ENTITY_TARGET_RESELECTS_PER_TICK {
+        return current;
+    }
+    *target_reselects = target_reselects.saturating_add(1);
+
+    let nearest = nearest_player(entity.position, &entity.dimension, viewers, range);
+    let selected = match (current, nearest) {
+        (Some(current), Some(nearest)) => {
+            let current_distance = horizontal_distance_sq(entity.position, current.position);
+            let nearest_distance = horizontal_distance_sq(entity.position, nearest.position);
+            if nearest.profile.uuid != current.profile.uuid
+                && nearest_distance < current_distance * ENTITY_TARGET_SWITCH_ADVANTAGE
+            {
+                nearest
+            } else {
+                current
+            }
+        }
+        (Some(current), None) => current,
+        (None, Some(nearest)) => nearest,
+        (None, None) => {
+            target_memory.remove(&entity.key);
+            return None;
+        }
+    };
+    target_memory.insert(
+        entity.key.clone(),
+        EntityTargetMemory {
+            player_id: selected.profile.uuid,
+            selected_at: now,
+        },
+    );
+    Some(selected)
+}
+
+fn target_reselect_interval(entity_key: &str) -> Duration {
+    ENTITY_TARGET_RESELECT_INTERVAL + Duration::from_millis(stable_jitter_ms(entity_key))
+}
+
+fn stable_jitter_ms(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash % (ENTITY_TARGET_RESELECT_JITTER_MS + 1)
 }
 
 fn nearest_player<'a>(
@@ -1252,16 +1833,20 @@ fn nearest_player<'a>(
 fn apply_entity_physics(
     entity: &mut ManagedEntity,
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     motion: &mut EntityMotion,
     movement: EntityMovement,
     tick_ms: u64,
 ) {
     let tick_scale = (tick_ms as f64 / 50.0).clamp(0.25, 4.0);
-    let dx = movement.x.clamp(-4.0, 4.0);
-    let dz = movement.z.clamp(-4.0, 4.0);
     let mut dy = movement.y.clamp(-4.0, 4.0);
+    apply_horizontal_motion(motion, movement, tick_scale);
+    let dx = (motion.velocity_x * tick_scale).clamp(-4.0, 4.0);
+    let dz = (motion.velocity_z * tick_scale).clamp(-4.0, 4.0);
 
-    if entity_has_ground(world, &entity.dimension, entity.position) && motion.velocity_y <= 0.0 {
+    if entity_has_ground(world, collision_cache, &entity.dimension, entity.position)
+        && motion.velocity_y <= 0.0
+    {
         entity.position.on_ground = true;
         motion.velocity_y = 0.0;
     } else {
@@ -1272,16 +1857,18 @@ fn apply_entity_physics(
     }
 
     if dy != 0.0 {
-        move_entity_axis(entity, world, motion, 0.0, dy, 0.0);
+        move_entity_axis(entity, world, collision_cache, motion, 0.0, dy, 0.0);
     }
     if dx != 0.0 {
-        move_entity_axis(entity, world, motion, dx, 0.0, 0.0);
+        move_entity_axis(entity, world, collision_cache, motion, dx, 0.0, 0.0);
     }
     if dz != 0.0 {
-        move_entity_axis(entity, world, motion, 0.0, 0.0, dz);
+        move_entity_axis(entity, world, collision_cache, motion, 0.0, 0.0, dz);
     }
 
-    if entity_has_ground(world, &entity.dimension, entity.position) && motion.velocity_y <= 0.0 {
+    if entity_has_ground(world, collision_cache, &entity.dimension, entity.position)
+        && motion.velocity_y <= 0.0
+    {
         entity.position.on_ground = true;
         motion.velocity_y = 0.0;
     } else {
@@ -1289,9 +1876,39 @@ fn apply_entity_physics(
     }
 }
 
+fn apply_horizontal_motion(motion: &mut EntityMotion, movement: EntityMovement, tick_scale: f64) {
+    let target_x = movement
+        .x
+        .clamp(-ENTITY_MAX_HORIZONTAL_SPEED, ENTITY_MAX_HORIZONTAL_SPEED);
+    let target_z = movement
+        .z
+        .clamp(-ENTITY_MAX_HORIZONTAL_SPEED, ENTITY_MAX_HORIZONTAL_SPEED);
+    if target_x == 0.0 && target_z == 0.0 {
+        let friction = ENTITY_HORIZONTAL_FRICTION.powf(tick_scale);
+        motion.velocity_x *= friction;
+        motion.velocity_z *= friction;
+        if motion.velocity_x.abs() < 0.001 {
+            motion.velocity_x = 0.0;
+        }
+        if motion.velocity_z.abs() < 0.001 {
+            motion.velocity_z = 0.0;
+        }
+        return;
+    }
+
+    let acceleration = ENTITY_HORIZONTAL_ACCELERATION * tick_scale;
+    motion.velocity_x = approach(motion.velocity_x, target_x, acceleration);
+    motion.velocity_z = approach(motion.velocity_z, target_z, acceleration);
+}
+
+fn approach(current: f64, target: f64, max_delta: f64) -> f64 {
+    current + (target - current).clamp(-max_delta, max_delta)
+}
+
 fn move_entity_axis(
     entity: &mut ManagedEntity,
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     motion: &mut EntityMotion,
     dx: f64,
     dy: f64,
@@ -1302,6 +1919,7 @@ fn move_entity_axis(
     let next_z = entity.position.z + dz;
     if entity_aabb_intersects_solid(
         world,
+        collision_cache,
         &entity.dimension,
         next_x,
         next_y,
@@ -1309,6 +1927,22 @@ fn move_entity_axis(
         ENTITY_PHYSICS_WIDTH,
         ENTITY_PHYSICS_HEIGHT,
     ) {
+        if entity.auto_jump
+            && dy == 0.0
+            && (dx != 0.0 || dz != 0.0)
+            && entity.position.on_ground
+            && can_entity_auto_jump(entity, world, collision_cache, dx, dz)
+        {
+            motion.velocity_y = ENTITY_AUTO_JUMP_VELOCITY;
+            entity.position.y += ENTITY_AUTO_JUMP_VELOCITY;
+            entity.position.on_ground = false;
+        }
+        if dx != 0.0 {
+            motion.velocity_x = 0.0;
+        }
+        if dz != 0.0 {
+            motion.velocity_z = 0.0;
+        }
         if dy < 0.0 {
             entity.position.y = next_y.floor() + 1.0;
             entity.position.on_ground = true;
@@ -1324,8 +1958,38 @@ fn move_entity_axis(
     entity.position.z = next_z;
 }
 
+fn can_entity_auto_jump(
+    entity: &ManagedEntity,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    dx: f64,
+    dz: f64,
+) -> bool {
+    let jump_y = entity.position.y + 1.0;
+    !entity_aabb_intersects_solid(
+        world,
+        collision_cache,
+        &entity.dimension,
+        entity.position.x,
+        jump_y,
+        entity.position.z,
+        ENTITY_PHYSICS_WIDTH,
+        ENTITY_PHYSICS_HEIGHT,
+    ) && !entity_aabb_intersects_solid(
+        world,
+        collision_cache,
+        &entity.dimension,
+        entity.position.x + dx,
+        jump_y,
+        entity.position.z + dz,
+        ENTITY_PHYSICS_WIDTH,
+        ENTITY_PHYSICS_HEIGHT,
+    )
+}
+
 fn entity_has_ground(
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     dimension: &str,
     position: EntityPosition,
 ) -> bool {
@@ -1336,7 +2000,7 @@ fn entity_has_ground(
     let max_z = (position.z + ENTITY_PHYSICS_WIDTH / 2.0 - 0.001).floor() as i32;
     for x in min_x..=max_x {
         for z in min_z..=max_z {
-            if block_has_collision_at(world, dimension, x, below_y, z) {
+            if collision_cache.block_has_collision(world, dimension, x, below_y, z) {
                 return true;
             }
         }
@@ -1346,6 +2010,7 @@ fn entity_has_ground(
 
 fn entity_aabb_intersects_solid(
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     dimension: &str,
     x: f64,
     y: f64,
@@ -1361,30 +2026,8 @@ fn entity_aabb_intersects_solid(
     let min_z = (z - half_width + 0.001).floor() as i32;
     let max_z = (z + half_width - 0.001).floor() as i32;
 
-    for block_x in min_x..=max_x {
-        for block_y in min_y..=max_y {
-            for block_z in min_z..=max_z {
-                if block_has_collision_at(world, dimension, block_x, block_y, block_z) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn block_has_collision_at(
-    world: &crate::world::WorldManager,
-    dimension: &str,
-    x: i32,
-    y: i32,
-    z: i32,
-) -> bool {
-    let position = BlockPosition { x, y, z };
-    world
-        .block_state_at(dimension, &position)
-        .map(crate::inventory::block_has_collision)
-        .unwrap_or(false)
+    collision_cache
+        .aabb_intersects_solid(world, dimension, min_x, max_x, min_y, max_y, min_z, max_z)
 }
 
 fn entity_ai_query(
@@ -1409,6 +2052,7 @@ fn entity_ai_query(
             custom_type: entity.custom_type.clone(),
             ai: entity.ai.clone(),
             spawn_rule: entity.spawn_rule.clone(),
+            ai_params: entity.ai_params.clone(),
             dimension: entity.dimension.clone(),
             position: qexed_plugin_api::player_position_payload(entity.position),
         },
@@ -1527,44 +2171,20 @@ fn spawn_rule_chance_passes(rule: &qexed_config::app::qexed::server::EntitySpawn
     chance >= 1.0 || rand::Rng::gen_range(&mut rand::thread_rng(), 0.0..1.0) < chance
 }
 
-fn spawn_position_for_rule(
-    rule: &qexed_config::app::qexed::server::EntitySpawnRule,
-    dimension: &str,
-    world: &crate::world::WorldManager,
-) -> Option<EntityPosition> {
-    let attempts = if rule.require_air || rule.require_ground {
-        rule.position_attempts.max(1).min(64)
-    } else {
-        1
-    };
-    for _ in 0..attempts {
-        let position = EntityPosition {
-            x: random_between(rule.min_x, rule.max_x),
-            y: random_spawn_y(rule),
-            z: random_between(rule.min_z, rule.max_z),
-            yaw: rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0),
-            pitch: 0.0,
-            on_ground: rule.on_ground,
-        };
-        if spawn_position_passes(rule, dimension, world, position) {
-            return Some(position);
-        }
-    }
-    None
-}
-
 fn spawn_position_passes(
     rule: &qexed_config::app::qexed::server::EntitySpawnRule,
     dimension: &str,
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     position: EntityPosition,
 ) -> bool {
-    if rule.require_ground && !entity_has_ground(world, dimension, position) {
+    if rule.require_ground && !entity_has_ground(world, collision_cache, dimension, position) {
         return false;
     }
     if rule.require_air
         && entity_aabb_intersects_solid(
             world,
+            collision_cache,
             dimension,
             position.x,
             position.y,
@@ -1586,20 +2206,23 @@ fn spawn_request_from_rule(
     custom: Option<CustomEntityRegistration>,
     position: EntityPosition,
 ) -> Result<EntitySpawnRequest> {
-    let (entity_type, custom_type, default_display_name, default_ai) = match custom {
-        Some(custom) => (
-            custom.entity_type,
-            rule.entity_type.trim().to_string(),
-            custom.display_name,
-            custom.ai,
-        ),
-        None => (
-            rule.entity_type.trim().to_string(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ),
-    };
+    let (entity_type, custom_type, default_display_name, default_ai, default_ai_params) =
+        match custom {
+            Some(custom) => (
+                custom.entity_type,
+                rule.entity_type.trim().to_string(),
+                custom.display_name,
+                custom.ai,
+                custom.ai_params,
+            ),
+            None => (
+                rule.entity_type.trim().to_string(),
+                String::new(),
+                String::new(),
+                String::new(),
+                std::collections::BTreeMap::new(),
+            ),
+        };
     let entity_type = if entity_type.trim().is_empty() {
         "minecraft:zombie".to_string()
     } else {
@@ -1619,9 +2242,13 @@ fn spawn_request_from_rule(
     };
     let ai = if !rule.ai.trim().is_empty() {
         rule.ai.clone()
-    } else {
+    } else if !default_ai.trim().is_empty() {
         default_ai
+    } else {
+        "random_stroll".to_string()
     };
+    let mut ai_params = default_ai_params;
+    ai_params.extend(rule.ai_params.clone());
     Ok(EntitySpawnRequest {
         key: format!("spawn:{rule_id}:{sequence}"),
         kind: ManagedEntityKind::Entity,
@@ -1634,6 +2261,8 @@ fn spawn_request_from_rule(
         skin_signature: String::new(),
         data: rule.data,
         ai,
+        ai_params,
+        auto_jump: rule.auto_jump,
         spawn_rule: rule_id.to_string(),
         custom_type,
         look_at_players: false,

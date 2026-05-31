@@ -1,4 +1,5 @@
 use qexed_protocol::to_client::play::add_entity::EntityPosition;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManagedEntity {
@@ -16,6 +17,8 @@ pub struct ManagedEntity {
     pub skin_signature: String,
     pub data: i32,
     pub ai: String,
+    pub ai_params: BTreeMap<String, serde_json::Value>,
+    pub auto_jump: bool,
     pub spawn_rule: String,
     pub custom_type: String,
     pub look_at_players: bool,
@@ -44,6 +47,8 @@ pub struct EntitySpawnRequest {
     pub skin_signature: String,
     pub data: i32,
     pub ai: String,
+    pub ai_params: BTreeMap<String, serde_json::Value>,
+    pub auto_jump: bool,
     pub spawn_rule: String,
     pub custom_type: String,
     pub look_at_players: bool,

@@ -11,3 +11,4 @@ server = ["dep:qexed_player", "dep:qexed_protocol"]
 qexed_player = { workspace = true, optional = true }
 qexed_protocol = { workspace = true, optional = true }
 serde.workspace = true
+serde_json.workspace = true

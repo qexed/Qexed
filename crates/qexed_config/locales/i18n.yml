@@ -68,8 +68,11 @@ autodoc:
         en: "%{file}: chat content filter engine, word list, and external API settings."
         zh-CN: "%{file}: 聊天内容审核引擎、词库和外部 API 设置。"
       entities:
-        en: "%{file}: static entity, NPC, and hologram configuration."
-        zh-CN: "%{file}: 静态实体、NPC 和悬浮字配置。"
+        en: "%{file}: static non-NPC entity, hologram, spawning, and AI configuration."
+        zh-CN: "%{file}: 静态非 NPC 实体、悬浮字、刷怪和 AI 配置。"
+      npc:
+        en: "%{file}: NPC definitions and non-plugin NPC click actions."
+        zh-CN: "%{file}: NPC 定义和非插件 NPC 点击动作配置。"
       entity_rendering:
         en: "%{file}: per-viewer entity render distance and entity stacking settings."
         zh-CN: "%{file}: 按玩家视角的实体渲染距离和实体堆叠显示设置。"
@@ -530,53 +533,32 @@ config:
           en: "Disconnect message used when a required resource pack is rejected or fails"
           zh-CN: "强制资源包被拒绝或下载失败时的断开提示"
       entities:
-        en: "Entity, NPC, hologram, AI, and spawn settings."
-        zh-CN: "静态实体与 NPC 设置。这些实体暂不启用 AI。"
+        en: "Static non-NPC entity, hologram, AI, and spawn settings."
+        zh-CN: "静态非 NPC 实体、悬浮字、AI 和刷怪设置。"
         enable:
-          en: "Enable configured static entities and NPCs"
-          zh-CN: "启用配置中的静态实体与 NPC"
+          en: "Enable configured static non-NPC entities and holograms"
+          zh-CN: "启用配置中的静态非 NPC 实体与悬浮字"
         dimension:
           en: "Dimension where configured static entities are visible"
           zh-CN: "配置中的静态实体可见的维度"
         list:
-          en: "Configured static entity and NPC list"
-          zh-CN: "配置的静态实体与 NPC 列表"
+          en: "Configured static non-NPC entity and hologram list"
+          zh-CN: "配置的静态非 NPC 实体与悬浮字列表"
           id:
             en: "Stable entity identifier used by Qexed"
             zh-CN: "Qexed 使用的稳定实体标识"
           kind:
-            en: "Entity kind: entity, npc, or hologram. NPCs are spawned as player entities; holograms use text display entities."
-            zh-CN: "实体类型：entity、npc 或 hologram。NPC 会以玩家实体生成，hologram 使用文本展示实体。"
+            en: "Entity kind: entity or hologram. NPCs are configured in qexed_npc.toml."
+            zh-CN: "实体类型：entity 或 hologram。NPC 请在 qexed_npc.toml 中配置。"
           entity_type:
-            en: "Minecraft entity type resource key, for example minecraft:armor_stand or minecraft:villager"
-            zh-CN: "Minecraft 实体类型资源键，例如 minecraft:armor_stand 或 minecraft:villager"
+            en: "Minecraft entity type resource key. Use minecraft:text_display for holograms."
+            zh-CN: "Minecraft 实体类型资源键。悬浮字使用 minecraft:text_display。"
           name:
-            en: "NPC player name or hologram text. Empty NPC names use the entity id."
-            zh-CN: "NPC 玩家名。为空时使用实体 id。"
+            en: "Entity name or hologram text"
+            zh-CN: "实体名称或悬浮字文本"
           display_name:
             en: "Custom display name shown above the entity. Supports JSON text and Unicode. Falls back to name when empty."
             zh-CN: "实体上方显示的自定义名称，支持 JSON 文本和 Unicode。为空时回退到 name。"
-          skin_textures:
-            en: "Base64 skin texture payload from the Mojang texture property"
-            zh-CN: "来自 Mojang texture 属性的 Base64 皮肤纹理数据"
-          skin_signature:
-            en: "Mojang signature paired with skin_textures"
-            zh-CN: "与 skin_textures 配套的 Mojang 签名"
-          skin_player_id:
-            en: "Player name or UUID used to resolve skin automatically when explicit texture fields are empty"
-            zh-CN: "当显式纹理字段为空时，用于自动解析皮肤的玩家名或 UUID"
-          look_at_players:
-            en: "Rotate this NPC to face nearby players when it is visible"
-            zh-CN: "NPC 可见时自动转向附近玩家"
-          main_hand_event:
-            en: "Plugin API event name emitted when the NPC is clicked with the main hand"
-            zh-CN: "主手点击该 NPC 时发送给插件 API 的事件名"
-          off_hand_event:
-            en: "Plugin API event name emitted when the NPC is clicked with the off hand"
-            zh-CN: "副手点击该 NPC 时发送给插件 API 的事件名"
-          attack_event:
-            en: "Plugin API event name emitted when the NPC is attacked"
-            zh-CN: "攻击该 NPC 时发送给插件 API 的事件名"
           x:
             en: "Entity X coordinate"
             zh-CN: "实体 X 坐标"
@@ -601,6 +583,84 @@ config:
           ai:
             en: "Entity AI behavior: none, random_stroll, look_at_player, follow_nearest_player, or plugin:<id>"
             zh-CN: "实体 AI 行为：none、random_stroll、look_at_player、follow_nearest_player 或 plugin:<id>"
+          ai_params:
+            en: "Structured parameters passed to plugin AI. TOML table values are delivered as JSON values."
+            zh-CN: "传递给插件 AI 的结构化参数。TOML 表值会作为 JSON 值传递。"
+          auto_jump:
+            en: "Allow this AI-controlled entity to automatically jump over one-block obstacles"
+            zh-CN: "允许该 AI 实体自动跳过一格高障碍"
+      npcs:
+        en: "NPC definitions and non-plugin click actions."
+        zh-CN: "NPC 定义和非插件点击动作配置。"
+        enable:
+          en: "Enable configured NPCs"
+          zh-CN: "启用配置中的 NPC"
+        dimension:
+          en: "Default dimension where configured NPCs are visible"
+          zh-CN: "配置中的 NPC 默认可见维度"
+        list:
+          en: "Configured NPC list"
+          zh-CN: "配置的 NPC 列表"
+          id:
+            en: "Stable NPC identifier used by Qexed"
+            zh-CN: "Qexed 使用的稳定 NPC 标识"
+          name:
+            en: "NPC player name. Empty names use the NPC id."
+            zh-CN: "NPC 玩家名。为空时使用 NPC id。"
+          display_name:
+            en: "Custom display name shown above the NPC. Supports JSON text and Unicode. Falls back to name when empty."
+            zh-CN: "NPC 上方显示的自定义名称，支持 JSON 文本和 Unicode。为空时回退到 name。"
+          skin_textures:
+            en: "Base64 skin texture payload from the Mojang texture property"
+            zh-CN: "来自 Mojang texture 属性的 Base64 皮肤纹理数据"
+          skin_signature:
+            en: "Mojang signature paired with skin_textures"
+            zh-CN: "与 skin_textures 配套的 Mojang 签名"
+          skin_player_id:
+            en: "Player name or UUID used to resolve skin automatically when explicit texture fields are empty"
+            zh-CN: "当显式纹理字段为空时，用于自动解析皮肤的玩家名或 UUID"
+          x:
+            en: "NPC X coordinate"
+            zh-CN: "NPC X 坐标"
+          y:
+            en: "NPC Y coordinate"
+            zh-CN: "NPC Y 坐标"
+          z:
+            en: "NPC Z coordinate"
+            zh-CN: "NPC Z 坐标"
+          yaw:
+            en: "NPC yaw"
+            zh-CN: "NPC 水平朝向"
+          pitch:
+            en: "NPC pitch"
+            zh-CN: "NPC 俯仰角"
+          on_ground:
+            en: "Whether the NPC is on the ground"
+            zh-CN: "NPC 是否在地面上"
+          look_at_players:
+            en: "Rotate this NPC to face nearby players when it is visible"
+            zh-CN: "NPC 可见时自动转向附近玩家"
+          main_hand_event:
+            en: "Plugin API event name emitted when the NPC is clicked with the main hand"
+            zh-CN: "主手点击该 NPC 时发送给插件 API 的事件名"
+          off_hand_event:
+            en: "Plugin API event name emitted when the NPC is clicked with the off hand"
+            zh-CN: "副手点击该 NPC 时发送给插件 API 的事件名"
+          attack_event:
+            en: "Plugin API event name emitted when the NPC is attacked"
+            zh-CN: "攻击该 NPC 时发送给插件 API 的事件名"
+          actions:
+            en: "Non-plugin actions executed for NPC interactions. Plugins run first; configured actions run only when plugins do not handle the event."
+            zh-CN: "NPC 交互时执行的非插件动作。插件优先执行；插件未处理时才执行这里的配置动作。"
+            main_hand:
+              en: "Action executed when the NPC is clicked with the main hand"
+              zh-CN: "主手点击 NPC 时执行的动作"
+            off_hand:
+              en: "Action executed when the NPC is clicked with the off hand"
+              zh-CN: "副手点击 NPC 时执行的动作"
+            attack:
+              en: "Action executed when the NPC is attacked"
+              zh-CN: "攻击 NPC 时执行的动作"
         spawning:
           en: "Natural entity spawning and AI tick settings"
           zh-CN: "自然实体刷怪和 AI tick 设置"
@@ -811,15 +871,6 @@ config:
           action:
             en: "Action executed when this menu item is clicked"
             zh-CN: "点击该菜单物品时执行的动作"
-        npc_actions:
-          en: "NPC interaction action bindings"
-          zh-CN: "NPC 交互动作绑定"
-          entity:
-            en: "Target NPC entity id"
-            zh-CN: "目标 NPC 实体 id"
-          action:
-            en: "Action executed when interacting with this NPC"
-            zh-CN: "与该 NPC 交互时执行的动作"
         action:
           en: "Lobby action payload"
           zh-CN: "大厅动作载荷"

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use qexed_config::{public::mongodb::MongoConfig, public::mysql::MysqlConfig};
 use qexed_config_macros::AutoDoc;
 use rust_i18n::t;
@@ -211,10 +213,6 @@ pub struct Lobby {
     #[AutoDoc(key = "config.qexed.server.lobby.menu_items", sub)]
     pub menu_items: Vec<LobbyMenuItem>,
 
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions", sub)]
-    pub npc_actions: Vec<LobbyNpcAction>,
-
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.lobby.broadcast", sub)]
     pub broadcast: LobbyBroadcast,
@@ -238,7 +236,6 @@ impl Default for Lobby {
             navigator: LobbyNavigator::default(),
             servers: Vec::new(),
             menu_items: Vec::new(),
-            npc_actions: Vec::new(),
             broadcast: LobbyBroadcast::default(),
             boss_bar: LobbyBossBar::default(),
             health_check: LobbyHealthCheck::default(),
@@ -492,17 +489,6 @@ impl Default for LobbyMenuItem {
             action: LobbyAction::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
-pub struct LobbyNpcAction {
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions.entity")]
-    pub entity: String,
-
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.npc_actions.action", sub)]
-    pub action: LobbyAction,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -961,6 +947,141 @@ impl Default for Entities {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct Npcs {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.enable")]
+    pub enable: bool,
+
+    #[serde(default = "default_entities_dimension")]
+    #[AutoDoc(key = "config.qexed.server.npcs.dimension")]
+    pub dimension: String,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.npcs.list", sub)]
+    pub list: Vec<Npc>,
+}
+
+impl Default for Npcs {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            dimension: default_entities_dimension(),
+            list: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+pub struct Npc {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.id")]
+    pub id: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.name")]
+    pub name: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.display_name")]
+    pub display_name: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.skin_textures")]
+    pub skin_textures: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.skin_signature")]
+    pub skin_signature: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.skin_player_id")]
+    pub skin_player_id: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.x")]
+    pub x: f64,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.y")]
+    pub y: f64,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.z")]
+    pub z: f64,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.yaw")]
+    pub yaw: f32,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.pitch")]
+    pub pitch: f32,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.on_ground")]
+    pub on_ground: bool,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.look_at_players")]
+    pub look_at_players: bool,
+
+    #[serde(default = "default_npc_main_hand_event")]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.main_hand_event")]
+    pub main_hand_event: String,
+
+    #[serde(default = "default_npc_off_hand_event")]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.off_hand_event")]
+    pub off_hand_event: String,
+
+    #[serde(default = "default_npc_attack_event")]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.attack_event")]
+    pub attack_event: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.actions", sub)]
+    pub actions: NpcActions,
+}
+
+impl Default for Npc {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            display_name: String::new(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            skin_player_id: String::new(),
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+            look_at_players: false,
+            main_hand_event: default_npc_main_hand_event(),
+            off_hand_event: default_npc_off_hand_event(),
+            attack_event: default_npc_attack_event(),
+            actions: NpcActions::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq, Default)]
+pub struct NpcActions {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.actions.main_hand")]
+    pub main_hand: MenuAction,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.actions.off_hand")]
+    pub off_hand: MenuAction,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.actions.attack")]
+    pub attack: MenuAction,
+}
+
 fn default_entities_dimension() -> String {
     "minecraft:overworld".to_string()
 }
@@ -1032,6 +1153,14 @@ pub struct Entity {
     pub ai: String,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.ai_params")]
+    pub ai_params: BTreeMap<String, serde_json::Value>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.list.auto_jump")]
+    pub auto_jump: bool,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.list.look_at_players")]
     pub look_at_players: bool,
 
@@ -1067,6 +1196,8 @@ impl Default for Entity {
             on_ground: true,
             data: 0,
             ai: String::new(),
+            ai_params: BTreeMap::new(),
+            auto_jump: false,
             look_at_players: false,
             main_hand_event: default_npc_main_hand_event(),
             off_hand_event: default_npc_off_hand_event(),
@@ -1221,9 +1352,17 @@ pub struct EntitySpawnRule {
     #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.display_name")]
     pub display_name: String,
 
-    #[serde(default = "default_entity_spawn_rule_ai")]
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.ai")]
     pub ai: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.ai_params")]
+    pub ai_params: BTreeMap<String, serde_json::Value>,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.auto_jump")]
+    pub auto_jump: bool,
 
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.data")]
@@ -1277,7 +1416,9 @@ impl Default for EntitySpawnRule {
             position_attempts: default_entity_spawn_rule_position_attempts(),
             name: String::new(),
             display_name: String::new(),
-            ai: default_entity_spawn_rule_ai(),
+            ai: String::new(),
+            ai_params: BTreeMap::new(),
+            auto_jump: false,
             data: 0,
             on_ground: default_entity_spawn_rule_on_ground(),
             min_x: default_entity_spawn_min_x(),
@@ -1295,7 +1436,7 @@ fn default_entity_spawn_tick_interval_ms() -> u64 {
 }
 
 fn default_entity_ai_tick_interval_ms() -> u64 {
-    200
+    50
 }
 
 fn default_entity_spawn_global_cap() -> usize {
@@ -1352,10 +1493,6 @@ fn default_entity_spawn_rule_require_air() -> bool {
 
 fn default_entity_spawn_rule_position_attempts() -> u32 {
     8
-}
-
-fn default_entity_spawn_rule_ai() -> String {
-    "random_stroll".to_string()
 }
 
 fn default_entity_spawn_rule_on_ground() -> bool {
@@ -3226,12 +3363,17 @@ position_attempts = 12
 name = "Mine Zombie"
 display_name = "{\"text\":\"Mine Zombie\"}"
 ai = "follow_nearest_player"
+auto_jump = true
 min_x = -8.0
 max_x = 8.0
 min_y = 64.0
 max_y = 64.0
 min_z = -8.0
 max_z = 8.0
+
+[spawning.rules.ai_params]
+iq = 114514
+profile = "aggressive"
 "#,
         )
         .unwrap();
@@ -3248,6 +3390,7 @@ max_z = 8.0
         assert_eq!(entities.spawning.rules[0].id, "mine_zombies");
         assert_eq!(entities.spawning.rules[0].entity_type, "minecraft:zombie");
         assert_eq!(entities.spawning.rules[0].ai, "follow_nearest_player");
+        assert!(entities.spawning.rules[0].auto_jump);
         assert_eq!(entities.spawning.rules[0].tick_interval_ms, 5000);
         assert_eq!(entities.spawning.rules[0].spawn_chance, 0.5);
         assert_eq!(entities.spawning.rules[0].min_players, 1);
@@ -3256,6 +3399,54 @@ max_z = 8.0
         assert!(entities.spawning.rules[0].require_ground);
         assert!(entities.spawning.rules[0].require_air);
         assert_eq!(entities.spawning.rules[0].position_attempts, 12);
+        assert_eq!(
+            entities.spawning.rules[0].ai_params["iq"].as_i64(),
+            Some(114514)
+        );
+        assert_eq!(
+            entities.spawning.rules[0].ai_params["profile"].as_str(),
+            Some("aggressive")
+        );
+    }
+
+    #[test]
+    fn parses_npc_settings() {
+        let npcs: Npcs = toml::from_str(
+            r#"
+enable = true
+dimension = "minecraft:overworld"
+
+[[list]]
+id = "survival_npc"
+name = "sv1"
+display_name = "原版生存"
+skin_player_id = "MHF_Grass"
+x = -14.5
+y = 9.0
+z = -17.5
+yaw = 180.0
+pitch = 0.0
+on_ground = true
+look_at_players = true
+
+[list.actions.main_hand]
+kind = "transfer"
+target = "survival_1"
+message = "正在传送到原版生存..."
+"#,
+        )
+        .unwrap();
+
+        assert!(npcs.enable);
+        assert_eq!(npcs.list.len(), 1);
+        assert_eq!(npcs.list[0].id, "survival_npc");
+        assert_eq!(npcs.list[0].skin_player_id, "MHF_Grass");
+        assert!(npcs.list[0].look_at_players);
+        assert_eq!(
+            npcs.list[0].actions.main_hand.kind,
+            MenuActionKind::Transfer
+        );
+        assert_eq!(npcs.list[0].actions.main_hand.target, "survival_1");
     }
 
     #[test]
@@ -3385,12 +3576,6 @@ kind = "transfer"
 target = "survival"
 message = "Connecting"
 
-[[lobby.npc_actions]]
-entity = "spawn-guide"
-
-[lobby.npc_actions.action]
-kind = "open_menu"
-
 [lobby.broadcast]
 enable = true
 interval_secs = 30
@@ -3445,10 +3630,6 @@ timeout_ms = 250
             vec!["Status: {status_label}", "{status_description}"]
         );
         assert_eq!(server.lobby.menu_items[0].action.target, "survival");
-        assert_eq!(
-            server.lobby.npc_actions[0].action.kind,
-            LobbyActionKind::OpenMenu
-        );
         assert!(server.lobby.broadcast.enable);
         assert_eq!(server.lobby.broadcast.interval_secs, 30);
         assert_eq!(server.lobby.broadcast.messages.len(), 2);
