@@ -14,6 +14,7 @@ use qexed_config::{
         qexed_player_data::QexedPlayerData,
         qexed_player_messages::QexedPlayerMessages,
         qexed_plugin_download::QexedPluginDownload,
+        qexed_proxy::QexedProxy,
         qexed_resource_pack::QexedResourcePack,
         qexed_scoreboard::QexedScoreboard,
         qexed_server::QexedServer,
@@ -35,6 +36,8 @@ impl RuntimeConfig {
             QexedPluginDownload::load_or_create_default(language.clone(), None, None)?
                 .plugin_download;
         QexedServer::load_or_create_default(language.clone(), None, None)?
+            .apply_to(&mut qexed.server);
+        QexedProxy::load_or_create_default(language.clone(), None, None)?
             .apply_to(&mut qexed.server);
         qexed.server.lan_discovery =
             QexedLanDiscovery::load_or_create_default(language.clone(), None, None)?.lan_discovery;

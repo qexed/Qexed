@@ -2,7 +2,7 @@ use qexed_config_macros::AutoDoc;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 
-use crate::app::qexed::server::{ForwardingMode, Server, ServerLogLevel};
+use crate::app::qexed::server::{Server, ServerLogLevel};
 
 #[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
 pub struct QexedServer {
@@ -58,27 +58,6 @@ pub struct QexedServerCore {
     #[AutoDoc(key = "config.qexed.server.network_compression_threshold")]
     pub network_compression_threshold: isize,
 
-    #[AutoDoc(key = "config.qexed.server.proxy")]
-    pub proxy: bool,
-
-    #[AutoDoc(key = "config.qexed.server.proxy_protocol")]
-    pub proxy_protocol: ForwardingMode,
-
-    #[serde(default)]
-    #[AutoDoc(
-        key = "config.qexed.server.proxy_server_id",
-        warning = "config.qexed.server.warning.proxy_server_id"
-    )]
-    pub proxy_server_id: String,
-
-    #[AutoDoc(
-        key = "config.qexed.server.proxy_token",
-        warning = "config.qexed.server.warning.proxy_token",
-        sensitive,
-        default_display = "<stored in .secrets>"
-    )]
-    pub proxy_token: String,
-
     #[AutoDoc(key = "config.qexed.server.max_port_connections")]
     pub max_port_connections: u16,
 
@@ -113,10 +92,6 @@ impl QexedServerCore {
         server.log_level = self.log_level;
         server.mojang_cache_path = self.mojang_cache_path;
         server.network_compression_threshold = self.network_compression_threshold;
-        server.proxy = self.proxy;
-        server.proxy_protocol = self.proxy_protocol;
-        server.proxy_server_id = self.proxy_server_id;
-        server.proxy_token = self.proxy_token;
         server.max_port_connections = self.max_port_connections;
         server.rate_limit_window_secs = self.rate_limit_window_secs;
         server.rate_limit_max_attempts = self.rate_limit_max_attempts;
@@ -139,10 +114,6 @@ impl Default for QexedServerCore {
             log_level: server.log_level,
             mojang_cache_path: server.mojang_cache_path,
             network_compression_threshold: server.network_compression_threshold,
-            proxy: server.proxy,
-            proxy_protocol: server.proxy_protocol,
-            proxy_server_id: server.proxy_server_id,
-            proxy_token: server.proxy_token,
             max_port_connections: server.max_port_connections,
             rate_limit_window_secs: server.rate_limit_window_secs,
             rate_limit_max_attempts: server.rate_limit_max_attempts,
@@ -160,6 +131,15 @@ impl Default for QexedServerCore {
 impl qexed_config::tool::AppConfigTrait for QexedServer {
     const PATH: &'static str = "/";
     const NAME: &'static str = "qexed_server";
+
+    fn obsolete_root_paths() -> &'static [&'static str] {
+        &[
+            "server.proxy",
+            "server.proxy_protocol",
+            "server.proxy_server_id",
+            "server.proxy_token",
+        ]
+    }
 
     fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
         rust_i18n::t!(

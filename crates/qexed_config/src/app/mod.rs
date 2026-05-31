@@ -13,6 +13,7 @@ pub mod qexed_player_audit;
 pub mod qexed_player_data;
 pub mod qexed_player_messages;
 pub mod qexed_plugin_download;
+pub mod qexed_proxy;
 pub mod qexed_resource_pack;
 pub mod qexed_scoreboard;
 pub mod qexed_server;

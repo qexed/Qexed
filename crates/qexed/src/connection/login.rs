@@ -138,7 +138,17 @@ where
         }
     }
 
-    let profile = if context.config.server.online_mode {
+    let online_mode = if context.config.server.proxy
+        && matches!(
+            context.config.server.proxy_protocol,
+            qexed_config::app::qexed::server::ForwardingMode::Victory
+        ) {
+        context.config.server.proxy_online_mode
+    } else {
+        context.config.server.online_mode
+    };
+
+    let profile = if online_mode {
         authenticate_online(packets, sink, context, login_start).await?
     } else {
         offline_profile(&login_start.username)

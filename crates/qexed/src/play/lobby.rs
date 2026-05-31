@@ -1,10 +1,9 @@
-use std::time::Duration;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use qexed_config::app::qexed::server::{
     ForwardingMode, Lobby, LobbyAction, LobbyActionKind, LobbyBossBarColor, LobbyBossBarOverlay,
-    LobbyMenuItem, LobbyServer, Server,
+    LobbyMenuItem, Server,
 };
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::{
@@ -14,7 +13,6 @@ use qexed_protocol::{
         container_set_slot,
         open_screen::OpenScreen,
         system_chat::SystemChat,
-        transfer::Transfer,
     },
     to_server::play::container_click::ContainerClick,
     types::{ComponentsToAdd, Slot, minecraft},
@@ -26,16 +24,11 @@ const LOBBY_MENU_WINDOW_ID: i32 = 1;
 const GENERIC_9X1_MENU_TYPE: i32 = 0;
 const GENERIC_9X6_MENU_TYPE: i32 = 5;
 const LOBBY_BOSS_BAR_UUID: uuid::Uuid = uuid::Uuid::from_u128(0x6c6f6262795f6261725f7165786564);
-const MIN_HEALTH_CHECK_INTERVAL_SECS: u64 = 1;
-const MAX_HEALTH_CHECK_INTERVAL_SECS: u64 = 300;
-const MIN_HEALTH_CHECK_TIMEOUT_MS: u64 = 50;
-const MAX_HEALTH_CHECK_TIMEOUT_MS: u64 = 5_000;
 pub(super) const MENU_WINDOW_ID: i32 = LOBBY_MENU_WINDOW_ID;
 
 #[derive(Debug, Clone)]
 pub(super) struct LobbyRuntime {
     config: Lobby,
-    servers: HashMap<String, LobbyServer>,
 }
 
 pub(super) struct ProxyConnectContext<'a> {
@@ -49,12 +42,6 @@ impl LobbyRuntime {
     pub(super) fn new(config: &Lobby) -> Self {
         Self {
             config: config.clone(),
-            servers: config
-                .servers
-                .iter()
-                .filter(|server| !server.id.trim().is_empty())
-                .map(|server| (server.id.trim().to_string(), server.clone()))
-                .collect(),
         }
     }
 
@@ -63,7 +50,7 @@ impl LobbyRuntime {
     }
 
     pub(super) fn has_server(&self, server_id: &str) -> bool {
-        self.servers.contains_key(server_id.trim())
+        self.resolve_server_id(server_id).is_some()
     }
 
     pub(super) fn protect_world(&self) -> bool {
@@ -203,59 +190,54 @@ impl LobbyRuntime {
     }
 
     pub(super) fn status_refresh_interval(&self) -> Option<Duration> {
-        if self.enabled() && !self.config.servers.is_empty() {
-            Some(Duration::from_secs(
-                self.config.health_check.interval_secs.clamp(
-                    MIN_HEALTH_CHECK_INTERVAL_SECS,
-                    MAX_HEALTH_CHECK_INTERVAL_SECS,
-                ),
-            ))
-        } else {
-            None
-        }
+        None
     }
 
     pub(super) async fn refresh_status(&self) -> LobbyStatusSnapshot {
-        let mut servers = HashMap::new();
-        for server in &self.config.servers {
-            let id = server.id.trim();
-            if id.is_empty() {
-                continue;
-            }
-            let status = if !server.enable {
-                LobbyServerStatus::Disabled
-            } else if server.maintenance {
-                LobbyServerStatus::Maintenance
-            } else if server.host.trim().is_empty() || server.port == 0 {
-                LobbyServerStatus::Offline
-            } else if self.server_is_reachable(server).await {
-                LobbyServerStatus::Online
-            } else {
-                LobbyServerStatus::Offline
-            };
-            servers.insert(id.to_string(), status);
+        LobbyStatusSnapshot::from_servers(self.configured_transfer_targets())
+    }
+
+    pub(super) fn proxy_server_list_request(
+        &self,
+        server_config: &Server,
+    ) -> Option<qexed_protocol::to_client::play::custom_payload::CustomPayload> {
+        if !self.enabled() || !proxy_backend_switching_enabled(server_config) {
+            return None;
         }
-        LobbyStatusSnapshot { servers }
+        Some(
+            qexed_protocol::to_client::play::custom_payload::CustomPayload {
+                channel: "bungeecord:main".to_string(),
+                data: qexed_packet::net_types::RestBuffer(bungee_plugin_message(&["GetServers"])),
+            },
+        )
+    }
+
+    pub(super) fn apply_proxy_server_list(
+        &self,
+        status: &mut LobbyStatusSnapshot,
+        payload: &qexed_protocol::to_server::play::custom_payload::CustomPayload,
+    ) -> bool {
+        if !self.enabled() || payload.channel != "bungeecord:main" {
+            return false;
+        }
+        let Some(servers) = parse_bungee_server_list_response(&payload.data.0) else {
+            return false;
+        };
+        *status = LobbyStatusSnapshot::from_servers(
+            servers
+                .into_iter()
+                .chain(self.configured_transfer_targets())
+                .collect(),
+        );
+        true
     }
 
     pub(super) fn status_summary(&self, status: &LobbyStatusSnapshot) -> String {
-        let total = self
-            .config
-            .servers
-            .iter()
-            .filter(|server| !server.id.trim().is_empty())
-            .count();
+        let total = self.total_server_count(status);
         if total == 0 {
             return "Lobby servers: none".to_string();
         }
-        let online = self
-            .config
-            .servers
-            .iter()
-            .filter(|server| {
-                status.status_for_server(server.id.trim()) == LobbyServerStatus::Online
-            })
-            .count();
+        let online = self.online_server_count(status);
         format!("Lobby servers: {online}/{total} online")
     }
 
@@ -269,7 +251,10 @@ impl LobbyRuntime {
                 "{online_servers}",
                 &self.online_server_count(status).to_string(),
             )
-            .replace("{total_servers}", &self.total_server_count().to_string())
+            .replace(
+                "{total_servers}",
+                &self.total_server_count(status).to_string(),
+            )
             .replace("{servers}", &self.server_labels(status).join(", "))
     }
 
@@ -446,14 +431,13 @@ impl LobbyRuntime {
 
     pub(super) fn server_labels(&self, status: &LobbyStatusSnapshot) -> Vec<String> {
         let mut servers = self
-            .config
-            .servers
-            .iter()
-            .map(|server| {
-                let name = display_server_name(server)
-                    .unwrap_or(server.id.as_str())
-                    .to_string();
-                format!("{name} {}", status.label_for_server(server.id.trim()))
+            .server_targets_from_status(status)
+            .into_iter()
+            .map(|server_id| {
+                let name = self
+                    .display_name_for_target(&server_id)
+                    .unwrap_or_else(|| server_id.clone());
+                format!("{name} {}", status.label_for_server(&server_id))
             })
             .collect::<Vec<_>>();
         servers.sort();
@@ -462,25 +446,33 @@ impl LobbyRuntime {
 
     pub(super) fn server_command_entries(&self, status: &LobbyStatusSnapshot) -> Vec<String> {
         let mut servers = self
-            .config
-            .servers
-            .iter()
-            .filter_map(|server| {
-                let id = server.id.trim();
-                if id.is_empty() {
-                    return None;
-                }
-                let name = display_server_name(server).unwrap_or(id);
-                let label = status.label_for_server(id);
-                Some(if name == id {
+            .server_targets_from_status(status)
+            .into_iter()
+            .map(|id| {
+                let name = self
+                    .display_name_for_target(&id)
+                    .unwrap_or_else(|| id.clone());
+                let label = status.label_for_server(&id);
+                if name == id {
                     format!("{id} {label}")
                 } else {
                     format!("{id}={name} {label}")
-                })
+                }
             })
             .collect::<Vec<_>>();
         servers.sort();
         servers
+    }
+
+    pub(super) fn server_targets(&self) -> Vec<String> {
+        self.configured_transfer_targets()
+    }
+
+    pub(super) fn server_targets_from_status(&self, status: &LobbyStatusSnapshot) -> Vec<String> {
+        let mut targets = self.configured_transfer_targets();
+        targets.extend(status.server_ids());
+        sort_dedup_case_insensitive(&mut targets);
+        targets
     }
 
     pub(super) fn resolve_server_id(&self, server_id: &str) -> Option<String> {
@@ -488,42 +480,34 @@ impl LobbyRuntime {
         if server_id.is_empty() {
             return None;
         }
-        if self.servers.contains_key(server_id) {
-            return Some(server_id.to_string());
-        }
         self.config
-            .servers
+            .menu_items
             .iter()
-            .filter_map(|server| {
-                let id = server.id.trim();
-                (!id.is_empty()).then_some((id, display_server_name(server)))
+            .filter(|item| item.action.kind == LobbyActionKind::Transfer)
+            .filter_map(|item| {
+                let id = item.action.target.trim();
+                (!id.is_empty()).then_some((id, item.name.trim()))
             })
             .find_map(|(id, name)| {
                 if id.eq_ignore_ascii_case(server_id)
-                    || name.is_some_and(|name| name.eq_ignore_ascii_case(server_id))
+                    || (!name.is_empty() && name.eq_ignore_ascii_case(server_id))
                 {
                     Some(id.to_string())
                 } else {
                     None
                 }
             })
+            .or_else(|| Some(server_id.to_string()))
     }
 
-    pub(super) fn total_server_count(&self) -> usize {
-        self.config
-            .servers
-            .iter()
-            .filter(|server| !server.id.trim().is_empty())
-            .count()
+    pub(super) fn total_server_count(&self, status: &LobbyStatusSnapshot) -> usize {
+        self.server_targets_from_status(status).len()
     }
 
     pub(super) fn online_server_count(&self, status: &LobbyStatusSnapshot) -> usize {
-        self.config
-            .servers
+        self.server_targets_from_status(status)
             .iter()
-            .filter(|server| {
-                status.status_for_server(server.id.trim()) == LobbyServerStatus::Online
-            })
+            .filter(|server| status.status_for_server(server) == LobbyServerStatus::Online)
             .count()
     }
 
@@ -531,47 +515,30 @@ impl LobbyRuntime {
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         action: &LobbyAction,
-        status: &LobbyStatusSnapshot,
+        _status: &LobbyStatusSnapshot,
         proxy_context: Option<&ProxyConnectContext<'_>>,
     ) -> Result<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        let Some(server) = self.servers.get(action.target.trim()) else {
+        let server_id = action.target.trim();
+        if server_id.is_empty() {
             sink.send(SystemChat {
                 content: text_component(format!("Server is unavailable: {}", action.target)),
                 overlay: false,
             })
             .await?;
             return Ok(());
-        };
-
-        if server_is_known_unavailable(status, &server.id) {
-            send_unavailable_server_message(sink, server).await?;
-            return Ok(());
         }
 
-        if server.host.trim().is_empty()
-            || server.port == 0
-            || !self.server_is_reachable(server).await
-        {
-            send_unavailable_server_message(sink, server).await?;
-            return Ok(());
-        }
-
-        let message = if action.message.trim().is_empty() {
-            format!(
-                "Connecting to {}...",
-                display_server_name(server).unwrap_or(server.id.as_str())
-            )
+        let message = if !action.message.trim().is_empty() {
+            action.message.trim().to_string()
         } else {
-            action.message.clone()
+            let name = self
+                .display_name_for_target(server_id)
+                .unwrap_or_else(|| server_id.to_string());
+            format!("Connecting to {name}...")
         };
-        sink.send(SystemChat {
-            content: text_component(message),
-            overlay: false,
-        })
-        .await?;
         if let Some(proxy_context) = proxy_context {
             if proxy_backend_switching_enabled(proxy_context.server_config) {
                 super::chat::apply_proxy_connect_action(
@@ -580,15 +547,18 @@ impl LobbyRuntime {
                     proxy_context.plugins,
                     proxy_context.players,
                     proxy_context.actor,
-                    &server.id,
-                    "",
+                    server_id,
+                    &message,
                 )
                 .await?;
                 return Ok(());
             }
         }
-        sink.send(Transfer::new(server.host.trim(), server.port))
-            .await?;
+        sink.send(SystemChat {
+            content: text_component("Proxy transfer is unavailable: proxy is disabled."),
+            overlay: false,
+        })
+        .await?;
         Ok(())
     }
 
@@ -599,19 +569,6 @@ impl LobbyRuntime {
     fn boss_bar_title(&self) -> &str {
         let title = self.config.boss_bar.title.trim();
         if title.is_empty() { "Qexed" } else { title }
-    }
-
-    async fn server_is_reachable(&self, server: &LobbyServer) -> bool {
-        server_is_reachable(server, self.health_check_timeout()).await
-    }
-
-    fn health_check_timeout(&self) -> Duration {
-        Duration::from_millis(
-            self.config
-                .health_check
-                .timeout_ms
-                .clamp(MIN_HEALTH_CHECK_TIMEOUT_MS, MAX_HEALTH_CHECK_TIMEOUT_MS),
-        )
     }
 
     fn menu_slots(&self, rows: u8, status: &LobbyStatusSnapshot) -> Vec<Slot> {
@@ -632,21 +589,20 @@ impl LobbyRuntime {
             let lore = if item.lore.is_empty() {
                 Vec::new()
             } else {
-                self.render_menu_lore(item, None, LobbyServerStatus::Unknown, status)
+                self.render_menu_lore(item, "", LobbyServerStatus::Unknown, status)
             };
             return named_item_with_lore(&item.item, name.as_str(), &lore, 1);
         }
 
         let server_id = item.action.target.trim();
         let server_status = status.status_for_server(server_id);
-        let server = self.servers.get(server_id);
         let item_name =
-            self.render_menu_item_text(item.name.as_str(), server, server_status, status);
+            self.render_menu_item_text(item.name.as_str(), server_id, server_status, status);
         let display_name = format!("{} {}", item_name.trim(), server_status.label())
             .trim()
             .to_string();
         let item_name = menu_item_name_for_status(item, server_status);
-        let lore = self.render_menu_lore(item, server, server_status, status);
+        let lore = self.render_menu_lore(item, server_id, server_status, status);
         named_item_with_lore(item_name, display_name.as_str(), &lore, 1)
     }
 
@@ -658,42 +614,73 @@ impl LobbyRuntime {
     fn render_menu_lore(
         &self,
         item: &LobbyMenuItem,
-        server: Option<&LobbyServer>,
+        server_id: &str,
         server_status: LobbyServerStatus,
         status: &LobbyStatusSnapshot,
     ) -> Vec<String> {
         if item.lore.is_empty() {
-            return vec![server_status_description(server_status, server)];
+            return vec![server_status_description(server_status)];
         }
         item.lore
             .iter()
-            .map(|line| self.render_menu_item_text(line, server, server_status, status))
+            .map(|line| self.render_menu_item_text(line, server_id, server_status, status))
             .collect()
     }
 
     fn render_menu_item_text(
         &self,
         template: &str,
-        server: Option<&LobbyServer>,
+        server_id: &str,
         server_status: LobbyServerStatus,
         status: &LobbyStatusSnapshot,
     ) -> String {
         let rendered = self.render_status_placeholders(template, status);
-        let server_id = server.map(|server| server.id.trim()).unwrap_or_default();
-        let server_name = server.and_then(display_server_name).unwrap_or(server_id);
-        let maintenance_message = server
-            .map(|server| server.maintenance_message.trim())
-            .unwrap_or_default();
+        let server_name = self
+            .display_name_for_target(server_id)
+            .unwrap_or_else(|| server_id.to_string());
         rendered
             .replace("{server}", server_id)
-            .replace("{server_name}", server_name)
+            .replace("{server_name}", &server_name)
             .replace("{status}", server_status.key())
             .replace("{status_label}", server_status.label())
             .replace(
                 "{status_description}",
-                &server_status_description(server_status, server),
+                &server_status_description(server_status),
             )
-            .replace("{maintenance_message}", maintenance_message)
+            .replace("{maintenance_message}", "")
+    }
+
+    fn configured_transfer_targets(&self) -> Vec<String> {
+        let mut targets = self
+            .config
+            .menu_items
+            .iter()
+            .filter(|item| item.action.kind == LobbyActionKind::Transfer)
+            .filter_map(|item| {
+                let target = item.action.target.trim();
+                (!target.is_empty()).then(|| target.to_string())
+            })
+            .collect::<Vec<_>>();
+        targets.sort();
+        targets.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        targets
+    }
+
+    fn display_name_for_target(&self, target: &str) -> Option<String> {
+        self.config
+            .menu_items
+            .iter()
+            .filter(|item| item.action.kind == LobbyActionKind::Transfer)
+            .find(|item| {
+                item.action
+                    .target
+                    .trim()
+                    .eq_ignore_ascii_case(target.trim())
+            })
+            .and_then(|item| {
+                let name = item.name.trim();
+                (!name.is_empty()).then(|| name.to_string())
+            })
     }
 }
 
@@ -744,9 +731,25 @@ pub(super) struct LobbyStatusSnapshot {
 }
 
 impl LobbyStatusSnapshot {
+    fn from_servers(servers: Vec<String>) -> Self {
+        Self {
+            servers: servers
+                .into_iter()
+                .filter_map(|server| {
+                    let server = server.trim();
+                    (!server.is_empty()).then(|| (server.to_string(), LobbyServerStatus::Unknown))
+                })
+                .collect(),
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn from_servers_for_tests(servers: HashMap<String, LobbyServerStatus>) -> Self {
         Self { servers }
+    }
+
+    fn server_ids(&self) -> Vec<String> {
+        self.servers.keys().cloned().collect()
     }
 
     pub(super) fn changed_servers_since(
@@ -815,6 +818,11 @@ fn menu_item_name_for_status(item: &LobbyMenuItem, status: LobbyServerStatus) ->
     }
 }
 
+fn sort_dedup_case_insensitive(values: &mut Vec<String>) {
+    values.sort_by_key(|value| value.to_ascii_lowercase());
+    values.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+}
+
 fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32) -> Slot {
     let item_id = crate::inventory::item_id_for_name(normalize_resource_key(item_name).as_str())
         .unwrap_or_else(|| crate::inventory::item_id_for_name("minecraft:paper").unwrap_or(1));
@@ -863,7 +871,7 @@ fn proxy_backend_switching_enabled(server_config: &Server) -> bool {
     server_config.proxy
         && matches!(
             server_config.proxy_protocol,
-            ForwardingMode::Velocity | ForwardingMode::BungeeCord
+            ForwardingMode::Velocity | ForwardingMode::Victory | ForwardingMode::BungeeCord
         )
 }
 
@@ -871,28 +879,52 @@ fn menu_type_for_rows(rows: u8) -> i32 {
     (GENERIC_9X1_MENU_TYPE + i32::from(rows.saturating_sub(1))).min(GENERIC_9X6_MENU_TYPE)
 }
 
-fn display_server_name(server: &LobbyServer) -> Option<&str> {
-    let name = server.name.trim();
-    (!name.is_empty()).then_some(name)
-}
-
-fn server_status_description(status: LobbyServerStatus, server: Option<&LobbyServer>) -> String {
-    if status == LobbyServerStatus::Maintenance {
-        if let Some(message) = server
-            .map(|server| server.maintenance_message.trim())
-            .filter(|message| !message.is_empty())
-        {
-            return message.to_string();
-        }
-    }
+fn server_status_description(status: LobbyServerStatus) -> String {
     status.description().to_string()
 }
 
-fn server_is_known_unavailable(status: &LobbyStatusSnapshot, server_id: &str) -> bool {
-    matches!(
-        status.status_for_server(server_id),
-        LobbyServerStatus::Offline | LobbyServerStatus::Disabled | LobbyServerStatus::Maintenance
+fn bungee_plugin_message(values: &[&str]) -> Vec<u8> {
+    let mut data = Vec::new();
+    for value in values {
+        write_modified_utf8(&mut data, value);
+    }
+    data
+}
+
+fn parse_bungee_server_list_response(data: &[u8]) -> Option<Vec<String>> {
+    let mut offset = 0usize;
+    let subchannel = read_modified_utf8(data, &mut offset)?;
+    if subchannel != "GetServers" {
+        return None;
+    }
+    let servers = read_modified_utf8(data, &mut offset)?;
+    Some(
+        servers
+            .split(',')
+            .map(str::trim)
+            .filter(|server| !server.is_empty())
+            .map(ToString::to_string)
+            .collect(),
     )
+}
+
+fn read_modified_utf8(data: &[u8], offset: &mut usize) -> Option<String> {
+    let len_end = offset.checked_add(2)?;
+    let len = usize::from(u16::from_be_bytes(
+        data.get(*offset..len_end)?.try_into().ok()?,
+    ));
+    let start = len_end;
+    let end = start.checked_add(len)?;
+    let value = std::str::from_utf8(data.get(start..end)?).ok()?.to_string();
+    *offset = end;
+    Some(value)
+}
+
+fn write_modified_utf8(out: &mut Vec<u8>, value: &str) {
+    let bytes = value.as_bytes();
+    let len = u16::try_from(bytes.len()).unwrap_or(u16::MAX);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(&bytes[..usize::from(len)]);
 }
 
 fn boss_bar_color(color: LobbyBossBarColor) -> BossBarColor {
@@ -917,43 +949,30 @@ fn boss_bar_overlay(overlay: LobbyBossBarOverlay) -> BossBarOverlay {
     }
 }
 
-async fn server_is_reachable(server: &LobbyServer, timeout: Duration) -> bool {
-    let address = format!("{}:{}", server.host.trim(), server.port);
-    let connect = tokio::net::TcpStream::connect(address);
-    matches!(tokio::time::timeout(timeout, connect).await, Ok(Ok(_)))
-}
-
-async fn send_unavailable_server_message<W>(
-    sink: &mut qexed_tcp_connect::PacketSink<W>,
-    server: &LobbyServer,
-) -> Result<()>
-where
-    W: tokio::io::AsyncWrite + Unpin,
-{
-    let message = if server.maintenance && !server.maintenance_message.trim().is_empty() {
-        server.maintenance_message.trim().to_string()
-    } else {
-        format!("Server is unavailable: {}", server.id)
-    };
-    sink.send(SystemChat {
-        content: text_component(message),
-        overlay: false,
-    })
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use qexed_config::app::qexed::server::{
-        ForwardingMode, LobbyAction, LobbyActionKind, LobbyHealthCheck, LobbyMenuItem,
-        LobbyNavigator, LobbyServer,
+        ForwardingMode, LobbyAction, LobbyActionKind, LobbyMenuItem, LobbyNavigator,
     };
     use qexed_packet::Packet;
+    use qexed_packet::net_types::RestBuffer;
     use qexed_protocol::to_client::play::{custom_payload::CustomPayload, system_chat::SystemChat};
     use tokio::io::duplex;
+
+    fn transfer_item(slot: u8, target: &str, name: &str) -> LobbyMenuItem {
+        LobbyMenuItem {
+            slot,
+            name: name.to_string(),
+            action: LobbyAction {
+                kind: LobbyActionKind::Transfer,
+                target: target.to_string(),
+                message: String::new(),
+            },
+            ..LobbyMenuItem::default()
+        }
+    }
 
     #[test]
     fn navigator_item_overwrites_configured_hotbar_slot() {
@@ -1030,13 +1049,7 @@ mod tests {
     fn server_labels_include_cached_status() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![LobbyServer {
-                id: "survival".to_string(),
-                name: "Survival".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 25566,
-                ..LobbyServer::default()
-            }],
+            menu_items: vec![transfer_item(13, "survival", "Survival")],
             ..Default::default()
         });
         let mut servers = HashMap::new();
@@ -1055,13 +1068,7 @@ mod tests {
     fn server_targets_resolve_by_id_case_and_display_name() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![LobbyServer {
-                id: "survival".to_string(),
-                name: "Survival Games".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 25566,
-                ..LobbyServer::default()
-            }],
+            menu_items: vec![transfer_item(13, "survival", "Survival Games")],
             ..Default::default()
         });
 
@@ -1077,20 +1084,17 @@ mod tests {
             lobby.resolve_server_id("survival games").as_deref(),
             Some("survival")
         );
-        assert_eq!(lobby.resolve_server_id("missing"), None);
+        assert_eq!(
+            lobby.resolve_server_id("missing").as_deref(),
+            Some("missing")
+        );
     }
 
     #[test]
     fn broadcast_messages_render_server_status_placeholders() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![LobbyServer {
-                id: "survival".to_string(),
-                name: "Survival".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 25566,
-                ..LobbyServer::default()
-            }],
+            menu_items: vec![transfer_item(13, "survival", "Survival")],
             broadcast: qexed_config::app::qexed::server::LobbyBroadcast {
                 enable: true,
                 interval_secs: 30,
@@ -1112,13 +1116,6 @@ mod tests {
     fn offline_transfer_menu_item_uses_barrier() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![LobbyServer {
-                id: "survival".to_string(),
-                name: "Survival".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 25566,
-                ..LobbyServer::default()
-            }],
             menu_items: vec![LobbyMenuItem {
                 slot: 13,
                 item: "minecraft:diamond".to_string(),
@@ -1145,21 +1142,6 @@ mod tests {
     fn transfer_menu_items_use_configured_status_icons() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![
-                LobbyServer {
-                    id: "offline".to_string(),
-                    ..LobbyServer::default()
-                },
-                LobbyServer {
-                    id: "disabled".to_string(),
-                    ..LobbyServer::default()
-                },
-                LobbyServer {
-                    id: "maintenance".to_string(),
-                    maintenance_message: "Restarting".to_string(),
-                    ..LobbyServer::default()
-                },
-            ],
             menu_items: vec![
                 LobbyMenuItem {
                     slot: 10,
@@ -1253,16 +1235,6 @@ mod tests {
     }
 
     #[test]
-    fn known_offline_status_blocks_transfer_probe() {
-        let mut servers = HashMap::new();
-        servers.insert("survival".to_string(), super::LobbyServerStatus::Offline);
-        let status = super::LobbyStatusSnapshot { servers };
-
-        assert!(super::server_is_known_unavailable(&status, "survival"));
-        assert!(!super::server_is_known_unavailable(&status, "unknown"));
-    }
-
-    #[test]
     fn maintenance_and_disabled_servers_are_unavailable() {
         let mut servers = HashMap::new();
         servers.insert(
@@ -1274,21 +1246,13 @@ mod tests {
 
         assert_eq!(status.label_for_server("maintenance"), "[maintenance]");
         assert_eq!(status.label_for_server("disabled"), "[disabled]");
-        assert!(super::server_is_known_unavailable(&status, "maintenance"));
-        assert!(super::server_is_known_unavailable(&status, "disabled"));
     }
 
     #[test]
     fn menu_lore_renders_server_status_placeholders() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![LobbyServer {
-                id: "survival".to_string(),
-                name: "Survival".to_string(),
-                maintenance: true,
-                maintenance_message: "Restarting".to_string(),
-                ..LobbyServer::default()
-            }],
+            menu_items: vec![transfer_item(13, "survival", "Survival")],
             ..Default::default()
         });
         let item = LobbyMenuItem {
@@ -1304,44 +1268,76 @@ mod tests {
             super::LobbyServerStatus::Maintenance,
         );
         let status = super::LobbyStatusSnapshot { servers };
-        let server = lobby.servers.get("survival");
 
         assert_eq!(
             lobby.render_menu_lore(
                 &item,
-                server,
+                "survival",
                 super::LobbyServerStatus::Maintenance,
                 &status
             ),
-            vec!["Survival [maintenance]", "Restarting"]
+            vec!["Survival [maintenance]", "Backend is under maintenance.",]
         );
     }
 
     #[test]
-    fn health_check_settings_are_clamped() {
+    fn lobby_backend_status_refresh_is_proxy_owned() {
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            health_check: LobbyHealthCheck {
-                interval_secs: 0,
-                timeout_ms: 10_000,
-            },
-            servers: vec![LobbyServer {
-                id: "survival".to_string(),
-                name: String::new(),
-                host: "127.0.0.1".to_string(),
-                port: 25566,
-                ..LobbyServer::default()
-            }],
+            menu_items: vec![transfer_item(13, "survival", "Survival")],
             ..Default::default()
         });
 
+        assert!(lobby.status_refresh_interval().is_none());
+    }
+
+    #[test]
+    fn proxy_server_list_request_uses_get_servers_plugin_message() {
+        let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
+            enable: true,
+            ..Default::default()
+        });
+        let mut server_config = qexed_config::app::qexed::server::Server::default();
+        server_config.proxy = true;
+        server_config.proxy_protocol = ForwardingMode::Victory;
+
+        let request = lobby.proxy_server_list_request(&server_config).unwrap();
+
+        assert_eq!(request.channel, "bungeecord:main");
         assert_eq!(
-            lobby.status_refresh_interval().unwrap(),
-            std::time::Duration::from_secs(1)
+            request.data.0,
+            vec![
+                0, 10, b'G', b'e', b't', b'S', b'e', b'r', b'v', b'e', b'r', b's'
+            ]
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_server_list_response_updates_status_targets() {
+        let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
+            enable: true,
+            menu_items: vec![transfer_item(13, "menu_server", "Menu Server")],
+            ..Default::default()
+        });
+        let payload = qexed_protocol::to_server::play::custom_payload::CustomPayload {
+            channel: "bungeecord:main".to_string(),
+            data: RestBuffer(super::bungee_plugin_message(&[
+                "GetServers",
+                "lobby-1, prison, survival_1",
+            ])),
+        };
+        let mut status = lobby.refresh_status().await;
+
+        assert!(lobby.apply_proxy_server_list(&mut status, &payload));
+
         assert_eq!(
-            lobby.health_check_timeout(),
-            std::time::Duration::from_millis(5_000)
+            lobby.server_targets_from_status(&status),
+            vec![
+                "lobby-1".to_string(),
+                "menu_server".to_string(),
+                "prison".to_string(),
+                "survival_1".to_string()
+            ]
         );
     }
 
@@ -1361,40 +1357,15 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_lobby_transfer_sends_proxy_connect_payload() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let accept_task = tokio::spawn(async move {
-            let _ = listener.accept().await;
-        });
         let lobby = super::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
             enable: true,
-            servers: vec![LobbyServer {
-                id: "prison".to_string(),
-                enable: true,
-                host: "127.0.0.1".to_string(),
-                port,
-                ..LobbyServer::default()
-            }],
+            menu_items: vec![transfer_item(13, "prison", "Prison")],
             ..Default::default()
         });
         let mut server_config = qexed_config::app::qexed::server::Server::default();
         server_config.proxy = true;
         server_config.proxy_protocol = ForwardingMode::Velocity;
         server_config.proxy_server_id = "lobby-1".to_string();
-        server_config.lobby = qexed_config::app::qexed::server::Lobby {
-            health_check: LobbyHealthCheck {
-                timeout_ms: 50,
-                ..LobbyHealthCheck::default()
-            },
-            servers: vec![LobbyServer {
-                id: "prison".to_string(),
-                enable: true,
-                host: "127.0.0.1".to_string(),
-                port,
-                ..LobbyServer::default()
-            }],
-            ..Default::default()
-        };
         let players = crate::players::PlayerManager::default();
         let player = players.join(
             qexed_packet::net_types::GameProfile {
@@ -1450,8 +1421,6 @@ mod tests {
                 .windows("prison".len())
                 .any(|window| window == "prison".as_bytes())
         );
-
-        accept_task.await.unwrap();
     }
 
     async fn read_packet<R>(

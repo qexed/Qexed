@@ -56,14 +56,17 @@ autodoc:
       zh-CN: "%{file}: 世界存档、生成器、出生点、光照和 GPU 计算设置。"
     qexed:
       main:
-        en: "%{file}: Qexed main configuration. Keeps global switches; runtime modules are separate qexed_* app config files."
-        zh-CN: "%{file}: Qexed 主配置。用于全局开关；运行时模块拆分为独立的 qexed_* 应用配置文件。"
+        en: "%{file}: Qexed main configuration. Keeps global switches."
+        zh-CN: "%{file}: Qexed 主配置。用于全局开关"
       plugin_download:
         en: "%{file}: plugin download source and authentication settings."
         zh-CN: "%{file}: 插件下载源和认证设置。"
       server:
-        en: "%{file}: core server runtime, network, proxy, rate-limit, MOTD, and favicon settings."
-        zh-CN: "%{file}: 核心服务端运行、网络、代理、速率限制、MOTD 和图标设置。"
+        en: "%{file}: core server runtime, network, rate-limit, MOTD, and favicon settings."
+        zh-CN: "%{file}: 核心服务端运行、网络、速率限制、MOTD 和图标设置。"
+      proxy:
+        en: "%{file}: proxy forwarding protocol and backend identity settings."
+        zh-CN: "%{file}: 代理转发协议和后端身份设置。"
       content_filter:
         en: "%{file}: chat content filter engine, word list, and external API settings."
         zh-CN: "%{file}: 聊天内容审核引擎、词库和外部 API 设置。"
@@ -151,6 +154,31 @@ config:
         enable:
           en: "The field name is kept compatible with the old qexed_config crate."
           zh-CN: "字段名保持与旧 qexed_config crate 兼容。"
+    proxy:
+      en: "Proxy forwarding settings"
+      zh-CN: "代理转发设置"
+      enable:
+        en: "Enable proxy forwarding"
+        zh-CN: "启用代理转发"
+      protocol:
+        en: "Proxy forwarding protocol"
+        zh-CN: "代理转发协议"
+      server_id:
+        en: "Current proxy backend server ID"
+        zh-CN: "当前代理后端子服 ID"
+      token:
+        en: "Proxy forwarding authentication token"
+        zh-CN: "代理转发认证 token"
+      online_mode:
+        en: "Online-mode used for Victory forwarded logins"
+        zh-CN: "Victory 转发登录使用的正版验证设置"
+      warning:
+        server_id:
+          en: "Set this to the backend name registered in Victory/Velocity. Qexed uses it to reject transfers to the current backend."
+          zh-CN: "设置为 Victory/Velocity 中注册的后端名。Qexed 会用它拒绝切换到当前后端的请求。"
+        token:
+          en: "Keep this token private and rotate it if it is exposed."
+          zh-CN: "请妥善保管该 token；一旦泄露请立即更换。"
     server:
       en: "Server settings"
       zh-CN: "服务器设置"
@@ -481,6 +509,15 @@ config:
         enable:
           en: "Enable player join and leave announcements"
           zh-CN: "启用玩家进服和退服提示"
+        chat_rate_limit_window_secs:
+          en: "Chat rate-limit window in seconds"
+          zh-CN: "聊天限速时间窗口，单位为秒"
+        chat_rate_limit_max_messages:
+          en: "Maximum chat messages allowed within the rate-limit window"
+          zh-CN: "聊天限速窗口内允许发送的最大消息数"
+        chat_max_length:
+          en: "Maximum chat message length in Unicode scalar values"
+          zh-CN: "单条聊天消息最大长度，按 Unicode 字符计数"
         join:
           en: "Join announcement template. Use {player} as the player name placeholder."
           zh-CN: "玩家进服提示模板，使用 {player} 作为玩家名占位符"
@@ -644,8 +681,8 @@ config:
             en: "Stable entity identifier used by Qexed"
             zh-CN: "Qexed 使用的稳定实体标识"
           kind:
-            en: "Entity kind: entity or hologram. NPCs are configured in qexed_npc.toml."
-            zh-CN: "实体类型：entity 或 hologram。NPC 请在 qexed_npc.toml 中配置。"
+            en: "Entity kind: entity or hologram. NPCs are configured in npc.toml."
+            zh-CN: "实体类型：entity 或 hologram。NPC 请在 npc.toml 中配置。"
           entity_type:
             en: "Minecraft entity type resource key. Use minecraft:text_display for holograms."
             zh-CN: "Minecraft 实体类型资源键。悬浮字使用 minecraft:text_display。"

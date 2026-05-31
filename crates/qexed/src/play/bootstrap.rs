@@ -89,13 +89,8 @@ where
     .await?;
 
     let visible_commands = crate::commands::visible_commands(permissions, &player.profile).await?;
-    let lobby_server_ids = config
-        .server
-        .lobby
-        .servers
-        .iter()
-        .map(|server| server.id.clone())
-        .collect::<Vec<_>>();
+    let lobby = super::lobby::LobbyRuntime::new(&config.server.lobby);
+    let lobby_server_ids = lobby.server_targets();
     let mut plugin_commands = Vec::new();
     for command in plugins.plugin_commands() {
         if permissions

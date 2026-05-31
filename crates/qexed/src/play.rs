@@ -15,7 +15,7 @@ mod util;
 
 use anyhow::Result;
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -43,11 +43,12 @@ use qexed_protocol::to_server::play::{
     chat_command::ChatCommand, chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
     chunk_batch_received::ChunkBatchReceived, client_command::ClientCommand,
     command_suggestion::CommandSuggestion, container_click::ContainerClick,
-    container_close::ContainerClose, interact::Interact,
-    keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
-    move_player_pos_rot::MovePlayerPosRot, move_player_rot::MovePlayerRot,
-    move_player_status_only::MovePlayerStatusOnly, pick_item_from_block::PickItemFromBlock,
-    player_action::PlayerAction, player_input::PlayerInput, set_carried_item::SetCarriedItem,
+    container_close::ContainerClose, custom_payload::CustomPayload as ServerboundCustomPayload,
+    interact::Interact, keep_alive::KeepAlive as ServerboundKeepAlive,
+    move_player_pos::MovePlayerPos, move_player_pos_rot::MovePlayerPosRot,
+    move_player_rot::MovePlayerRot, move_player_status_only::MovePlayerStatusOnly,
+    pick_item_from_block::PickItemFromBlock, player_action::PlayerAction,
+    player_input::PlayerInput, set_carried_item::SetCarriedItem,
     set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
@@ -90,6 +91,78 @@ const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
 const PLAYER_ACTION_STOP_DESTROY_BLOCK: i32 = 2;
 const PLAYER_ACTION_DROP_ITEM_STACK: i32 = 3;
 const PLAYER_ACTION_DROP_ITEM: i32 = 4;
+
+struct ChatRateLimit {
+    window: Duration,
+    max_messages: usize,
+    max_length: usize,
+    sent_at: VecDeque<Instant>,
+}
+
+impl ChatRateLimit {
+    fn new(config: &qexed_config::app::qexed::server::PlayerMessages) -> Self {
+        Self {
+            window: Duration::from_secs(config.chat_rate_limit_window_secs.max(1)),
+            max_messages: config.chat_rate_limit_max_messages.max(1) as usize,
+            max_length: config.chat_max_length.max(1),
+            sent_at: VecDeque::new(),
+        }
+    }
+
+    fn check(&mut self, message: &str, now: Instant) -> ChatLimitResult {
+        if message.chars().count() > self.max_length {
+            return ChatLimitResult::TooLong {
+                max_length: self.max_length,
+            };
+        }
+
+        while self
+            .sent_at
+            .front()
+            .is_some_and(|sent_at| now.duration_since(*sent_at) >= self.window)
+        {
+            self.sent_at.pop_front();
+        }
+
+        if self.sent_at.len() >= self.max_messages {
+            return ChatLimitResult::RateLimited;
+        }
+
+        self.sent_at.push_back(now);
+        ChatLimitResult::Allowed
+    }
+}
+
+enum ChatLimitResult {
+    Allowed,
+    RateLimited,
+    TooLong { max_length: usize },
+}
+
+fn validate_player_chat_message(rate_limit: &mut ChatRateLimit, message: &str) -> Option<String> {
+    match rate_limit.check(message, Instant::now()) {
+        ChatLimitResult::Allowed => None,
+        ChatLimitResult::RateLimited => {
+            Some("You are sending chat messages too quickly.".to_string())
+        }
+        ChatLimitResult::TooLong { max_length } => Some(format!(
+            "Chat message is too long. Maximum length is {max_length}."
+        )),
+    }
+}
+
+fn effective_online_mode(server: &qexed_config::app::qexed::server::Server) -> bool {
+    if server.proxy
+        && matches!(
+            server.proxy_protocol,
+            qexed_config::app::qexed::server::ForwardingMode::Victory
+        )
+    {
+        server.proxy_online_mode
+    } else {
+        server.online_mode
+    }
+}
 
 fn pending_chunk_center_update_sleep(chunk_state: &ChunkSendState) -> tokio::time::Sleep {
     let deadline = chunk_state
@@ -196,7 +269,7 @@ where
         death_position: None,
         portal_cooldown: VarInt(0),
         sea_level: VarInt(63),
-        enforces_secure_chat: config.server.online_mode,
+        enforces_secure_chat: effective_online_mode(&config.server),
     })
     .await?;
 
@@ -344,7 +417,8 @@ where
     let mut pending_keep_alive = None;
     let mut chat_session: Option<crate::secure_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0;
-    let enforce_secure_chat = config.server.online_mode;
+    let enforce_secure_chat = effective_online_mode(&config.server);
+    let mut chat_rate_limit = ChatRateLimit::new(&config.server.player_messages);
     let world_config = &config.world;
     let mut position = session.player.position;
     let mut last_stepped_block: Option<BlockPosition> = None;
@@ -353,11 +427,7 @@ where
     let mut pending_dig: Option<mining::PendingDig> = None;
     let mut click_tracker = ClickTracker::new(&config.server.click_detection);
     let lobby = lobby::LobbyRuntime::new(&config.server.lobby);
-    let mut lobby_status = if lobby.status_refresh_interval().is_some() {
-        lobby.refresh_status().await
-    } else {
-        lobby::LobbyStatusSnapshot::default()
-    };
+    let mut lobby_status = lobby.refresh_status().await;
     let mut lobby_status_refresh = lobby.status_refresh_interval().map(tokio::time::interval);
     if let Some(interval) = lobby_status_refresh.as_mut() {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -390,6 +460,9 @@ where
     let menu_hotbar_changes = menus.sync_hotbar_items(&mut inventory);
     lobby.show_boss_bar(sink).await?;
     lobby.update_boss_bar_status(sink, &lobby_status).await?;
+    if let Some(request) = lobby.proxy_server_list_request(&config.server) {
+        sink.send(request).await?;
+    }
     for packet in scoreboard::lobby_sidebar_packets(
         &config.server.scoreboard,
         &lobby,
@@ -687,7 +760,8 @@ where
                     let matches = command_suggestion_matches(
                         &suggestion.text,
                         players,
-                        &config.server.lobby,
+                        &lobby,
+                        &lobby_status,
                     );
                     sink.send(CommandSuggestions {
                         id: suggestion.id,
@@ -704,6 +778,39 @@ where
                     })
                     .await?;
                     sink.flush().await?;
+                    continue;
+                }
+
+                if packet_id == ServerboundCustomPayload::ID {
+                    let custom_payload = crate::connection::decode_payload::<ServerboundCustomPayload>(&mut payload)?;
+                    if lobby.apply_proxy_server_list(&mut lobby_status, &custom_payload) {
+                        lobby.update_boss_bar_status(sink, &lobby_status).await?;
+                        for packet in scoreboard::refresh_lobby_sidebar_packets(
+                            &config.server.scoreboard,
+                            &lobby,
+                            &lobby_status,
+                            config.server.placeholders.enable,
+                            plugins,
+                            &session.player,
+                            players.online_count(),
+                            config.server.max_player,
+                        )? {
+                            sink.send_raw(packet).await?;
+                        }
+                        if lobby_menu_open {
+                            lobby.refresh_open_menu(sink, &lobby_status).await?;
+                        }
+                        refresh_command_tree(
+                            sink,
+                            permissions,
+                            plugins,
+                            profile,
+                            &lobby,
+                            &lobby_status,
+                        )
+                        .await?;
+                        sink.flush().await?;
+                    }
                     continue;
                 }
 
@@ -1955,7 +2062,17 @@ where
 
                 if packet_id == ChatMessage::ID {
                     let chat = crate::connection::decode_payload::<ChatMessage>(&mut payload)?;
-                    log::debug!("received chat message: {}", chat.message);
+                    if let Some(message) =
+                        validate_player_chat_message(&mut chat_rate_limit, &chat.message)
+                    {
+                        sink.send(SystemChat {
+                            content: text_component(message),
+                            overlay: false,
+                        })
+                        .await?;
+                        sink.flush().await?;
+                        continue;
+                    }
                     let filtered_message = match content_filter.check_chat(&chat.message).await? {
                         crate::content_filter::FilterAction::Allow(message) => message,
                         crate::content_filter::FilterAction::Block { reason } => {
@@ -2182,7 +2299,8 @@ struct CommandSuggestionMatches {
 fn command_suggestion_matches(
     text: &str,
     players: &PlayerManager,
-    lobby: &qexed_config::app::qexed::server::Lobby,
+    lobby: &lobby::LobbyRuntime,
+    lobby_status: &lobby::LobbyStatusSnapshot,
 ) -> CommandSuggestionMatches {
     let raw_token_start = text
         .char_indices()
@@ -2196,7 +2314,7 @@ fn command_suggestion_matches(
     };
     let prefix = &text[token_start..];
     let lower_prefix = prefix.trim_start_matches('/').to_ascii_lowercase();
-    let mut values = command_suggestion_candidates(text, players, lobby)
+    let mut values = command_suggestion_candidates(text, players, lobby, lobby_status)
         .into_iter()
         .filter(|candidate| {
             candidate
@@ -2217,7 +2335,8 @@ fn command_suggestion_matches(
 fn command_suggestion_candidates(
     text: &str,
     players: &PlayerManager,
-    lobby: &qexed_config::app::qexed::server::Lobby,
+    lobby: &lobby::LobbyRuntime,
+    lobby_status: &lobby::LobbyStatusSnapshot,
 ) -> Vec<String> {
     let trimmed = text.trim_start_matches('/').trim_start();
     let mut parts = trimmed.split_whitespace();
@@ -2235,14 +2354,7 @@ fn command_suggestion_candidates(
             values.extend(players.online_names());
             values
         }
-        Some("server") => lobby
-            .servers
-            .iter()
-            .filter_map(|server| {
-                let id = server.id.trim();
-                (!id.is_empty()).then_some(id.to_string())
-            })
-            .collect(),
+        Some("server") => lobby.server_targets_from_status(lobby_status),
         Some("entity") => ["list", "spawn", "move", "remove", "npc", "hologram"]
             .into_iter()
             .map(ToString::to_string)
@@ -2267,6 +2379,34 @@ fn command_suggestion_candidates(
         Some("time") | Some("gamerule") => default_dimension_suggestions(),
         _ => Vec::new(),
     }
+}
+
+async fn refresh_command_tree<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    permissions: &crate::permissions::PermissionManager,
+    plugins: &crate::plugins::PluginManager,
+    profile: &qexed_packet::net_types::GameProfile,
+    lobby: &lobby::LobbyRuntime,
+    lobby_status: &lobby::LobbyStatusSnapshot,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let visible_commands = crate::commands::visible_commands(permissions, profile).await?;
+    let lobby_server_ids = lobby.server_targets_from_status(lobby_status);
+    let mut plugin_commands = Vec::new();
+    for command in plugins.plugin_commands() {
+        if permissions.can_run_command(profile, &command.name).await? {
+            plugin_commands.push(command.name);
+        }
+    }
+    sink.send(crate::commands::command_tree_for_lobby_with_extra(
+        &visible_commands,
+        &lobby_server_ids,
+        &plugin_commands,
+    ))
+    .await?;
+    Ok(())
 }
 
 fn default_dimension_suggestions() -> Vec<String> {

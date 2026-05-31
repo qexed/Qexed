@@ -8,6 +8,9 @@ use qexed_packet::net_types::Position;
 use crate::world::WorldManager;
 
 const DEFAULT_MAX_NODES: usize = 4096;
+const MAX_STEP_UP_BLOCKS: i32 = 1;
+const MAX_DROP_BLOCKS: i32 = 3;
+const STEPABLE_COLLISION_HEIGHT: f64 = 0.6;
 
 #[derive(Debug, Clone)]
 pub struct PathQuery<'a> {
@@ -53,11 +56,17 @@ pub fn find_path(query: PathQuery<'_>) -> Option<Vec<Position>> {
             continue;
         }
 
-        for next in neighbours_toward(current.position, goal) {
+        for next in neighbours_toward(
+            query.world,
+            query.dimension,
+            current.position,
+            goal,
+            &mut walkable,
+        ) {
             if !is_walkable_cached(query.world, query.dimension, next, &mut walkable) {
                 continue;
             }
-            let new_cost = current.cost + 1;
+            let new_cost = current.cost + movement_cost(current.position, next);
             if cost_so_far
                 .get(&next)
                 .is_some_and(|existing| new_cost >= *existing)
@@ -100,31 +109,56 @@ fn reconstruct_path(
     path
 }
 
-fn neighbours_toward(position: PositionKey, goal: PositionKey) -> [PositionKey; 4] {
-    let mut neighbours = [
-        PositionKey {
-            x: position.x + 1,
-            ..position
-        },
-        PositionKey {
-            x: position.x - 1,
-            ..position
-        },
-        PositionKey {
-            z: position.z + 1,
-            ..position
-        },
-        PositionKey {
-            z: position.z - 1,
-            ..position
-        },
-    ];
+fn neighbours_toward(
+    world: &WorldManager,
+    dimension: &str,
+    position: PositionKey,
+    goal: PositionKey,
+    walkable: &mut HashMap<PositionKey, bool>,
+) -> Vec<PositionKey> {
+    let mut neighbours = Vec::with_capacity(20);
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        for dy in candidate_y_offsets(position, goal) {
+            let candidate = PositionKey {
+                x: position.x + dx,
+                y: position.y + dy,
+                z: position.z + dz,
+            };
+            if is_walkable_cached(world, dimension, candidate, walkable) {
+                neighbours.push(candidate);
+                break;
+            }
+        }
+    }
     neighbours.sort_by_key(|position| manhattan(*position, goal));
     neighbours
 }
 
 fn manhattan(left: PositionKey, right: PositionKey) -> i32 {
     (left.x - right.x).abs() + (left.y - right.y).abs() + (left.z - right.z).abs()
+}
+
+fn movement_cost(from: PositionKey, to: PositionKey) -> i32 {
+    10 + (to.y - from.y).abs() * 4
+}
+
+fn candidate_y_offsets(position: PositionKey, goal: PositionKey) -> Vec<i32> {
+    let mut offsets = Vec::with_capacity(usize::try_from(2 + MAX_DROP_BLOCKS).unwrap_or(6));
+    let preferred_vertical = (goal.y - position.y).clamp(-MAX_DROP_BLOCKS, MAX_STEP_UP_BLOCKS);
+    offsets.push(preferred_vertical);
+    for offset in 0..=MAX_STEP_UP_BLOCKS {
+        push_unique_offset(&mut offsets, offset);
+    }
+    for offset in 1..=MAX_DROP_BLOCKS {
+        push_unique_offset(&mut offsets, -offset);
+    }
+    offsets
+}
+
+fn push_unique_offset(offsets: &mut Vec<i32>, offset: i32) {
+    if !offsets.contains(&offset) {
+        offsets.push(offset);
+    }
 }
 
 fn is_walkable_cached(
@@ -153,19 +187,25 @@ fn is_walkable(world: &WorldManager, dimension: &str, feet: &Position) -> bool {
         z: feet.z,
     };
 
-    let feet_state = world
-        .block_state_at(dimension, feet)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    let head_state = world
-        .block_state_at(dimension, &head)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    let below_state = world
-        .block_state_at(dimension, &below)
-        .unwrap_or_else(crate::inventory::air_block_state);
+    let feet_shape = collision_shape_at(world, dimension, feet);
+    let head_shape = collision_shape_at(world, dimension, &head);
+    let below_shape = collision_shape_at(world, dimension, &below);
 
-    !crate::inventory::block_has_collision(feet_state)
-        && !crate::inventory::block_has_collision(head_state)
-        && crate::inventory::block_has_collision(below_state)
+    let feet_clear = feet_shape.is_none_or(|shape| shape.max_y <= STEPABLE_COLLISION_HEIGHT);
+    let head_clear = head_shape.is_none();
+    let has_support = below_shape.is_some() || feet_shape.is_some_and(|shape| shape.max_y > 0.0);
+
+    feet_clear && head_clear && has_support
+}
+
+fn collision_shape_at(
+    world: &WorldManager,
+    dimension: &str,
+    position: &Position,
+) -> Option<crate::inventory::BlockCollisionShape> {
+    world
+        .block_state_at(dimension, position)
+        .and_then(crate::inventory::block_collision_shape)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -216,5 +256,90 @@ impl From<&Position> for PositionKey {
             y: position.y,
             z: position.z,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PathQuery, find_path};
+    use qexed_packet::net_types::Position;
+
+    fn stone_block_state() -> i32 {
+        crate::inventory::placed_block_state_for_item(&qexed_protocol::types::Slot {
+            item_count: qexed_packet::net_types::VarInt(1),
+            item_id: Some(qexed_packet::net_types::VarInt(1)),
+            ..Default::default()
+        })
+        .expect("stone block state")
+    }
+
+    fn empty_world() -> crate::world::WorldManager {
+        crate::world::WorldManager::new(tempfile::tempdir().expect("temp world dir").keep())
+    }
+
+    #[test]
+    fn pathfinding_routes_around_blocking_wall() {
+        let world = empty_world();
+        for x in 0..=4 {
+            for z in -2..=2 {
+                world.place_block(
+                    "minecraft:overworld",
+                    Position { x, y: 63, z },
+                    stone_block_state(),
+                );
+            }
+        }
+        for z in -1..=1 {
+            for y in 64..=65 {
+                world.place_block(
+                    "minecraft:overworld",
+                    Position { x: 1, y, z },
+                    stone_block_state(),
+                );
+            }
+        }
+
+        let path = find_path(PathQuery {
+            world: &world,
+            dimension: "minecraft:overworld",
+            start: Position { x: 0, y: 64, z: 0 },
+            goal: Position { x: 4, y: 64, z: 0 },
+            max_nodes: 256,
+        })
+        .expect("path");
+
+        assert!(path.iter().any(|position| position.z.abs() > 1));
+        assert_eq!(path.last(), Some(&Position { x: 4, y: 64, z: 0 }));
+    }
+
+    #[test]
+    fn pathfinding_steps_up_one_block() {
+        let world = empty_world();
+        world.place_block(
+            "minecraft:overworld",
+            Position { x: 0, y: 63, z: 0 },
+            stone_block_state(),
+        );
+        world.place_block(
+            "minecraft:overworld",
+            Position { x: 1, y: 63, z: 0 },
+            stone_block_state(),
+        );
+        world.place_block(
+            "minecraft:overworld",
+            Position { x: 1, y: 64, z: 0 },
+            stone_block_state(),
+        );
+
+        let path = find_path(PathQuery {
+            world: &world,
+            dimension: "minecraft:overworld",
+            start: Position { x: 0, y: 64, z: 0 },
+            goal: Position { x: 1, y: 65, z: 0 },
+            max_nodes: 64,
+        })
+        .expect("path");
+
+        assert_eq!(path.last(), Some(&Position { x: 1, y: 65, z: 0 }));
     }
 }

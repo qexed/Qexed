@@ -30,6 +30,16 @@ pub fn response(config: &qexed_config::app::qexed::Qexed) -> serde_json::Value {
             "text": config.server.motd.join("\n"),
         },
         "favicon": config.server.favicon,
-        "enforcesSecureChat": config.server.online_mode,
+        "enforcesSecureChat": effective_online_mode(&config.server),
     })
+}
+
+fn effective_online_mode(server: &qexed_config::app::qexed::server::Server) -> bool {
+    if server.proxy
+        && server.proxy_protocol == qexed_config::app::qexed::server::ForwardingMode::Victory
+    {
+        server.proxy_online_mode
+    } else {
+        server.online_mode
+    }
 }

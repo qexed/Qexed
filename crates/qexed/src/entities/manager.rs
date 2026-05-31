@@ -39,6 +39,10 @@ const ENTITY_TARGET_RESELECT_INTERVAL: Duration = Duration::from_millis(750);
 const ENTITY_TARGET_RESELECT_JITTER_MS: u64 = 350;
 const ENTITY_TARGET_SWITCH_ADVANTAGE: f64 = 0.65;
 const ENTITY_TARGET_RESELECTS_PER_TICK: usize = 16;
+const ENTITY_PATH_RECALC_INTERVAL: Duration = Duration::from_millis(650);
+const ENTITY_PATH_RECALCS_PER_TICK: usize = 8;
+const ENTITY_PATH_MAX_NODES: usize = 512;
+const ENTITY_PATH_WAYPOINT_REACHED: f64 = 0.65;
 
 #[derive(Debug)]
 pub struct EntityManager {
@@ -53,6 +57,7 @@ pub struct EntityManager {
     last_rule_spawn_tick: Mutex<HashMap<String, Instant>>,
     entity_motion: Mutex<HashMap<String, EntityMotion>>,
     entity_targets: Mutex<HashMap<String, EntityTargetMemory>>,
+    entity_paths: Mutex<HashMap<String, EntityPathMemory>>,
     collision_cache: Mutex<CollisionCache>,
 }
 
@@ -77,6 +82,15 @@ struct EntityMotion {
 struct EntityTargetMemory {
     player_id: uuid::Uuid,
     selected_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct EntityPathMemory {
+    target_player_id: uuid::Uuid,
+    target_block: BlockPosition,
+    calculated_at: Instant,
+    waypoints: Vec<BlockPosition>,
+    cursor: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -247,6 +261,7 @@ impl EntityManager {
             last_rule_spawn_tick: Mutex::new(HashMap::new()),
             entity_motion: Mutex::new(HashMap::new()),
             entity_targets: Mutex::new(HashMap::new()),
+            entity_paths: Mutex::new(HashMap::new()),
             collision_cache: Mutex::new(CollisionCache::default()),
         };
 
@@ -797,6 +812,10 @@ impl EntityManager {
             .lock()
             .expect("entity target state poisoned")
             .remove(&entity.key);
+        self.entity_paths
+            .lock()
+            .expect("entity path state poisoned")
+            .remove(&entity.key);
         Ok(entity)
     }
 
@@ -1104,6 +1123,11 @@ impl EntityManager {
                 .lock()
                 .expect("entity target state poisoned")
                 .clone();
+            let mut path_memory = self
+                .entity_paths
+                .lock()
+                .expect("entity path state poisoned")
+                .clone();
             let mut collision_cache = std::mem::take(
                 &mut *self
                     .collision_cache
@@ -1112,6 +1136,7 @@ impl EntityManager {
             );
             collision_cache.sync_world_epoch(world.cache_epoch());
             let mut target_reselects = 0usize;
+            let mut path_recalcs = 0usize;
             for mut entity in snapshot {
                 let previous = entity.position;
                 let mut movement = EntityMovement::default();
@@ -1120,13 +1145,16 @@ impl EntityManager {
                 match ai {
                     EntityAiKind::None => {
                         target_memory.remove(&entity.key);
+                        path_memory.remove(&entity.key);
                     }
                     EntityAiKind::RandomStroll => {
                         target_memory.remove(&entity.key);
+                        path_memory.remove(&entity.key);
                         movement = apply_random_stroll(&mut entity, tick_ms);
                     }
                     EntityAiKind::LookAtPlayer => {
                         target_memory.remove(&entity.key);
+                        path_memory.remove(&entity.key);
                         apply_look_at_nearest_player(
                             &mut entity,
                             &viewers,
@@ -1139,12 +1167,16 @@ impl EntityManager {
                             &viewers,
                             tick_ms,
                             &mut target_memory,
+                            &mut path_memory,
                             &mut target_reselects,
+                            &mut path_recalcs,
+                            world,
                             now,
                         );
                     }
                     EntityAiKind::Plugin => {
                         target_memory.remove(&entity.key);
+                        path_memory.remove(&entity.key);
                         for operation in plugins
                             .handle_entity_ai_tick(entity_ai_query(&entity, &viewers, tick_ms))
                         {
@@ -1191,6 +1223,7 @@ impl EntityManager {
 
                 if remove {
                     target_memory.remove(&entity.key);
+                    path_memory.remove(&entity.key);
                     removes.push(entity.key.clone());
                     continue;
                 }
@@ -1233,6 +1266,10 @@ impl EntityManager {
                 .entity_targets
                 .lock()
                 .expect("entity target state poisoned") = target_memory;
+            *self
+                .entity_paths
+                .lock()
+                .expect("entity path state poisoned") = path_memory;
         }
 
         if !tick_updates.is_empty() {
@@ -1958,7 +1995,10 @@ fn apply_follow_nearest_player(
     viewers: &[crate::players::OnlinePlayer],
     tick_ms: u64,
     target_memory: &mut HashMap<String, EntityTargetMemory>,
+    path_memory: &mut HashMap<String, EntityPathMemory>,
     target_reselects: &mut usize,
+    path_recalcs: &mut usize,
+    world: &crate::world::WorldManager,
     now: Instant,
 ) -> EntityMovement {
     const FOLLOW_RANGE: f64 = 32.0;
@@ -1974,23 +2014,122 @@ fn apply_follow_nearest_player(
         FOLLOW_RANGE,
     ) else {
         target_memory.remove(&entity.key);
+        path_memory.remove(&entity.key);
         return EntityMovement::default();
     };
-    let dx = target.position.x - entity.position.x;
-    let dz = target.position.z - entity.position.z;
-    let horizontal = (dx * dx + dz * dz).sqrt();
+    let target_dx = target.position.x - entity.position.x;
+    let target_dz = target.position.z - entity.position.z;
+    let target_horizontal = (target_dx * target_dx + target_dz * target_dz).sqrt();
     let (target_yaw, target_pitch) = look_rotation(entity.position, target.position);
     let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, tick_ms);
     entity.position.yaw = yaw;
     entity.position.pitch = pitch;
-    if horizontal <= STOP_DISTANCE {
+    if target_horizontal <= STOP_DISTANCE {
+        path_memory.remove(&entity.key);
         return EntityMovement::default();
     }
-    let speed = BASE_STEP.min(horizontal - STOP_DISTANCE);
+
+    let move_target = follow_move_target(entity, target, world, path_memory, path_recalcs, now);
+    let dx = move_target.x - entity.position.x;
+    let dz = move_target.z - entity.position.z;
+    let horizontal = (dx * dx + dz * dz).sqrt();
+    if horizontal <= f64::EPSILON {
+        return EntityMovement::default();
+    }
+    let speed = BASE_STEP.min(horizontal);
     EntityMovement {
         x: dx / horizontal * speed,
         y: 0.0,
         z: dz / horizontal * speed,
+    }
+}
+
+fn follow_move_target(
+    entity: &ManagedEntity,
+    target: &crate::players::OnlinePlayer,
+    world: &crate::world::WorldManager,
+    path_memory: &mut HashMap<String, EntityPathMemory>,
+    path_recalcs: &mut usize,
+    now: Instant,
+) -> EntityPosition {
+    let target_block = position_block(target.position);
+    let entity_block = position_block(entity.position);
+    let should_recalculate = path_memory.get(&entity.key).is_none_or(|path| {
+        path.target_player_id != target.profile.uuid
+            || path.target_block != target_block
+            || now.duration_since(path.calculated_at) >= ENTITY_PATH_RECALC_INTERVAL
+            || path.cursor >= path.waypoints.len()
+    });
+
+    if should_recalculate && *path_recalcs < ENTITY_PATH_RECALCS_PER_TICK {
+        *path_recalcs = path_recalcs.saturating_add(1);
+        if let Some(path) =
+            crate::play::pathfinding::find_path(crate::play::pathfinding::PathQuery {
+                world,
+                dimension: &entity.dimension,
+                start: entity_block,
+                goal: target_block.clone(),
+                max_nodes: ENTITY_PATH_MAX_NODES,
+            })
+        {
+            let waypoints = path.into_iter().skip(1).collect::<Vec<_>>();
+            if waypoints.is_empty() {
+                path_memory.remove(&entity.key);
+            } else {
+                path_memory.insert(
+                    entity.key.clone(),
+                    EntityPathMemory {
+                        target_player_id: target.profile.uuid,
+                        target_block,
+                        calculated_at: now,
+                        waypoints,
+                        cursor: 0,
+                    },
+                );
+            }
+        } else {
+            path_memory.remove(&entity.key);
+        }
+    }
+
+    if let Some(path) = path_memory.get_mut(&entity.key) {
+        advance_path_cursor(path, entity.position);
+        if let Some(waypoint) = path.waypoints.get(path.cursor) {
+            return block_center_position(waypoint);
+        }
+    }
+
+    target.position
+}
+
+fn advance_path_cursor(path: &mut EntityPathMemory, position: EntityPosition) {
+    while let Some(waypoint) = path.waypoints.get(path.cursor) {
+        let waypoint_position = block_center_position(waypoint);
+        if horizontal_distance_sq(position, waypoint_position)
+            > ENTITY_PATH_WAYPOINT_REACHED * ENTITY_PATH_WAYPOINT_REACHED
+        {
+            break;
+        }
+        path.cursor += 1;
+    }
+}
+
+fn position_block(position: EntityPosition) -> BlockPosition {
+    BlockPosition {
+        x: position.x.floor() as i32,
+        y: position.y.floor() as i32,
+        z: position.z.floor() as i32,
+    }
+}
+
+fn block_center_position(position: &BlockPosition) -> EntityPosition {
+    EntityPosition {
+        x: f64::from(position.x) + 0.5,
+        y: f64::from(position.y),
+        z: f64::from(position.z) + 0.5,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: true,
     }
 }
 

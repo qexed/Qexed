@@ -23,6 +23,7 @@ use qexed_config::{
         qexed_player_data::QexedPlayerData,
         qexed_player_messages::QexedPlayerMessages,
         qexed_plugin_download::QexedPluginDownload,
+        qexed_proxy::QexedProxy,
         qexed_resource_pack::QexedResourcePack,
         qexed_scoreboard::QexedScoreboard,
         qexed_server::QexedServer,
@@ -3662,6 +3663,7 @@ fn collect_language_apps(lang: &str) -> Result<Vec<DocApp>> {
         "qexed_server.toml",
         lang,
     )?);
+    apps.push(collect_app::<QexedProxy>("proxy", "proxy.toml", lang)?);
     apps.push(collect_app::<QexedLanDiscovery>(
         "qexed_lan_discovery",
         "qexed_lan_discovery.toml",
@@ -4196,20 +4198,69 @@ fn write_plugin_api_next_app_docs(output_dir: &Path, commit: &str, langs: &[Stri
     fs::create_dir_all(output_dir)
         .with_context(|| format!("无法创建插件 API 文档目录 {}", output_dir.display()))?;
 
+    let version_id = short_commit(commit);
+    let version_dir = output_dir.join("dev").join(&version_id);
+    fs::create_dir_all(&version_dir).with_context(|| {
+        format!(
+            "cannot create Plugin API version dir {}",
+            version_dir.display()
+        )
+    })?;
+
     let langs = normalized_langs(langs.to_vec());
     for lang in langs {
-        let path = if lang.to_ascii_lowercase().starts_with("zh") {
-            output_dir.join("page.mdx")
-        } else {
-            let lang_dir = output_dir.join("en");
-            fs::create_dir_all(&lang_dir)
-                .with_context(|| format!("无法创建插件 API 英文文档目录 {}", lang_dir.display()))?;
-            lang_dir.join("page.mdx")
-        };
+        let lang_dir = version_dir.join(&lang);
+        fs::create_dir_all(&lang_dir)
+            .with_context(|| format!("cannot create Plugin API lang dir {}", lang_dir.display()))?;
+        let path = lang_dir.join("page.mdx");
         fs::write(&path, render_plugin_api_mdx(commit, &lang))
             .with_context(|| format!("无法写入 {}", path.display()))?;
     }
 
+    fs::write(
+        version_dir.join("page.mdx"),
+        render_plugin_api_version_index(commit, &version_id),
+    )
+    .with_context(|| {
+        format!(
+            "cannot write Plugin API version index {}",
+            version_dir.display()
+        )
+    })?;
+    fs::write(
+        output_dir.join("page.mdx"),
+        render_plugin_api_root_index(&version_id),
+    )
+    .with_context(|| {
+        format!(
+            "cannot write Plugin API root index {}",
+            output_dir.display()
+        )
+    })?;
+
+    let stable_dir = output_dir.join("stable");
+    fs::create_dir_all(&stable_dir).with_context(|| {
+        format!(
+            "cannot create Plugin API stable dir {}",
+            stable_dir.display()
+        )
+    })?;
+    fs::write(
+        stable_dir.join("page.mdx"),
+        render_plugin_api_empty_channel(true),
+    )
+    .with_context(|| "cannot write Plugin API stable page")?;
+
+    let beta_dir = output_dir.join("beta");
+    fs::create_dir_all(&beta_dir)
+        .with_context(|| format!("cannot create Plugin API beta dir {}", beta_dir.display()))?;
+    fs::write(
+        beta_dir.join("page.mdx"),
+        render_plugin_api_empty_channel(false),
+    )
+    .with_context(|| "cannot write Plugin API beta page")?;
+
+    update_plugin_api_versions(output_dir, commit, &version_id)?;
     Ok(())
 }
 
@@ -4302,6 +4353,41 @@ fn update_placeholder_versions(output_dir: &Path, commit: &str, version_id: &str
 
     fs::write(&path, serde_json::to_string_pretty(&versions)?)
         .with_context(|| format!("无法写入 {}", path.display()))?;
+    Ok(())
+}
+
+fn update_plugin_api_versions(output_dir: &Path, commit: &str, version_id: &str) -> Result<()> {
+    let path = output_dir.join("versions.json");
+    let mut versions = read_placeholder_versions(&path)?;
+    let dev_versions = versions
+        .as_object_mut()
+        .and_then(|value| value.get_mut("dev"))
+        .and_then(|value| value.as_array_mut())
+        .ok_or_else(|| anyhow!("Plugin API versions.json missing dev array"))?;
+
+    let source_sha = commit.to_string();
+    let exists = dev_versions.iter().any(|value| {
+        value
+            .get("id")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|id| id == version_id)
+    });
+
+    if !exists {
+        let entry = PlaceholderDocsVersion {
+            channel: "dev".to_string(),
+            id: version_id.to_string(),
+            label: version_id.to_string(),
+            source_ref: "v4".to_string(),
+            source_sha,
+            title: "Plugin API AutoDoc".to_string(),
+            source_date: git_source_date(),
+        };
+        dev_versions.insert(0, serde_json::to_value(entry)?);
+    }
+
+    fs::write(&path, serde_json::to_string_pretty(&versions)?)
+        .with_context(|| format!("cannot write {}", path.display()))?;
     Ok(())
 }
 
@@ -5177,6 +5263,26 @@ fn render_plugin_api_mdx(commit: &str, lang: &str) -> String {
     out
 }
 
+fn render_plugin_api_version_index(commit: &str, version_id: &str) -> String {
+    format!(
+        "# Plugin API AutoDoc\n\n- 提交: `{commit}`\n- 版本: `{version_id}`\n\n- [zh-CN](./zh-CN)\n- [en](./en)\n"
+    )
+}
+
+fn render_plugin_api_root_index(version_id: &str) -> String {
+    format!(
+        "# Plugin API AutoDoc\n\n- [稳定版](./stable)\n- [测试版](./beta)\n- [开发版 {version_id}](./dev/{version_id}/zh-CN)\n- [Stable](./stable)\n- [Beta](./beta)\n- [Dev {version_id}](./dev/{version_id}/en)\n"
+    )
+}
+
+fn render_plugin_api_empty_channel(stable: bool) -> String {
+    if stable {
+        "# 稳定版 Plugin API AutoDoc\n\nQexed 暂未发布稳定版插件 API 文档。\n".to_string()
+    } else {
+        "# 测试版 Plugin API AutoDoc\n\nQexed 暂未发布测试版插件 API 文档。\n".to_string()
+    }
+}
+
 fn render_placeholder_mdx(commit: &str, lang: &str) -> String {
     let zh = is_zh(lang);
     let mut out = String::new();
@@ -5583,10 +5689,12 @@ mod tests {
             &["zh-CN".to_string(), "en".to_string()],
         )?;
 
-        let zh = std::fs::read_to_string(dir.join("page.mdx"))?;
-        let en = std::fs::read_to_string(dir.join("en").join("page.mdx"))?;
+        let zh = std::fs::read_to_string(dir.join("dev/test-commit/zh-CN/page.mdx"))?;
+        let en = std::fs::read_to_string(dir.join("dev/test-commit/en/page.mdx"))?;
         assert!(zh.contains("插件 API AutoDoc"));
         assert!(en.contains("Plugin API AutoDoc"));
+        assert!(dir.join("versions.json").exists());
+        assert!(dir.join("page.mdx").exists());
 
         let _ = std::fs::remove_dir_all(dir);
         Ok(())
@@ -5703,6 +5811,23 @@ mod tests {
                 .any(|field| field.value_type == "unknown"),
             "world docs still contain unknown value types"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn proxy_config_is_documented_as_own_file() -> anyhow::Result<()> {
+        let bundle = collect_bundle("test-commit", &["zh-CN".to_string()])?;
+        let proxy = bundle.languages[0]
+            .apps
+            .iter()
+            .find(|app| app.name == "proxy")
+            .expect("proxy config doc must be generated");
+
+        assert_eq!(proxy.config_path, "config/proxy.toml");
+        assert_eq!(field_type(proxy, "proxy.enable"), "boolean");
+        assert_eq!(field_type(proxy, "proxy.protocol"), "string");
+        assert_eq!(field_type(proxy, "proxy.online_mode"), "boolean");
+        assert!(proxy.description.contains("proxy.toml"));
         Ok(())
     }
 

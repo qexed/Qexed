@@ -43,26 +43,20 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.network_compression_threshold")]
     pub network_compression_threshold: isize,
 
-    #[AutoDoc(key = "config.qexed.server.proxy")]
+    #[serde(default, skip)]
     pub proxy: bool,
 
-    #[AutoDoc(key = "config.qexed.server.proxy_protocol")]
+    #[serde(default, skip)]
     pub proxy_protocol: ForwardingMode,
 
-    #[serde(default)]
-    #[AutoDoc(
-        key = "config.qexed.server.proxy_server_id",
-        warning = "config.qexed.server.warning.proxy_server_id"
-    )]
+    #[serde(default, skip)]
     pub proxy_server_id: String,
 
-    #[AutoDoc(
-        key = "config.qexed.server.proxy_token",
-        warning = "config.qexed.server.warning.proxy_token",
-        sensitive,
-        default_display = "<stored in .secrets>"
-    )]
+    #[serde(default, skip)]
     pub proxy_token: String,
+
+    #[serde(default = "default_proxy_online_mode", skip)]
+    pub proxy_online_mode: bool,
 
     #[AutoDoc(key = "config.qexed.server.max_port_connections")]
     pub max_port_connections: u16,
@@ -156,6 +150,7 @@ impl Default for Server {
             proxy_protocol: ForwardingMode::QTunnel,
             proxy_server_id: String::new(),
             proxy_token: nanoid::nanoid!(),
+            proxy_online_mode: default_proxy_online_mode(),
             rate_limit_window_secs: 60,
             rate_limit_max_attempts: 6,
             click_detection: ClickDetection::default(),
@@ -206,10 +201,6 @@ pub struct Lobby {
     pub navigator: LobbyNavigator,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers", sub)]
-    pub servers: Vec<LobbyServer>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[AutoDoc(key = "config.qexed.server.lobby.menu_items", sub)]
     pub menu_items: Vec<LobbyMenuItem>,
 
@@ -234,7 +225,6 @@ impl Default for Lobby {
             menu_title: default_lobby_menu_title(),
             menu_rows: default_lobby_menu_rows(),
             navigator: LobbyNavigator::default(),
-            servers: Vec::new(),
             menu_items: Vec::new(),
             broadcast: LobbyBroadcast::default(),
             boss_bar: LobbyBossBar::default(),
@@ -387,51 +377,6 @@ impl Default for LobbyNavigator {
             slot: default_lobby_navigator_slot(),
             item: default_lobby_navigator_item(),
             name: default_lobby_navigator_name(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
-pub struct LobbyServer {
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.id")]
-    pub id: String,
-
-    #[serde(default = "default_lobby_server_enable")]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.enable")]
-    pub enable: bool,
-
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.maintenance")]
-    pub maintenance: bool,
-
-    #[serde(default = "default_lobby_server_maintenance_message")]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.maintenance_message")]
-    pub maintenance_message: String,
-
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.name")]
-    pub name: String,
-
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.host")]
-    pub host: String,
-
-    #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.servers.port")]
-    pub port: u16,
-}
-
-impl Default for LobbyServer {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            enable: default_lobby_server_enable(),
-            maintenance: false,
-            maintenance_message: default_lobby_server_maintenance_message(),
-            name: String::new(),
-            host: String::new(),
-            port: 0,
         }
     }
 }
@@ -852,14 +797,6 @@ fn default_lobby_menu_item_disabled_item() -> String {
 
 fn default_lobby_menu_item_maintenance_item() -> String {
     "minecraft:barrier".to_string()
-}
-
-fn default_lobby_server_enable() -> bool {
-    true
-}
-
-fn default_lobby_server_maintenance_message() -> String {
-    "Server is under maintenance.".to_string()
 }
 
 fn default_lobby_broadcast_interval_secs() -> u64 {
@@ -1750,6 +1687,18 @@ pub struct PlayerMessages {
     #[AutoDoc(key = "config.qexed.server.player_messages.enable")]
     pub enable: bool,
 
+    #[serde(default = "default_chat_rate_limit_window_secs")]
+    #[AutoDoc(key = "config.qexed.server.player_messages.chat_rate_limit_window_secs")]
+    pub chat_rate_limit_window_secs: u64,
+
+    #[serde(default = "default_chat_rate_limit_max_messages")]
+    #[AutoDoc(key = "config.qexed.server.player_messages.chat_rate_limit_max_messages")]
+    pub chat_rate_limit_max_messages: u32,
+
+    #[serde(default = "default_chat_max_length")]
+    #[AutoDoc(key = "config.qexed.server.player_messages.chat_max_length")]
+    pub chat_max_length: usize,
+
     #[serde(default = "default_player_join_message")]
     #[AutoDoc(key = "config.qexed.server.player_messages.join")]
     pub join: String,
@@ -1763,6 +1712,9 @@ impl Default for PlayerMessages {
     fn default() -> Self {
         Self {
             enable: default_player_messages_enable(),
+            chat_rate_limit_window_secs: default_chat_rate_limit_window_secs(),
+            chat_rate_limit_max_messages: default_chat_rate_limit_max_messages(),
+            chat_max_length: default_chat_max_length(),
             join: default_player_join_message(),
             leave: default_player_leave_message(),
         }
@@ -1779,6 +1731,22 @@ fn default_player_join_message() -> String {
 
 fn default_player_leave_message() -> String {
     "{player} left the server".to_string()
+}
+
+fn default_chat_rate_limit_window_secs() -> u64 {
+    2
+}
+
+fn default_chat_rate_limit_max_messages() -> u32 {
+    5
+}
+
+fn default_chat_max_length() -> usize {
+    256
+}
+
+fn default_proxy_online_mode() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
@@ -2138,7 +2106,7 @@ pub struct LanDiscovery {
 impl Default for LanDiscovery {
     fn default() -> Self {
         Self {
-            enable: true,
+            enable: false,
             interval_ms: 1500,
         }
     }
@@ -3483,6 +3451,9 @@ database = "qexed_player_test"
         let player_messages: PlayerMessages = toml::from_str(
             r#"
 enable = true
+chat_rate_limit_window_secs = 3
+chat_rate_limit_max_messages = 7
+chat_max_length = 128
 join = "{player} joined"
 leave = "{player} left"
 "#,
@@ -3490,6 +3461,9 @@ leave = "{player} left"
         .unwrap();
 
         assert!(player_messages.enable);
+        assert_eq!(player_messages.chat_rate_limit_window_secs, 3);
+        assert_eq!(player_messages.chat_rate_limit_max_messages, 7);
+        assert_eq!(player_messages.chat_max_length, 128);
         assert_eq!(player_messages.join, "{player} joined");
         assert_eq!(player_messages.leave, "{player} left");
     }
@@ -3641,10 +3615,6 @@ max_player = -1
 display_players = true
 online_mode = false
 network_compression_threshold = 256
-proxy = false
-proxy_protocol = "QTunnel"
-proxy_server_id = ""
-proxy_token = "secret"
 max_port_connections = 65535
 rate_limit_window_secs = 60
 rate_limit_max_attempts = 6
@@ -3847,10 +3817,6 @@ max_player = -1
 display_players = true
 online_mode = false
 network_compression_threshold = 256
-proxy = false
-proxy_protocol = "QTunnel"
-proxy_server_id = ""
-proxy_token = "secret"
 max_port_connections = 65535
 rate_limit_window_secs = 60
 rate_limit_max_attempts = 6
@@ -3900,10 +3866,6 @@ max_player = -1
 display_players = true
 online_mode = false
 network_compression_threshold = 256
-proxy = false
-proxy_protocol = "QTunnel"
-proxy_server_id = ""
-proxy_token = "secret"
 max_port_connections = 65535
 rate_limit_window_secs = 60
 rate_limit_max_attempts = 6
@@ -3939,15 +3901,6 @@ enable = true
 slot = 4
 item = "minecraft:compass"
 name = "Games"
-
-[[lobby.servers]]
-id = "survival"
-enable = true
-maintenance = false
-maintenance_message = "Survival is restarting."
-name = "Survival"
-host = "127.0.0.1"
-port = 25566
 
 [[lobby.menu_items]]
 slot = 13
@@ -3988,14 +3941,6 @@ timeout_ms = 250
         assert!(server.lobby.enable);
         assert_eq!(server.lobby.menu_title, "Games");
         assert_eq!(server.lobby.navigator.slot, 4);
-        assert_eq!(server.lobby.servers[0].id, "survival");
-        assert!(server.lobby.servers[0].enable);
-        assert!(!server.lobby.servers[0].maintenance);
-        assert_eq!(
-            server.lobby.servers[0].maintenance_message,
-            "Survival is restarting."
-        );
-        assert_eq!(server.lobby.servers[0].port, 25566);
         assert_eq!(
             server.lobby.menu_items[0].action.kind,
             LobbyActionKind::Transfer

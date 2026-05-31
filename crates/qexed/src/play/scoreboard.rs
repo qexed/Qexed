@@ -136,7 +136,7 @@ fn render_lobby_lines(
         online_players,
         max_players,
         lobby_online_servers: lobby.online_server_count(status),
-        lobby_total_servers: lobby.total_server_count(),
+        lobby_total_servers: lobby.total_server_count(status),
         lobby_servers: if labels.is_empty() {
             "none".to_string()
         } else {
@@ -242,17 +242,9 @@ mod tests {
         let lobby =
             super::super::lobby::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
                 enable: true,
-                servers: vec![
-                    qexed_config::app::qexed::server::LobbyServer {
-                        id: "survival".to_string(),
-                        name: "Survival".to_string(),
-                        ..Default::default()
-                    },
-                    qexed_config::app::qexed::server::LobbyServer {
-                        id: "minigame".to_string(),
-                        name: "Minigame".to_string(),
-                        ..Default::default()
-                    },
+                menu_items: vec![
+                    transfer_item(10, "survival", "Survival"),
+                    transfer_item(11, "minigame", "Minigame"),
                 ],
                 ..Default::default()
             });
@@ -328,6 +320,23 @@ mod tests {
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),
             language: "en_us".to_string(),
+        }
+    }
+
+    fn transfer_item(
+        slot: u8,
+        target: &str,
+        name: &str,
+    ) -> qexed_config::app::qexed::server::LobbyMenuItem {
+        qexed_config::app::qexed::server::LobbyMenuItem {
+            slot,
+            name: name.to_string(),
+            action: qexed_config::app::qexed::server::LobbyAction {
+                kind: qexed_config::app::qexed::server::LobbyActionKind::Transfer,
+                target: target.to_string(),
+                message: String::new(),
+            },
+            ..Default::default()
         }
     }
 }

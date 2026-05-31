@@ -894,6 +894,105 @@ fn follow_nearest_player_ai_accelerates_smoothly() {
 }
 
 #[test]
+fn follow_nearest_player_ai_uses_path_around_wall() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 4.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    for x in -1..=4 {
+        for z in -2..=2 {
+            world.place_block(
+                "minecraft:overworld",
+                qexed_packet::net_types::Position { x, y: 63, z },
+                stone_block_state(),
+            );
+        }
+    }
+    for z in -1..=1 {
+        for y in 64..=65 {
+            world.place_block(
+                "minecraft:overworld",
+                qexed_packet::net_types::Position { x: 1, y, z },
+                stone_block_state(),
+            );
+        }
+    }
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "path_follower".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Path".to_string(),
+            display_name: "Path".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    for _ in 0..8 {
+        manager
+            .tick_ai(
+                &players,
+                &world,
+                &crate::plugins::PluginManager::empty_for_tests(),
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                50,
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    let entity = manager.entity_by_key("path_follower").unwrap();
+    assert!(
+        entity.position.z.abs() > 0.2,
+        "path follower should leave the blocked direct line, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
 fn entity_ai_applies_gravity_and_horizontal_collision() {
     let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
     let manager = EntityManager::from_config(

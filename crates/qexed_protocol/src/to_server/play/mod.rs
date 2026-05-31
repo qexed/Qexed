@@ -9,6 +9,7 @@ pub mod client_command;
 pub mod command_suggestion;
 pub mod container_click;
 pub mod container_close;
+pub mod custom_payload;
 pub mod interact;
 pub mod keep_alive;
 pub mod move_player_pos;

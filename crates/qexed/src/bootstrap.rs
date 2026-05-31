@@ -66,7 +66,7 @@ fn log_runtime_info() {
 }
 
 fn log_online_warnings(config: &crate::config::RuntimeConfig) {
-    if !config.server.online_mode {
+    if !config.server.online_mode && !config.server.proxy {
         log::warn!("{}", t!("qexed.minecraft_warning.offline_mode"));
         log::warn!("{}", t!("qexed.minecraft_warning.no_authentication"));
         log::warn!("{}", t!("qexed.minecraft_warning.hacker_risk"));

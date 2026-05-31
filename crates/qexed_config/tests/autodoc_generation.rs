@@ -15,6 +15,7 @@ use qexed_config::{
         qexed_player_data::QexedPlayerData,
         qexed_player_messages::QexedPlayerMessages,
         qexed_plugin_download::QexedPluginDownload,
+        qexed_proxy::QexedProxy,
         qexed_resource_pack::QexedResourcePack,
         qexed_scoreboard::QexedScoreboard,
         qexed_server::QexedServer,
@@ -26,7 +27,7 @@ use qexed_config::{
 fn temp_config_dir(name: &str) -> std::path::PathBuf {
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "qexed_config_{}_{}_{}",
+        "config_{}_{}_{}",
         name,
         std::process::id(),
         std::time::SystemTime::now()
@@ -42,6 +43,7 @@ fn create_qexed_app_configs(dir: &std::path::Path) -> anyhow::Result<()> {
     Qexed::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedPluginDownload::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedServer::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
+    QexedProxy::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedLanDiscovery::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedContentFilter::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
     QexedEntity::load_or_create_default(lang.clone(), Some(true), Some(dir.to_path_buf()))?;
@@ -90,8 +92,15 @@ fn generated_configs_include_autodoc_comments() -> anyhow::Result<()> {
     assert!(server.contains("qexed_server.toml:"));
     assert!(server.contains("[server]"));
     assert!(server.contains("ip = \"0.0.0.0:25565\""));
+    assert!(!server.contains("proxy_token"));
     assert!(!server.contains("[server.world]"));
     assert!(!server.contains("[server.entities]"));
+
+    let proxy = std::fs::read_to_string(dir.join("proxy.toml"))?;
+    assert!(proxy.contains("# ==== AutoDocHeader ===="));
+    assert!(proxy.contains("proxy.toml:"));
+    assert!(proxy.contains("[proxy]"));
+    assert!(proxy.contains("token = \"<stored in .secrets>\""));
 
     let world = std::fs::read_to_string(dir.join("world.toml"))?;
     assert!(world.contains("world.toml:"));
@@ -152,7 +161,8 @@ fn sensitive_fields_are_written_to_local_secrets_files() -> anyhow::Result<()> {
         Some(true),
         Some(dir.clone()),
     )?;
-    let server = QexedServer::load_or_create_default(
+    QexedServer::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    let proxy = QexedProxy::load_or_create_default(
         Some("zh-CN".to_string()),
         Some(true),
         Some(dir.clone()),
@@ -160,23 +170,25 @@ fn sensitive_fields_are_written_to_local_secrets_files() -> anyhow::Result<()> {
 
     let plugin_download_text = std::fs::read_to_string(dir.join("qexed_plugin_download.toml"))?;
     let server_text = std::fs::read_to_string(dir.join("qexed_server.toml"))?;
+    let proxy_text = std::fs::read_to_string(dir.join("proxy.toml"))?;
     let plugin_secrets =
         std::fs::read_to_string(dir.join(".secrets").join("qexed_plugin_download.toml"))?;
-    let server_secrets = std::fs::read_to_string(dir.join(".secrets").join("qexed_server.toml"))?;
+    let proxy_secrets = std::fs::read_to_string(dir.join(".secrets").join("proxy.toml"))?;
 
     assert!(plugin_download_text.contains("download_token = \"<stored in .secrets>\""));
-    assert!(server_text.contains("proxy_token = \"<stored in .secrets>\""));
+    assert!(!server_text.contains("proxy_token"));
+    assert!(proxy_text.contains("token = \"<stored in .secrets>\""));
     assert!(!plugin_download_text.contains(&plugin_download.plugin_download.download_token));
-    assert!(!server_text.contains(&server.server.proxy_token));
+    assert!(!proxy_text.contains(&proxy.proxy.token));
     assert!(plugin_secrets.contains(&plugin_download.plugin_download.download_token));
-    assert!(server_secrets.contains(&server.server.proxy_token));
+    assert!(proxy_secrets.contains(&proxy.proxy.token));
 
     let reloaded_plugin = QexedPluginDownload::load_or_create_default(
         Some("zh-CN".to_string()),
         Some(true),
         Some(dir.clone()),
     )?;
-    let reloaded_server = QexedServer::load_or_create_default(
+    let reloaded_proxy = QexedProxy::load_or_create_default(
         Some("zh-CN".to_string()),
         Some(true),
         Some(dir.clone()),
@@ -186,10 +198,7 @@ fn sensitive_fields_are_written_to_local_secrets_files() -> anyhow::Result<()> {
         reloaded_plugin.plugin_download.download_token,
         plugin_download.plugin_download.download_token
     );
-    assert_eq!(
-        reloaded_server.server.proxy_token,
-        server.server.proxy_token
-    );
+    assert_eq!(reloaded_proxy.proxy.token, proxy.proxy.token);
 
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
@@ -212,6 +221,28 @@ enable = false
         r#"
 [content_filter]
 enable = true
+"#,
+    )?;
+    std::fs::write(
+        dir.join("qexed_server.toml"),
+        r#"
+[server]
+proxy = true
+proxy_protocol = "Velocity"
+proxy_server_id = "lobby-1"
+proxy_token = "legacy-token"
+"#,
+    )?;
+    std::fs::write(
+        dir.join("qexed_lobby.toml"),
+        r#"
+[lobby]
+enable = true
+
+[[lobby.servers]]
+id = "legacy"
+host = "127.0.0.1"
+port = 25565
 "#,
     )?;
     std::fs::write(
@@ -244,6 +275,8 @@ password = "existing-mysql-password"
         Some(true),
         Some(dir.clone()),
     )?;
+    QexedServer::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
+    QexedLobby::load_or_create_default(Some("zh-CN".to_string()), Some(true), Some(dir.clone()))?;
     QexedPlayerData::load_or_create_default(
         Some("zh-CN".to_string()),
         Some(true),
@@ -257,6 +290,8 @@ password = "existing-mysql-password"
     let player_messages = std::fs::read_to_string(dir.join("qexed_player_messages.toml"))?;
     let content_filter = std::fs::read_to_string(dir.join("qexed_content_filter.toml"))?;
     let permissions = std::fs::read_to_string(dir.join("qexed_permissions.toml"))?;
+    let server = std::fs::read_to_string(dir.join("qexed_server.toml"))?;
+    let lobby = std::fs::read_to_string(dir.join("qexed_lobby.toml"))?;
     let secrets = std::fs::read_to_string(dir.join(".secrets").join("qexed_player_data.toml"))?;
 
     assert!(!player_messages_config.player_messages.enable);
@@ -269,6 +304,9 @@ password = "existing-mysql-password"
     assert!(world.contains("spawn_protection_radius = 16"));
     assert!(player_messages.contains("join = \"{player} joined the server\""));
     assert!(player_messages.contains("leave = \"{player} left the server\""));
+    assert!(player_messages.contains("chat_rate_limit_window_secs = 2"));
+    assert!(player_messages.contains("chat_rate_limit_max_messages = 5"));
+    assert!(player_messages.contains("chat_max_length = 256"));
     assert!(content_filter.contains("engine = \"fixed\""));
     assert!(content_filter.contains("replacement = \"***\""));
     assert!(permissions.contains("[permissions]"));
@@ -276,6 +314,9 @@ password = "existing-mysql-password"
     assert!(permissions.contains("local_path = \"config/qexed_permissions.toml\""));
     assert!(permissions.contains("table_prefix = \"luckperms_\""));
     assert!(permissions.contains("allow_by_default = false"));
+    assert!(!server.contains("proxy_token"));
+    assert!(!server.contains("proxy_protocol"));
+    assert!(!lobby.contains("[[lobby.servers]]"));
     assert!(player_data.contains("password = \"<stored in .secrets>\""));
     assert!(secrets.contains("password = \"existing-mongo-password\""));
     assert!(secrets.contains("password = \"existing-mysql-password\""));
@@ -292,6 +333,7 @@ fn module_configs_are_serialized_as_independent_apps() -> anyhow::Result<()> {
 
     let qexed = std::fs::read_to_string(dir.join("qexed.toml"))?;
     let server = std::fs::read_to_string(dir.join("qexed_server.toml"))?;
+    let proxy = std::fs::read_to_string(dir.join("proxy.toml"))?;
     let entities = std::fs::read_to_string(dir.join("qexed_entity.toml"))?;
     let npcs = std::fs::read_to_string(dir.join("qexed_npc.toml"))?;
     let lobby = std::fs::read_to_string(dir.join("qexed_lobby.toml"))?;
@@ -302,6 +344,8 @@ fn module_configs_are_serialized_as_independent_apps() -> anyhow::Result<()> {
     assert!(!qexed.contains("[server]"));
     assert!(!qexed.contains("[plugin_download]"));
     assert!(server.contains("[server]"));
+    assert!(proxy.contains("[proxy]"));
+    assert!(!server.contains("proxy_token"));
     assert!(entities.contains("[entities]"));
     assert!(entities.contains("dimension = \"minecraft:overworld\""));
     assert!(!entities.contains("list = []"));
