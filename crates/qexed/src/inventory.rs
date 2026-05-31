@@ -30,6 +30,27 @@ pub struct PlacementContext {
     pub player_yaw: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockCollisionShape {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+    pub min_z: f64,
+    pub max_z: f64,
+}
+
+impl BlockCollisionShape {
+    pub const FULL_BLOCK: Self = Self {
+        min_x: 0.0,
+        max_x: 1.0,
+        min_y: 0.0,
+        max_y: 1.0,
+        min_z: 0.0,
+        max_z: 1.0,
+    };
+}
+
 #[derive(Debug, Clone)]
 pub enum InventorySlotChange {
     Hotbar { slot: usize, item: Slot },
@@ -440,6 +461,18 @@ pub fn block_has_collision(block_state: i32) -> bool {
         return registry.collision_block_states.contains(&block_state);
     }
     true
+}
+
+pub fn block_collision_shape(block_state: i32) -> Option<BlockCollisionShape> {
+    if !block_has_collision(block_state) {
+        return None;
+    }
+    let registry = block_item_registry();
+    let Some(name) = registry.block_name_by_state.get(&block_state) else {
+        return Some(BlockCollisionShape::FULL_BLOCK);
+    };
+    let properties = registry.properties_by_block_state.get(&block_state);
+    Some(collision_shape_for_block(name, properties))
 }
 
 pub fn upper_half_block_state(lower_state: i32) -> Option<i32> {
@@ -912,6 +945,67 @@ fn block_state_has_collision(definition_type: &str) -> bool {
             | "minecraft:kelp"
             | "minecraft:seagrass"
     )
+}
+
+fn collision_shape_for_block(
+    name: &str,
+    properties: Option<&HashMap<String, String>>,
+) -> BlockCollisionShape {
+    if name.ends_with("_carpet") || name == "minecraft:carpet" {
+        return BlockCollisionShape {
+            max_y: 1.0 / 16.0,
+            ..BlockCollisionShape::FULL_BLOCK
+        };
+    }
+    if name == "minecraft:snow" || name == "minecraft:snow_layer" {
+        let layers = properties
+            .and_then(|properties| properties.get("layers"))
+            .and_then(|layers| layers.parse::<u8>().ok())
+            .unwrap_or(1)
+            .clamp(1, 8);
+        return BlockCollisionShape {
+            max_y: f64::from(layers) / 8.0,
+            ..BlockCollisionShape::FULL_BLOCK
+        };
+    }
+    if name.ends_with("_slab") {
+        return match properties
+            .and_then(|properties| properties.get("type"))
+            .map(String::as_str)
+        {
+            Some("top") => BlockCollisionShape {
+                min_y: 0.5,
+                ..BlockCollisionShape::FULL_BLOCK
+            },
+            Some("double") => BlockCollisionShape::FULL_BLOCK,
+            _ => BlockCollisionShape {
+                max_y: 0.5,
+                ..BlockCollisionShape::FULL_BLOCK
+            },
+        };
+    }
+    if name.ends_with("_trapdoor") {
+        return match properties
+            .and_then(|properties| properties.get("open"))
+            .map(String::as_str)
+        {
+            Some("true") => BlockCollisionShape::FULL_BLOCK,
+            _ => match properties
+                .and_then(|properties| properties.get("half"))
+                .map(String::as_str)
+            {
+                Some("top") => BlockCollisionShape {
+                    min_y: 13.0 / 16.0,
+                    ..BlockCollisionShape::FULL_BLOCK
+                },
+                _ => BlockCollisionShape {
+                    max_y: 3.0 / 16.0,
+                    ..BlockCollisionShape::FULL_BLOCK
+                },
+            },
+        };
+    }
+    BlockCollisionShape::FULL_BLOCK
 }
 
 fn find_state_with_properties(

@@ -102,7 +102,7 @@ pub struct QexedEntityEntry {
     #[AutoDoc(key = "config.qexed.server.entities.list.ai_params")]
     pub ai_params: std::collections::BTreeMap<String, serde_json::Value>,
 
-    #[serde(default)]
+    #[serde(default = "default_entity_auto_jump")]
     #[AutoDoc(key = "config.qexed.server.entities.list.auto_jump")]
     pub auto_jump: bool,
 }
@@ -124,7 +124,7 @@ impl Default for QexedEntityEntry {
             data: 0,
             ai: String::new(),
             ai_params: std::collections::BTreeMap::new(),
-            auto_jump: false,
+            auto_jump: default_entity_auto_jump(),
         }
     }
 }
@@ -175,6 +175,10 @@ fn default_entities_dimension() -> String {
 
 fn default_entity_type() -> String {
     "minecraft:armor_stand".to_string()
+}
+
+fn default_entity_auto_jump() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]

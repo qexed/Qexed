@@ -21,6 +21,16 @@ fn stone_block_state() -> i32 {
     .expect("stone block state")
 }
 
+fn block_state_for_item_name(name: &str) -> i32 {
+    let item_id = crate::inventory::item_id_for_name(name).expect("item id");
+    crate::inventory::placed_block_state_for_item(&qexed_protocol::types::Slot {
+        item_count: qexed_packet::net_types::VarInt(1),
+        item_id: Some(qexed_packet::net_types::VarInt(item_id)),
+        ..Default::default()
+    })
+    .expect("block state")
+}
+
 fn empty_world() -> crate::world::WorldManager {
     crate::world::WorldManager::new(tempfile::tempdir().expect("temp world dir").keep())
 }
@@ -889,6 +899,105 @@ fn entity_ai_auto_jump_starts_jump_when_horizontal_step_is_blocked() {
     let entity = manager.entity_by_key("jumper").unwrap();
     assert!(entity.position.y > 64.0);
     assert!(!entity.position.on_ground);
+}
+
+#[test]
+fn entity_ai_walks_over_carpet_without_treating_it_as_full_block() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 4.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    for x in -1..=4 {
+        world.place_block(
+            "minecraft:overworld",
+            qexed_packet::net_types::Position { x, y: 63, z: 0 },
+            stone_block_state(),
+        );
+    }
+    world.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 1, y: 64, z: 0 },
+        block_state_for_item_name("minecraft:white_carpet"),
+    );
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "carpet_walker".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.65,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Walker".to_string(),
+            display_name: "Walker".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "follow_nearest_player".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    for _ in 0..5 {
+        manager
+            .tick_ai(
+                &players,
+                &world,
+                &crate::plugins::PluginManager::empty_for_tests(),
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                50,
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    let entity = manager.entity_by_key("carpet_walker").unwrap();
+    assert!(entity.position.x > 1.0);
+    assert!((64.0..64.2).contains(&entity.position.y));
+}
+
+#[test]
+fn entity_ai_auto_jump_defaults_to_enabled_for_spawn_rules() {
+    let rule = qexed_config::app::qexed::server::EntitySpawnRule {
+        ai: "follow_nearest_player".to_string(),
+        ..Default::default()
+    };
+
+    assert!(rule.auto_jump);
 }
 
 #[test]

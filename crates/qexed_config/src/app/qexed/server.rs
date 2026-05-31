@@ -1156,7 +1156,7 @@ pub struct Entity {
     #[AutoDoc(key = "config.qexed.server.entities.list.ai_params")]
     pub ai_params: BTreeMap<String, serde_json::Value>,
 
-    #[serde(default)]
+    #[serde(default = "default_entity_auto_jump")]
     #[AutoDoc(key = "config.qexed.server.entities.list.auto_jump")]
     pub auto_jump: bool,
 
@@ -1197,7 +1197,7 @@ impl Default for Entity {
             data: 0,
             ai: String::new(),
             ai_params: BTreeMap::new(),
-            auto_jump: false,
+            auto_jump: default_entity_auto_jump(),
             look_at_players: false,
             main_hand_event: default_npc_main_hand_event(),
             off_hand_event: default_npc_off_hand_event(),
@@ -1217,6 +1217,10 @@ pub enum EntityKind {
 
 fn default_entity_type() -> String {
     "minecraft:armor_stand".to_string()
+}
+
+fn default_entity_auto_jump() -> bool {
+    true
 }
 
 fn default_npc_main_hand_event() -> String {
@@ -1360,7 +1364,7 @@ pub struct EntitySpawnRule {
     #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.ai_params")]
     pub ai_params: BTreeMap<String, serde_json::Value>,
 
-    #[serde(default)]
+    #[serde(default = "default_entity_auto_jump")]
     #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.auto_jump")]
     pub auto_jump: bool,
 
@@ -1418,7 +1422,7 @@ impl Default for EntitySpawnRule {
             display_name: String::new(),
             ai: String::new(),
             ai_params: BTreeMap::new(),
-            auto_jump: false,
+            auto_jump: default_entity_auto_jump(),
             data: 0,
             on_ground: default_entity_spawn_rule_on_ground(),
             min_x: default_entity_spawn_min_x(),

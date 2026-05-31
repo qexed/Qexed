@@ -24,6 +24,7 @@ const ENTITY_PHYSICS_HEIGHT: f64 = 1.95;
 const ENTITY_GRAVITY_PER_TICK: f64 = 0.08;
 const ENTITY_TERMINAL_VELOCITY: f64 = -3.92;
 const ENTITY_GROUND_SNAP: f64 = 0.05;
+const ENTITY_MAX_STEP_HEIGHT: f64 = 0.6;
 const ENTITY_AUTO_JUMP_VELOCITY: f64 = 0.42;
 const ENTITY_HORIZONTAL_ACCELERATION: f64 = 0.12;
 const ENTITY_HORIZONTAL_FRICTION: f64 = 0.72;
@@ -98,7 +99,7 @@ struct EntityMotionTickUpdate {
 #[derive(Debug, Default)]
 struct CollisionCache {
     world_epoch: u64,
-    blocks: HashMap<CollisionBlockKey, bool>,
+    blocks: HashMap<CollisionBlockKey, Option<crate::inventory::BlockCollisionShape>>,
     aabbs: HashMap<CollisionAabbKey, bool>,
 }
 
@@ -119,6 +120,103 @@ struct CollisionAabbKey {
     max_y: i32,
     min_z: i32,
     max_z: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EntityAabb {
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    min_z: f64,
+    max_z: f64,
+}
+
+impl EntityAabb {
+    fn new(x: f64, y: f64, z: f64, width: f64, height: f64) -> Self {
+        let half_width = width / 2.0;
+        Self {
+            min_x: x - half_width + 0.001,
+            max_x: x + half_width - 0.001,
+            min_y: y + 0.001,
+            max_y: y + height - 0.001,
+            min_z: z - half_width + 0.001,
+            max_z: z + half_width - 0.001,
+        }
+    }
+
+    fn ground_probe(position: EntityPosition, width: f64) -> Self {
+        let half_width = width / 2.0;
+        Self {
+            min_x: position.x - half_width + 0.001,
+            max_x: position.x + half_width - 0.001,
+            min_y: position.y - ENTITY_GROUND_SNAP,
+            max_y: position.y + 0.001,
+            min_z: position.z - half_width + 0.001,
+            max_z: position.z + half_width - 0.001,
+        }
+    }
+
+    fn block_min_x(self) -> i32 {
+        self.min_x.floor() as i32
+    }
+
+    fn block_max_x(self) -> i32 {
+        self.max_x.floor() as i32
+    }
+
+    fn block_min_y(self) -> i32 {
+        self.min_y.floor() as i32
+    }
+
+    fn block_max_y(self) -> i32 {
+        self.max_y.floor() as i32
+    }
+
+    fn block_min_z(self) -> i32 {
+        self.min_z.floor() as i32
+    }
+
+    fn block_max_z(self) -> i32 {
+        self.max_z.floor() as i32
+    }
+
+    fn cache_key(self, dimension: &str) -> CollisionAabbKey {
+        CollisionAabbKey {
+            dimension: dimension.to_string(),
+            min_x: quantized_aabb_coord(self.min_x),
+            max_x: quantized_aabb_coord(self.max_x),
+            min_y: quantized_aabb_coord(self.min_y),
+            max_y: quantized_aabb_coord(self.max_y),
+            min_z: quantized_aabb_coord(self.min_z),
+            max_z: quantized_aabb_coord(self.max_z),
+        }
+    }
+
+    fn intersects_block_shape(
+        self,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+        shape: crate::inventory::BlockCollisionShape,
+    ) -> bool {
+        let min_x = f64::from(block_x) + shape.min_x;
+        let max_x = f64::from(block_x) + shape.max_x;
+        let min_y = f64::from(block_y) + shape.min_y;
+        let max_y = f64::from(block_y) + shape.max_y;
+        let min_z = f64::from(block_z) + shape.min_z;
+        let max_z = f64::from(block_z) + shape.max_z;
+        self.max_x > min_x
+            && self.min_x < max_x
+            && self.max_y > min_y
+            && self.min_y < max_y
+            && self.max_z > min_z
+            && self.min_z < max_z
+    }
+}
+
+fn quantized_aabb_coord(value: f64) -> i32 {
+    (value * 1024.0).round() as i32
 }
 
 impl EntityManager {
@@ -1243,75 +1341,94 @@ impl CollisionCache {
         self.aabbs.clear();
     }
 
-    fn block_has_collision(
+    fn block_collision_shape(
         &mut self,
         world: &crate::world::WorldManager,
         dimension: &str,
         x: i32,
         y: i32,
         z: i32,
-    ) -> bool {
+    ) -> Option<crate::inventory::BlockCollisionShape> {
         let key = CollisionBlockKey {
             dimension: dimension.to_string(),
             x,
             y,
             z,
         };
-        if let Some(collides) = self.blocks.get(&key) {
-            return *collides;
+        if let Some(shape) = self.blocks.get(&key) {
+            return *shape;
         }
         let position = BlockPosition { x, y, z };
-        let collides = world
+        let shape = world
             .block_state_at(dimension, &position)
-            .map(crate::inventory::block_has_collision)
-            .unwrap_or(false);
+            .and_then(crate::inventory::block_collision_shape);
         if self.blocks.len() >= COLLISION_BLOCK_CACHE_LIMIT {
             self.blocks.clear();
         }
-        self.blocks.insert(key, collides);
-        collides
+        self.blocks.insert(key, shape);
+        shape
     }
 
-    fn aabb_intersects_solid(
+    fn entity_aabb_intersects_solid(
         &mut self,
         world: &crate::world::WorldManager,
         dimension: &str,
-        min_x: i32,
-        max_x: i32,
-        min_y: i32,
-        max_y: i32,
-        min_z: i32,
-        max_z: i32,
+        bounds: EntityAabb,
     ) -> bool {
-        let key = CollisionAabbKey {
-            dimension: dimension.to_string(),
-            min_x,
-            max_x,
-            min_y,
-            max_y,
-            min_z,
-            max_z,
-        };
+        let key = bounds.cache_key(dimension);
         if let Some(collides) = self.aabbs.get(&key) {
             return *collides;
         }
 
         let mut collides = false;
-        'blocks: for block_x in min_x..=max_x {
-            for block_y in min_y..=max_y {
-                for block_z in min_z..=max_z {
-                    if self.block_has_collision(world, dimension, block_x, block_y, block_z) {
+        'blocks: for block_x in bounds.block_min_x()..=bounds.block_max_x() {
+            for block_y in bounds.block_min_y()..=bounds.block_max_y() {
+                for block_z in bounds.block_min_z()..=bounds.block_max_z() {
+                    let Some(shape) =
+                        self.block_collision_shape(world, dimension, block_x, block_y, block_z)
+                    else {
+                        continue;
+                    };
+                    if bounds.intersects_block_shape(block_x, block_y, block_z, shape) {
                         collides = true;
                         break 'blocks;
                     }
                 }
             }
         }
+
         if self.aabbs.len() >= COLLISION_AABB_CACHE_LIMIT {
             self.aabbs.clear();
         }
         self.aabbs.insert(key, collides);
         collides
+    }
+
+    fn max_collision_top_for_aabb(
+        &mut self,
+        world: &crate::world::WorldManager,
+        dimension: &str,
+        bounds: EntityAabb,
+    ) -> Option<f64> {
+        let mut top = None::<f64>;
+        for block_x in bounds.block_min_x()..=bounds.block_max_x() {
+            for block_y in bounds.block_min_y()..=bounds.block_max_y() {
+                for block_z in bounds.block_min_z()..=bounds.block_max_z() {
+                    let Some(shape) =
+                        self.block_collision_shape(world, dimension, block_x, block_y, block_z)
+                    else {
+                        continue;
+                    };
+                    if bounds.intersects_block_shape(block_x, block_y, block_z, shape) {
+                        top = Some(
+                            top.unwrap_or(f64::NEG_INFINITY)
+                                .max(f64::from(block_y) + shape.max_y),
+                        );
+                    }
+                }
+            }
+        }
+        top
     }
 }
 
@@ -1927,7 +2044,14 @@ fn move_entity_axis(
         ENTITY_PHYSICS_WIDTH,
         ENTITY_PHYSICS_HEIGHT,
     ) {
-        if entity.auto_jump
+        if dy == 0.0
+            && (dx != 0.0 || dz != 0.0)
+            && entity.position.on_ground
+            && try_entity_step_up(entity, world, collision_cache, next_x, next_z)
+        {
+            return;
+        }
+        if entity_can_auto_jump(entity)
             && dy == 0.0
             && (dx != 0.0 || dz != 0.0)
             && entity.position.on_ground
@@ -1936,6 +2060,7 @@ fn move_entity_axis(
             motion.velocity_y = ENTITY_AUTO_JUMP_VELOCITY;
             entity.position.y += ENTITY_AUTO_JUMP_VELOCITY;
             entity.position.on_ground = false;
+            return;
         }
         if dx != 0.0 {
             motion.velocity_x = 0.0;
@@ -1958,6 +2083,51 @@ fn move_entity_axis(
     entity.position.z = next_z;
 }
 
+fn try_entity_step_up(
+    entity: &mut ManagedEntity,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    next_x: f64,
+    next_z: f64,
+) -> bool {
+    let forward = EntityAabb::new(
+        next_x,
+        entity.position.y,
+        next_z,
+        ENTITY_PHYSICS_WIDTH,
+        ENTITY_PHYSICS_HEIGHT,
+    );
+    let Some(obstacle_top) =
+        collision_cache.max_collision_top_for_aabb(world, &entity.dimension, forward)
+    else {
+        return false;
+    };
+    let step_height = obstacle_top - entity.position.y;
+    if !(0.0..=ENTITY_MAX_STEP_HEIGHT).contains(&step_height) {
+        return false;
+    }
+    let stepped_y = obstacle_top;
+    if entity_aabb_intersects_solid_at(
+        world,
+        collision_cache,
+        &entity.dimension,
+        next_x,
+        stepped_y,
+        next_z,
+    ) {
+        return false;
+    }
+    entity.position.x = next_x;
+    entity.position.y = stepped_y;
+    entity.position.z = next_z;
+    entity.position.on_ground = true;
+    true
+}
+
+fn entity_can_auto_jump(entity: &ManagedEntity) -> bool {
+    entity.auto_jump
+}
+
 fn can_entity_auto_jump(
     entity: &ManagedEntity,
     world: &crate::world::WorldManager,
@@ -1966,24 +2136,20 @@ fn can_entity_auto_jump(
     dz: f64,
 ) -> bool {
     let jump_y = entity.position.y + 1.0;
-    !entity_aabb_intersects_solid(
+    !entity_aabb_intersects_solid_at(
         world,
         collision_cache,
         &entity.dimension,
         entity.position.x,
         jump_y,
         entity.position.z,
-        ENTITY_PHYSICS_WIDTH,
-        ENTITY_PHYSICS_HEIGHT,
-    ) && !entity_aabb_intersects_solid(
+    ) && !entity_aabb_intersects_solid_at(
         world,
         collision_cache,
         &entity.dimension,
         entity.position.x + dx,
         jump_y,
         entity.position.z + dz,
-        ENTITY_PHYSICS_WIDTH,
-        ENTITY_PHYSICS_HEIGHT,
     )
 }
 
@@ -1993,19 +2159,11 @@ fn entity_has_ground(
     dimension: &str,
     position: EntityPosition,
 ) -> bool {
-    let below_y = (position.y - ENTITY_GROUND_SNAP).floor() as i32;
-    let min_x = (position.x - ENTITY_PHYSICS_WIDTH / 2.0 + 0.001).floor() as i32;
-    let max_x = (position.x + ENTITY_PHYSICS_WIDTH / 2.0 - 0.001).floor() as i32;
-    let min_z = (position.z - ENTITY_PHYSICS_WIDTH / 2.0 + 0.001).floor() as i32;
-    let max_z = (position.z + ENTITY_PHYSICS_WIDTH / 2.0 - 0.001).floor() as i32;
-    for x in min_x..=max_x {
-        for z in min_z..=max_z {
-            if collision_cache.block_has_collision(world, dimension, x, below_y, z) {
-                return true;
-            }
-        }
-    }
-    false
+    collision_cache.entity_aabb_intersects_solid(
+        world,
+        dimension,
+        EntityAabb::ground_probe(position, ENTITY_PHYSICS_WIDTH),
+    )
 }
 
 fn entity_aabb_intersects_solid(
@@ -2018,16 +2176,31 @@ fn entity_aabb_intersects_solid(
     width: f64,
     height: f64,
 ) -> bool {
-    let half_width = width / 2.0;
-    let min_x = (x - half_width + 0.001).floor() as i32;
-    let max_x = (x + half_width - 0.001).floor() as i32;
-    let min_y = (y + 0.001).floor() as i32;
-    let max_y = (y + height - 0.001).floor() as i32;
-    let min_z = (z - half_width + 0.001).floor() as i32;
-    let max_z = (z + half_width - 0.001).floor() as i32;
+    collision_cache.entity_aabb_intersects_solid(
+        world,
+        dimension,
+        EntityAabb::new(x, y, z, width, height),
+    )
+}
 
-    collision_cache
-        .aabb_intersects_solid(world, dimension, min_x, max_x, min_y, max_y, min_z, max_z)
+fn entity_aabb_intersects_solid_at(
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    dimension: &str,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> bool {
+    entity_aabb_intersects_solid(
+        world,
+        collision_cache,
+        dimension,
+        x,
+        y,
+        z,
+        ENTITY_PHYSICS_WIDTH,
+        ENTITY_PHYSICS_HEIGHT,
+    )
 }
 
 fn entity_ai_query(
