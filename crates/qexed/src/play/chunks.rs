@@ -832,7 +832,22 @@ impl ChunkSendState {
 
         let mut chunks = Vec::with_capacity(selected.len());
         for loaded in selected {
-            chunks.push((loaded.chunk_x, loaded.chunk_z, loaded.frame?));
+            match loaded.frame {
+                Ok(frame) => chunks.push((loaded.chunk_x, loaded.chunk_z, frame)),
+                Err(err) if is_expired_world_session_error(&err) => {
+                    log::debug!(
+                        "discarded expired chunk load result: dimension={}, chunk=({}, {})",
+                        self.dimension,
+                        loaded.chunk_x,
+                        loaded.chunk_z
+                    );
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        if chunks.is_empty() {
+            self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
+            return Ok(0);
         }
 
         sink.send(ChunkBatchStart {}).await?;
@@ -1022,6 +1037,11 @@ fn chunk_send_priority(
     let dx = chunk_x - center_x;
     let dz = chunk_z - center_z;
     (dx * dx + dz * dz, dx.abs().max(dz.abs()), chunk_z, chunk_x)
+}
+
+fn is_expired_world_session_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.to_string().contains("world session expired"))
 }
 
 fn build_saved_chunk_payload_sync(

@@ -1495,6 +1495,7 @@ where
                 key: key.to_string(),
                 kind,
                 entity_type,
+                entity_type_id_override: None,
                 dimension: dimension.to_string(),
                 position: player_position,
                 name: name.clone(),
@@ -1641,22 +1642,20 @@ where
             }
         }
         "spawn" => {
-            let Some(key) = parts.next() else {
+            let args = parts.collect::<Vec<_>>();
+            let Some(args) = parse_npc_spawn_args(&args) else {
                 send_npc_usage(sink, argument).await?;
                 return Ok(());
             };
-            let mut name = parts.collect::<Vec<_>>().join(" ");
-            if name.trim().is_empty() {
-                name = key.to_string();
-            }
             let entity = match entities.spawn_local(crate::entities::EntitySpawnRequest {
-                key: key.to_string(),
+                key: args.key,
                 kind: crate::entities::ManagedEntityKind::Npc,
-                entity_type: "minecraft:player".to_string(),
+                entity_type: args.entity_type,
+                entity_type_id_override: None,
                 dimension: dimension.to_string(),
                 position: player_position,
-                name: name.clone(),
-                display_name: name,
+                name: args.name.clone(),
+                display_name: args.name,
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 data: 0,
@@ -1763,6 +1762,50 @@ where
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NpcSpawnArgs {
+    key: String,
+    entity_type: String,
+    name: String,
+}
+
+fn parse_npc_spawn_args(parts: &[&str]) -> Option<NpcSpawnArgs> {
+    let key = parts.first()?.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    let (entity_type, name_offset) = if let Some(entity_type) = parts
+        .get(1)
+        .and_then(|value| normalize_npc_spawn_entity_type(value))
+    {
+        (entity_type, 2)
+    } else {
+        ("minecraft:player".to_string(), 1)
+    };
+    let mut name = parts[name_offset..].join(" ");
+    if name.trim().is_empty() {
+        name = key.to_string();
+    }
+
+    Some(NpcSpawnArgs {
+        key: key.to_string(),
+        entity_type,
+        name,
+    })
+}
+
+fn normalize_npc_spawn_entity_type(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || !value.contains(':') {
+        return None;
+    }
+    let entity_type = value.to_string();
+    crate::entities::entity_type_id(&entity_type)
+        .is_ok()
+        .then_some(entity_type)
 }
 
 async fn handle_structure_command<W>(
@@ -2887,6 +2930,33 @@ mod tests {
         );
         assert_eq!(&data[9..11], &u16::MAX.to_be_bytes());
         assert_eq!(data.len(), 9 + 2 + usize::from(u16::MAX));
+    }
+
+    #[test]
+    fn npc_spawn_args_default_to_player_npc() {
+        let args = super::parse_npc_spawn_args(&["guard", "Guard", "One"]).unwrap();
+
+        assert_eq!(args.key, "guard");
+        assert_eq!(args.entity_type, "minecraft:player");
+        assert_eq!(args.name, "Guard One");
+    }
+
+    #[test]
+    fn npc_spawn_args_accept_client_entity_shell() {
+        let args = super::parse_npc_spawn_args(&["guard", "minecraft:zombie", "Guard"]).unwrap();
+
+        assert_eq!(args.key, "guard");
+        assert_eq!(args.entity_type, "minecraft:zombie");
+        assert_eq!(args.name, "Guard");
+    }
+
+    #[test]
+    fn npc_spawn_args_keep_short_entity_like_name_as_display_name() {
+        let args = super::parse_npc_spawn_args(&["guard", "zombie"]).unwrap();
+
+        assert_eq!(args.key, "guard");
+        assert_eq!(args.entity_type, "minecraft:player");
+        assert_eq!(args.name, "zombie");
     }
 
     #[test]

@@ -1005,6 +1005,10 @@ pub struct Npc {
     pub display_name: String,
 
     #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.npcs.list.entity_type")]
+    pub entity_type: String,
+
+    #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.npcs.list.skin_textures")]
     pub skin_textures: String,
 
@@ -1067,6 +1071,7 @@ impl Default for Npc {
             id: String::new(),
             name: String::new(),
             display_name: String::new(),
+            entity_type: String::new(),
             skin_textures: String::new(),
             skin_signature: String::new(),
             skin_player_id: String::new(),
@@ -2485,6 +2490,10 @@ pub struct WorldOrePit {
     #[AutoDoc(key = "config.qexed.server.world.ore_pits.tick_interval_ms")]
     pub tick_interval_ms: u64,
 
+    #[serde(default = "default_world_ore_pit_initial_refill")]
+    #[AutoDoc(key = "config.qexed.server.world.ore_pits.initial_refill")]
+    pub initial_refill: bool,
+
     #[serde(default = "default_world_ore_pit_max_blocks_per_tick")]
     #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_blocks_per_tick")]
     pub max_blocks_per_tick: usize,
@@ -2519,6 +2528,7 @@ impl Default for WorldOrePit {
             min_z: 0,
             max_z: 0,
             tick_interval_ms: default_world_ore_pit_tick_interval_ms(),
+            initial_refill: default_world_ore_pit_initial_refill(),
             max_blocks_per_tick: default_world_ore_pit_max_blocks_per_tick(),
             replace_air: default_world_ore_pit_replace_air(),
             replace_generated: default_world_ore_pit_replace_generated(),
@@ -2563,6 +2573,10 @@ fn default_world_ore_pit_enable() -> bool {
 
 fn default_world_ore_pit_tick_interval_ms() -> u64 {
     300_000
+}
+
+fn default_world_ore_pit_initial_refill() -> bool {
+    true
 }
 
 fn default_world_ore_pit_max_blocks_per_tick() -> usize {
@@ -3344,6 +3358,7 @@ max_y = -30
 min_z = 6
 max_z = 24
 tick_interval_ms = 500
+initial_refill = true
 max_blocks_per_tick = 512
 replace_air = true
 replace_generated = true
@@ -3364,6 +3379,7 @@ weight = 1
         let pit = &world.ore_pits[0];
         assert_eq!(pit.id, "mine_a");
         assert_eq!(pit.dimension, "qexed:mine_a");
+        assert!(pit.initial_refill);
         assert_eq!(pit.max_blocks_per_tick, 512);
         assert!(pit.only_break_generated);
         assert_eq!(pit.blocks.len(), 2);
@@ -3790,6 +3806,7 @@ dimension = "minecraft:overworld"
 id = "survival_npc"
 name = "sv1"
 display_name = "原版生存"
+entity_type = "minecraft:zombie"
 skin_player_id = "MHF_Grass"
 x = -14.5
 y = 9.0
@@ -3810,6 +3827,7 @@ message = "正在传送到原版生存..."
         assert!(npcs.enable);
         assert_eq!(npcs.list.len(), 1);
         assert_eq!(npcs.list[0].id, "survival_npc");
+        assert_eq!(npcs.list[0].entity_type, "minecraft:zombie");
         assert_eq!(npcs.list[0].skin_player_id, "MHF_Grass");
         assert!(npcs.list[0].look_at_players);
         assert_eq!(

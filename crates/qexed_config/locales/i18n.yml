@@ -346,6 +346,9 @@ config:
           tick_interval_ms:
             en: "Minimum interval between ore refill ticks in milliseconds"
             zh-CN: "矿坑补矿 tick 的最小间隔，单位毫秒"
+          initial_refill:
+            en: "Try to refill this ore pit immediately on the first runtime tick instead of waiting for tick_interval_ms"
+            zh-CN: "首次运行 tick 立即尝试补矿，而不是等待 tick_interval_ms"
           max_blocks_per_tick:
             en: "Maximum number of blocks this ore pit may refill per tick"
             zh-CN: "该矿坑每次 tick 最多补充的方块数量"
@@ -703,6 +706,9 @@ config:
           display_name:
             en: "Custom display name shown above the NPC. Supports JSON text and Unicode. Falls back to name when empty."
             zh-CN: "NPC 上方显示的自定义名称，支持 JSON 文本和 Unicode。为空时回退到 name。"
+          entity_type:
+            en: "Vanilla entity type shown to clients. Empty keeps the NPC as a player entity; for example people can be disguised as minecraft:zombie."
+            zh-CN: "客户端看到的原版实体类型。留空时 NPC 仍以玩家实体显示；例如 people 可套壳为 minecraft:zombie。"
           skin_textures:
             en: "Base64 skin texture payload from the Mojang texture property"
             zh-CN: "来自 Mojang texture 属性的 Base64 皮肤纹理数据"

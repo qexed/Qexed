@@ -287,9 +287,7 @@ impl PluginManager {
         {
             definitions.extend(response.entities);
         }
-        definitions.retain(|definition| {
-            !definition.id.trim().is_empty() && !definition.entity_type.trim().is_empty()
-        });
+        definitions.retain(|definition| !definition.id.trim().is_empty());
         definitions.sort_by(|left, right| left.id.cmp(&right.id));
         definitions.dedup_by(|left, right| left.id == right.id);
         definitions

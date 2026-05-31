@@ -92,6 +92,7 @@ fn npc_to_entity(
     qexed_config::app::qexed::server::Entity {
         id: npc.id,
         kind: qexed_config::app::qexed::server::EntityKind::Npc,
+        entity_type: npc.entity_type,
         name: npc.name,
         display_name: npc.display_name,
         skin_textures: npc.skin_textures,

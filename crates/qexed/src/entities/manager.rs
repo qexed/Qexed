@@ -46,6 +46,7 @@ pub struct EntityManager {
     entities: Mutex<Vec<ManagedEntity>>,
     dropped_items: Mutex<Vec<DroppedItemEntity>>,
     custom_entities: Mutex<HashMap<String, CustomEntityRegistration>>,
+    custom_entity_type_ids: Mutex<HashMap<String, i32>>,
     spawn_sequence: Mutex<u64>,
     last_spawn_tick: Mutex<Option<Instant>>,
     last_ai_tick: Mutex<Option<Instant>>,
@@ -57,7 +58,9 @@ pub struct EntityManager {
 
 #[derive(Debug, Clone)]
 struct CustomEntityRegistration {
-    entity_type: String,
+    id: String,
+    shell_entity_type: String,
+    entity_type_id: Option<i32>,
     display_name: String,
     ai: String,
     ai_params: std::collections::BTreeMap<String, serde_json::Value>,
@@ -237,6 +240,7 @@ impl EntityManager {
             entities: Mutex::new(Vec::new()),
             dropped_items: Mutex::new(Vec::new()),
             custom_entities: Mutex::new(HashMap::new()),
+            custom_entity_type_ids: Mutex::new(HashMap::new()),
             spawn_sequence: Mutex::new(0),
             last_spawn_tick: Mutex::new(None),
             last_ai_tick: Mutex::new(None),
@@ -699,7 +703,7 @@ impl EntityManager {
                     entity_type.to_string()
                 }
             }
-            ManagedEntityKind::Npc => "minecraft:player".to_string(),
+            ManagedEntityKind::Npc => normalized_npc_client_entity_type(key, &request.entity_type),
             ManagedEntityKind::Hologram => "minecraft:text_display".to_string(),
         };
         let entity = ManagedEntity {
@@ -707,7 +711,10 @@ impl EntityManager {
             uuid: stable_entity_uuid(key),
             key: key.to_string(),
             kind: request.kind,
-            entity_type_id: entity_type_id(&entity_type)?,
+            entity_type_id: request
+                .entity_type_id_override
+                .map(Ok)
+                .unwrap_or_else(|| entity_type_id(&entity_type))?,
             entity_type,
             dimension: request.dimension,
             position: request.position,
@@ -809,15 +816,14 @@ impl EntityManager {
             ManagedEntityKind::Entity => {
                 let entity_type = config.entity_type.trim();
                 if entity_type.is_empty() {
-                    "minecraft:armor_stand"
+                    "minecraft:armor_stand".to_string()
                 } else {
-                    entity_type
+                    entity_type.to_string()
                 }
             }
-            ManagedEntityKind::Npc => "minecraft:player",
-            ManagedEntityKind::Hologram => "minecraft:text_display",
-        }
-        .to_string();
+            ManagedEntityKind::Npc => normalized_npc_client_entity_type(&key, &config.entity_type),
+            ManagedEntityKind::Hologram => "minecraft:text_display".to_string(),
+        };
         let entity_type_id = entity_type_id(&entity_type)?;
         let display_name = {
             let name = config.display_name.trim();
@@ -954,14 +960,17 @@ impl EntityManager {
             .expect("entity custom registry poisoned");
         for definition in definitions {
             let id = definition.id.trim();
-            let entity_type = definition.entity_type.trim();
-            if id.is_empty() || entity_type.is_empty() {
+            if id.is_empty() {
                 continue;
             }
+            let shell_entity_type = custom_entity_shell_type(&definition);
+            let entity_type_id = self.custom_entity_type_id(id, &shell_entity_type, &definition);
             custom_entities.insert(
                 id.to_string(),
                 CustomEntityRegistration {
-                    entity_type: entity_type.to_string(),
+                    id: id.to_string(),
+                    shell_entity_type,
+                    entity_type_id,
                     display_name: definition.display_name,
                     ai: definition.ai,
                     ai_params: definition.ai_params,
@@ -1004,9 +1013,17 @@ impl EntityManager {
                 continue;
             }
             let custom = self.custom_registration(&rule.entity_type);
+            if custom.is_none() && !is_known_minecraft_entity_type(&rule.entity_type) {
+                log::warn!(
+                    "skip spawn rule with unknown entity type: rule={}, entity_type={}",
+                    rule_id,
+                    rule.entity_type
+                );
+                continue;
+            }
             let counted_entity_type = custom
                 .as_ref()
-                .map(|registration| registration.entity_type.as_str())
+                .map(|registration| registration.id.as_str())
                 .unwrap_or(rule.entity_type.as_str());
             if self.dynamic_count(Some(dimension), Some(counted_entity_type), None)
                 >= spawning.per_type_cap
@@ -1307,6 +1324,31 @@ impl EntityManager {
             .expect("entity custom registry poisoned")
             .get(id.trim())
             .cloned()
+    }
+
+    fn custom_entity_type_id(
+        &self,
+        id: &str,
+        shell_entity_type: &str,
+        definition: &crate::plugins::CustomEntityDefinition,
+    ) -> Option<i32> {
+        if let Some(registry_id) = definition.registry_id {
+            return Some(registry_id);
+        }
+        if shell_entity_type != id {
+            return entity_type_id(shell_entity_type).ok();
+        }
+
+        let mut ids = self
+            .custom_entity_type_ids
+            .lock()
+            .expect("entity custom registry ids poisoned");
+        if let Some(id) = ids.get(id) {
+            return Some(*id);
+        }
+        let next_id = custom_entity_runtime_id(ids.len());
+        ids.insert(id.to_string(), next_id);
+        Some(next_id)
     }
 
     fn dynamic_count(
@@ -2472,23 +2514,31 @@ fn spawn_request_from_rule(
     custom: Option<CustomEntityRegistration>,
     position: EntityPosition,
 ) -> Result<EntitySpawnRequest> {
-    let (entity_type, custom_type, default_display_name, default_ai, default_ai_params) =
-        match custom {
-            Some(custom) => (
-                custom.entity_type,
-                rule.entity_type.trim().to_string(),
-                custom.display_name,
-                custom.ai,
-                custom.ai_params,
-            ),
-            None => (
-                rule.entity_type.trim().to_string(),
-                String::new(),
-                String::new(),
-                String::new(),
-                std::collections::BTreeMap::new(),
-            ),
-        };
+    let (
+        entity_type,
+        entity_type_id,
+        custom_type,
+        default_display_name,
+        default_ai,
+        default_ai_params,
+    ) = match custom {
+        Some(custom) => (
+            custom.shell_entity_type,
+            custom.entity_type_id,
+            custom.id,
+            custom.display_name,
+            custom.ai,
+            custom.ai_params,
+        ),
+        None => (
+            rule.entity_type.trim().to_string(),
+            None,
+            String::new(),
+            String::new(),
+            String::new(),
+            std::collections::BTreeMap::new(),
+        ),
+    };
     let entity_type = if entity_type.trim().is_empty() {
         "minecraft:zombie".to_string()
     } else {
@@ -2518,7 +2568,8 @@ fn spawn_request_from_rule(
     Ok(EntitySpawnRequest {
         key: format!("spawn:{rule_id}:{sequence}"),
         kind: ManagedEntityKind::Entity,
-        entity_type,
+        entity_type: entity_type.clone(),
+        entity_type_id_override: entity_type_id,
         dimension: dimension.to_string(),
         position,
         name,
@@ -2536,6 +2587,45 @@ fn spawn_request_from_rule(
         off_hand_event: "interact_off_hand".to_string(),
         attack_event: "attack".to_string(),
     })
+}
+
+fn custom_entity_shell_type(definition: &crate::plugins::CustomEntityDefinition) -> String {
+    let shell_entity_type = definition.shell_entity_type.trim();
+    if !shell_entity_type.is_empty() {
+        return shell_entity_type.to_string();
+    }
+    let legacy_entity_type = definition.entity_type.trim();
+    if !legacy_entity_type.is_empty() {
+        return legacy_entity_type.to_string();
+    }
+    definition.id.trim().to_string()
+}
+
+fn custom_entity_runtime_id(index: usize) -> i32 {
+    10_000 + i32::try_from(index).unwrap_or(i32::MAX - 10_000)
+}
+
+fn normalized_npc_client_entity_type(key: &str, entity_type: &str) -> String {
+    let entity_type = entity_type.trim();
+    if entity_type.is_empty() {
+        "minecraft:player".to_string()
+    } else if entity_type_id(entity_type).is_ok() {
+        entity_type.to_string()
+    } else {
+        log::warn!(
+            "npc client entity type is unknown, falling back to minecraft:player: key={}, entity_type={}",
+            key,
+            entity_type
+        );
+        "minecraft:player".to_string()
+    }
+}
+
+fn is_known_minecraft_entity_type(entity_type: &str) -> bool {
+    let entity_type = entity_type.trim();
+    !entity_type.is_empty()
+        && entity_type.starts_with("minecraft:")
+        && entity_type_id(entity_type).is_ok()
 }
 
 fn random_between(left: f64, right: f64) -> f64 {

@@ -883,7 +883,7 @@ fn localized_builtin_help_entry(command: &str, locale: &str) -> Option<CommandHe
             "qexed.command.entity.description",
         ),
         "npc" => (
-            "/npc list|spawn|move|remove ...",
+            "/npc list|spawn <id> [entity_type] [name...]|move|remove ...",
             "qexed.command.npc.description",
         ),
         "structure" => (

@@ -46,7 +46,9 @@ pub extern "C" fn qexed_plugin_custom_entities(_ptr: i32, _len: i32) -> i64 {
     qexed_plugin_sdk::response_ptr_len(&CustomEntityRegistryResponse {
         entities: vec![CustomEntityDefinition {
             id: "demo:patrol_guard".to_string(),
-            entity_type: "minecraft:villager".to_string(),
+            entity_type: String::new(),
+            shell_entity_type: "minecraft:villager".to_string(),
+            registry_id: None,
             display_name: "{\"text\":\"Patrol Guard\",\"color\":\"gold\"}".to_string(),
             ai: "plugin:demo_patrol".to_string(),
             ai_params: [
@@ -174,6 +176,7 @@ pub extern "C" fn qexed_plugin_npc_mutations(_ptr: i32, _len: i32) -> i64 {
                 pitch: 0.0,
                 name: "Hub NPC".to_string(),
                 display_name: "狗策划".to_string(),
+                entity_type: String::new(),
                 skin_textures: String::new(),
                 skin_signature: String::new(),
                 look_at_players: true,

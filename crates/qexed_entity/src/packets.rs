@@ -36,7 +36,9 @@ const TEXT_DISPLAY_USE_DEFAULT_BACKGROUND: u8 = 0x04;
 impl ManagedEntity {
     pub fn spawn_packets(&self) -> Result<Vec<Bytes>> {
         let mut packets = Vec::new();
-        if self.kind == ManagedEntityKind::Npc {
+        let player_npc =
+            self.kind == ManagedEntityKind::Npc && self.entity_type == "minecraft:player";
+        if player_npc {
             let display_name = self.display_name().map(text_component_or_json);
             packets.push(packet_bytes(PlayerInfoUpdate {
                 actions: PlayerInfoActions::player_initializing(),
@@ -44,7 +46,7 @@ impl ManagedEntity {
             })?);
         }
 
-        let add_entity = if self.kind == ManagedEntityKind::Npc {
+        let add_entity = if player_npc {
             AddEntity::player(
                 self.entity_id,
                 self.uuid,
@@ -84,7 +86,7 @@ impl ManagedEntity {
 
     pub fn remove_packets(&self) -> Result<Vec<Bytes>> {
         let mut packets = vec![packet_bytes(RemoveEntities::one(self.entity_id))?];
-        if self.kind == ManagedEntityKind::Npc {
+        if self.kind == ManagedEntityKind::Npc && self.entity_type == "minecraft:player" {
             packets.push(packet_bytes(PlayerInfoRemove::one(self.uuid))?);
         }
         Ok(packets)

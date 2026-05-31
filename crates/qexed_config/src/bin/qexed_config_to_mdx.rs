@@ -2969,6 +2969,13 @@ const PLUGIN_STRUCT_DOCS: &[PluginStructDoc] = &[
                 "Display name.",
             ),
             field(
+                "entity_type",
+                "String",
+                "\"\"",
+                "客户端看到的原版实体类型。留空时 NPC 仍以玩家实体显示；例如 people 可套壳为 minecraft:zombie。",
+                "Vanilla entity type shown to clients. Empty keeps the NPC as a player entity; for example people can be disguised as minecraft:zombie.",
+            ),
+            field(
                 "skin_textures",
                 "String",
                 "\"\"",
@@ -3027,9 +3034,23 @@ const PLUGIN_STRUCT_DOCS: &[PluginStructDoc] = &[
             field(
                 "entity_type",
                 "String",
-                "\"minecraft:armor_stand\"",
-                "底层 Minecraft 实体类型。",
-                "Backing Minecraft entity type.",
+                "\"\"",
+                "旧版套壳实体类型别名；新插件请使用 shell_entity_type。",
+                "Legacy shell entity type alias; new plugins should use shell_entity_type.",
+            ),
+            field(
+                "shell_entity_type",
+                "String",
+                "\"\"",
+                "客户端看到的实体类型。留空时使用 id，例如 demo:patrol_guard。",
+                "Entity type shown to clients. Empty uses id, for example demo:patrol_guard.",
+            ),
+            field(
+                "registry_id",
+                "Option<i32>",
+                "None",
+                "无套壳模组实体的可选协议 registry id。",
+                "Optional protocol registry id for an undisguised modded entity.",
             ),
             field(
                 "display_name",
@@ -3111,8 +3132,8 @@ const PLUGIN_STRUCT_DOCS: &[PluginStructDoc] = &[
                 "entity_type",
                 "String",
                 "",
-                "底层 Minecraft 实体类型。",
-                "Backing Minecraft entity type.",
+                "客户端看到的实体类型。",
+                "Entity type shown to clients.",
             ),
             field(
                 "custom_type",

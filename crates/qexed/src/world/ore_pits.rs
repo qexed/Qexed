@@ -32,6 +32,7 @@ struct RuntimeOrePit {
     min_z: i32,
     max_z: i32,
     tick_interval: Duration,
+    initial_refill: bool,
     max_blocks_per_tick: usize,
     replace_air: bool,
     replace_generated: bool,
@@ -52,9 +53,9 @@ struct RuntimeOrePitState {
 }
 
 impl RuntimeOrePitState {
-    fn new(now: Instant) -> Self {
+    fn new(pit: &RuntimeOrePit, now: Instant) -> Self {
         Self {
-            last_tick: Some(now),
+            last_tick: (!pit.initial_refill).then_some(now),
             cursor: 0,
             generated_positions: HashSet::new(),
         }
@@ -106,7 +107,7 @@ impl OrePitManager {
             let pit_state = state
                 .pits
                 .entry(pit.id.clone())
-                .or_insert_with(|| RuntimeOrePitState::new(now));
+                .or_insert_with(|| RuntimeOrePitState::new(pit, now));
             if let Some(last_tick) = pit_state.last_tick
                 && now.duration_since(last_tick) < pit.tick_interval
             {
@@ -165,6 +166,7 @@ impl RuntimeOrePit {
             min_z: config.min_z.min(config.max_z),
             max_z: config.min_z.max(config.max_z),
             tick_interval: Duration::from_millis(config.tick_interval_ms.max(1)),
+            initial_refill: config.initial_refill,
             max_blocks_per_tick: config.max_blocks_per_tick.max(1),
             replace_air: config.replace_air,
             replace_generated: config.replace_generated,
@@ -366,6 +368,7 @@ mod tests {
             min_z: 0,
             max_z: 0,
             tick_interval_ms: 500,
+            initial_refill: false,
             max_blocks_per_tick: 8,
             blocks: vec![WorldOrePitBlock {
                 block: "minecraft:diamond_ore".to_string(),
@@ -400,6 +403,45 @@ mod tests {
     }
 
     #[test]
+    fn ore_pit_refills_on_first_tick_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let world = crate::world::WorldManager::with_light_mode(
+            dir.path(),
+            crate::world::WorldLightMode::Static,
+            crate::world::WorldLightAlgorithm::Fast,
+            None,
+            true,
+        );
+        let diamond = crate::world::chunk_nbt::default_block_state_id("minecraft:diamond_ore");
+        let position = qexed_packet::net_types::Position { x: 0, y: 0, z: 0 };
+        let manager = OrePitManager::from_config(&[WorldOrePit {
+            id: "test".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            min_x: 0,
+            max_x: 0,
+            min_y: 0,
+            max_y: 0,
+            min_z: 0,
+            max_z: 0,
+            tick_interval_ms: 300_000,
+            max_blocks_per_tick: 1,
+            blocks: vec![WorldOrePitBlock {
+                block: "minecraft:diamond_ore".to_string(),
+                weight: 1,
+            }],
+            ..WorldOrePit::default()
+        }]);
+
+        let updates = manager.tick(&world, std::time::Instant::now());
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            world.block_state_at("minecraft:overworld", &position),
+            Some(diamond)
+        );
+    }
+
+    #[test]
     fn ore_pit_refills_generated_ore_after_break() {
         let dir = tempfile::tempdir().unwrap();
         let world = crate::world::WorldManager::with_light_mode(
@@ -422,6 +464,7 @@ mod tests {
             min_z: 0,
             max_z: 0,
             tick_interval_ms: 500,
+            initial_refill: false,
             max_blocks_per_tick: 1,
             blocks: vec![WorldOrePitBlock {
                 block: "diamond_ore".to_string(),
@@ -474,6 +517,7 @@ mod tests {
             min_z: 0,
             max_z: 0,
             tick_interval_ms: 500,
+            initial_refill: false,
             max_blocks_per_tick: 8,
             only_break_generated: true,
             blocks: vec![WorldOrePitBlock {

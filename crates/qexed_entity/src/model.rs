@@ -39,6 +39,7 @@ pub struct EntitySpawnRequest {
     pub key: String,
     pub kind: ManagedEntityKind,
     pub entity_type: String,
+    pub entity_type_id_override: Option<i32>,
     pub dimension: String,
     pub position: EntityPosition,
     pub name: String,

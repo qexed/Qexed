@@ -326,6 +326,8 @@ pub struct NpcUpsert {
     #[serde(default)]
     pub display_name: String,
     #[serde(default)]
+    pub entity_type: String,
+    #[serde(default)]
     pub skin_textures: String,
     #[serde(default)]
     pub skin_signature: String,
@@ -342,8 +344,12 @@ pub struct NpcUpsert {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CustomEntityDefinition {
     pub id: String,
-    #[serde(default = "default_custom_entity_minecraft_type")]
+    #[serde(default)]
     pub entity_type: String,
+    #[serde(default)]
+    pub shell_entity_type: String,
+    #[serde(default)]
+    pub registry_id: Option<i32>,
     #[serde(default)]
     pub display_name: String,
     #[serde(default)]
@@ -530,8 +536,4 @@ fn default_npc_off_hand_event() -> String {
 
 fn default_npc_attack_event() -> String {
     "attack".to_string()
-}
-
-fn default_custom_entity_minecraft_type() -> String {
-    "minecraft:armor_stand".to_string()
 }

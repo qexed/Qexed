@@ -521,7 +521,8 @@ fn apply_plugin_npc_mutations(
                 let entity = crate::entities::EntitySpawnRequest {
                     key: key.to_string(),
                     kind: crate::entities::ManagedEntityKind::Npc,
-                    entity_type: "minecraft:player".to_string(),
+                    entity_type: npc.entity_type.clone(),
+                    entity_type_id_override: None,
                     dimension: npc.dimension.clone(),
                     position: qexed_protocol::to_client::play::add_entity::EntityPosition {
                         x: npc.x,
