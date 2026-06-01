@@ -218,22 +218,52 @@ impl PlayerInventory {
     }
 
     pub fn can_accept_item_stack(&self, item: &Slot) -> bool {
-        item_stack_capacity(&self.hotbar, item) + item_stack_capacity(&self.main, item)
-            >= item.item_count.0.max(0)
+        inventory_capacity_for_item(&self.hotbar, &self.main, item) >= item.item_count.0.max(0)
+    }
+
+    pub fn item_stack_capacity(&self, item: &Slot) -> i32 {
+        inventory_capacity_for_item(&self.hotbar, &self.main, item)
     }
 
     pub fn add_item_stack(&mut self, item: &Slot) -> Option<Vec<InventorySlotChange>> {
-        let mut remaining = item.item_count.0;
-        if remaining <= 0 {
+        if item.item_count.0 <= 0 {
             return Some(Vec::new());
         }
         if !self.can_accept_item_stack(item) {
-            return None;
+            None
+        } else {
+            let (changes, _) = self.add_item_stack_partial(item);
+            Some(changes)
+        }
+    }
+
+    pub fn add_item_stack_partial(&mut self, item: &Slot) -> (Vec<InventorySlotChange>, i32) {
+        let capacity = self.item_stack_capacity(item);
+        let mut remaining = item.item_count.0.min(capacity);
+        let target = remaining;
+        if remaining <= 0 {
+            return (Vec::new(), 0);
         }
 
         let mut changes = Vec::new();
+        self.add_item_to_matching_hotbar_slots(item, &mut remaining, &mut changes);
+        self.add_item_to_matching_main_slots(item, &mut remaining, &mut changes);
+        self.add_item_to_empty_hotbar_slots(item, &mut remaining, &mut changes);
+        self.add_item_to_empty_main_slots(item, &mut remaining, &mut changes);
+
+        let held = self.hotbar[self.selected].clone();
+        self.set_equipment_slot(Equipment::MAINHAND, held);
+        (changes, target - remaining)
+    }
+
+    fn add_item_to_matching_hotbar_slots(
+        &mut self,
+        item: &Slot,
+        remaining: &mut i32,
+        changes: &mut Vec<InventorySlotChange>,
+    ) {
         for slot in 0..self.hotbar.len() {
-            if remaining <= 0 {
+            if *remaining <= 0 {
                 break;
             }
             if !same_stack_kind(&self.hotbar[slot], item) {
@@ -243,17 +273,24 @@ impl PlayerInventory {
             if available <= 0 {
                 continue;
             }
-            let added = remaining.min(available);
+            let added = (*remaining).min(available);
             self.hotbar[slot].item_count = VarInt(self.hotbar[slot].item_count.0 + added);
-            remaining -= added;
+            *remaining -= added;
             changes.push(InventorySlotChange::Hotbar {
                 slot,
                 item: self.hotbar[slot].clone(),
             });
         }
+    }
 
+    fn add_item_to_matching_main_slots(
+        &mut self,
+        item: &Slot,
+        remaining: &mut i32,
+        changes: &mut Vec<InventorySlotChange>,
+    ) {
         for slot in 0..self.main.len() {
-            if remaining <= 0 {
+            if *remaining <= 0 {
                 break;
             }
             if !same_stack_kind(&self.main[slot], item) {
@@ -263,54 +300,64 @@ impl PlayerInventory {
             if available <= 0 {
                 continue;
             }
-            let added = remaining.min(available);
+            let added = (*remaining).min(available);
             self.main[slot].item_count = VarInt(self.main[slot].item_count.0 + added);
-            remaining -= added;
+            *remaining -= added;
             changes.push(InventorySlotChange::Main {
                 slot,
                 item: self.main[slot].clone(),
             });
         }
+    }
 
+    fn add_item_to_empty_hotbar_slots(
+        &mut self,
+        item: &Slot,
+        remaining: &mut i32,
+        changes: &mut Vec<InventorySlotChange>,
+    ) {
         for slot in 0..self.hotbar.len() {
-            if remaining <= 0 {
+            if *remaining <= 0 {
                 break;
             }
             if self.hotbar[slot].item_count.0 != 0 {
                 continue;
             }
-            let added = remaining.min(DEFAULT_STACK_LIMIT);
+            let added = (*remaining).min(DEFAULT_STACK_LIMIT);
             let mut stack = item.clone();
             stack.item_count = VarInt(added);
             self.hotbar[slot] = stack;
-            remaining -= added;
+            *remaining -= added;
             changes.push(InventorySlotChange::Hotbar {
                 slot,
                 item: self.hotbar[slot].clone(),
             });
         }
+    }
 
+    fn add_item_to_empty_main_slots(
+        &mut self,
+        item: &Slot,
+        remaining: &mut i32,
+        changes: &mut Vec<InventorySlotChange>,
+    ) {
         for slot in 0..self.main.len() {
-            if remaining <= 0 {
+            if *remaining <= 0 {
                 break;
             }
             if self.main[slot].item_count.0 != 0 {
                 continue;
             }
-            let added = remaining.min(DEFAULT_STACK_LIMIT);
+            let added = (*remaining).min(DEFAULT_STACK_LIMIT);
             let mut stack = item.clone();
             stack.item_count = VarInt(added);
             self.main[slot] = stack;
-            remaining -= added;
+            *remaining -= added;
             changes.push(InventorySlotChange::Main {
                 slot,
                 item: self.main[slot].clone(),
             });
         }
-
-        let held = self.hotbar[self.selected].clone();
-        self.set_equipment_slot(Equipment::MAINHAND, held);
-        Some(changes)
     }
 
     pub fn held_item(&self) -> &Slot {
@@ -667,12 +714,16 @@ fn inventory_slot_from_container(slot: i16) -> Option<InventorySlot> {
     }
 }
 
-fn item_stack_capacity(hotbar: &[Slot], item: &Slot) -> i32 {
+fn inventory_capacity_for_item(hotbar: &[Slot], main: &[Slot], item: &Slot) -> i32 {
+    item_stack_capacity(hotbar, item) + item_stack_capacity(main, item)
+}
+
+fn item_stack_capacity(slots: &[Slot], item: &Slot) -> i32 {
     if item.item_count.0 <= 0 || item.item_id.is_none() {
         return 0;
     }
 
-    hotbar
+    slots
         .iter()
         .map(|existing| {
             if existing.item_count.0 == 0 {
@@ -1234,6 +1285,26 @@ mod tests {
 
         assert_eq!(changes.len(), 1);
         assert_eq!(inventory.held_item().item_count.0, 64);
+        assert_eq!(inventory.visible_equipment()[0].item.item_count.0, 64);
+    }
+
+    #[test]
+    fn adding_item_stack_uses_empty_slot_when_existing_stack_is_full() {
+        let mut inventory = PlayerInventory::default();
+        inventory.hotbar[0] = simple_item(STONE_ITEM_ID, 64);
+        inventory.set_equipment_slot(Equipment::MAINHAND, inventory.hotbar[0].clone());
+
+        let changes = inventory
+            .add_item_stack(&simple_item(STONE_ITEM_ID, 1))
+            .unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(inventory.hotbar[0].item_count.0, 64);
+        assert_eq!(
+            inventory.hotbar[1].item_id.as_ref().unwrap().0,
+            STONE_ITEM_ID
+        );
+        assert_eq!(inventory.hotbar[1].item_count.0, 1);
         assert_eq!(inventory.visible_equipment()[0].item.item_count.0, 64);
     }
 

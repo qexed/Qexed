@@ -1,67 +1,48 @@
-use qexed_config_macros::AutoDoc;
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, AutoDoc)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct MongoConfig {
     #[serde(default = "default_host")]
-    #[AutoDoc(key = "config.public.mongodb.host")]
     pub host: String,
 
     #[serde(default = "default_mongo_port")]
-    #[AutoDoc(key = "config.public.mongodb.port")]
     pub port: u16,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.public.mongodb.username")]
     pub username: Option<String>,
 
     #[serde(default)]
-    #[AutoDoc(
-        key = "config.public.mongodb.password",
-        sensitive,
-        default_display = "<stored in .secrets>"
-    )]
     pub password: Option<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.public.mongodb.database")]
     pub database: String,
 
     #[serde(default = "default_app_name")]
-    #[AutoDoc(key = "config.public.mongodb.app_name")]
     pub app_name: Option<String>,
 
     #[serde(default = "default_replica_set")]
-    #[AutoDoc(key = "config.public.mongodb.replica_set")]
     pub replica_set: Option<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.public.mongodb.auth_source")]
     pub auth_source: Option<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.public.mongodb.use_tls")]
     pub use_tls: bool,
 
     #[serde(with = "humantime_serde", default = "default_connect_timeout_ms")]
-    #[AutoDoc(key = "config.public.mongodb.connect_timeout")]
     pub connect_timeout: Duration,
 
     #[serde(with = "humantime_serde", default = "default_socket_timeout_ms")]
-    #[AutoDoc(key = "config.public.mongodb.socket_timeout")]
     pub socket_timeout: Duration,
 
     #[serde(default = "default_max_pool_size")]
-    #[AutoDoc(key = "config.public.mongodb.max_pool_size")]
     pub max_pool_size: u32,
 
     #[serde(default = "default_min_pool_size")]
-    #[AutoDoc(key = "config.public.mongodb.min_pool_size")]
     pub min_pool_size: u32,
 
     #[serde(with = "humantime_serde", default = "default_max_idle_time_ms")]
-    #[AutoDoc(key = "config.public.mongodb.max_idle_time")]
     pub max_idle_time: Option<Duration>,
 }
 
@@ -180,14 +161,20 @@ impl MongoConfig {
 
     pub fn validate(&self) -> Result<(), String> {
         if self.database.is_empty() {
-            return Err("MongoDB 配置错误：数据库名不能为空".to_string());
+            return Err("MongoDB config error: database must not be empty".to_string());
         }
         if self.max_pool_size < self.min_pool_size {
-            return Err("MongoDB 配置错误：最大连接池大小不能小于最小连接池大小".to_string());
+            return Err(
+                "MongoDB config error: max_pool_size must be at least min_pool_size".to_string(),
+            );
         }
         match (&self.username, &self.password) {
-            (Some(_), None) => return Err("MongoDB 配置错误：提供了用户名但未提供密码".to_string()),
-            (None, Some(_)) => return Err("MongoDB 配置错误：提供了密码但未提供用户名".to_string()),
+            (Some(_), None) => {
+                return Err("MongoDB config error: password is required with username".to_string());
+            }
+            (None, Some(_)) => {
+                return Err("MongoDB config error: username is required with password".to_string());
+            }
             _ => {}
         }
         Ok(())

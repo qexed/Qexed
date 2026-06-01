@@ -256,6 +256,31 @@ fn stepped_block_position_uses_block_under_feet() {
 }
 
 #[test]
+fn dropped_item_position_is_lifted_out_of_solid_block() {
+    let temp = tempfile::tempdir().unwrap();
+    let world = crate::world::WorldManager::new(temp.path().join("world"));
+    let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
+    world.set_runtime_block("minecraft:overworld", Position { x: 0, y: 64, z: 0 }, stone);
+    let position = EntityPosition {
+        x: 0.5,
+        y: 64.1,
+        z: 0.5,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: false,
+    };
+
+    let lifted = super::lift_drop_position_out_of_blocks(&world, "minecraft:overworld", position);
+
+    assert!(lifted.y >= 65.0);
+    assert!(!super::drop_item_intersects_blocks(
+        &world,
+        "minecraft:overworld",
+        lifted
+    ));
+}
+
+#[test]
 fn translatable_component_uses_minecraft_translation_key() {
     let component = super::translatable_component(
         "death.fell.accident.water",

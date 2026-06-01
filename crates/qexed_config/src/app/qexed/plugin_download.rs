@@ -1,26 +1,11 @@
-use qexed_config_macros::AutoDoc;
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PluginDownload {
-    #[AutoDoc(
-        key = "config.qexed.plugin_download.enable",
-        migration_notice = "config.qexed.plugin_download.migration_notice.enable"
-    )]
     pub enable: bool,
 
-    #[AutoDoc(
-        key = "config.qexed.plugin_download.download",
-        warning = "config.qexed.plugin_download.warning.download"
-    )]
     pub download: String,
 
-    #[AutoDoc(
-        key = "config.qexed.plugin_download.download_token",
-        warning = "config.qexed.plugin_download.warning.download_token",
-        sensitive,
-        default_display = "<stored in .secrets>"
-    )]
     pub download_token: String,
 }
 

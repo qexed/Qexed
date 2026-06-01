@@ -1,11 +1,9 @@
-use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 
 use crate::app::qexed::server::{ForwardingMode, Server};
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedProxy {
-    #[AutoDoc(key = "config.qexed.proxy", sub)]
     pub proxy: Proxy,
 }
 
@@ -23,34 +21,21 @@ impl Default for QexedProxy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proxy {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.proxy.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.proxy.protocol")]
     pub protocol: ForwardingMode,
 
     #[serde(default)]
-    #[AutoDoc(
-        key = "config.qexed.proxy.server_id",
-        warning = "config.qexed.proxy.warning.server_id"
-    )]
     pub server_id: String,
 
     #[serde(default = "default_proxy_token")]
-    #[AutoDoc(
-        key = "config.qexed.proxy.token",
-        warning = "config.qexed.proxy.warning.token",
-        sensitive,
-        default_display = "<stored in .secrets>"
-    )]
     pub token: String,
 
     #[serde(default = "default_proxy_online_mode")]
-    #[AutoDoc(key = "config.qexed.proxy.online_mode")]
     pub online_mode: bool,
 }
 
@@ -79,15 +64,6 @@ impl Default for Proxy {
 impl qexed_config::tool::AppConfigTrait for QexedProxy {
     const PATH: &'static str = "/";
     const NAME: &'static str = "proxy";
-
-    fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
-        rust_i18n::t!(
-            "autodoc.file_description.qexed.proxy",
-            locale = lang,
-            file = config_file
-        )
-        .to_string()
-    }
 }
 
 fn default_proxy_token() -> String {

@@ -1,16 +1,17 @@
-pub mod data;
+﻿pub mod data;
 
-use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 
-#[qexed_config_macros::app_config("/", "qexed_warden")]
-#[derive(Debug, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QexedWarden {
-    #[AutoDoc(key = "config.qexed_warden.version")]
     pub version: i32,
 
-    #[AutoDoc(key = "config.qexed_warden.data", sub)]
     pub data: data::Data,
+}
+
+impl crate::tool::AppConfigTrait for QexedWarden {
+    const PATH: &'static str = "/";
+    const NAME: &'static str = "qexed_warden";
 }
 
 impl Default for QexedWarden {

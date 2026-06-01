@@ -1,12 +1,9 @@
-use qexed_config_macros::AutoDoc;
-use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 
 use crate::app::qexed::server::{Server, ServerLogLevel};
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedServer {
-    #[AutoDoc(key = "config.qexed.server", sub)]
     pub server: QexedServerCore,
 }
 
@@ -24,61 +21,40 @@ impl Default for QexedServer {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedServerCore {
-    #[AutoDoc(key = "config.qexed.server.ip")]
     pub ip: String,
 
-    #[AutoDoc(
-        key = "config.qexed.server.online",
-        warning = "config.qexed.server.warning.online"
-    )]
     pub online: bool,
 
-    #[AutoDoc(key = "config.qexed.server.max_player")]
     pub max_player: i32,
 
-    #[AutoDoc(key = "config.qexed.server.display_players")]
     pub display_players: bool,
 
-    #[AutoDoc(
-        key = "config.qexed.server.online_mode",
-        warning = "config.qexed.server.warning.online_mode"
-    )]
     pub online_mode: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.log_level")]
     pub log_level: ServerLogLevel,
 
     #[serde(default = "default_mojang_cache_path")]
-    #[AutoDoc(key = "config.qexed.server.mojang_cache_path")]
     pub mojang_cache_path: String,
 
-    #[AutoDoc(key = "config.qexed.server.network_compression_threshold")]
     pub network_compression_threshold: isize,
 
-    #[AutoDoc(key = "config.qexed.server.max_port_connections")]
     pub max_port_connections: u16,
 
-    #[AutoDoc(key = "config.qexed.server.rate_limit_window_secs")]
     pub rate_limit_window_secs: u64,
 
-    #[AutoDoc(key = "config.qexed.server.rate_limit_max_attempts")]
     pub rate_limit_max_attempts: u32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.click_detection", sub)]
     pub click_detection: crate::app::qexed::server::ClickDetection,
 
-    #[AutoDoc(key = "config.qexed.server.motd")]
     pub motd: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.code_of_conduct")]
     pub code_of_conduct: bool,
 
-    #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
 
@@ -119,8 +95,7 @@ impl Default for QexedServerCore {
             rate_limit_max_attempts: server.rate_limit_max_attempts,
             click_detection: server.click_detection,
             motd: vec![
-                t!("qexed_config.config.server.motd1").to_string(),
-                t!("qexed_config.config.server.motd2").to_string(),
+                "qexed服务端awa".to_string()
             ],
             code_of_conduct: server.code_of_conduct,
             favicon: server.favicon,
@@ -139,15 +114,6 @@ impl qexed_config::tool::AppConfigTrait for QexedServer {
             "server.proxy_server_id",
             "server.proxy_token",
         ]
-    }
-
-    fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
-        rust_i18n::t!(
-            "autodoc.file_description.qexed.server",
-            locale = lang,
-            file = config_file
-        )
-        .to_string()
     }
 }
 

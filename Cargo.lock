@@ -4329,10 +4329,8 @@ dependencies = [
  "humantime-serde",
  "log",
  "nanoid",
- "qexed_config_macros",
  "qexed_plugin_api",
  "rand 0.8.6",
- "rust-i18n",
  "serde",
  "serde_json",
  "sys-locale",
@@ -4340,6 +4338,13 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "toml_edit 0.25.11+spec-1.1.0",
  "uuid",
+]
+
+[[package]]
+name = "qexed_config_autodoc"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

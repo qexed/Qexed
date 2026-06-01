@@ -1,46 +1,29 @@
 use std::collections::BTreeMap;
 
 use qexed_config::{public::mongodb::MongoConfig, public::mysql::MysqlConfig};
-use qexed_config_macros::AutoDoc;
-use rust_i18n::t;
 use serde::{Deserialize, Serialize, de};
 
-#[derive(Debug, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Server {
-    #[AutoDoc(key = "config.qexed.server.ip")]
     pub ip: String,
 
-    #[AutoDoc(
-        key = "config.qexed.server.online",
-        warning = "config.qexed.server.warning.online"
-    )]
     pub online: bool,
 
-    #[AutoDoc(key = "config.qexed.server.max_player")]
     pub max_player: i32,
 
-    #[AutoDoc(key = "config.qexed.server.display_players")]
     pub display_players: bool,
 
-    #[AutoDoc(
-        key = "config.qexed.server.online_mode",
-        warning = "config.qexed.server.warning.online_mode"
-    )]
     pub online_mode: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.log_level")]
     pub log_level: ServerLogLevel,
 
     #[serde(default = "default_mojang_cache_path")]
-    #[AutoDoc(key = "config.qexed.server.mojang_cache_path")]
     pub mojang_cache_path: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lan_discovery", sub)]
     pub lan_discovery: LanDiscovery,
 
-    #[AutoDoc(key = "config.qexed.server.network_compression_threshold")]
     pub network_compression_threshold: isize,
 
     #[serde(default, skip)]
@@ -58,83 +41,62 @@ pub struct Server {
     #[serde(default = "default_proxy_online_mode", skip)]
     pub proxy_online_mode: bool,
 
-    #[AutoDoc(key = "config.qexed.server.max_port_connections")]
     pub max_port_connections: u16,
 
-    #[AutoDoc(key = "config.qexed.server.rate_limit_window_secs")]
     pub rate_limit_window_secs: u64,
 
-    #[AutoDoc(key = "config.qexed.server.rate_limit_max_attempts")]
     pub rate_limit_max_attempts: u32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.click_detection", sub)]
     pub click_detection: ClickDetection,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.gameplay", sub)]
     pub gameplay: Gameplay,
 
-    #[AutoDoc(key = "config.qexed.server.motd")]
     pub motd: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.code_of_conduct")]
     pub code_of_conduct: bool,
 
     #[serde(default, skip)]
-    #[AutoDoc(key = "config.qexed.server.world", sub)]
     pub world: World,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_data", sub)]
     pub player_data: PlayerData,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_messages", sub)]
     pub player_messages: PlayerMessages,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_audit", sub)]
     pub player_audit: PlayerAudit,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter", sub)]
     pub content_filter: ContentFilter,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.permissions", sub)]
     pub permissions: Permissions,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack", sub)]
     pub resource_pack: ResourcePack,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities", sub)]
     pub entities: Entities,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.scoreboard", sub)]
     pub scoreboard: Scoreboard,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus", sub)]
     pub menus: Menus,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering", sub)]
     pub entity_rendering: EntityRendering,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.placeholders", sub)]
     pub placeholders: Placeholders,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby", sub)]
     pub lobby: Lobby,
 
-    #[AutoDoc(key = "config.qexed.server.favicon")]
     pub favicon: String,
 }
 
@@ -160,8 +122,7 @@ impl Default for Server {
             click_detection: ClickDetection::default(),
             gameplay: Gameplay::default(),
             motd: vec![
-                t!("qexed_config.config.server.motd1").to_string(),
-                t!("qexed_config.config.server.motd2").to_string(),
+                "Qexed服务器awa".to_string()
             ],
             code_of_conduct: false,
             world: World::default(),
@@ -183,42 +144,33 @@ impl Default for Server {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Lobby {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.enable")]
     pub enable: bool,
 
     #[serde(default = "default_lobby_protect_world")]
-    #[AutoDoc(key = "config.qexed.server.lobby.protect_world")]
     pub protect_world: bool,
 
     #[serde(default = "default_lobby_menu_title")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_title")]
     pub menu_title: String,
 
     #[serde(default = "default_lobby_menu_rows")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_rows")]
     pub menu_rows: u8,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.navigator", sub)]
     pub navigator: LobbyNavigator,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items", sub)]
     pub menu_items: Vec<LobbyMenuItem>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.broadcast", sub)]
     pub broadcast: LobbyBroadcast,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar", sub)]
     pub boss_bar: LobbyBossBar,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.health_check", sub)]
     pub health_check: LobbyHealthCheck,
 }
 
@@ -238,14 +190,12 @@ impl Default for Lobby {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LobbyHealthCheck {
     #[serde(default = "default_lobby_health_check_interval_secs")]
-    #[AutoDoc(key = "config.qexed.server.lobby.health_check.interval_secs")]
     pub interval_secs: u64,
 
     #[serde(default = "default_lobby_health_check_timeout_ms")]
-    #[AutoDoc(key = "config.qexed.server.lobby.health_check.timeout_ms")]
     pub timeout_ms: u64,
 }
 
@@ -258,34 +208,27 @@ impl Default for LobbyHealthCheck {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LobbyBossBar {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.enable")]
     pub enable: bool,
 
     #[serde(default = "default_lobby_boss_bar_title")]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.title")]
     pub title: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.color")]
     pub color: LobbyBossBarColor,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.overlay")]
     pub overlay: LobbyBossBarOverlay,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.darken_screen")]
     pub darken_screen: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.play_music")]
     pub play_music: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.boss_bar.create_world_fog")]
     pub create_world_fog: bool,
 }
 
@@ -331,18 +274,15 @@ pub enum LobbyBossBarOverlay {
     Notched20,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LobbyBroadcast {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.broadcast.enable")]
     pub enable: bool,
 
     #[serde(default = "default_lobby_broadcast_interval_secs")]
-    #[AutoDoc(key = "config.qexed.server.lobby.broadcast.interval_secs")]
     pub interval_secs: u64,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.broadcast.messages")]
     pub messages: Vec<String>,
 }
 
@@ -356,22 +296,18 @@ impl Default for LobbyBroadcast {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LobbyNavigator {
     #[serde(default = "default_lobby_navigator_enable")]
-    #[AutoDoc(key = "config.qexed.server.lobby.navigator.enable")]
     pub enable: bool,
 
     #[serde(default = "default_lobby_navigator_slot")]
-    #[AutoDoc(key = "config.qexed.server.lobby.navigator.slot")]
     pub slot: u8,
 
     #[serde(default = "default_lobby_navigator_item")]
-    #[AutoDoc(key = "config.qexed.server.lobby.navigator.item")]
     pub item: String,
 
     #[serde(default = "default_lobby_navigator_name")]
-    #[AutoDoc(key = "config.qexed.server.lobby.navigator.name")]
     pub name: String,
 }
 
@@ -386,42 +322,33 @@ impl Default for LobbyNavigator {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LobbyMenuItem {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.slot")]
     pub slot: u8,
 
     #[serde(default = "default_lobby_menu_item_item")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.item")]
     pub item: String,
 
     #[serde(default = "default_lobby_menu_item_unknown_item")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.unknown_item")]
     pub unknown_item: String,
 
     #[serde(default = "default_lobby_menu_item_offline_item")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.offline_item")]
     pub offline_item: String,
 
     #[serde(default = "default_lobby_menu_item_disabled_item")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.disabled_item")]
     pub disabled_item: String,
 
     #[serde(default = "default_lobby_menu_item_maintenance_item")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.maintenance_item")]
     pub maintenance_item: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.name")]
     pub name: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.lore")]
     pub lore: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.menu_items.action", sub)]
     pub action: LobbyAction,
 }
 
@@ -441,18 +368,15 @@ impl Default for LobbyMenuItem {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LobbyAction {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.action.kind")]
     pub kind: LobbyActionKind,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.action.target")]
     pub target: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.lobby.action.message")]
     pub message: String,
 }
 
@@ -476,26 +400,21 @@ pub enum LobbyActionKind {
     Message,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Menus {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.reset_inventory_on_join")]
     pub reset_inventory_on_join: bool,
 
     #[serde(default = "default_menus_fixed_slots_only")]
-    #[AutoDoc(key = "config.qexed.server.menus.fixed_slots_only")]
     pub fixed_slots_only: bool,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items", sub)]
     pub hotbar_items: Vec<MenuHotbarItem>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.menus.chests", sub)]
     pub chests: Vec<ChestMenu>,
 }
 
@@ -511,26 +430,21 @@ impl Default for Menus {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MenuHotbarItem {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.slot")]
     pub slot: u8,
 
     #[serde(default = "default_menu_item_item")]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.item")]
     pub item: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.name")]
     pub name: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.lore")]
     pub lore: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.hotbar_items.action", sub)]
     pub action: MenuAction,
 }
 
@@ -546,22 +460,18 @@ impl Default for MenuHotbarItem {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ChestMenu {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.id")]
     pub id: String,
 
     #[serde(default = "default_chest_menu_title")]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.title")]
     pub title: String,
 
     #[serde(default = "default_chest_menu_rows")]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.rows")]
     pub rows: u8,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items", sub)]
     pub items: Vec<MenuItem>,
 }
 
@@ -576,26 +486,21 @@ impl Default for ChestMenu {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MenuItem {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items.slot")]
     pub slot: u8,
 
     #[serde(default = "default_menu_item_item")]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items.item")]
     pub item: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items.name")]
     pub name: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items.lore")]
     pub lore: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.chests.items.action", sub)]
     pub action: MenuAction,
 }
 
@@ -611,18 +516,15 @@ impl Default for MenuItem {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MenuAction {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.action.kind")]
     pub kind: MenuActionKind,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.action.target")]
     pub target: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.menus.action.message")]
     pub message: String,
 }
 
@@ -649,42 +551,33 @@ pub enum MenuActionKind {
     TogglePlayers,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct EntityRendering {
     #[serde(default = "default_entity_render_distance")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.default_distance")]
     pub default_distance: f64,
 
     #[serde(default = "default_player_render_distance")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.player_distance")]
     pub player_distance: f64,
 
     #[serde(default = "default_npc_render_distance")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.npc_distance")]
     pub npc_distance: f64,
 
     #[serde(default = "default_hologram_render_distance")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.hologram_distance")]
     pub hologram_distance: f64,
 
     #[serde(default = "default_item_render_distance")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.item_distance")]
     pub item_distance: f64,
 
     #[serde(default = "default_item_merge_radius")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.item_merge_radius")]
     pub item_merge_radius: f64,
 
     #[serde(default = "default_item_merge_max_stack")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.item_merge_max_stack")]
     pub item_merge_max_stack: i32,
 
     #[serde(default = "default_entity_stack_threshold")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.stack_threshold")]
     pub stack_threshold: usize,
 
     #[serde(default = "default_entity_stack_radius")]
-    #[AutoDoc(key = "config.qexed.server.entity_rendering.stack_radius")]
     pub stack_radius: f64,
 }
 
@@ -820,22 +713,18 @@ fn default_lobby_health_check_timeout_ms() -> u64 {
     600
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Scoreboard {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.scoreboard.enable")]
     pub enable: bool,
 
     #[serde(default = "default_scoreboard_objective")]
-    #[AutoDoc(key = "config.qexed.server.scoreboard.objective")]
     pub objective: String,
 
     #[serde(default = "default_scoreboard_title")]
-    #[AutoDoc(key = "config.qexed.server.scoreboard.title")]
     pub title: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.scoreboard.lines")]
     pub lines: Vec<String>,
 }
 
@@ -850,10 +739,9 @@ impl Default for Scoreboard {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Placeholders {
     #[serde(default = "default_placeholders_enable")]
-    #[AutoDoc(key = "config.qexed.server.placeholders.enable")]
     pub enable: bool,
 }
 
@@ -877,22 +765,18 @@ fn default_scoreboard_title() -> String {
     "Qexed".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Entities {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.enable")]
     pub enable: bool,
 
     #[serde(default = "default_entities_dimension")]
-    #[AutoDoc(key = "config.qexed.server.entities.dimension")]
     pub dimension: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.entities.list", sub)]
     pub list: Vec<Entity>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning", sub)]
     pub spawning: EntitySpawning,
 }
 
@@ -907,18 +791,15 @@ impl Default for Entities {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Npcs {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.enable")]
     pub enable: bool,
 
     #[serde(default = "default_entities_dimension")]
-    #[AutoDoc(key = "config.qexed.server.npcs.dimension")]
     pub dimension: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.npcs.list", sub)]
     pub list: Vec<Npc>,
 }
 
@@ -932,78 +813,60 @@ impl Default for Npcs {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Npc {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.id")]
     pub id: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.name")]
     pub name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.display_name")]
     pub display_name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.entity_type")]
     pub entity_type: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.skin_textures")]
     pub skin_textures: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.skin_signature")]
     pub skin_signature: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.skin_player_id")]
     pub skin_player_id: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.x")]
     pub x: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.y")]
     pub y: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.z")]
     pub z: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.yaw")]
     pub yaw: f32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.pitch")]
     pub pitch: f32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.on_ground")]
     pub on_ground: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.look_at_players")]
     pub look_at_players: bool,
 
     #[serde(default = "default_npc_main_hand_event")]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.main_hand_event")]
     pub main_hand_event: String,
 
     #[serde(default = "default_npc_off_hand_event")]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.off_hand_event")]
     pub off_hand_event: String,
 
     #[serde(default = "default_npc_attack_event")]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.attack_event")]
     pub attack_event: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.actions", sub)]
     pub actions: NpcActions,
 }
 
@@ -1032,18 +895,15 @@ impl Default for Npc {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct NpcActions {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.actions.main_hand")]
     pub main_hand: MenuAction,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.actions.off_hand")]
     pub off_hand: MenuAction,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.npcs.list.actions.attack")]
     pub attack: MenuAction,
 }
 
@@ -1051,94 +911,72 @@ fn default_entities_dimension() -> String {
     "minecraft:overworld".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Entity {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.id")]
     pub id: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.kind")]
     pub kind: EntityKind,
 
     #[serde(default = "default_entity_type")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.entity_type")]
     pub entity_type: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.name")]
     pub name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.display_name")]
     pub display_name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.skin_textures")]
     pub skin_textures: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.skin_signature")]
     pub skin_signature: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.skin_player_id")]
     pub skin_player_id: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.x")]
     pub x: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.y")]
     pub y: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.z")]
     pub z: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.yaw")]
     pub yaw: f32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.pitch")]
     pub pitch: f32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.on_ground")]
     pub on_ground: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.data")]
     pub data: i32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.ai")]
     pub ai: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.ai_params")]
     pub ai_params: BTreeMap<String, serde_json::Value>,
 
     #[serde(default = "default_entity_auto_jump")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.auto_jump")]
     pub auto_jump: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.look_at_players")]
     pub look_at_players: bool,
 
     #[serde(default = "default_npc_main_hand_event")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.main_hand_event")]
     pub main_hand_event: String,
 
     #[serde(default = "default_npc_off_hand_event")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.off_hand_event")]
     pub off_hand_event: String,
 
     #[serde(default = "default_npc_attack_event")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.attack_event")]
     pub attack_event: String,
 }
 
@@ -1200,42 +1038,33 @@ fn default_npc_attack_event() -> String {
     "attack".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct EntitySpawning {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.enable")]
     pub enable: bool,
 
     #[serde(default = "default_entity_spawn_tick_interval_ms")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.tick_interval_ms")]
     pub tick_interval_ms: u64,
 
     #[serde(default = "default_entity_ai_tick_interval_ms")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.ai_tick_interval_ms")]
     pub ai_tick_interval_ms: u64,
 
     #[serde(default = "default_entity_spawn_global_cap")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.global_cap")]
     pub global_cap: usize,
 
     #[serde(default = "default_entity_spawn_per_dimension_cap")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.per_dimension_cap")]
     pub per_dimension_cap: usize,
 
     #[serde(default = "default_entity_spawn_per_type_cap")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.per_type_cap")]
     pub per_type_cap: usize,
 
     #[serde(default = "default_entity_spawn_max_per_tick")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.max_spawn_per_tick")]
     pub max_spawn_per_tick: usize,
 
     #[serde(default = "default_entity_spawn_player_activation_range")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.player_activation_range")]
     pub player_activation_range: f64,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules", sub)]
     pub rules: Vec<EntitySpawnRule>,
 }
 
@@ -1255,114 +1084,87 @@ impl Default for EntitySpawning {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct EntitySpawnRule {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.id")]
     pub id: String,
 
     #[serde(default = "default_entity_spawn_rule_enable")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.dimension")]
     pub dimension: String,
 
     #[serde(default = "default_entity_spawn_rule_entity_type")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.entity_type")]
     pub entity_type: String,
 
     #[serde(default = "default_entity_spawn_rule_weight")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.weight")]
     pub weight: u32,
 
     #[serde(default = "default_entity_spawn_rule_cap")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.cap")]
     pub cap: usize,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.tick_interval_ms")]
     pub tick_interval_ms: u64,
 
     #[serde(default = "default_entity_spawn_rule_spawn_chance")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.spawn_chance")]
     pub spawn_chance: f64,
 
     #[serde(default = "default_entity_spawn_rule_min_players")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_players")]
     pub min_players: usize,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_players")]
     pub max_players: usize,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.activation_range")]
     pub activation_range: f64,
 
     #[serde(default = "default_entity_spawn_rule_require_ground")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.require_ground")]
     pub require_ground: bool,
 
     #[serde(default = "default_entity_spawn_rule_require_air")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.require_air")]
     pub require_air: bool,
 
     #[serde(default = "default_entity_spawn_rule_position_attempts")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.position_attempts")]
     pub position_attempts: u32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.name")]
     pub name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.display_name")]
     pub display_name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.ai")]
     pub ai: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.ai_params")]
     pub ai_params: BTreeMap<String, serde_json::Value>,
 
     #[serde(default = "default_entity_auto_jump")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.auto_jump")]
     pub auto_jump: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.data")]
     pub data: i32,
 
     #[serde(default = "default_entity_spawn_rule_on_ground")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.on_ground")]
     pub on_ground: bool,
 
     #[serde(default = "default_entity_spawn_min_x")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_x")]
     pub min_x: f64,
 
     #[serde(default = "default_entity_spawn_max_x")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_x")]
     pub max_x: f64,
 
     #[serde(default = "default_entity_spawn_min_y")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_y")]
     pub min_y: f64,
 
     #[serde(default = "default_entity_spawn_max_y")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_y")]
     pub max_y: f64,
 
     #[serde(default = "default_entity_spawn_min_z")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.min_z")]
     pub min_z: f64,
 
     #[serde(default = "default_entity_spawn_max_z")]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning.rules.max_z")]
     pub max_z: f64,
 }
 
@@ -1492,22 +1294,18 @@ fn default_entity_spawn_max_z() -> f64 {
     16.0
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ClickDetection {
     #[serde(default = "default_click_detection_enable")]
-    #[AutoDoc(key = "config.qexed.server.click_detection.enable")]
     pub enable: bool,
 
     #[serde(default = "default_click_detection_window_ms")]
-    #[AutoDoc(key = "config.qexed.server.click_detection.window_ms")]
     pub window_ms: u64,
 
     #[serde(default = "default_click_detection_max_clicks")]
-    #[AutoDoc(key = "config.qexed.server.click_detection.max_clicks")]
     pub max_clicks: u32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.click_detection.cancel_actions")]
     pub cancel_actions: bool,
 }
 
@@ -1534,62 +1332,48 @@ fn default_click_detection_max_clicks() -> u32 {
     18
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Gameplay {
     #[serde(default = "default_gameplay_block_updates")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.block_updates")]
     pub block_updates: bool,
 
     #[serde(default = "default_gameplay_crafting_table")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.crafting_table")]
     pub crafting_table: bool,
 
     #[serde(default = "default_gameplay_furnace")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.furnace")]
     pub furnace: bool,
 
     #[serde(default = "default_gameplay_crafting")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.crafting")]
     pub crafting: bool,
 
     #[serde(default = "default_gameplay_durability")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.durability")]
     pub durability: bool,
 
     #[serde(default = "default_gameplay_combat")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.combat")]
     pub combat: bool,
 
     #[serde(default = "default_gameplay_oxygen")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.oxygen")]
     pub oxygen: bool,
 
     #[serde(default = "default_gameplay_sounds")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.sounds")]
     pub sounds: bool,
 
     #[serde(default = "default_gameplay_advancements")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.advancements")]
     pub advancements: bool,
 
     #[serde(default = "default_gameplay_enchantments")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.enchantments")]
     pub enchantments: bool,
 
     #[serde(default = "default_gameplay_potion_effects")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.potion_effects")]
     pub potion_effects: bool,
 
     #[serde(default = "default_gameplay_furnace_tick_ms")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.furnace_tick_ms")]
     pub furnace_tick_ms: u64,
 
     #[serde(default = "default_gameplay_oxygen_tick_ms")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.oxygen_tick_ms")]
     pub oxygen_tick_ms: u64,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements", sub)]
     pub custom_advancements: Vec<CustomAdvancement>,
 }
 
@@ -1614,30 +1398,24 @@ impl Default for Gameplay {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CustomAdvancement {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.id")]
     pub id: String,
 
     #[serde(default = "default_custom_advancement_title")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.title")]
     pub title: String,
 
     #[serde(default = "default_custom_advancement_description")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.description")]
     pub description: String,
 
     #[serde(default = "default_custom_advancement_icon")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.icon")]
     pub icon: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.trigger")]
     pub trigger: CustomAdvancementTrigger,
 
     #[serde(default = "default_custom_advancement_toast")]
-    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.toast")]
     pub toast: bool,
 }
 
@@ -1735,54 +1513,42 @@ fn default_custom_advancement_toast() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ResourcePack {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.source")]
     pub source: ResourcePackSource,
 
     #[serde(default = "default_resource_pack_id")]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.id")]
     pub id: uuid::Uuid,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.url")]
     pub url: String,
 
     #[serde(default = "default_resource_pack_path")]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.path")]
     pub path: String,
 
     #[serde(default = "default_resource_pack_download_bind")]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.download_bind")]
     pub download_bind: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.download_host")]
     pub download_host: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage", sub)]
     pub object_storage: ResourcePackObjectStorage,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.hash")]
     pub hash: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.required")]
     pub required: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.prompt")]
     pub prompt: String,
 
     #[serde(default = "default_resource_pack_disconnect_message")]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.disconnect_message")]
     pub disconnect_message: String,
 }
 
@@ -1814,30 +1580,24 @@ pub enum ResourcePackSource {
     ObjectStorage,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ResourcePackObjectStorage {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.provider")]
     pub provider: ResourcePackObjectStorageProvider,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.public_base_url")]
     pub public_base_url: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.endpoint")]
     pub endpoint: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.bucket")]
     pub bucket: String,
 
     #[serde(default = "default_resource_pack_object_key")]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.object_key")]
     pub object_key: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.resource_pack.object_storage.force_path_style")]
     pub force_path_style: bool,
 }
 
@@ -1887,30 +1647,24 @@ fn default_resource_pack_disconnect_message() -> String {
     "This server requires its resource pack.".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PlayerMessages {
     #[serde(default = "default_player_messages_enable")]
-    #[AutoDoc(key = "config.qexed.server.player_messages.enable")]
     pub enable: bool,
 
     #[serde(default = "default_chat_rate_limit_window_secs")]
-    #[AutoDoc(key = "config.qexed.server.player_messages.chat_rate_limit_window_secs")]
     pub chat_rate_limit_window_secs: u64,
 
     #[serde(default = "default_chat_rate_limit_max_messages")]
-    #[AutoDoc(key = "config.qexed.server.player_messages.chat_rate_limit_max_messages")]
     pub chat_rate_limit_max_messages: u32,
 
     #[serde(default = "default_chat_max_length")]
-    #[AutoDoc(key = "config.qexed.server.player_messages.chat_max_length")]
     pub chat_max_length: usize,
 
     #[serde(default = "default_player_join_message")]
-    #[AutoDoc(key = "config.qexed.server.player_messages.join")]
     pub join: String,
 
     #[serde(default = "default_player_leave_message")]
-    #[AutoDoc(key = "config.qexed.server.player_messages.leave")]
     pub leave: String,
 }
 
@@ -1955,22 +1709,18 @@ fn default_proxy_online_mode() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PlayerAudit {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_audit.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_audit.storage")]
     pub storage: PlayerAuditStorage,
 
     #[serde(default = "default_player_audit_file_path")]
-    #[AutoDoc(key = "config.qexed.server.player_audit.file_path")]
     pub file_path: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_audit.events", sub)]
     pub events: PlayerAuditEvents,
 }
 
@@ -1998,22 +1748,18 @@ pub enum PlayerAuditStorage {
     FileAndStdout,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PlayerAuditEvents {
     #[serde(default = "default_player_audit_track_block_place")]
-    #[AutoDoc(key = "config.qexed.server.player_audit.events.block_place")]
     pub block_place: bool,
 
     #[serde(default = "default_player_audit_track_block_break")]
-    #[AutoDoc(key = "config.qexed.server.player_audit.events.block_break")]
     pub block_break: bool,
 
     #[serde(default = "default_player_audit_track_item_switch")]
-    #[AutoDoc(key = "config.qexed.server.player_audit.events.item_switch")]
     pub item_switch: bool,
 
     #[serde(default = "default_player_audit_track_command")]
-    #[AutoDoc(key = "config.qexed.server.player_audit.events.command")]
     pub command: bool,
 }
 
@@ -2044,42 +1790,30 @@ fn default_player_audit_track_command() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ContentFilter {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter.engine")]
     pub engine: ContentFilterEngine,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter.words")]
     pub words: Vec<String>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter.knowledge_path")]
     pub knowledge_path: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.content_filter.api_url")]
     pub api_url: String,
 
     #[serde(default)]
-    #[AutoDoc(
-        key = "config.qexed.server.content_filter.api_token",
-        sensitive,
-        default_display = "<stored in .secrets>"
-    )]
     pub api_token: String,
 
     #[serde(default = "default_content_filter_replacement")]
-    #[AutoDoc(key = "config.qexed.server.content_filter.replacement")]
     pub replacement: String,
 
     #[serde(default = "default_content_filter_block_message")]
-    #[AutoDoc(key = "config.qexed.server.content_filter.block_message")]
     pub block_message: String,
 }
 
@@ -2115,42 +1849,33 @@ pub enum ContentFilterEngine {
     Api,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Permissions {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.permissions.engine")]
     pub engine: PermissionEngine,
 
     #[serde(default = "default_permissions_local_path")]
-    #[AutoDoc(key = "config.qexed.server.permissions.local_path")]
     pub local_path: String,
 
     #[serde(default = "default_permissions_table_prefix")]
-    #[AutoDoc(key = "config.qexed.server.permissions.table_prefix")]
     pub table_prefix: String,
 
     #[serde(default = "default_permissions_server")]
-    #[AutoDoc(key = "config.qexed.server.permissions.server")]
     pub server: String,
 
     #[serde(default = "default_permissions_world")]
-    #[AutoDoc(key = "config.qexed.server.permissions.world")]
     pub world: String,
 
     #[serde(default = "default_permissions_default_group")]
-    #[AutoDoc(key = "config.qexed.server.permissions.default_group")]
     pub default_group: String,
 
     #[serde(default = "default_permissions_allow_by_default")]
-    #[AutoDoc(key = "config.qexed.server.permissions.allow_by_default")]
     pub allow_by_default: bool,
 
     #[serde(default = "default_permissions_denied_message")]
-    #[AutoDoc(key = "config.qexed.server.permissions.denied_message")]
     pub denied_message: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.permissions.mysql", sub)]
     pub mysql: MysqlConfig,
 }
 
@@ -2211,34 +1936,27 @@ fn default_permissions_denied_message() -> String {
     "You do not have permission to use this command.".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct PlayerData {
     #[serde(default = "default_player_data_enable")]
-    #[AutoDoc(key = "config.qexed.server.player_data.enable")]
     pub enable: bool,
 
     #[serde(default = "default_player_data_autosave_interval_secs")]
-    #[AutoDoc(key = "config.qexed.server.player_data.autosave_interval_secs")]
     pub autosave_interval_secs: u64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_data.engine")]
     pub engine: PlayerDataEngine,
 
     #[serde(default = "default_player_data_collection")]
-    #[AutoDoc(key = "config.qexed.server.player_data.collection")]
     pub collection: String,
 
     #[serde(default = "default_player_data_table")]
-    #[AutoDoc(key = "config.qexed.server.player_data.table")]
     pub table: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_data.mongodb", sub)]
     pub mongodb: MongoConfig,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.player_data.mysql", sub)]
     pub mysql: MysqlConfig,
 }
 
@@ -2309,12 +2027,10 @@ fn default_mojang_cache_path() -> String {
     "cache/mojang".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LanDiscovery {
-    #[AutoDoc(key = "config.qexed.server.lan_discovery.enable")]
     pub enable: bool,
 
-    #[AutoDoc(key = "config.qexed.server.lan_discovery.interval_ms")]
     pub interval_ms: u64,
 }
 
@@ -2327,95 +2043,72 @@ impl Default for LanDiscovery {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct World {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.default_dimension")]
     pub default_dimension: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.world.worlds", sub)]
     pub worlds: Vec<WorldStorage>,
 
     #[serde(default = "default_world_path")]
-    #[AutoDoc(key = "config.qexed.server.world.path")]
     pub path: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.read_only")]
     pub read_only: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.generator")]
     pub generator: WorldGenerator,
 
     #[serde(default = "default_world_generator_preset")]
-    #[AutoDoc(key = "config.qexed.server.world.generator_preset")]
     pub generator_preset: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.seed")]
     pub seed: i64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.game_mode")]
     pub game_mode: GameMode,
 
     #[serde(default = "default_spawn_protection_radius")]
-    #[AutoDoc(key = "config.qexed.server.world.spawn_protection_radius")]
     pub spawn_protection_radius: i32,
 
     #[serde(default = "default_world_default_dimension")]
-    #[AutoDoc(key = "config.qexed.server.world.dimension")]
     pub dimension: String,
 
     #[serde(default = "default_world_dimension_type")]
-    #[AutoDoc(key = "config.qexed.server.world.dimension_type")]
     pub dimension_type: String,
 
-    #[AutoDoc(key = "config.qexed.server.world.view_distance")]
     pub view_distance: i32,
 
     #[serde(default = "default_chunk_load_parallelism")]
-    #[AutoDoc(key = "config.qexed.server.world.chunk_load_parallelism")]
     pub chunk_load_parallelism: usize,
 
     #[serde(default = "default_chunk_update_delay_ms")]
-    #[AutoDoc(key = "config.qexed.server.world.chunk_update_delay_ms")]
     pub chunk_update_delay_ms: u64,
 
-    #[AutoDoc(key = "config.qexed.server.world.simulation_distance")]
     pub simulation_distance: i32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.light")]
     pub light: LightMode,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.light_algorithm")]
     pub light_algorithm: LightAlgorithm,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks", sub)]
     pub precompiled_chunks: PrecompiledChunks,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.gpu", sub)]
     pub gpu: WorldGpu,
 
-    #[AutoDoc(key = "config.qexed.server.world.spawn", sub)]
     pub spawn: Spawn,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.world.instances", sub)]
     pub instances: Vec<WorldInstance>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits", sub)]
     pub ore_pits: Vec<WorldOrePit>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions", sub)]
     pub edit_regions: Vec<WorldEditRegion>,
 }
 
@@ -2516,15 +2209,6 @@ fn push_unique_dimension(dimensions: &mut Vec<String>, dimension: impl AsRef<str
 impl qexed_config::tool::AppConfigTrait for World {
     const PATH: &'static str = "/";
     const NAME: &'static str = "world";
-
-    fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
-        rust_i18n::t!(
-            "autodoc.file_description.world",
-            locale = lang,
-            file = config_file
-        )
-        .to_string()
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -2564,22 +2248,18 @@ fn default_spawn_protection_radius() -> i32 {
     16
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorldStorage {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.worlds.id")]
     pub id: String,
 
     #[serde(default = "default_world_default_dimension")]
-    #[AutoDoc(key = "config.qexed.server.world.worlds.dimension")]
     pub dimension: String,
 
     #[serde(default = "default_world_dimension_type")]
-    #[AutoDoc(key = "config.qexed.server.world.worlds.dimension_type")]
     pub dimension_type: String,
 
     #[serde(default = "default_world_path")]
-    #[AutoDoc(key = "config.qexed.server.world.worlds.path")]
     pub path: String,
 }
 
@@ -2594,26 +2274,21 @@ impl Default for WorldStorage {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorldInstance {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.instances.id")]
     pub id: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.instances.dimension")]
     pub dimension: String,
 
     #[serde(default = "default_world_instance_source_dimension")]
-    #[AutoDoc(key = "config.qexed.server.world.instances.source_dimension")]
     pub source_dimension: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.instances.path")]
     pub path: String,
 
     #[serde(default = "default_world_instance_copy_on_write")]
-    #[AutoDoc(key = "config.qexed.server.world.instances.copy_on_write")]
     pub copy_on_write: bool,
 }
 
@@ -2637,64 +2312,51 @@ fn default_world_instance_copy_on_write() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorldOrePit {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.id")]
     pub id: String,
 
     #[serde(default = "default_world_ore_pit_enable")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.enable")]
     pub enable: bool,
 
     #[serde(default = "default_world_default_dimension")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.dimension")]
     pub dimension: String,
 
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.min_x")]
     pub min_x: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_x")]
     pub max_x: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.min_y")]
     pub min_y: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_y")]
     pub max_y: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.min_z")]
     pub min_z: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_z")]
     pub max_z: i32,
 
     #[serde(default = "default_world_ore_pit_tick_interval_ms")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.tick_interval_ms")]
     pub tick_interval_ms: u64,
 
     #[serde(default = "default_world_ore_pit_initial_refill")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.initial_refill")]
     pub initial_refill: bool,
 
     #[serde(default = "default_world_ore_pit_max_blocks_per_tick")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.max_blocks_per_tick")]
     pub max_blocks_per_tick: usize,
 
+    #[serde(default)]
+    pub teleport_players_to_surface_on_refill: bool,
+
     #[serde(default = "default_world_ore_pit_replace_air")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.replace_air")]
     pub replace_air: bool,
 
     #[serde(default = "default_world_ore_pit_replace_generated")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.replace_generated")]
     pub replace_generated: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.only_break_generated")]
     pub only_break_generated: bool,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.blocks", sub)]
     pub blocks: Vec<WorldOrePitBlock>,
 }
 
@@ -2713,6 +2375,7 @@ impl Default for WorldOrePit {
             tick_interval_ms: default_world_ore_pit_tick_interval_ms(),
             initial_refill: default_world_ore_pit_initial_refill(),
             max_blocks_per_tick: default_world_ore_pit_max_blocks_per_tick(),
+            teleport_players_to_surface_on_refill: false,
             replace_air: default_world_ore_pit_replace_air(),
             replace_generated: default_world_ore_pit_replace_generated(),
             only_break_generated: false,
@@ -2730,14 +2393,12 @@ impl WorldOrePit {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorldOrePitBlock {
     #[serde(default = "default_world_ore_pit_block")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.blocks.block")]
     pub block: String,
 
     #[serde(default = "default_world_ore_pit_block_weight")]
-    #[AutoDoc(key = "config.qexed.server.world.ore_pits.blocks.weight")]
     pub weight: u32,
 }
 
@@ -2782,48 +2443,36 @@ fn default_world_ore_pit_block_weight() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorldEditRegion {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.id")]
     pub id: String,
 
     #[serde(default = "default_world_default_dimension")]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.dimension")]
     pub dimension: String,
 
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.min_x")]
     pub min_x: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.max_x")]
     pub max_x: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.min_y")]
     pub min_y: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.max_y")]
     pub max_y: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.min_z")]
     pub min_z: i32,
 
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.max_z")]
     pub max_z: i32,
 
     #[serde(default = "default_world_edit_region_allow_player_break")]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.allow_player_break")]
     pub allow_player_break: bool,
 
     #[serde(default = "default_world_edit_region_allow_player_place")]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.allow_player_place")]
     pub allow_player_place: bool,
 
     #[serde(default = "default_world_edit_region_allow_plugin_write")]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.allow_plugin_write")]
     pub allow_plugin_write: bool,
 
     #[serde(default = "default_world_edit_region_runtime_only")]
-    #[AutoDoc(key = "config.qexed.server.world.edit_regions.runtime_only")]
     pub runtime_only: bool,
 }
 
@@ -2877,26 +2526,21 @@ fn default_world_edit_region_runtime_only() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PrecompiledChunks {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.enable")]
     pub enable: bool,
 
     #[serde(default = "default_precompiled_chunks_light")]
-    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.light")]
     pub light: bool,
 
     #[serde(default = "default_precompiled_chunks_max_cached_packets")]
-    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.max_cached_packets")]
     pub max_cached_packets: usize,
 
     #[serde(default = "default_precompiled_chunks_max_cached_packet_bytes")]
-    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.max_cached_packet_bytes")]
     pub max_cached_packet_bytes: usize,
 
     #[serde(default = "default_precompiled_chunks_block_state_cache_limit")]
-    #[AutoDoc(key = "config.qexed.server.world.precompiled_chunks.block_state_cache_limit")]
     pub block_state_cache_limit: usize,
 }
 
@@ -3047,14 +2691,12 @@ pub enum LightAlgorithm {
     RayTrace,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorldGpu {
     #[serde(default = "default_world_gpu_enable")]
-    #[AutoDoc(key = "config.qexed.server.world.gpu.enable")]
     pub enable: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.gpu.device")]
     pub device: GpuDeviceSelector,
 }
 
@@ -3154,21 +2796,16 @@ impl<'de> Deserialize<'de> for GpuDeviceSelector {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Spawn {
-    #[AutoDoc(key = "config.qexed.server.world.spawn.x")]
     pub x: f64,
 
-    #[AutoDoc(key = "config.qexed.server.world.spawn.y")]
     pub y: f64,
 
-    #[AutoDoc(key = "config.qexed.server.world.spawn.z")]
     pub z: f64,
 
-    #[AutoDoc(key = "config.qexed.server.world.spawn.yaw")]
     pub yaw: f32,
 
-    #[AutoDoc(key = "config.qexed.server.world.spawn.pitch")]
     pub pitch: f32,
 }
 
@@ -3224,7 +2861,7 @@ impl std::str::FromStr for ForwardingMode {
             "velocity" => Ok(ForwardingMode::Velocity),
             "bungeecord" => Ok(ForwardingMode::BungeeCord),
             "none" => Ok(ForwardingMode::None),
-            _ => Err(format!("未知的转发模式: {}", s)),
+            _ => Err(format!("鏈煡鐨勮浆鍙戞ā寮? {}", s)),
         }
     }
 }
@@ -3543,6 +3180,7 @@ max_z = 24
 tick_interval_ms = 500
 initial_refill = true
 max_blocks_per_tick = 512
+teleport_players_to_surface_on_refill = true
 replace_air = true
 replace_generated = true
 only_break_generated = true
@@ -3564,6 +3202,7 @@ weight = 1
         assert_eq!(pit.dimension, "qexed:mine_a");
         assert!(pit.initial_refill);
         assert_eq!(pit.max_blocks_per_tick, 512);
+        assert!(pit.teleport_players_to_surface_on_refill);
         assert!(pit.only_break_generated);
         assert_eq!(pit.blocks.len(), 2);
         assert!(pit.contains("qexed:mine_a", 36, -50, 6));
@@ -4032,7 +3671,7 @@ dimension = "minecraft:overworld"
 [[list]]
 id = "survival_npc"
 name = "sv1"
-display_name = "原版生存"
+display_name = "鍘熺増鐢熷瓨"
 entity_type = "minecraft:zombie"
 skin_player_id = "MHF_Grass"
 x = -14.5
@@ -4046,7 +3685,7 @@ look_at_players = true
 [list.actions.main_hand]
 kind = "transfer"
 target = "survival_1"
-message = "正在传送到原版生存..."
+message = "姝ｅ湪浼犻€佸埌鍘熺増鐢熷瓨..."
 "#,
         )
         .unwrap();

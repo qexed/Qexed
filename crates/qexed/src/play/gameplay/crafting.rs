@@ -18,6 +18,8 @@ pub(in crate::play) const CRAFTING_WINDOW_ID: i32 = 21;
 const RESULT_SLOT: i16 = 0;
 const GRID_START: i16 = 1;
 const GRID_END: i16 = 9;
+const PLAYER_INVENTORY_WINDOW_ID: i32 = 0;
+const PLAYER_INVENTORY_GRID_END: i16 = 4;
 
 #[derive(Debug, Default)]
 pub(in crate::play) struct CraftingRuntime {
@@ -26,12 +28,17 @@ pub(in crate::play) struct CraftingRuntime {
     grid: Vec<Slot>,
     result: Slot,
     current_recipe: Option<String>,
+    inventory_state_id: i32,
+    inventory_grid: Vec<Slot>,
+    inventory_result: Slot,
+    inventory_recipe: Option<String>,
 }
 
 impl CraftingRuntime {
     pub(super) fn new() -> Self {
         Self {
             grid: vec![crate::inventory::empty_slot(); 9],
+            inventory_grid: vec![crate::inventory::empty_slot(); 4],
             ..Self::default()
         }
     }
@@ -106,6 +113,15 @@ impl CraftingRuntime {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
+        if click.window_id.0 == PLAYER_INVENTORY_WINDOW_ID
+            && click.slot >= RESULT_SLOT
+            && click.slot <= PLAYER_INVENTORY_GRID_END
+        {
+            return self
+                .handle_inventory_click(sink, click, inventory, player, plugins, config)
+                .await
+                .map(Some);
+        }
         if !self.open || click.window_id.0 != CRAFTING_WINDOW_ID {
             return Ok(None);
         }
@@ -186,6 +202,113 @@ impl CraftingRuntime {
         Ok(Some(outcome))
     }
 
+    async fn handle_inventory_click<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        click: &ContainerClick,
+        inventory: &mut crate::inventory::PlayerInventory,
+        player: &crate::players::OnlinePlayer,
+        plugins: &crate::plugins::PluginManager,
+        config: &qexed_config::app::qexed::server::Gameplay,
+    ) -> Result<GameplayActionOutcome>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let mut outcome = GameplayActionOutcome::handled();
+        if click.slot == RESULT_SLOT {
+            if self.inventory_result.item_count.0 > 0 {
+                let recipe_id = self.inventory_recipe.clone().unwrap_or_default();
+                let response = plugins.handle_craft_item(crate::plugins::CraftItemQuery {
+                    player: qexed_plugin_api::player_payload_owned(player),
+                    recipe_id,
+                    result: items::item_stack_payload(&self.inventory_result),
+                    ingredients: self
+                        .inventory_grid
+                        .iter()
+                        .filter(|slot| slot.item_count.0 > 0)
+                        .map(items::item_stack_payload)
+                        .collect(),
+                });
+                for action in response.actions {
+                    outcome.handled |= matches!(
+                        action,
+                        crate::plugins::PlayerAction::SystemMessage { .. }
+                            | crate::plugins::PlayerAction::Velocity { .. }
+                    );
+                }
+                if !response.cancel {
+                    let crafted = response
+                        .result
+                        .and_then(|item| {
+                            (item.item_id >= 0).then(|| {
+                                crate::inventory::simple_item(item.item_id, item.count.max(1))
+                            })
+                        })
+                        .unwrap_or_else(|| self.inventory_result.clone());
+                    if let Some(mut changes) = inventory.add_item_stack(&crafted) {
+                        outcome.inventory_changes.append(&mut changes);
+                        consume_grid_once(&mut self.inventory_grid);
+                        outcome.grant_triggers.push(
+                            qexed_config::app::qexed::server::CustomAdvancementTrigger::Craft,
+                        );
+                    }
+                }
+            }
+        } else if (GRID_START..=PLAYER_INVENTORY_GRID_END).contains(&click.slot) {
+            let index = usize::try_from(click.slot - GRID_START).unwrap_or_default();
+            let applied_client_grid =
+                self.apply_inventory_changed_slots(click, inventory, &mut outcome);
+            if !applied_client_grid {
+                if click.button == 1 {
+                    if self.inventory_grid[index].item_count.0 > 0
+                        && let Some(mut changes) =
+                            inventory.add_item_stack(&self.inventory_grid[index])
+                    {
+                        outcome.inventory_changes.append(&mut changes);
+                    }
+                    self.inventory_grid[index] = crate::inventory::empty_slot();
+                } else if let Some(mut held) = inventory.drop_selected(false).map(|(_, item)| item)
+                {
+                    held.item_count.0 = 1;
+                    self.inventory_grid[index] = held;
+                    outcome
+                        .inventory_changes
+                        .push(inventory.selected_hotbar_change());
+                }
+            }
+        }
+
+        self.recompute_inventory_result(player, plugins, config);
+        self.sync_inventory_crafting(sink).await?;
+        Ok(outcome)
+    }
+
+    fn apply_inventory_changed_slots(
+        &mut self,
+        click: &ContainerClick,
+        inventory: &mut crate::inventory::PlayerInventory,
+        outcome: &mut GameplayActionOutcome,
+    ) -> bool {
+        let mut applied_clicked_grid = false;
+        for (slot, hashed) in &click.changed_slots.0 {
+            let slot_data = slot_from_hashed(hashed);
+            match *slot {
+                GRID_START..=PLAYER_INVENTORY_GRID_END => {
+                    let index = usize::try_from(*slot - GRID_START).unwrap_or_default();
+                    self.inventory_grid[index] = slot_data;
+                    applied_clicked_grid |= *slot == click.slot;
+                }
+                5..=45 => {
+                    if let Some(change) = inventory.set_creative_slot(*slot, slot_data) {
+                        outcome.inventory_changes.push(change);
+                    }
+                }
+                _ => {}
+            }
+        }
+        applied_clicked_grid
+    }
+
     fn recompute_result(
         &mut self,
         player: &crate::players::OnlinePlayer,
@@ -236,6 +359,57 @@ impl CraftingRuntime {
         }
     }
 
+    fn recompute_inventory_result(
+        &mut self,
+        player: &crate::players::OnlinePlayer,
+        plugins: &crate::plugins::PluginManager,
+        config: &qexed_config::app::qexed::server::Gameplay,
+    ) {
+        if !config.crafting {
+            self.inventory_result = crate::inventory::empty_slot();
+            self.inventory_recipe = None;
+            return;
+        }
+        let vanilla = recipe_registry().match_grid(&self.inventory_grid, 2, 2);
+        let query = crate::plugins::CraftingRecipeQuery {
+            player: qexed_plugin_api::player_payload_owned(player),
+            width: 2,
+            height: 2,
+            ingredients: self
+                .inventory_grid
+                .iter()
+                .filter(|slot| slot.item_count.0 > 0)
+                .map(items::item_stack_payload)
+                .collect(),
+            vanilla_result: vanilla
+                .as_ref()
+                .map(|recipe| items::item_stack_payload(&recipe.output)),
+        };
+        if let Some(response) = plugins.apply_crafting_recipe(query) {
+            if response.replace {
+                self.inventory_result = response
+                    .result
+                    .map(|item| crate::inventory::simple_item(item.item_id, item.count.max(1)))
+                    .unwrap_or_else(crate::inventory::empty_slot);
+                self.inventory_recipe = Some("plugin".to_string());
+                return;
+            }
+            if let Some(result) = response.result {
+                self.inventory_result =
+                    crate::inventory::simple_item(result.item_id, result.count.max(1));
+                self.inventory_recipe = Some("plugin".to_string());
+                return;
+            }
+        }
+        if let Some(recipe) = vanilla {
+            self.inventory_result = recipe.output;
+            self.inventory_recipe = Some(recipe.id);
+        } else {
+            self.inventory_result = crate::inventory::empty_slot();
+            self.inventory_recipe = None;
+        }
+    }
+
     async fn sync<W>(&self, sink: &mut qexed_tcp_connect::PacketSink<W>) -> Result<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -259,6 +433,40 @@ impl CraftingRuntime {
         .await?;
         Ok(())
     }
+
+    async fn sync_inventory_crafting<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+    ) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        self.inventory_state_id = self.inventory_state_id.wrapping_add(1);
+        sink.send(container_set_slot::ContainerSetContent {
+            window_id: VarInt(PLAYER_INVENTORY_WINDOW_ID),
+            state_id: VarInt(self.inventory_state_id),
+            slot: RESULT_SLOT,
+            slot_data: self.inventory_result.clone(),
+        })
+        .await?;
+        for (index, slot) in self.inventory_grid.iter().enumerate() {
+            sink.send(container_set_slot::ContainerSetContent {
+                window_id: VarInt(PLAYER_INVENTORY_WINDOW_ID),
+                state_id: VarInt(self.inventory_state_id),
+                slot: GRID_START + i16::try_from(index).unwrap_or_default(),
+                slot_data: slot.clone(),
+            })
+            .await?;
+        }
+        sink.send(container_set_slot::ContainerSetContent {
+            window_id: VarInt(-1),
+            state_id: VarInt(0),
+            slot: -1,
+            slot_data: crate::inventory::empty_slot(),
+        })
+        .await?;
+        Ok(())
+    }
 }
 
 fn consume_grid_once(grid: &mut [Slot]) {
@@ -272,6 +480,15 @@ fn inventory_hotbar_slot(slot: i16) -> Option<usize> {
         .contains(&slot)
         .then(|| usize::try_from(slot - 36).ok())
         .flatten()
+}
+
+fn slot_from_hashed(hashed: &qexed_protocol::to_server::play::container_click::HashedSlot) -> Slot {
+    hashed
+        .item
+        .as_ref()
+        .filter(|item| item.item_id.0 >= 0 && item.item_count.0 > 0)
+        .map(|item| crate::inventory::simple_item(item.item_id.0, item.item_count.0))
+        .unwrap_or_else(crate::inventory::empty_slot)
 }
 
 fn menu_id(name: &str) -> i32 {
@@ -600,4 +817,30 @@ impl RawIngredient {
 struct RawResult {
     id: String,
     count: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_by_two_inventory_grid_matches_vanilla_recipe() {
+        let Some(planks) = crate::inventory::item_id_for_name("minecraft:oak_planks") else {
+            return;
+        };
+        let Some(crafting_table) = crate::inventory::item_id_for_name("minecraft:crafting_table")
+        else {
+            return;
+        };
+        let grid = vec![crate::inventory::simple_item(planks, 1); 4];
+
+        let recipe = recipe_registry()
+            .match_grid(&grid, 2, 2)
+            .expect("2x2 crafting table recipe should match");
+
+        assert_eq!(
+            recipe.output.item_id.as_ref().map(|id| id.0),
+            Some(crafting_table)
+        );
+    }
 }

@@ -1,4 +1,3 @@
-use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 
 pub mod plugin_download;
@@ -6,15 +5,12 @@ pub mod qexed_args;
 pub mod server;
 pub mod world_rules;
 
-#[derive(Debug, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Qexed {
-    #[AutoDoc(key = "config.qexed.version")]
     pub version: i32,
 
-    #[AutoDoc(key = "config.qexed.update_check")]
     pub update_check: bool,
 
-    #[AutoDoc(key = "config.qexed.language")]
     pub language: String,
 
     #[serde(skip)]
@@ -68,14 +64,6 @@ impl qexed_config::tool::AppConfigTrait for Qexed {
 
     fn obsolete_root_paths() -> &'static [&'static str] {
         &["plugin_download", "server"]
-    }
-
-    fn config_file_description(lang: &str, config_file: &str, root_path: Option<&str>) -> String {
-        let key = match root_path {
-            None => "autodoc.file_description.qexed.main",
-            _ => "autodoc.file_description.default",
-        };
-        rust_i18n::t!(key, locale = lang, file = config_file).to_string()
     }
 }
 

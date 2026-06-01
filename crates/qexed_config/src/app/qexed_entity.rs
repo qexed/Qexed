@@ -1,24 +1,19 @@
-use qexed_config_macros::AutoDoc;
 use serde::{Deserialize, Serialize};
 
 use crate::app::qexed::server::{Entities, Entity, EntityKind, EntitySpawning};
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedEntityConfig {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.enable")]
     pub enable: bool,
 
     #[serde(default = "default_entities_dimension")]
-    #[AutoDoc(key = "config.qexed.server.entities.dimension")]
     pub dimension: String,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[AutoDoc(key = "config.qexed.server.entities.list", sub)]
     pub list: Vec<QexedEntityEntry>,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.spawning", sub)]
     pub spawning: EntitySpawning,
 }
 
@@ -44,66 +39,51 @@ impl From<QexedEntityConfig> for Entities {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QexedEntityEntry {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.id")]
     pub id: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.kind")]
     pub kind: QexedEntityKind,
 
     #[serde(default = "default_entity_type")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.entity_type")]
     pub entity_type: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.name")]
     pub name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.display_name")]
     pub display_name: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.x")]
     pub x: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.y")]
     pub y: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.z")]
     pub z: f64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.yaw")]
     pub yaw: f32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.pitch")]
     pub pitch: f32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.on_ground")]
     pub on_ground: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.data")]
     pub data: i32,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.ai")]
     pub ai: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.entities.list.ai_params")]
     pub ai_params: std::collections::BTreeMap<String, serde_json::Value>,
 
     #[serde(default = "default_entity_auto_jump")]
-    #[AutoDoc(key = "config.qexed.server.entities.list.auto_jump")]
     pub auto_jump: bool,
 }
 
@@ -181,9 +161,8 @@ fn default_entity_auto_jump() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedEntity {
-    #[AutoDoc(key = "config.qexed.server.entities", sub)]
     pub entities: QexedEntityConfig,
 }
 
@@ -198,13 +177,4 @@ impl Default for QexedEntity {
 impl qexed_config::tool::AppConfigTrait for QexedEntity {
     const PATH: &'static str = "/";
     const NAME: &'static str = "qexed_entity";
-
-    fn config_file_description(lang: &str, config_file: &str, _root_path: Option<&str>) -> String {
-        rust_i18n::t!(
-            "autodoc.file_description.qexed.entities",
-            locale = lang,
-            file = config_file
-        )
-        .to_string()
-    }
 }

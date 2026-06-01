@@ -38,6 +38,7 @@ use qexed_protocol::to_client::play::{
     set_held_slot::SetHeldSlot,
     set_time::SetTime,
     system_chat::SystemChat,
+    take_item_entity::TakeItemEntity,
 };
 use qexed_protocol::to_server::play::{
     accept_teleportation::AcceptTeleportation, attack::Attack, chat_ack::ChatAck,
@@ -620,7 +621,9 @@ where
                     &config.server.entity_rendering,
                     spawning.ai_tick_interval_ms,
                 )?;
-                let ore_updates = ore_pits.tick(world, Instant::now());
+                let ore_now = Instant::now();
+                evacuate_ore_pit_players(ore_pits, world, players, ore_now);
+                let ore_updates = ore_pits.tick(world, ore_now);
                 broadcast_ore_pit_updates(world, world_rules, players, ore_updates)?;
                 if gameplay_runtime.should_tick_furnace(&config.server.gameplay) {
                     let mut outcome = gameplay_runtime
@@ -1247,6 +1250,7 @@ where
                     if player_action_drops_item(action.status.0) {
                         drop_player_item(
                             sink,
+                            world,
                             players,
                             entities,
                             &play_dimension,
@@ -4739,6 +4743,7 @@ where
         }
         drop_broken_block(
             sink,
+            world,
             players,
             entities,
             plugins,
@@ -4761,6 +4766,7 @@ where
 
 async fn drop_broken_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
@@ -4779,7 +4785,8 @@ where
         return Ok(());
     }
 
-    let drop_position = mining::drop_position(position);
+    let drop_position =
+        lift_drop_position_out_of_blocks(world, dimension, mining::drop_position(position));
     for item in mining::default_block_drops(block_state, position, held_item, plugins) {
         for update in entities.drop_item_with_rendering(
             players,
@@ -4870,9 +4877,16 @@ where
             entities.restore_dropped_item(item);
             continue;
         }
-        if let Some(mut item_changes) = inventory.add_item_stack(&item.item) {
+        let original_count = item.item.item_count.0;
+        let (mut item_changes, picked_count) = inventory.add_item_stack_partial(&item.item);
+        if picked_count > 0 {
             changes.append(&mut item_changes);
-            picked.push(item);
+            picked.push((item.clone(), picked_count));
+            if picked_count < original_count {
+                let mut remaining = item;
+                remaining.item.item_count.0 = original_count - picked_count;
+                entities.restore_dropped_item(remaining);
+            }
         } else {
             entities.restore_dropped_item(item);
         }
@@ -4892,8 +4906,8 @@ where
     )
     .await?;
 
-    for item in picked {
-        let packets = item.pickup_packets(collector_entity_id)?;
+    for (item, amount) in picked {
+        let packets = item_pickup_packets(&item, collector_entity_id, amount)?;
         for packet in &packets {
             sink.send_raw(packet.clone()).await?;
         }
@@ -4902,8 +4916,29 @@ where
     Ok(())
 }
 
+fn item_pickup_packets(
+    item: &crate::entities::DroppedItemEntity,
+    collector_entity_id: i32,
+    amount: i32,
+) -> Result<Vec<bytes::Bytes>> {
+    if amount >= item.item.item_count.0 {
+        return item.pickup_packets(collector_entity_id);
+    }
+
+    let mut packets = vec![crate::players::packet_bytes(TakeItemEntity {
+        item_id: VarInt(item.entity_id),
+        player_id: VarInt(collector_entity_id),
+        amount: VarInt(amount.max(1)),
+    })?];
+    let mut remaining = item.clone();
+    remaining.item.item_count.0 -= amount.max(0);
+    packets.extend(remaining.metadata_packets()?);
+    Ok(packets)
+}
+
 async fn drop_player_item<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     dimension: &str,
@@ -4920,7 +4955,8 @@ where
     let Some((slot, held)) = inventory.drop_selected(player_action_drop_all(status)) else {
         return Ok(());
     };
-    let drop_position = dropped_item_position(position);
+    let drop_position =
+        lift_drop_position_out_of_blocks(world, dimension, dropped_item_position(position));
     let updates = entities.drop_item_with_rendering(
         players,
         actor,
@@ -4980,6 +5016,84 @@ fn dropped_item_position(position: EntityPosition) -> EntityPosition {
         pitch: position.pitch,
         on_ground: false,
     }
+}
+
+fn lift_drop_position_out_of_blocks(
+    world: &WorldManager,
+    dimension: &str,
+    mut position: EntityPosition,
+) -> EntityPosition {
+    for _ in 0..8 {
+        if !drop_item_intersects_blocks(world, dimension, position) {
+            return position;
+        }
+        position.y = position.y.floor() + 1.05;
+        position.on_ground = false;
+    }
+    position
+}
+
+fn drop_item_intersects_blocks(
+    world: &WorldManager,
+    dimension: &str,
+    position: EntityPosition,
+) -> bool {
+    const ITEM_HALF_WIDTH: f64 = 0.125;
+    const ITEM_HEIGHT: f64 = 0.25;
+
+    let min_x = position.x - ITEM_HALF_WIDTH;
+    let max_x = position.x + ITEM_HALF_WIDTH;
+    let min_y = position.y;
+    let max_y = position.y + ITEM_HEIGHT;
+    let min_z = position.z - ITEM_HALF_WIDTH;
+    let max_z = position.z + ITEM_HALF_WIDTH;
+
+    for block_x in min_x.floor() as i32..=max_x.floor() as i32 {
+        for block_y in min_y.floor() as i32..=max_y.floor() as i32 {
+            for block_z in min_z.floor() as i32..=max_z.floor() as i32 {
+                let block = BlockPosition {
+                    x: block_x,
+                    y: block_y,
+                    z: block_z,
+                };
+                let state = world
+                    .block_state_at(dimension, &block)
+                    .unwrap_or_else(crate::inventory::air_block_state);
+                let Some(shape) = crate::inventory::block_collision_shape(state) else {
+                    continue;
+                };
+                if item_aabb_intersects_block_shape(
+                    (min_x, max_x, min_y, max_y, min_z, max_z),
+                    &block,
+                    shape,
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn item_aabb_intersects_block_shape(
+    item: (f64, f64, f64, f64, f64, f64),
+    block: &BlockPosition,
+    shape: crate::inventory::BlockCollisionShape,
+) -> bool {
+    let (min_x, max_x, min_y, max_y, min_z, max_z) = item;
+    let block_min_x = block.x as f64 + shape.min_x;
+    let block_max_x = block.x as f64 + shape.max_x;
+    let block_min_y = block.y as f64 + shape.min_y;
+    let block_max_y = block.y as f64 + shape.max_y;
+    let block_min_z = block.z as f64 + shape.min_z;
+    let block_max_z = block.z as f64 + shape.max_z;
+
+    max_x > block_min_x
+        && min_x < block_max_x
+        && max_y > block_min_y
+        && min_y < block_max_y
+        && max_z > block_min_z
+        && min_z < block_max_z
 }
 
 async fn begin_destroy_block<W>(
@@ -5259,6 +5373,21 @@ fn broadcast_ore_pit_updates(
         );
     }
     Ok(())
+}
+
+fn evacuate_ore_pit_players(
+    ore_pits: &crate::world::OrePitManager,
+    world: &WorldManager,
+    players: &PlayerManager,
+    now: Instant,
+) {
+    for player in players.list_except(uuid::Uuid::nil()) {
+        if let Some(target) =
+            ore_pits.evacuation_target_for_player(world, &player.dimension, player.position, now)
+        {
+            players.teleport_player(player.profile.uuid, player.dimension, target);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,34 +1,26 @@
-use qexed_config_macros::AutoDoc;
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionWorldRules {
     #[serde(default = "default_dimension")]
-    #[AutoDoc(key = "config.qexed.server.world.dimension")]
     pub dimension: String,
 
     #[serde(default = "default_dimension_type")]
-    #[AutoDoc(key = "config.qexed.server.world.dimension_type")]
     pub dimension_type: String,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.read_only")]
     pub read_only: bool,
 
     #[serde(default = "default_block_updates")]
-    #[AutoDoc(key = "config.qexed.server.world.rules.block_updates")]
     pub block_updates: bool,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.light")]
     pub light: super::server::LightMode,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.light_algorithm")]
     pub light_algorithm: super::server::LightAlgorithm,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.rules.time", sub)]
     pub time: DimensionTimeRule,
 }
 
@@ -46,22 +38,18 @@ impl Default for DimensionWorldRules {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionTimeRule {
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.rules.time.value")]
     pub value: i64,
 
     #[serde(default)]
-    #[AutoDoc(key = "config.qexed.server.world.rules.time.fixed")]
     pub fixed: Option<i64>,
 
     #[serde(default = "default_daylight_cycle")]
-    #[AutoDoc(key = "config.qexed.server.world.rules.time.daylight_cycle")]
     pub daylight_cycle: bool,
 
     #[serde(default = "default_tick_step")]
-    #[AutoDoc(key = "config.qexed.server.world.rules.time.tick_step")]
     pub tick_step: i64,
 }
 

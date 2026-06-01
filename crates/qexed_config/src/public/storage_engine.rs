@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum StorageEngine {
@@ -34,7 +34,7 @@ impl std::str::FromStr for StorageEngine {
             "mysql" => Ok(StorageEngine::Mysql),
             "mongodb" => Ok(StorageEngine::MongoDB),
             "pika" => Ok(StorageEngine::Pika),
-            _ => Err(format!("未知的存储引擎: {}", s)),
+            _ => Err(format!("未知引擎? {}", s)),
         }
     }
 }

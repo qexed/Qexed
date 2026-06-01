@@ -1,10 +1,8 @@
-use qexed_config_macros::AutoDoc;
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, AutoDoc)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct IP {
     #[cfg(feature = "distributed")]
-    #[AutoDoc(key = "config.public.ip.ip")]
     pub ip: String,
 }
 

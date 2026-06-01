@@ -84,7 +84,7 @@ pub fn expand(input: DeriveInput) -> TokenStream {
     }
 
     quote! {
-        impl ::qexed_config::tool::AutoDocConfigTrait for #struct_name {
+        impl ::qexed_config_autodoc::AutoDocConfigTrait for #struct_name {
             fn doc_fields(lang: &str) -> Vec<(String, String)> {
                 let mut all_doc = Vec::new();
                 #(#doc_builders)*
@@ -398,7 +398,7 @@ fn push_translated_entry(target: &str, display_name: &LitStr, i18n_key: &str) ->
     let i18n_key = LitStr::new(i18n_key, Span::call_site());
 
     quote! {
-        ::qexed_config::tool::autodoc_push_translated(
+        ::qexed_config_autodoc::autodoc_push_translated(
             &mut #target,
             #display_name,
             #i18n_key,
@@ -412,7 +412,7 @@ fn push_literal_entry(target: &str, display_name: &LitStr, value: &str) -> Token
     let value = LitStr::new(value, Span::call_site());
 
     quote! {
-        ::qexed_config::tool::autodoc_push_literal(&mut #target, #display_name, #value);
+        ::qexed_config_autodoc::autodoc_push_literal(&mut #target, #display_name, #value);
     }
 }
 
@@ -421,7 +421,7 @@ fn push_value_type_entry(target: &str, display_name: &LitStr, value_type: &str) 
     let value_type = LitStr::new(value_type, Span::call_site());
 
     quote! {
-        ::qexed_config::tool::autodoc_push_value_type(&mut #target, #display_name, #value_type);
+        ::qexed_config_autodoc::autodoc_push_value_type(&mut #target, #display_name, #value_type);
     }
 }
 
@@ -446,14 +446,14 @@ fn push_recursive_type_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            ::qexed_config::tool::autodoc_extend_prefixed_value_types(
+            ::qexed_config_autodoc::autodoc_extend_prefixed_value_types(
                 &mut #target,
                 #prefix,
-                <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types(),
+                <#trait_target as ::qexed_config_autodoc::AutoDocConfigTrait>::field_value_types(),
             );
         },
         None => quote! {
-            #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types());
+            #target.extend(<#trait_target as ::qexed_config_autodoc::AutoDocConfigTrait>::field_value_types());
         },
     }
 }
@@ -470,14 +470,14 @@ fn push_recursive_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            ::qexed_config::tool::autodoc_extend_prefixed_strings(
+            ::qexed_config_autodoc::autodoc_extend_prefixed_strings(
                 &mut #target,
                 #prefix,
-                <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang),
+                <#trait_target as ::qexed_config_autodoc::AutoDocConfigTrait>::#method(lang),
             );
         },
         None => quote! {
-            #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang));
+            #target.extend(<#trait_target as ::qexed_config_autodoc::AutoDocConfigTrait>::#method(lang));
         },
     }
 }
@@ -492,14 +492,14 @@ fn push_recursive_sensitive_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            ::qexed_config::tool::autodoc_extend_prefixed_sensitive(
+            ::qexed_config_autodoc::autodoc_extend_prefixed_sensitive(
                 &mut #target,
                 #prefix,
-                <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields(),
+                <#trait_target as ::qexed_config_autodoc::AutoDocConfigTrait>::sensitive_fields(),
             );
         },
         None => quote! {
-            #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields());
+            #target.extend(<#trait_target as ::qexed_config_autodoc::AutoDocConfigTrait>::sensitive_fields());
         },
     }
 }

@@ -6,6 +6,7 @@ use std::{
 
 use qexed_config::app::qexed::server::{WorldOrePit, WorldOrePitBlock};
 use qexed_packet::net_types::Position;
+use qexed_protocol::to_client::play::add_entity::EntityPosition;
 
 use super::WorldManager;
 
@@ -34,6 +35,7 @@ struct RuntimeOrePit {
     tick_interval: Duration,
     initial_refill: bool,
     max_blocks_per_tick: usize,
+    teleport_players_to_surface_on_refill: bool,
     replace_air: bool,
     replace_generated: bool,
     only_break_generated: bool,
@@ -140,6 +142,37 @@ impl OrePitManager {
         updates
     }
 
+    pub fn evacuation_target_for_player(
+        &self,
+        world: &WorldManager,
+        dimension: &str,
+        position: EntityPosition,
+        now: Instant,
+    ) -> Option<EntityPosition> {
+        if self.pits.is_empty() {
+            return None;
+        }
+
+        let block_position = Position {
+            x: position.x.floor() as i32,
+            y: position.y.floor() as i32,
+            z: position.z.floor() as i32,
+        };
+        let mut state = self.state.lock().expect("ore pit state poisoned");
+        self.pits
+            .iter()
+            .filter(|pit| pit.teleport_players_to_surface_on_refill)
+            .filter(|pit| pit.contains(dimension, &block_position))
+            .find_map(|pit| {
+                let pit_state = state
+                    .pits
+                    .entry(pit.id.clone())
+                    .or_insert_with(|| RuntimeOrePitState::new(pit, now));
+                pit.refill_due(pit_state, now)
+                    .then(|| pit.surface_position(world, position))
+            })
+    }
+
     pub fn permits_player_break(
         &self,
         dimension: &str,
@@ -189,6 +222,7 @@ impl RuntimeOrePit {
             tick_interval: Duration::from_millis(config.tick_interval_ms.max(1)),
             initial_refill: config.initial_refill,
             max_blocks_per_tick: config.max_blocks_per_tick.max(1),
+            teleport_players_to_surface_on_refill: config.teleport_players_to_surface_on_refill,
             replace_air: config.replace_air,
             replace_generated: config.replace_generated,
             only_break_generated: config.only_break_generated,
@@ -242,6 +276,35 @@ impl RuntimeOrePit {
                 && self.blocks.contains_state(current_state))
     }
 
+    fn refill_due(&self, state: &RuntimeOrePitState, now: Instant) -> bool {
+        state.refill_in_progress
+            || match state.last_tick {
+                Some(last_tick) => now.duration_since(last_tick) >= self.tick_interval,
+                None => true,
+            }
+    }
+
+    fn surface_position(&self, world: &WorldManager, position: EntityPosition) -> EntityPosition {
+        let x = position
+            .x
+            .clamp(self.min_x as f64 + 0.5, self.max_x as f64 + 0.5);
+        let z = position
+            .z
+            .clamp(self.min_z as f64 + 0.5, self.max_z as f64 + 0.5);
+        let start_y = self.max_y.saturating_add(1);
+        let y = (start_y..=start_y.saturating_add(16))
+            .find(|y| player_space_is_clear(world, &self.dimension, x, *y, z))
+            .unwrap_or(start_y);
+        EntityPosition {
+            x,
+            y: y as f64,
+            z,
+            yaw: position.yaw,
+            pitch: position.pitch,
+            on_ground: false,
+        }
+    }
+
     fn volume(&self) -> usize {
         let x = i64::from(self.max_x - self.min_x + 1);
         let y = i64::from(self.max_y - self.min_y + 1);
@@ -270,6 +333,24 @@ impl RuntimeOrePit {
             && (self.min_y..=self.max_y).contains(&position.y)
             && (self.min_z..=self.max_z).contains(&position.z)
     }
+}
+
+fn player_space_is_clear(world: &WorldManager, dimension: &str, x: f64, y: i32, z: f64) -> bool {
+    let body = Position {
+        x: x.floor() as i32,
+        y,
+        z: z.floor() as i32,
+    };
+    let head = Position {
+        y: y.saturating_add(1),
+        ..body.clone()
+    };
+    [body, head].into_iter().all(|position| {
+        let state = world
+            .block_state_at(dimension, &position)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        !crate::inventory::block_has_collision(state)
+    })
 }
 
 impl WeightedBlocks {
@@ -616,5 +697,112 @@ mod tests {
 
         assert!(manager.permits_player_break("minecraft:overworld", &position, diamond));
         assert!(!manager.permits_player_break("minecraft:overworld", &native, stone));
+    }
+
+    #[test]
+    fn ore_pit_evacuation_target_is_available_when_refill_is_due() {
+        let dir = tempfile::tempdir().unwrap();
+        let world = crate::world::WorldManager::with_light_mode(
+            dir.path(),
+            crate::world::WorldLightMode::Static,
+            crate::world::WorldLightAlgorithm::Fast,
+            None,
+            true,
+        );
+        let manager = OrePitManager::from_config(&[WorldOrePit {
+            id: "test".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            min_x: 0,
+            max_x: 4,
+            min_y: 0,
+            max_y: 4,
+            min_z: 0,
+            max_z: 4,
+            tick_interval_ms: 300_000,
+            initial_refill: true,
+            teleport_players_to_surface_on_refill: true,
+            blocks: vec![WorldOrePitBlock {
+                block: "minecraft:diamond_ore".to_string(),
+                weight: 1,
+            }],
+            ..WorldOrePit::default()
+        }]);
+        let position = qexed_protocol::to_client::play::add_entity::EntityPosition {
+            x: 2.5,
+            y: 2.0,
+            z: 2.5,
+            yaw: 90.0,
+            pitch: 0.0,
+            on_ground: true,
+        };
+
+        let target = manager
+            .evacuation_target_for_player(
+                &world,
+                "minecraft:overworld",
+                position,
+                std::time::Instant::now(),
+            )
+            .expect("player inside a due ore pit should be evacuated");
+
+        assert_eq!(target.y, 5.0);
+        assert_eq!(target.x, 2.5);
+        assert_eq!(target.z, 2.5);
+        assert_eq!(target.yaw, 90.0);
+    }
+
+    #[test]
+    fn ore_pit_evacuation_target_skips_solid_surface_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let world = crate::world::WorldManager::with_light_mode(
+            dir.path(),
+            crate::world::WorldLightMode::Static,
+            crate::world::WorldLightAlgorithm::Fast,
+            None,
+            true,
+        );
+        let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
+        world.set_runtime_block(
+            "minecraft:overworld",
+            qexed_packet::net_types::Position { x: 2, y: 5, z: 2 },
+            stone,
+        );
+        let manager = OrePitManager::from_config(&[WorldOrePit {
+            id: "test".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            min_x: 0,
+            max_x: 4,
+            min_y: 0,
+            max_y: 4,
+            min_z: 0,
+            max_z: 4,
+            tick_interval_ms: 300_000,
+            initial_refill: true,
+            teleport_players_to_surface_on_refill: true,
+            blocks: vec![WorldOrePitBlock {
+                block: "minecraft:diamond_ore".to_string(),
+                weight: 1,
+            }],
+            ..WorldOrePit::default()
+        }]);
+        let position = qexed_protocol::to_client::play::add_entity::EntityPosition {
+            x: 2.5,
+            y: 2.0,
+            z: 2.5,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        };
+
+        let target = manager
+            .evacuation_target_for_player(
+                &world,
+                "minecraft:overworld",
+                position,
+                std::time::Instant::now(),
+            )
+            .expect("player inside a due ore pit should be evacuated");
+
+        assert_eq!(target.y, 6.0);
     }
 }
