@@ -4,17 +4,22 @@ mod placeholders;
 
 pub use event::PluginEvent;
 pub use payload::{
-    BlockDropItem, BlockDropPosition, BlockDropQuery, BlockDropResponse, BlockStepPayload,
-    BlockStepPosition, ChunkPayload, ClickDetectedPayload, ConfigReloadPayload,
-    CustomEntityDefinition, CustomEntityRegistryResponse, EntityAiEntityPayload, EntityAiOperation,
-    EntityAiPlayerPayload, EntityAiTickQuery, EntityAiTickResponse, ItemEnchantment,
-    LanguagePayload, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
-    NpcMutationOp, NpcMutationQuery, NpcMutationResponse, NpcUpsert, PathfindingQuery,
-    PathfindingResponse, PlaceholderContext, PlaceholderQuery, PlaceholderReplacement,
-    PlaceholderResponse, PlayerAction, PlayerInputPayload, PlayerInputState, PlayerItemPickupQuery,
-    PlayerItemPickupResponse, PlayerMovePayload, PlayerPayload, PlayerPayloadOwned,
-    PlayerPositionPayload, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
-    PluginEnchantment, ProxyConnectResultPayload,
+    AdvancementGrantQuery, AdvancementGrantResponse, BlockDropItem, BlockDropPosition,
+    BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition, ChunkPayload,
+    ClickDetectedPayload, ConfigReloadPayload, CraftItemQuery, CraftItemResponse,
+    CraftingRecipeQuery, CraftingRecipeResponse, CustomEntityDefinition,
+    CustomEntityRegistryResponse, EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload,
+    EntityAiTickQuery, EntityAiTickResponse, FurnaceRecipeQuery, FurnaceRecipeResponse,
+    FurnaceTickPayload, ItemDurabilityQuery, ItemDurabilityResponse, ItemEnchantment,
+    ItemStackPayload, LanguagePayload, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload,
+    NpcInteractPayload, NpcMutationOp, NpcMutationQuery, NpcMutationResponse, NpcUpsert,
+    PathfindingQuery, PathfindingResponse, PlaceholderContext, PlaceholderQuery,
+    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
+    PlayerAttackResponse, PlayerInputPayload, PlayerInputState, PlayerItemPickupQuery,
+    PlayerItemPickupResponse, PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse,
+    PlayerPayload, PlayerPayloadOwned, PlayerPositionPayload, PluginCommandDefinition,
+    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, PotionEffectTickQuery,
+    PotionEffectTickResponse, ProxyConnectResultPayload, SoundPayload, SoundResponse,
 };
 pub use placeholders::{
     NATIVE_PLACEHOLDER_DOCS, PlaceholderDoc, PlaceholderScope, native_placeholder_docs,

@@ -18,8 +18,13 @@ use status::handle_status;
 
 const SERVER_BRAND: &str = "qexed";
 
-pub async fn handle(stream: TcpStream, peer_addr: std::net::SocketAddr, context: ServerContext) {
-    if let Err(err) = handle_inner(stream, peer_addr, context).await {
+pub async fn handle(
+    stream: TcpStream,
+    peer_addr: std::net::SocketAddr,
+    context: ServerContext,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    if let Err(err) = handle_inner(stream, peer_addr, context, shutdown).await {
         if is_expected_disconnect_error(&err) {
             log::debug!(
                 "connection ended before protocol completion: peer={peer_addr}, error={err:#}"
@@ -35,6 +40,7 @@ async fn handle_inner(
     stream: TcpStream,
     peer_addr: std::net::SocketAddr,
     context: ServerContext,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let (reader, writer) = tokio::io::split(stream);
     let mut packets = qexed_tcp_connect::PacketStream::new(reader);
@@ -51,7 +57,7 @@ async fn handle_inner(
     );
     match handshake.next_state.0 {
         1 => handle_status(&mut packets, &mut sink, &context).await,
-        2 | 3 => handle_login(handshake, &mut packets, &mut sink, &context).await,
+        2 | 3 => handle_login(handshake, &mut packets, &mut sink, &context, shutdown).await,
         state => anyhow::bail!("unsupported handshake target state: {state}"),
     }
 }

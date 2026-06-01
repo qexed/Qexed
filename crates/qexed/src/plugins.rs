@@ -13,15 +13,20 @@ pub(crate) mod host;
 mod instance;
 
 pub use qexed_plugin_api::{
-    BlockDropPosition, BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition,
-    ClickDetectedPayload, CustomEntityDefinition, CustomEntityRegistryResponse,
-    EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload, EntityAiTickQuery,
-    EntityAiTickResponse, ItemEnchantment, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload,
-    NpcInteractPayload, NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext,
-    PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
-    PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse, PlayerMovePayload,
-    PlayerPayloadOwned, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
-    PluginEnchantment, ProxyConnectResultPayload,
+    AdvancementGrantQuery, AdvancementGrantResponse, BlockDropPosition, BlockDropQuery,
+    BlockDropResponse, BlockStepPayload, BlockStepPosition, ClickDetectedPayload, CraftItemQuery,
+    CraftItemResponse, CraftingRecipeQuery, CraftingRecipeResponse, CustomEntityDefinition,
+    CustomEntityRegistryResponse, EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload,
+    EntityAiTickQuery, EntityAiTickResponse, FurnaceRecipeQuery, FurnaceRecipeResponse,
+    FurnaceTickPayload, ItemDurabilityQuery, ItemDurabilityResponse, ItemEnchantment,
+    ItemStackPayload, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
+    NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
+    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
+    PlayerAttackResponse, PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse,
+    PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse, PlayerPayloadOwned,
+    PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse, PluginEnchantment,
+    PotionEffectTickQuery, PotionEffectTickResponse, ProxyConnectResultPayload, SoundPayload,
+    SoundResponse,
 };
 
 use event::PluginEvent;
@@ -227,6 +232,160 @@ impl PluginManager {
                 current.items.clear();
             }
             current.items.extend(response.items);
+        }
+        result
+    }
+
+    pub fn apply_crafting_recipe(
+        &self,
+        query: CraftingRecipeQuery,
+    ) -> Option<CraftingRecipeResponse> {
+        let mut result = None;
+        for response in
+            self.query_encoded::<_, CraftingRecipeResponse>(PluginEvent::CraftingRecipe, &query)
+        {
+            let current = result.get_or_insert_with(CraftingRecipeResponse::default);
+            if response.replace {
+                current.replace = true;
+                current.result = response.result;
+            } else if response.result.is_some() {
+                current.result = response.result;
+            }
+        }
+        result
+    }
+
+    pub fn handle_craft_item(&self, query: CraftItemQuery) -> CraftItemResponse {
+        let mut result = CraftItemResponse::default();
+        for response in self.query_encoded::<_, CraftItemResponse>(PluginEvent::CraftItem, &query) {
+            result.cancel |= response.cancel;
+            if response.result.is_some() {
+                result.result = response.result;
+            }
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn apply_furnace_recipe(&self, query: FurnaceRecipeQuery) -> Option<FurnaceRecipeResponse> {
+        let mut result = None;
+        for response in
+            self.query_encoded::<_, FurnaceRecipeResponse>(PluginEvent::FurnaceRecipe, &query)
+        {
+            let current = result.get_or_insert_with(FurnaceRecipeResponse::default);
+            if response.replace {
+                current.replace = true;
+                current.result = response.result;
+            } else if response.result.is_some() {
+                current.result = response.result;
+            }
+            if response.cook_time.is_some() {
+                current.cook_time = response.cook_time;
+            }
+            if response.experience.is_some() {
+                current.experience = response.experience;
+            }
+        }
+        result
+    }
+
+    pub fn emit_furnace_tick(&self, payload: &FurnaceTickPayload) {
+        self.emit_encoded(PluginEvent::FurnaceTick, payload);
+    }
+
+    pub fn apply_item_durability(&self, query: ItemDurabilityQuery) -> ItemDurabilityResponse {
+        let mut result = ItemDurabilityResponse::default();
+        for response in
+            self.query_encoded::<_, ItemDurabilityResponse>(PluginEvent::ItemDurability, &query)
+        {
+            result.cancel |= response.cancel;
+            if response.amount.is_some() {
+                result.amount = response.amount;
+            }
+        }
+        result
+    }
+
+    pub fn apply_player_attack(&self, query: PlayerAttackQuery) -> PlayerAttackResponse {
+        let mut result = PlayerAttackResponse::default();
+        for response in
+            self.query_encoded::<_, PlayerAttackResponse>(PluginEvent::PlayerAttack, &query)
+        {
+            result.cancel |= response.cancel;
+            if response.damage.is_some() {
+                result.damage = response.damage;
+            }
+            if response.knockback.is_some() {
+                result.knockback = response.knockback;
+            }
+            if response.fire_ticks.is_some() {
+                result.fire_ticks = response.fire_ticks;
+            }
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn apply_player_oxygen(&self, query: PlayerOxygenTickQuery) -> PlayerOxygenTickResponse {
+        let mut result = PlayerOxygenTickResponse::default();
+        for response in
+            self.query_encoded::<_, PlayerOxygenTickResponse>(PluginEvent::PlayerOxygenTick, &query)
+        {
+            result.cancel |= response.cancel;
+            if response.air.is_some() {
+                result.air = response.air;
+            }
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn apply_sound(&self, payload: SoundPayload) -> SoundResponse {
+        let mut result = SoundResponse::default();
+        for response in self.query_encoded::<_, SoundResponse>(PluginEvent::Sound, &payload) {
+            result.cancel |= response.cancel;
+            if response.sound.is_some() {
+                result.sound = response.sound;
+            }
+            if response.volume.is_some() {
+                result.volume = response.volume;
+            }
+            if response.pitch.is_some() {
+                result.pitch = response.pitch;
+            }
+        }
+        result
+    }
+
+    pub fn apply_advancement_grant(
+        &self,
+        query: AdvancementGrantQuery,
+    ) -> AdvancementGrantResponse {
+        let mut result = AdvancementGrantResponse::default();
+        for response in
+            self.query_encoded::<_, AdvancementGrantResponse>(PluginEvent::AdvancementGrant, &query)
+        {
+            result.cancel |= response.cancel;
+        }
+        result
+    }
+
+    pub fn apply_potion_effect_tick(
+        &self,
+        query: PotionEffectTickQuery,
+    ) -> PotionEffectTickResponse {
+        let mut result = PotionEffectTickResponse::default();
+        for response in
+            self.query_encoded::<_, PotionEffectTickResponse>(PluginEvent::PotionEffectTick, &query)
+        {
+            result.cancel |= response.cancel;
+            if response.duration_ticks.is_some() {
+                result.duration_ticks = response.duration_ticks;
+            }
+            if response.amplifier.is_some() {
+                result.amplifier = response.amplifier;
+            }
+            result.actions.extend(response.actions);
         }
         result
     }

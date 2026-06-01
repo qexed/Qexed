@@ -307,6 +307,7 @@ password = "existing-mysql-password"
     assert!(player_messages.contains("chat_rate_limit_window_secs = 2"));
     assert!(player_messages.contains("chat_rate_limit_max_messages = 5"));
     assert!(player_messages.contains("chat_max_length = 256"));
+    assert!(player_data.contains("autosave_interval_secs = 300"));
     assert!(content_filter.contains("engine = \"fixed\""));
     assert!(content_filter.contains("replacement = \"***\""));
     assert!(permissions.contains("[permissions]"));

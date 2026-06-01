@@ -192,6 +192,31 @@ impl PlayerInventory {
         Some((slot, dropped))
     }
 
+    pub fn decrement_hotbar_slot(
+        &mut self,
+        slot: usize,
+        amount: i32,
+    ) -> Option<InventorySlotChange> {
+        let amount = amount.max(0);
+        if amount == 0 || slot >= self.hotbar.len() || self.hotbar[slot].item_count.0 <= 0 {
+            return None;
+        }
+
+        let next_count = self.hotbar[slot].item_count.0.saturating_sub(amount);
+        if next_count <= 0 {
+            self.hotbar[slot] = empty_slot();
+        } else {
+            self.hotbar[slot].item_count = VarInt(next_count);
+        }
+        if slot == self.selected {
+            self.set_equipment_slot(Equipment::MAINHAND, self.hotbar[slot].clone());
+        }
+        Some(InventorySlotChange::Hotbar {
+            slot,
+            item: self.hotbar[slot].clone(),
+        })
+    }
+
     pub fn can_accept_item_stack(&self, item: &Slot) -> bool {
         item_stack_capacity(&self.hotbar, item) + item_stack_capacity(&self.main, item)
             >= item.item_count.0.max(0)
@@ -292,12 +317,20 @@ impl PlayerInventory {
         &self.hotbar[self.selected]
     }
 
+    pub fn held_item_mut(&mut self) -> &mut Slot {
+        &mut self.hotbar[self.selected]
+    }
+
     pub fn selected_slot(&self) -> usize {
         self.selected
     }
 
     pub fn hotbar_item(&self, slot: usize) -> Option<&Slot> {
         self.hotbar.get(slot)
+    }
+
+    pub fn main_item(&self, slot: usize) -> Option<&Slot> {
+        self.main.get(slot)
     }
 
     pub fn set_hotbar_slot(&mut self, slot: usize, item: Slot) -> Option<InventorySlotChange> {
@@ -309,6 +342,21 @@ impl PlayerInventory {
             self.set_equipment_slot(Equipment::MAINHAND, item.clone());
         }
         Some(InventorySlotChange::Hotbar { slot, item })
+    }
+
+    pub fn set_main_slot(&mut self, slot: usize, item: Slot) -> Option<InventorySlotChange> {
+        if slot >= self.main.len() {
+            return None;
+        }
+        self.main[slot] = item.clone();
+        Some(InventorySlotChange::Main { slot, item })
+    }
+
+    pub fn selected_hotbar_change(&self) -> InventorySlotChange {
+        InventorySlotChange::Hotbar {
+            slot: self.selected,
+            item: self.hotbar[self.selected].clone(),
+        }
     }
 
     pub fn set_player_inventory_packets(&self) -> Vec<SetPlayerInventory> {
@@ -438,6 +486,10 @@ pub fn item_id_name_map() -> HashMap<i32, String> {
 
 pub fn item_id_for_name(name: &str) -> Option<i32> {
     block_item_registry().item_id_by_name.get(name).copied()
+}
+
+pub fn item_name_for_id(item_id: i32) -> Option<String> {
+    block_item_registry().item_name_by_id.get(&item_id).cloned()
 }
 
 pub fn is_air_block_state(block_state: i32) -> bool {

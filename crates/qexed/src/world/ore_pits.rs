@@ -49,6 +49,8 @@ struct OrePitState {
 struct RuntimeOrePitState {
     last_tick: Option<Instant>,
     cursor: usize,
+    scanned: usize,
+    refill_in_progress: bool,
     generated_positions: HashSet<BlockKey>,
 }
 
@@ -57,8 +59,23 @@ impl RuntimeOrePitState {
         Self {
             last_tick: (!pit.initial_refill).then_some(now),
             cursor: 0,
+            scanned: 0,
+            refill_in_progress: false,
             generated_positions: HashSet::new(),
         }
+    }
+
+    fn start_refill(&mut self, now: Instant) {
+        self.last_tick = Some(now);
+        self.cursor = 0;
+        self.scanned = 0;
+        self.refill_in_progress = true;
+    }
+
+    fn finish_refill(&mut self) {
+        self.cursor = 0;
+        self.scanned = 0;
+        self.refill_in_progress = false;
     }
 }
 
@@ -108,13 +125,17 @@ impl OrePitManager {
                 .pits
                 .entry(pit.id.clone())
                 .or_insert_with(|| RuntimeOrePitState::new(pit, now));
-            if let Some(last_tick) = pit_state.last_tick
-                && now.duration_since(last_tick) < pit.tick_interval
-            {
-                continue;
+            if !pit_state.refill_in_progress {
+                if let Some(last_tick) = pit_state.last_tick
+                    && now.duration_since(last_tick) < pit.tick_interval
+                {
+                    continue;
+                }
+                pit_state.start_refill(now);
             }
-            pit_state.last_tick = Some(now);
-            pit.tick(world, pit_state, &mut updates);
+            if pit.tick(world, pit_state, &mut updates) {
+                pit_state.finish_refill();
+            }
         }
         updates
     }
@@ -180,18 +201,17 @@ impl RuntimeOrePit {
         world: &WorldManager,
         state: &mut RuntimeOrePitState,
         updates: &mut Vec<OrePitBlockUpdate>,
-    ) {
+    ) -> bool {
         let volume = self.volume();
         if volume == 0 {
-            return;
+            return true;
         }
 
-        let mut visited = 0usize;
         let mut changed = 0usize;
-        while visited < volume && changed < self.max_blocks_per_tick {
+        while state.scanned < volume && changed < self.max_blocks_per_tick {
             let offset = state.cursor % volume;
             state.cursor = (state.cursor + 1) % volume;
-            visited += 1;
+            state.scanned += 1;
 
             let position = self.position_at(offset);
             let current_state = world
@@ -212,6 +232,7 @@ impl RuntimeOrePit {
             });
             changed += 1;
         }
+        state.scanned >= volume
     }
 
     fn can_replace(&self, current_state: i32, key: &BlockKey, state: &RuntimeOrePitState) -> bool {
@@ -439,6 +460,68 @@ mod tests {
             world.block_state_at("minecraft:overworld", &position),
             Some(diamond)
         );
+    }
+
+    #[test]
+    fn ore_pit_refill_period_scans_entire_pit_across_service_ticks() {
+        let dir = tempfile::tempdir().unwrap();
+        let world = crate::world::WorldManager::with_light_mode(
+            dir.path(),
+            crate::world::WorldLightMode::Static,
+            crate::world::WorldLightAlgorithm::Fast,
+            None,
+            true,
+        );
+        let diamond = crate::world::chunk_nbt::default_block_state_id("minecraft:diamond_ore");
+        let manager = OrePitManager::from_config(&[WorldOrePit {
+            id: "test".to_string(),
+            dimension: "minecraft:overworld".to_string(),
+            min_x: 0,
+            max_x: 2,
+            min_y: 0,
+            max_y: 0,
+            min_z: 0,
+            max_z: 0,
+            tick_interval_ms: 300_000,
+            initial_refill: true,
+            max_blocks_per_tick: 1,
+            blocks: vec![WorldOrePitBlock {
+                block: "minecraft:diamond_ore".to_string(),
+                weight: 1,
+            }],
+            ..WorldOrePit::default()
+        }]);
+        let now = std::time::Instant::now();
+
+        assert_eq!(manager.tick(&world, now).len(), 1);
+        assert_eq!(
+            manager
+                .tick(&world, now + std::time::Duration::from_millis(50))
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager
+                .tick(&world, now + std::time::Duration::from_millis(100))
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager
+                .tick(&world, now + std::time::Duration::from_millis(150))
+                .len(),
+            0
+        );
+
+        for x in 0..=2 {
+            assert_eq!(
+                world.block_state_at(
+                    "minecraft:overworld",
+                    &qexed_packet::net_types::Position { x, y: 0, z: 0 }
+                ),
+                Some(diamond)
+            );
+        }
     }
 
     #[test]

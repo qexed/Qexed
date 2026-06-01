@@ -56,6 +56,7 @@ pub struct EntityManager {
     last_ai_tick: Mutex<Option<Instant>>,
     last_rule_spawn_tick: Mutex<HashMap<String, Instant>>,
     entity_motion: Mutex<HashMap<String, EntityMotion>>,
+    entity_health: Mutex<HashMap<String, f32>>,
     entity_targets: Mutex<HashMap<String, EntityTargetMemory>>,
     entity_paths: Mutex<HashMap<String, EntityPathMemory>>,
     collision_cache: Mutex<CollisionCache>,
@@ -106,6 +107,12 @@ struct EntityAiTickUpdate {
     previous: EntityPosition,
     next: EntityPosition,
     motion: Option<EntityMotion>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityDamageResult {
+    pub entity: ManagedEntity,
+    pub killed: bool,
 }
 
 #[derive(Debug)]
@@ -260,6 +267,7 @@ impl EntityManager {
             last_ai_tick: Mutex::new(None),
             last_rule_spawn_tick: Mutex::new(HashMap::new()),
             entity_motion: Mutex::new(HashMap::new()),
+            entity_health: Mutex::new(HashMap::new()),
             entity_targets: Mutex::new(HashMap::new()),
             entity_paths: Mutex::new(HashMap::new()),
             collision_cache: Mutex::new(CollisionCache::default()),
@@ -759,6 +767,11 @@ impl EntityManager {
             .expect("entity motion state poisoned")
             .entry(entity.key.clone())
             .or_default();
+        self.entity_health
+            .lock()
+            .expect("entity health state poisoned")
+            .entry(entity.key.clone())
+            .or_insert_with(|| default_entity_health(&entity.entity_type));
         Ok(entity)
     }
 
@@ -808,6 +821,10 @@ impl EntityManager {
             .lock()
             .expect("entity motion state poisoned")
             .remove(&entity.key);
+        self.entity_health
+            .lock()
+            .expect("entity health state poisoned")
+            .remove(&entity.key);
         self.entity_targets
             .lock()
             .expect("entity target state poisoned")
@@ -817,6 +834,46 @@ impl EntityManager {
             .expect("entity path state poisoned")
             .remove(&entity.key);
         Ok(entity)
+    }
+
+    pub fn damage_managed_entity(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        entity_id: i32,
+        damage: f32,
+    ) -> Result<Option<EntityDamageResult>> {
+        if damage <= 0.0 {
+            return Ok(None);
+        }
+        let Some(entity) = self.entity_by_runtime_id(entity_id) else {
+            return Ok(None);
+        };
+        if entity.kind != ManagedEntityKind::Entity {
+            return Ok(None);
+        }
+
+        let mut health = self
+            .entity_health
+            .lock()
+            .expect("entity health state poisoned");
+        let current = health
+            .entry(entity.key.clone())
+            .or_insert_with(|| default_entity_health(&entity.entity_type));
+        *current = (*current - damage).max(0.0);
+        let killed = *current <= 0.0;
+        if killed {
+            health.remove(&entity.key);
+        }
+        drop(health);
+
+        if killed {
+            if let Ok(removed) = self.remove_local(&entity.key) {
+                self.send_remove_to_rendered_viewers(players, rendering, &removed)?;
+            }
+        }
+
+        Ok(Some(EntityDamageResult { entity, killed }))
     }
 
     fn spawn_configured(
@@ -1850,6 +1907,42 @@ fn render_distance_for_entity(
         ManagedEntityKind::Entity => rendering.default_distance,
         ManagedEntityKind::Npc => rendering.npc_distance,
         ManagedEntityKind::Hologram => rendering.hologram_distance,
+    }
+}
+
+fn default_entity_health(entity_type: &str) -> f32 {
+    match entity_type {
+        "minecraft:warden" => 500.0,
+        "minecraft:ender_dragon" => 200.0,
+        "minecraft:wither" => 300.0,
+        "minecraft:iron_golem" => 100.0,
+        "minecraft:ravager" => 100.0,
+        "minecraft:ghast" => 10.0,
+        "minecraft:slime" | "minecraft:magma_cube" => 16.0,
+        "minecraft:chicken"
+        | "minecraft:rabbit"
+        | "minecraft:bat"
+        | "minecraft:cod"
+        | "minecraft:salmon"
+        | "minecraft:tropical_fish"
+        | "minecraft:pufferfish" => 6.0,
+        "minecraft:sheep" | "minecraft:pig" | "minecraft:cow" | "minecraft:goat"
+        | "minecraft:wolf" | "minecraft:cat" | "minecraft:ocelot" | "minecraft:fox" => 10.0,
+        "minecraft:zombie"
+        | "minecraft:husk"
+        | "minecraft:drowned"
+        | "minecraft:skeleton"
+        | "minecraft:stray"
+        | "minecraft:creeper"
+        | "minecraft:spider"
+        | "minecraft:cave_spider"
+        | "minecraft:pillager"
+        | "minecraft:vindicator"
+        | "minecraft:witch"
+        | "minecraft:piglin"
+        | "minecraft:zombified_piglin" => 20.0,
+        "minecraft:enderman" => 40.0,
+        _ => 20.0,
     }
 }
 

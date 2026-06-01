@@ -3539,7 +3539,7 @@ fn main() -> Result<()> {
     let commit = args
         .commit
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| build::COMMIT_HASH.to_string());
+        .unwrap_or_else(|| crate::COMMIT_HASH.to_string());
 
     let output_root = args.out.join(&commit);
     if !args.placeholders_only {

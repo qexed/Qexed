@@ -19,6 +19,7 @@ pub(super) async fn handle_login<R, W>(
     packets: &mut qexed_tcp_connect::PacketStream<R>,
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     context: &ServerContext,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -82,6 +83,7 @@ where
         &context.content_filter,
         &login.profile,
         client_locale,
+        shutdown,
     )
     .await?;
 

@@ -57,6 +57,86 @@ pub trait AutoDocConfigTrait {
     fn danger_fields(lang: &str) -> Vec<(String, String)>;
 }
 
+#[doc(hidden)]
+pub fn autodoc_translate(key: &'static str, lang: &str) -> String {
+    let mut translation = rust_i18n::t!(key, locale = lang).to_string();
+    if translation == key {
+        let zh_fallback = rust_i18n::t!(key, locale = "zh-CN").to_string();
+        if zh_fallback != key {
+            translation = zh_fallback;
+        } else {
+            let en_fallback = rust_i18n::t!(key, locale = "en").to_string();
+            if en_fallback != key {
+                translation = en_fallback;
+            }
+        }
+    }
+    translation
+}
+
+#[doc(hidden)]
+pub fn autodoc_push_translated(
+    target: &mut Vec<(String, String)>,
+    field: &'static str,
+    key: &'static str,
+    lang: &str,
+) {
+    target.push((field.to_string(), autodoc_translate(key, lang)));
+}
+
+#[doc(hidden)]
+pub fn autodoc_push_literal(
+    target: &mut Vec<(String, String)>,
+    field: &'static str,
+    value: &'static str,
+) {
+    target.push((field.to_string(), value.to_string()));
+}
+
+#[doc(hidden)]
+pub fn autodoc_push_value_type(
+    target: &mut Vec<(String, &'static str)>,
+    field: &'static str,
+    value_type: &'static str,
+) {
+    target.push((field.to_string(), value_type));
+}
+
+#[doc(hidden)]
+pub fn autodoc_extend_prefixed_strings(
+    target: &mut Vec<(String, String)>,
+    prefix: &'static str,
+    entries: Vec<(String, String)>,
+) {
+    target.extend(
+        entries
+            .into_iter()
+            .map(|(key, value)| (format!("{prefix}.{key}"), value)),
+    );
+}
+
+#[doc(hidden)]
+pub fn autodoc_extend_prefixed_value_types(
+    target: &mut Vec<(String, &'static str)>,
+    prefix: &'static str,
+    entries: Vec<(String, &'static str)>,
+) {
+    target.extend(
+        entries
+            .into_iter()
+            .map(|(key, value)| (format!("{prefix}.{key}"), value)),
+    );
+}
+
+#[doc(hidden)]
+pub fn autodoc_extend_prefixed_sensitive(
+    target: &mut Vec<String>,
+    prefix: &'static str,
+    entries: Vec<String>,
+) {
+    target.extend(entries.into_iter().map(|key| format!("{prefix}.{key}")));
+}
+
 // ========================
 // 主配置 Trait
 // ========================

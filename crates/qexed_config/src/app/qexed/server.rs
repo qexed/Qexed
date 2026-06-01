@@ -71,6 +71,10 @@ pub struct Server {
     #[AutoDoc(key = "config.qexed.server.click_detection", sub)]
     pub click_detection: ClickDetection,
 
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.gameplay", sub)]
+    pub gameplay: Gameplay,
+
     #[AutoDoc(key = "config.qexed.server.motd")]
     pub motd: Vec<String>,
 
@@ -154,6 +158,7 @@ impl Default for Server {
             rate_limit_window_secs: 60,
             rate_limit_max_attempts: 6,
             click_detection: ClickDetection::default(),
+            gameplay: Gameplay::default(),
             motd: vec![
                 t!("qexed_config.config.server.motd1").to_string(),
                 t!("qexed_config.config.server.motd2").to_string(),
@@ -1530,6 +1535,207 @@ fn default_click_detection_max_clicks() -> u32 {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct Gameplay {
+    #[serde(default = "default_gameplay_block_updates")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.block_updates")]
+    pub block_updates: bool,
+
+    #[serde(default = "default_gameplay_crafting_table")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.crafting_table")]
+    pub crafting_table: bool,
+
+    #[serde(default = "default_gameplay_furnace")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.furnace")]
+    pub furnace: bool,
+
+    #[serde(default = "default_gameplay_crafting")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.crafting")]
+    pub crafting: bool,
+
+    #[serde(default = "default_gameplay_durability")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.durability")]
+    pub durability: bool,
+
+    #[serde(default = "default_gameplay_combat")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.combat")]
+    pub combat: bool,
+
+    #[serde(default = "default_gameplay_oxygen")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.oxygen")]
+    pub oxygen: bool,
+
+    #[serde(default = "default_gameplay_sounds")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.sounds")]
+    pub sounds: bool,
+
+    #[serde(default = "default_gameplay_advancements")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.advancements")]
+    pub advancements: bool,
+
+    #[serde(default = "default_gameplay_enchantments")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.enchantments")]
+    pub enchantments: bool,
+
+    #[serde(default = "default_gameplay_potion_effects")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.potion_effects")]
+    pub potion_effects: bool,
+
+    #[serde(default = "default_gameplay_furnace_tick_ms")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.furnace_tick_ms")]
+    pub furnace_tick_ms: u64,
+
+    #[serde(default = "default_gameplay_oxygen_tick_ms")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.oxygen_tick_ms")]
+    pub oxygen_tick_ms: u64,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements", sub)]
+    pub custom_advancements: Vec<CustomAdvancement>,
+}
+
+impl Default for Gameplay {
+    fn default() -> Self {
+        Self {
+            block_updates: default_gameplay_block_updates(),
+            crafting_table: default_gameplay_crafting_table(),
+            furnace: default_gameplay_furnace(),
+            crafting: default_gameplay_crafting(),
+            durability: default_gameplay_durability(),
+            combat: default_gameplay_combat(),
+            oxygen: default_gameplay_oxygen(),
+            sounds: default_gameplay_sounds(),
+            advancements: default_gameplay_advancements(),
+            enchantments: default_gameplay_enchantments(),
+            potion_effects: default_gameplay_potion_effects(),
+            furnace_tick_ms: default_gameplay_furnace_tick_ms(),
+            oxygen_tick_ms: default_gameplay_oxygen_tick_ms(),
+            custom_advancements: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
+pub struct CustomAdvancement {
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.id")]
+    pub id: String,
+
+    #[serde(default = "default_custom_advancement_title")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.title")]
+    pub title: String,
+
+    #[serde(default = "default_custom_advancement_description")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.description")]
+    pub description: String,
+
+    #[serde(default = "default_custom_advancement_icon")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.icon")]
+    pub icon: String,
+
+    #[serde(default)]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.trigger")]
+    pub trigger: CustomAdvancementTrigger,
+
+    #[serde(default = "default_custom_advancement_toast")]
+    #[AutoDoc(key = "config.qexed.server.gameplay.custom_advancements.toast")]
+    pub toast: bool,
+}
+
+impl Default for CustomAdvancement {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: default_custom_advancement_title(),
+            description: default_custom_advancement_description(),
+            icon: default_custom_advancement_icon(),
+            trigger: CustomAdvancementTrigger::default(),
+            toast: default_custom_advancement_toast(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomAdvancementTrigger {
+    #[default]
+    Join,
+    Craft,
+    Smelt,
+    Mine,
+    Attack,
+    Kill,
+    EnterWater,
+}
+
+fn default_gameplay_block_updates() -> bool {
+    true
+}
+
+fn default_gameplay_crafting_table() -> bool {
+    true
+}
+
+fn default_gameplay_furnace() -> bool {
+    true
+}
+
+fn default_gameplay_crafting() -> bool {
+    true
+}
+
+fn default_gameplay_durability() -> bool {
+    true
+}
+
+fn default_gameplay_combat() -> bool {
+    true
+}
+
+fn default_gameplay_oxygen() -> bool {
+    true
+}
+
+fn default_gameplay_sounds() -> bool {
+    true
+}
+
+fn default_gameplay_advancements() -> bool {
+    true
+}
+
+fn default_gameplay_enchantments() -> bool {
+    true
+}
+
+fn default_gameplay_potion_effects() -> bool {
+    true
+}
+
+fn default_gameplay_furnace_tick_ms() -> u64 {
+    50
+}
+
+fn default_gameplay_oxygen_tick_ms() -> u64 {
+    1000
+}
+
+fn default_custom_advancement_title() -> String {
+    "Qexed".to_string()
+}
+
+fn default_custom_advancement_description() -> String {
+    "Custom advancement".to_string()
+}
+
+fn default_custom_advancement_icon() -> String {
+    "minecraft:stone".to_string()
+}
+
+fn default_custom_advancement_toast() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, AutoDoc, PartialEq, Eq)]
 pub struct ResourcePack {
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.resource_pack.enable")]
@@ -2011,6 +2217,10 @@ pub struct PlayerData {
     #[AutoDoc(key = "config.qexed.server.player_data.enable")]
     pub enable: bool,
 
+    #[serde(default = "default_player_data_autosave_interval_secs")]
+    #[AutoDoc(key = "config.qexed.server.player_data.autosave_interval_secs")]
+    pub autosave_interval_secs: u64,
+
     #[serde(default)]
     #[AutoDoc(key = "config.qexed.server.player_data.engine")]
     pub engine: PlayerDataEngine,
@@ -2036,6 +2246,7 @@ impl Default for PlayerData {
     fn default() -> Self {
         Self {
             enable: default_player_data_enable(),
+            autosave_interval_secs: default_player_data_autosave_interval_secs(),
             engine: PlayerDataEngine::default(),
             collection: default_player_data_collection(),
             table: default_player_data_table(),
@@ -2059,6 +2270,10 @@ impl Default for PlayerData {
 
 fn default_player_data_enable() -> bool {
     true
+}
+
+fn default_player_data_autosave_interval_secs() -> u64 {
+    300
 }
 
 fn default_player_data_collection() -> String {
@@ -3017,12 +3232,12 @@ impl std::str::FromStr for ForwardingMode {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentFilter, ContentFilterEngine, Entities, EntityKind, ForwardingMode, GameMode,
-        GpuDeviceSelector, LightAlgorithm, LightMode, LobbyActionKind, LobbyBossBarColor,
-        LobbyBossBarOverlay, MenuActionKind, Npcs, PermissionEngine, Permissions, PlayerAudit,
-        PlayerAuditStorage, PlayerData, PlayerDataEngine, PlayerMessages, PrecompiledChunks,
-        ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource, Server, World,
-        WorldGenerator,
+        ContentFilter, ContentFilterEngine, CustomAdvancementTrigger, Entities, EntityKind,
+        ForwardingMode, GameMode, Gameplay, GpuDeviceSelector, LightAlgorithm, LightMode,
+        LobbyActionKind, LobbyBossBarColor, LobbyBossBarOverlay, MenuActionKind, Npcs,
+        PermissionEngine, Permissions, PlayerAudit, PlayerAuditStorage, PlayerData,
+        PlayerDataEngine, PlayerMessages, PrecompiledChunks, ResourcePack,
+        ResourcePackObjectStorageProvider, ResourcePackSource, Server, World, WorldGenerator,
     };
 
     #[test]
@@ -3421,6 +3636,7 @@ pitch = 0.0
         let player_data: PlayerData = toml::from_str(
             r#"
 enable = false
+autosave_interval_secs = 120
 engine = "mysql"
 collection = "qexed_players"
 table = "qexed_player_data"
@@ -3439,6 +3655,7 @@ database = "qexed_player_test"
         .unwrap();
 
         assert!(!player_data.enable);
+        assert_eq!(player_data.autosave_interval_secs, 120);
         assert_eq!(player_data.engine, PlayerDataEngine::Mysql);
         assert_eq!(player_data.collection, "qexed_players");
         assert_eq!(player_data.table, "qexed_player_data");
@@ -3466,6 +3683,46 @@ leave = "{player} left"
         assert_eq!(player_messages.chat_max_length, 128);
         assert_eq!(player_messages.join, "{player} joined");
         assert_eq!(player_messages.leave, "{player} left");
+    }
+
+    #[test]
+    fn parses_gameplay_settings() {
+        let gameplay: Gameplay = toml::from_str(
+            r#"
+block_updates = false
+crafting_table = true
+furnace = true
+crafting = true
+durability = true
+combat = true
+oxygen = true
+sounds = true
+advancements = true
+enchantments = true
+potion_effects = true
+furnace_tick_ms = 100
+oxygen_tick_ms = 500
+
+[[custom_advancements]]
+id = "qexed:first_mine"
+title = "First Mine"
+description = "Break a block"
+icon = "minecraft:iron_pickaxe"
+trigger = "mine"
+toast = true
+"#,
+        )
+        .unwrap();
+
+        assert!(!gameplay.block_updates);
+        assert!(gameplay.crafting_table);
+        assert_eq!(gameplay.furnace_tick_ms, 100);
+        assert_eq!(gameplay.oxygen_tick_ms, 500);
+        assert_eq!(gameplay.custom_advancements.len(), 1);
+        assert_eq!(
+            gameplay.custom_advancements[0].trigger,
+            CustomAdvancementTrigger::Mine
+        );
     }
 
     #[test]

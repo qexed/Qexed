@@ -3,6 +3,7 @@ mod chat;
 mod chunks;
 mod drops;
 mod events;
+mod gameplay;
 mod lobby;
 mod menus;
 mod mining;
@@ -85,6 +86,7 @@ const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const ENTITY_SERVICE_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const MIN_PLAYER_DATA_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(10);
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
 const PLAYER_ACTION_START_DESTROY_BLOCK: i32 = 0;
 const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
@@ -164,6 +166,12 @@ fn effective_online_mode(server: &qexed_config::app::qexed::server::Server) -> b
     }
 }
 
+fn player_data_autosave_interval(
+    config: &qexed_config::app::qexed::server::PlayerData,
+) -> Duration {
+    Duration::from_secs(config.autosave_interval_secs).max(MIN_PLAYER_DATA_AUTOSAVE_INTERVAL)
+}
+
 fn pending_chunk_center_update_sleep(chunk_state: &ChunkSendState) -> tokio::time::Sleep {
     let deadline = chunk_state
         .pending_center_update_deadline()
@@ -189,6 +197,7 @@ pub async fn initialize<R, W>(
     content_filter: &crate::content_filter::ContentFilter,
     profile: &qexed_packet::net_types::GameProfile,
     client_language: Option<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -361,6 +370,7 @@ where
         inventory,
         next_teleport_id,
         world_session,
+        shutdown,
     )
     .await;
     leave_guard.leave();
@@ -391,6 +401,7 @@ async fn wait_for_play_packets<R, W>(
     mut inventory: crate::inventory::PlayerInventory,
     mut next_teleport_id: i32,
     _world_session: crate::world::WorldSession,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -414,6 +425,10 @@ where
     let mut world_time_tick = tokio::time::interval(WORLD_TIME_TICK_INTERVAL);
     world_time_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     world_time_tick.tick().await;
+    let mut player_data_autosave =
+        tokio::time::interval(player_data_autosave_interval(&config.server.player_data));
+    player_data_autosave.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    player_data_autosave.tick().await;
     let mut pending_keep_alive = None;
     let mut chat_session: Option<crate::secure_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0;
@@ -425,6 +440,11 @@ where
     let mut last_input_flags = 0u8;
     let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
+    let mut gameplay_runtime = gameplay::GameplayRuntime::new(&config.server.gameplay);
+    gameplay_runtime
+        .advancements
+        .send_initial(sink, &session.player, plugins, &config.server.gameplay)
+        .await?;
     let mut click_tracker = ClickTracker::new(&config.server.click_detection);
     let lobby = lobby::LobbyRuntime::new(&config.server.lobby);
     let mut lobby_status = lobby.refresh_status().await;
@@ -501,6 +521,12 @@ where
     let result: Result<()> = async {
         loop {
             tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_ok() && *shutdown.borrow() {
+                    log::debug!("closing play session because server shutdown was requested");
+                    break Ok(());
+                }
+            }
             loaded_chunk = chunk_receiver.recv(), if chunk_state.has_loading_chunks() => {
                 let Some(loaded_chunk) = loaded_chunk else {
                     anyhow::bail!("chunk load task channel closed");
@@ -549,6 +575,34 @@ where
                 ).await? {
                     pending_dig = None;
                 }
+                let effect_damage = gameplay_runtime
+                    .effects
+                    .tick(
+                        sink,
+                        &session.player,
+                        plugins,
+                        &config.server.gameplay,
+                        SURVIVAL_TICK_INTERVAL,
+                        &mut survival,
+                    )
+                    .await?;
+                if let Some(message) = effect_damage.death_message() {
+                    handle_player_death(
+                        sink,
+                        players,
+                        entities,
+                        world_config.game_mode,
+                        profile.uuid,
+                        &play_dimension,
+                        session.player.entity_id,
+                        position,
+                        &mut inventory,
+                        message,
+                        &config.server.entity_rendering,
+                    )
+                    .await?;
+                    pending_dig = None;
+                }
             }
             _ = entity_service_tick.tick() => {
                 let spawning = &config.server.entities.spawning;
@@ -568,6 +622,83 @@ where
                 )?;
                 let ore_updates = ore_pits.tick(world, Instant::now());
                 broadcast_ore_pit_updates(world, world_rules, players, ore_updates)?;
+                if gameplay_runtime.should_tick_furnace(&config.server.gameplay) {
+                    let mut outcome = gameplay_runtime
+                        .furnace
+                        .tick(
+                            sink,
+                            &session.player,
+                            plugins,
+                            &config.server.gameplay,
+                        )
+                        .await?;
+                    handle_gameplay_outcome(
+                        sink,
+                        players,
+                        profile.uuid,
+                        session.player.entity_id,
+                        &mut inventory,
+                        &mut gameplay_runtime,
+                        plugins,
+                        &session.player,
+                        &config.server.gameplay,
+                        &mut outcome,
+                    )
+                    .await?;
+                }
+                if gameplay_runtime.should_tick_oxygen(&config.server.gameplay) {
+                    let underwater = fall_context_at(world, &play_dimension, position).in_water;
+                    let oxygen = gameplay_runtime
+                        .oxygen
+                        .tick(
+                            sink,
+                            &session.player,
+                            plugins,
+                            &config.server.gameplay,
+                            underwater,
+                            &inventory,
+                            &gameplay_runtime.effects,
+                            &mut survival,
+                            world_config.game_mode,
+                        )
+                        .await?;
+                    if let Some(message) = oxygen.death_message() {
+                        handle_player_death(
+                            sink,
+                            players,
+                            entities,
+                            world_config.game_mode,
+                            profile.uuid,
+                            &play_dimension,
+                            session.player.entity_id,
+                            position,
+                            &mut inventory,
+                            message,
+                            &config.server.entity_rendering,
+                        )
+                        .await?;
+                        pending_dig = None;
+                    }
+                    if underwater {
+                        let mut outcome = gameplay::GameplayActionOutcome::default();
+                        outcome.grant_triggers.push(
+                            qexed_config::app::qexed::server::CustomAdvancementTrigger::EnterWater,
+                        );
+                        handle_gameplay_outcome(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &mut inventory,
+                            &mut gameplay_runtime,
+                            plugins,
+                            &session.player,
+                            &config.server.gameplay,
+                            &mut outcome,
+                        )
+                        .await?;
+                    }
+                }
             }
             _ = world_time_tick.tick() => {
                 let game_time = world_rules.tick_dimension_time(&play_dimension);
@@ -577,6 +708,20 @@ where
                 })
                 .await?;
                 sink.flush().await?;
+            }
+            _ = player_data_autosave.tick() => {
+                save_player_runtime(
+                    player_data,
+                    saved_player,
+                    &play_dimension,
+                    position,
+                    &inventory,
+                    survival,
+                    profile.uuid,
+                    "autosave",
+                )
+                .await;
+                world.flush_block_writes();
             }
             event = session.receiver.recv() => {
                 let Some(event) = event else {
@@ -979,6 +1124,24 @@ where
                         continue;
                     }
                     if use_item_on.hand.0 == 0 {
+                        if let Some(block_name) =
+                            block_name_at(world, &play_dimension, &use_item_on.block_hit.position)
+                        {
+                            if config.server.gameplay.crafting_table
+                                && block_name == "minecraft:crafting_table"
+                            {
+                                gameplay_runtime.crafting.open(sink).await?;
+                                send_block_change_ack(sink, sequence).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
+                            if config.server.gameplay.furnace && block_name == "minecraft:furnace" {
+                                gameplay_runtime.furnace.open(sink).await?;
+                                send_block_change_ack(sink, sequence).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
+                        }
                         if let Some(block_state) = crate::inventory::placed_block_state_for_item(inventory.held_item()) {
                             let held_item_id = inventory.held_item().item_id.as_ref().map(|id| id.0);
                             let placed = place_held_block(
@@ -992,6 +1155,7 @@ where
                                 &position,
                                 &use_item_on,
                                 block_state,
+                                config.server.gameplay.block_updates,
                             )
                             .await?;
                             if !placed.is_empty() {
@@ -1010,6 +1174,18 @@ where
                                     profile.uuid,
                                     world_config.game_mode,
                                     &mut inventory,
+                                )
+                                .await?;
+                                gameplay::sounds::play_at(
+                                    sink,
+                                    players,
+                                    plugins,
+                                    Some(&session.player),
+                                    &play_dimension,
+                                    position,
+                                    "minecraft:block.stone.place",
+                                    "block",
+                                    config.server.gameplay.sounds,
                                 )
                                 .await?;
                             }
@@ -1129,6 +1305,7 @@ where
                                     inventory.held_item(),
                                     action.location,
                                     &config.server.entity_rendering,
+                                    config.server.gameplay.block_updates,
                                 )
                                 .await? {
                                     player_audit.log_block_break(
@@ -1184,6 +1361,7 @@ where
                                     inventory.held_item(),
                                     action.location,
                                     &config.server.entity_rendering,
+                                    config.server.gameplay.block_updates,
                                 )
                                 .await?;
                                 let was_destroyed = destroyed.is_some();
@@ -1196,6 +1374,56 @@ where
                                         inventory.held_item().item_id.as_ref().map(|id| id.0),
                                     );
                                     survival.apply_exhaustion(MINING_EXHAUSTION_PER_BLOCK);
+                                    if world_config.game_mode == GameMode::Survival {
+                                        let damaged = gameplay::durability::damage_item(
+                                            inventory.held_item_mut(),
+                                            &session.player,
+                                            plugins,
+                                            &config.server.gameplay,
+                                            "mine",
+                                            1,
+                                        );
+                                        if damaged {
+                                            sync_inventory_changes(
+                                                sink,
+                                                players,
+                                                profile.uuid,
+                                                session.player.entity_id,
+                                                inventory.selected_slot(),
+                                                vec![inventory.selected_hotbar_change()],
+                                            )
+                                            .await?;
+                                        }
+                                    }
+                                    gameplay::sounds::play_at(
+                                        sink,
+                                        players,
+                                        plugins,
+                                        Some(&session.player),
+                                        &play_dimension,
+                                        position,
+                                        "minecraft:block.stone.break",
+                                        "block",
+                                        config.server.gameplay.sounds,
+                                    )
+                                    .await?;
+                                    let mut outcome = gameplay::GameplayActionOutcome::default();
+                                    outcome.grant_triggers.push(
+                                        qexed_config::app::qexed::server::CustomAdvancementTrigger::Mine,
+                                    );
+                                    handle_gameplay_outcome(
+                                        sink,
+                                        players,
+                                        profile.uuid,
+                                        session.player.entity_id,
+                                        &mut inventory,
+                                        &mut gameplay_runtime,
+                                        plugins,
+                                        &session.player,
+                                        &config.server.gameplay,
+                                        &mut outcome,
+                                    )
+                                    .await?;
                                 }
                                 if !survival.is_dead() && was_destroyed {
                                     collect_nearby_drops(
@@ -1277,6 +1505,23 @@ where
                             .await?
                     {
                         lobby_menu_open = true;
+                        pending_dig = None;
+                    }
+                    if !survival.is_dead()
+                        && use_item.hand.0 == 0
+                        && handle_gameplay_use_item(
+                            sink,
+                            players,
+                            plugins,
+                            &session.player,
+                            &config.server.gameplay,
+                            world_config.game_mode,
+                            &mut inventory,
+                            &mut survival,
+                            &mut gameplay_runtime,
+                        )
+                        .await?
+                    {
                         pending_dig = None;
                     }
                     send_block_change_ack(sink, sequence).await?;
@@ -1401,6 +1646,7 @@ where
                         if plugin_outcome.handled {
                             pending_dig = None;
                             sink.flush().await?;
+                            continue;
                         } else {
                             let config_outcome = run_config_npc_action(
                                 sink,
@@ -1428,7 +1674,78 @@ where
                             if config_outcome.handled {
                                 pending_dig = None;
                                 sink.flush().await?;
+                                continue;
                             }
+                        }
+                        let combat_outcome = gameplay::combat::attack_entity(
+                            sink,
+                            players,
+                            entities,
+                            &session.player,
+                            &mut inventory,
+                            plugins,
+                            &config.server.gameplay,
+                            &gameplay_runtime.effects,
+                            attack.entity_id.0,
+                            &config.server.entity_rendering,
+                        )
+                        .await?;
+                        if combat_outcome.handled {
+                            if combat_outcome.damaged_held_item {
+                                gameplay::durability::damage_item(
+                                    inventory.held_item_mut(),
+                                    &session.player,
+                                    plugins,
+                                    &config.server.gameplay,
+                                    "attack",
+                                    1,
+                                );
+                                sync_inventory_changes(
+                                    sink,
+                                    players,
+                                    profile.uuid,
+                                    session.player.entity_id,
+                                    inventory.selected_slot(),
+                                    vec![inventory.selected_hotbar_change()],
+                                )
+                                .await?;
+                            }
+                            gameplay::sounds::play_at(
+                                sink,
+                                players,
+                                plugins,
+                                Some(&session.player),
+                                &play_dimension,
+                                position,
+                                "minecraft:entity.player.attack.strong",
+                                "player",
+                                config.server.gameplay.sounds,
+                            )
+                            .await?;
+                            let mut outcome = gameplay::GameplayActionOutcome::default();
+                            outcome.grant_triggers.push(
+                                qexed_config::app::qexed::server::CustomAdvancementTrigger::Attack,
+                            );
+                            if combat_outcome.killed {
+                                outcome.grant_triggers.push(
+                                    qexed_config::app::qexed::server::CustomAdvancementTrigger::Kill,
+                                );
+                            }
+                            handle_gameplay_outcome(
+                                sink,
+                                players,
+                                profile.uuid,
+                                session.player.entity_id,
+                                &mut inventory,
+                                &mut gameplay_runtime,
+                                plugins,
+                                &session.player,
+                                &config.server.gameplay,
+                                &mut outcome,
+                            )
+                            .await?;
+                            pending_dig = None;
+                            sink.flush().await?;
                         }
                     }
                     if survival.is_dead() {
@@ -1439,6 +1756,46 @@ where
 
                 if packet_id == ContainerClick::ID {
                     let click = crate::connection::decode_payload::<ContainerClick>(&mut payload)?;
+                    let mut gameplay_outcome = gameplay::GameplayActionOutcome::default();
+                    if let Some(outcome) = gameplay_runtime
+                        .crafting
+                        .handle_click(
+                            sink,
+                            &click,
+                            &mut inventory,
+                            &session.player,
+                            plugins,
+                            &config.server.gameplay,
+                        )
+                        .await?
+                    {
+                        gameplay_outcome.merge(outcome);
+                    }
+                    if let Some(outcome) = gameplay_runtime
+                        .furnace
+                        .handle_click(sink, &click, &mut inventory)
+                        .await?
+                    {
+                        gameplay_outcome.merge(outcome);
+                    }
+                    if gameplay_outcome.handled {
+                        handle_gameplay_outcome(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &mut inventory,
+                            &mut gameplay_runtime,
+                            plugins,
+                            &session.player,
+                            &config.server.gameplay,
+                            &mut gameplay_outcome,
+                        )
+                        .await?;
+                        pending_dig = None;
+                        sink.flush().await?;
+                        continue;
+                    }
                     let affects_fixed_menu_slot =
                         container_click_affects_fixed_menu_slot(&click, &menus, &inventory);
                     let affects_navigator_slot =
@@ -1521,6 +1878,41 @@ where
 
                 if packet_id == ContainerClose::ID {
                     let close = crate::connection::decode_payload::<ContainerClose>(&mut payload)?;
+                    let mut gameplay_outcome = gameplay::GameplayActionOutcome::default();
+                    if close.window_id.0 == gameplay::crafting::CRAFTING_WINDOW_ID {
+                        gameplay_outcome.merge(
+                            gameplay_runtime
+                                .crafting
+                                .close(sink, &mut inventory)
+                                .await?,
+                        );
+                    }
+                    if close.window_id.0 == gameplay::furnace::FURNACE_WINDOW_ID {
+                        gameplay_outcome.merge(
+                            gameplay_runtime
+                                .furnace
+                                .close(sink, &mut inventory)
+                                .await?,
+                        );
+                    }
+                    if gameplay_outcome.handled {
+                        handle_gameplay_outcome(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &mut inventory,
+                            &mut gameplay_runtime,
+                            plugins,
+                            &session.player,
+                            &config.server.gameplay,
+                            &mut gameplay_outcome,
+                        )
+                        .await?;
+                        pending_dig = None;
+                        sink.flush().await?;
+                        continue;
+                    }
                     if close.window_id.0 == lobby::MENU_WINDOW_ID {
                         lobby_menu_open = false;
                     }
@@ -2272,15 +2664,38 @@ where
     if let Err(err) = lobby.remove_boss_bar(sink).await {
         log::debug!("failed to remove lobby boss bar before disconnect: {err:#}");
     }
-    saved_player.update_runtime(&play_dimension, position, &inventory, survival.to_stored());
-    if let Err(err) = player_data.save(saved_player).await {
-        log::warn!(
-            "failed to save player data: uuid={}, error={err:#}",
-            profile.uuid
-        );
-    }
+    save_player_runtime(
+        player_data,
+        saved_player,
+        &play_dimension,
+        position,
+        &inventory,
+        survival,
+        profile.uuid,
+        "disconnect",
+    )
+    .await;
+    world.flush_block_writes();
 
     result
+}
+
+async fn save_player_runtime(
+    player_data: &PlayerDataManager,
+    saved_player: &mut PlayerData,
+    play_dimension: &str,
+    position: EntityPosition,
+    inventory: &crate::inventory::PlayerInventory,
+    survival: SurvivalState,
+    profile_id: uuid::Uuid,
+    reason: &str,
+) {
+    saved_player.update_runtime(play_dimension, position, inventory, survival.to_stored());
+    if let Err(err) = player_data.save(saved_player).await {
+        log::warn!("failed to save player data: uuid={profile_id}, reason={reason}, error={err:#}");
+    } else {
+        log::debug!("saved player data: uuid={profile_id}, reason={reason}");
+    }
 }
 
 fn lobby_broadcast_progress(index: usize, message_count: usize) -> f32 {
@@ -2568,6 +2983,349 @@ where
     Ok(())
 }
 
+async fn handle_gameplay_outcome<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    inventory: &mut crate::inventory::PlayerInventory,
+    gameplay_runtime: &mut gameplay::GameplayRuntime,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    config: &qexed_config::app::qexed::server::Gameplay,
+    outcome: &mut gameplay::GameplayActionOutcome,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !outcome.inventory_changes.is_empty() {
+        let changes = std::mem::take(&mut outcome.inventory_changes);
+        sync_inventory_changes(
+            sink,
+            players,
+            actor,
+            entity_id,
+            inventory.selected_slot(),
+            changes,
+        )
+        .await?;
+    }
+    if !outcome.grant_triggers.is_empty() {
+        let triggers = std::mem::take(&mut outcome.grant_triggers);
+        gameplay_runtime
+            .advancements
+            .grant_triggers(sink, player, plugins, config, triggers)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn handle_gameplay_use_item<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    config: &qexed_config::app::qexed::server::Gameplay,
+    game_mode: GameMode,
+    inventory: &mut crate::inventory::PlayerInventory,
+    survival: &mut SurvivalState,
+    gameplay_runtime: &mut gameplay::GameplayRuntime,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if game_mode != GameMode::Survival {
+        return Ok(false);
+    }
+    let held = inventory.held_item().clone();
+    if held.item_count.0 <= 0 {
+        return Ok(false);
+    }
+    let profile = consumable_profile(&held);
+    let mut handled = false;
+    if let Some(food) = profile.food
+        && survival.can_eat(food.can_always_eat)
+        && survival.eat(food.nutrition, food.saturation_modifier)
+    {
+        handled = true;
+    }
+    if config.potion_effects {
+        for effect in profile.effects {
+            if matches!(
+                effect.id.as_str(),
+                "minecraft:instant_health" | "minecraft:instant_damage"
+            ) {
+                let damage = gameplay_runtime
+                    .effects
+                    .apply_instant_effect(
+                        sink,
+                        player.entity_id,
+                        &effect.id,
+                        effect.amplifier,
+                        survival,
+                    )
+                    .await?;
+                if let Some(message) = damage.death_message() {
+                    log::debug!(
+                        "player died from consumable effect: entity_id={}, message={}",
+                        player.entity_id,
+                        message.translation_key()
+                    );
+                }
+            } else {
+                gameplay_runtime
+                    .effects
+                    .add_effect(
+                        sink,
+                        player.entity_id,
+                        &effect.id,
+                        effect.amplifier,
+                        effect.duration_ticks,
+                    )
+                    .await?;
+            }
+            handled = true;
+        }
+    }
+    if !handled {
+        return Ok(false);
+    }
+    sink.send(survival.health_packet()).await?;
+    if let Some(change) = inventory.decrement_hotbar_slot(inventory.selected_slot(), 1) {
+        sync_inventory_changes(
+            sink,
+            players,
+            player.profile.uuid,
+            player.entity_id,
+            inventory.selected_slot(),
+            vec![change],
+        )
+        .await?;
+    }
+    gameplay::sounds::play_at(
+        sink,
+        players,
+        plugins,
+        Some(player),
+        &player.dimension,
+        player.position,
+        "minecraft:entity.generic.eat",
+        "player",
+        config.sounds,
+    )
+    .await?;
+    Ok(true)
+}
+
+#[derive(Debug, Default)]
+struct ConsumableProfile {
+    food: Option<ConsumableFood>,
+    effects: Vec<ConsumableEffect>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ConsumableFood {
+    nutrition: i32,
+    saturation_modifier: f32,
+    can_always_eat: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ConsumableEffect {
+    id: String,
+    amplifier: i32,
+    duration_ticks: i32,
+}
+
+fn consumable_profile(slot: &qexed_protocol::types::Slot) -> ConsumableProfile {
+    let item_name = slot
+        .item_id
+        .as_ref()
+        .and_then(|id| crate::inventory::item_name_for_id(id.0))
+        .unwrap_or_default();
+    let mut profile = fallback_consumable_profile(&item_name);
+    if let Some(components) = slot.components_to_add.as_ref() {
+        for component in components {
+            match component {
+                qexed_protocol::types::ComponentsToAdd::MinecraftFood(food) => {
+                    profile.food = Some(ConsumableFood {
+                        nutrition: food.nutrition.0,
+                        saturation_modifier: food.saturation_modifier,
+                        can_always_eat: food.can_always_eat,
+                    });
+                }
+                qexed_protocol::types::ComponentsToAdd::MinecraftPotionContents(potion) => {
+                    if let Some(potion_id) = &potion.potion_id {
+                        profile.effects.extend(potion_effects_for_id(potion_id.0));
+                    }
+                }
+                qexed_protocol::types::ComponentsToAdd::MinecraftSuspiciousStewEffects(stew) => {
+                    profile
+                        .effects
+                        .extend(stew.effects.iter().filter_map(|effect| {
+                            effect_name_for_id(effect.type_id.0).map(|id| ConsumableEffect {
+                                id,
+                                amplifier: 0,
+                                duration_ticks: effect.duration.0.max(1),
+                            })
+                        }));
+                }
+                _ => {}
+            }
+        }
+    }
+    profile
+}
+
+fn fallback_consumable_profile(item_name: &str) -> ConsumableProfile {
+    let mut profile = ConsumableProfile::default();
+    if let Some(food) = fallback_food(item_name) {
+        profile.food = Some(food);
+    }
+    match item_name {
+        "minecraft:potion" => profile.effects.push(ConsumableEffect {
+            id: "minecraft:water_breathing".to_string(),
+            amplifier: 0,
+            duration_ticks: 20 * 60 * 3,
+        }),
+        "minecraft:golden_apple" => {
+            profile.effects.push(ConsumableEffect {
+                id: "minecraft:regeneration".to_string(),
+                amplifier: 1,
+                duration_ticks: 20 * 5,
+            });
+            profile.effects.push(ConsumableEffect {
+                id: "minecraft:absorption".to_string(),
+                amplifier: 0,
+                duration_ticks: 20 * 60 * 2,
+            });
+        }
+        "minecraft:enchanted_golden_apple" => {
+            profile.effects.push(ConsumableEffect {
+                id: "minecraft:regeneration".to_string(),
+                amplifier: 1,
+                duration_ticks: 20 * 20,
+            });
+            profile.effects.push(ConsumableEffect {
+                id: "minecraft:resistance".to_string(),
+                amplifier: 0,
+                duration_ticks: 20 * 60 * 5,
+            });
+            profile.effects.push(ConsumableEffect {
+                id: "minecraft:fire_resistance".to_string(),
+                amplifier: 0,
+                duration_ticks: 20 * 60 * 5,
+            });
+            profile.effects.push(ConsumableEffect {
+                id: "minecraft:absorption".to_string(),
+                amplifier: 3,
+                duration_ticks: 20 * 60 * 2,
+            });
+        }
+        _ => {}
+    }
+    profile
+}
+
+fn fallback_food(item_name: &str) -> Option<ConsumableFood> {
+    let (nutrition, saturation_modifier) = match item_name {
+        "minecraft:apple" => (4, 0.3),
+        "minecraft:bread" => (5, 0.6),
+        "minecraft:cooked_beef" | "minecraft:cooked_porkchop" => (8, 0.8),
+        "minecraft:cooked_chicken" | "minecraft:cooked_mutton" => (6, 0.6),
+        "minecraft:cooked_cod" | "minecraft:cooked_salmon" => (5, 0.6),
+        "minecraft:carrot" => (3, 0.6),
+        "minecraft:potato" => (1, 0.3),
+        "minecraft:baked_potato" => (5, 0.6),
+        "minecraft:beetroot" => (1, 0.6),
+        "minecraft:melon_slice" => (2, 0.3),
+        "minecraft:pumpkin_pie" => (8, 0.3),
+        "minecraft:cookie" => (2, 0.1),
+        "minecraft:golden_apple" | "minecraft:enchanted_golden_apple" => (4, 1.2),
+        "minecraft:golden_carrot" => (6, 1.2),
+        "minecraft:raw_beef" | "minecraft:raw_porkchop" => (3, 0.3),
+        "minecraft:raw_chicken" | "minecraft:raw_mutton" => (2, 0.3),
+        "minecraft:rotten_flesh" => (4, 0.1),
+        "minecraft:spider_eye" => (2, 0.8),
+        _ => return None,
+    };
+    Some(ConsumableFood {
+        nutrition,
+        saturation_modifier,
+        can_always_eat: matches!(
+            item_name,
+            "minecraft:golden_apple" | "minecraft:enchanted_golden_apple"
+        ),
+    })
+}
+
+fn potion_effects_for_id(potion_id: i32) -> Vec<ConsumableEffect> {
+    let effect = match potion_id {
+        1 => ("minecraft:regeneration", 0, 20 * 45),
+        2 => ("minecraft:speed", 0, 20 * 180),
+        3 => ("minecraft:fire_resistance", 0, 20 * 180),
+        4 => ("minecraft:poison", 0, 20 * 45),
+        5 => ("minecraft:instant_health", 0, 1),
+        6 => ("minecraft:night_vision", 0, 20 * 180),
+        7 => ("minecraft:weakness", 0, 20 * 90),
+        8 => ("minecraft:strength", 0, 20 * 180),
+        9 => ("minecraft:slowness", 0, 20 * 90),
+        10 => ("minecraft:jump_boost", 0, 20 * 180),
+        11 => ("minecraft:water_breathing", 0, 20 * 180),
+        12 => ("minecraft:invisibility", 0, 20 * 180),
+        13 => ("minecraft:instant_damage", 0, 1),
+        14 => ("minecraft:slow_falling", 0, 20 * 90),
+        _ => return Vec::new(),
+    };
+    vec![ConsumableEffect {
+        id: effect.0.to_string(),
+        amplifier: effect.1,
+        duration_ticks: effect.2,
+    }]
+}
+
+fn effect_name_for_id(effect_id: i32) -> Option<String> {
+    Some(
+        match effect_id {
+            1 => "minecraft:speed",
+            2 => "minecraft:slowness",
+            3 => "minecraft:haste",
+            4 => "minecraft:mining_fatigue",
+            5 => "minecraft:strength",
+            6 => "minecraft:instant_health",
+            7 => "minecraft:instant_damage",
+            8 => "minecraft:jump_boost",
+            9 => "minecraft:nausea",
+            10 => "minecraft:regeneration",
+            11 => "minecraft:resistance",
+            12 => "minecraft:fire_resistance",
+            13 => "minecraft:water_breathing",
+            14 => "minecraft:invisibility",
+            15 => "minecraft:blindness",
+            16 => "minecraft:night_vision",
+            17 => "minecraft:hunger",
+            18 => "minecraft:weakness",
+            19 => "minecraft:poison",
+            20 => "minecraft:wither",
+            21 => "minecraft:health_boost",
+            22 => "minecraft:absorption",
+            23 => "minecraft:saturation",
+            24 => "minecraft:glowing",
+            25 => "minecraft:levitation",
+            26 => "minecraft:luck",
+            27 => "minecraft:unluck",
+            28 => "minecraft:slow_falling",
+            29 => "minecraft:conduit_power",
+            30 => "minecraft:dolphins_grace",
+            31 => "minecraft:bad_omen",
+            32 => "minecraft:hero_of_the_village",
+            33 => "minecraft:darkness",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
 fn fall_context_at(world: &WorldManager, dimension: &str, position: EntityPosition) -> FallContext {
     let landing_position = BlockPosition {
         x: position.x.floor() as i32,
@@ -2709,6 +3467,14 @@ fn is_lava_block(name: &str) -> bool {
 fn block_name(block_state: i32) -> String {
     crate::inventory::block_name_for_state(block_state)
         .unwrap_or_else(|| crate::world::chunk_nbt::block_state_entry(block_state).name)
+}
+
+fn block_name_at(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> Option<String> {
+    world.block_state_at(dimension, position).map(block_name)
 }
 
 fn block_state_property(block_state: i32, key: &str) -> Option<String> {
@@ -3786,6 +4552,7 @@ async fn place_held_block<W>(
     player_position: &EntityPosition,
     use_item_on: &UseItemOn,
     block_state: i32,
+    gameplay_block_updates: bool,
 ) -> Result<Vec<PlacedBlockChange>>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -3844,6 +4611,7 @@ where
             target.clone(),
             block_state,
             WorldEditKind::Place,
+            gameplay_block_updates,
         )
         .await?;
         if !placed_lower {
@@ -3860,6 +4628,7 @@ where
             upper.clone(),
             upper_state,
             WorldEditKind::Place,
+            gameplay_block_updates,
         )
         .await?;
         let mut placed = vec![PlacedBlockChange {
@@ -3886,6 +4655,7 @@ where
         target.clone(),
         block_state,
         WorldEditKind::Place,
+        gameplay_block_updates,
     )
     .await?;
     if !placed {
@@ -3911,6 +4681,7 @@ async fn destroy_block<W>(
     held_item: &qexed_protocol::types::Slot,
     position: BlockPosition,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
+    gameplay_block_updates: bool,
 ) -> Result<Option<DestroyedBlockChange>>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -3946,6 +4717,7 @@ where
         position.clone(),
         crate::inventory::air_block_state(),
         WorldEditKind::Break,
+        gameplay_block_updates,
     )
     .await?;
     if destroyed {
@@ -3961,6 +4733,7 @@ where
                 paired_position,
                 crate::inventory::air_block_state(),
                 WorldEditKind::Break,
+                gameplay_block_updates,
             )
             .await?;
         }
@@ -4395,6 +5168,7 @@ async fn apply_block_change<W>(
     position: BlockPosition,
     block_state: i32,
     edit_kind: WorldEditKind,
+    gameplay_block_updates: bool,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -4406,6 +5180,7 @@ where
         dimension,
         &position,
         edit_kind,
+        gameplay_block_updates,
     );
     if !write_mode.allowed {
         log::debug!(
@@ -4505,7 +5280,15 @@ fn world_write_mode(
     dimension: &str,
     position: &BlockPosition,
     edit_kind: WorldEditKind,
+    gameplay_block_updates: bool,
 ) -> WorldWriteMode {
+    if !gameplay_block_updates {
+        return WorldWriteMode {
+            allowed: false,
+            runtime_only: false,
+        };
+    }
+
     if !can_attempt_world_edit(world_config) {
         return WorldWriteMode {
             allowed: false,

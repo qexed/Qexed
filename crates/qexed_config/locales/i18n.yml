@@ -94,6 +94,69 @@ autodoc:
       placeholders:
         en: "%{file}: text placeholder formatting settings."
         zh-CN: "%{file}: 文本占位符格式化设置。"
+      gameplay:
+        en: "Vanilla gameplay feature switches and runtime settings"
+        zh-CN: "原版玩法功能开关和运行设置"
+        block_updates:
+          en: "Enable runtime block updates for player edits and gameplay systems"
+          zh-CN: "启用玩家编辑和玩法系统触发的运行时方块更新"
+        crafting_table:
+          en: "Enable opening crafting table blocks"
+          zh-CN: "启用工作台方块交互"
+        furnace:
+          en: "Enable furnace block UI and smelting ticks"
+          zh-CN: "启用熔炉方块界面和烧炼 tick"
+        crafting:
+          en: "Enable recipe crafting resolution"
+          zh-CN: "启用配方合成解析"
+        durability:
+          en: "Enable item durability consumption"
+          zh-CN: "启用物品耐久消耗"
+        combat:
+          en: "Enable player attack handling"
+          zh-CN: "启用玩家攻击处理"
+        oxygen:
+          en: "Enable player oxygen and drowning handling"
+          zh-CN: "启用玩家氧气和溺水处理"
+        sounds:
+          en: "Enable gameplay sound packets"
+          zh-CN: "启用玩法音效数据包"
+        advancements:
+          en: "Enable custom advancement grants"
+          zh-CN: "启用自定义成就授予"
+        enchantments:
+          en: "Enable vanilla enchantment effects in supported gameplay systems"
+          zh-CN: "启用已接入玩法系统中的原版附魔效果"
+        potion_effects:
+          en: "Enable potion effect application and ticking"
+          zh-CN: "启用药水效果应用和 tick"
+        furnace_tick_ms:
+          en: "Furnace smelting tick interval in milliseconds"
+          zh-CN: "熔炉烧炼 tick 间隔，单位毫秒"
+        oxygen_tick_ms:
+          en: "Player oxygen tick interval in milliseconds"
+          zh-CN: "玩家氧气 tick 间隔，单位毫秒"
+        custom_advancements:
+          en: "Custom advancement definitions"
+          zh-CN: "自定义成就定义"
+          id:
+            en: "Custom advancement id"
+            zh-CN: "自定义成就 ID"
+          title:
+            en: "Custom advancement title"
+            zh-CN: "自定义成就标题"
+          description:
+            en: "Custom advancement description"
+            zh-CN: "自定义成就说明"
+          icon:
+            en: "Custom advancement icon item id"
+            zh-CN: "自定义成就图标物品 ID"
+          trigger:
+            en: "Trigger: join, craft, smelt, mine, attack, kill, or enter_water"
+            zh-CN: "触发器：join、craft、smelt、mine、attack、kill 或 enter_water"
+          toast:
+            en: "Show toast notification when granted"
+            zh-CN: "授予时显示 toast 提示"
       player_audit:
         en: "%{file}: player action audit switches and storage settings."
         zh-CN: "%{file}: 玩家行为审计开关和存储设置。"
@@ -488,6 +551,9 @@ config:
         enable:
           en: "Enable player data saving and loading"
           zh-CN: "启用玩家数据保存与加载"
+        autosave_interval_secs:
+          en: "Interval for automatically saving online player data, in seconds"
+          zh-CN: "在线玩家数据自动保存间隔，单位为秒"
         engine:
           en: "Player data storage engine. vanilla uses local playerdata files in the world folder; mongodb stores player data in MongoDB; mysql stores player data in a MySQL table."
           zh-CN: "玩家数据存储引擎。vanilla 使用世界目录下的本地 playerdata 文件；mongodb 使用 MongoDB 集合存储；mysql 使用 MySQL 数据表存储。"

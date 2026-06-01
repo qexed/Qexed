@@ -24,6 +24,11 @@ pub(super) enum DeathMessage {
     OutOfWorld,
     Fall(FallLocation),
     Stalagmite,
+    Drown,
+    Generic,
+    PlayerAttack,
+    Magic,
+    Wither,
 }
 
 impl DeathMessage {
@@ -33,6 +38,11 @@ impl DeathMessage {
             Self::OutOfWorld => "death.attack.outOfWorld",
             Self::Fall(location) => location.translation_key(),
             Self::Stalagmite => "death.attack.stalagmite",
+            Self::Drown => "death.attack.drown",
+            Self::Generic => "death.attack.generic",
+            Self::PlayerAttack => "death.attack.player",
+            Self::Magic => "death.attack.magic",
+            Self::Wither => "death.attack.wither",
         }
     }
 }
@@ -197,6 +207,22 @@ impl SurvivalState {
         }
     }
 
+    pub(super) fn can_eat(self, always: bool) -> bool {
+        !self.dead && (always || self.food < MAX_FOOD)
+    }
+
+    pub(super) fn eat(&mut self, nutrition: i32, saturation_modifier: f32) -> bool {
+        if self.dead || nutrition <= 0 {
+            return false;
+        }
+        let previous_food = self.food;
+        let previous_saturation = self.saturation;
+        self.food = (self.food + nutrition).clamp(0, MAX_FOOD);
+        let saturation_gain = nutrition as f32 * saturation_modifier.max(0.0) * 2.0;
+        self.saturation = (self.saturation + saturation_gain).clamp(0.0, self.food as f32);
+        self.food != previous_food || (self.saturation - previous_saturation).abs() > f32::EPSILON
+    }
+
     pub(super) fn tick(&mut self, game_mode: GameMode, elapsed: Duration) -> SurvivalDamage {
         if game_mode != GameMode::Survival || self.dead {
             self.starvation_timer = Duration::ZERO;
@@ -281,7 +307,11 @@ impl SurvivalState {
         self.apply_damage(damage as f32, death_message)
     }
 
-    fn apply_damage(&mut self, amount: f32, death_message: DeathMessage) -> SurvivalDamage {
+    pub(super) fn apply_damage(
+        &mut self,
+        amount: f32,
+        death_message: DeathMessage,
+    ) -> SurvivalDamage {
         if amount <= 0.0 || self.dead {
             return SurvivalDamage::None;
         }
@@ -300,7 +330,7 @@ impl SurvivalState {
         }
     }
 
-    fn heal(&mut self, amount: f32) -> bool {
+    pub(super) fn heal(&mut self, amount: f32) -> bool {
         if amount <= 0.0 || self.dead || self.health >= MAX_HEALTH {
             return false;
         }

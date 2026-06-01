@@ -24,6 +24,4 @@ sys-locale = { workspace = true }
 rust-i18n = { workspace = true }
 clap.workspace = true
 toml_edit = {"version"="0.25.11","features" = ["serde"]}
-shadow-rs.workspace = true
 [build-dependencies]
-shadow-rs.workspace = true

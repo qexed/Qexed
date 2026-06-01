@@ -94,7 +94,6 @@ impl std::fmt::Debug for WorldWriteQueue {
 
 enum WorldWriteTask {
     Run(Box<dyn FnOnce() + Send + 'static>),
-    #[cfg(test)]
     Flush(mpsc::Sender<()>),
 }
 
@@ -117,7 +116,6 @@ impl WorldWriteQueue {
                 while let Ok(task) = receiver.recv() {
                     match task {
                         WorldWriteTask::Run(task) => task(),
-                        #[cfg(test)]
                         WorldWriteTask::Flush(done) => {
                             let _ = done.send(());
                         }
@@ -139,7 +137,6 @@ impl WorldWriteQueue {
         }
     }
 
-    #[cfg(test)]
     fn flush(&self) {
         let (sender, receiver) = mpsc::channel();
         if self.sender().send(WorldWriteTask::Flush(sender)).is_ok() {
@@ -683,7 +680,6 @@ impl WorldManager {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
     pub(crate) fn flush_block_writes(&self) {
         self.block_write_queue.flush();
     }

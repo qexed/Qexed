@@ -294,7 +294,7 @@ fn append_field_builders(
         }
         if field.auto_doc.sensitive {
             sensitive_builders.push(quote! {
-                all_sensitive.push(#display_name_lit.to_string());
+                all_sensitive.push(::std::string::String::from(#display_name_lit));
             });
         }
         push_optional_translated_entry(
@@ -398,22 +398,12 @@ fn push_translated_entry(target: &str, display_name: &LitStr, i18n_key: &str) ->
     let i18n_key = LitStr::new(i18n_key, Span::call_site());
 
     quote! {
-        let mut translation = ::rust_i18n::t!(#i18n_key, locale = lang).to_string();
-        if translation == #i18n_key {
-            let zh_fallback = ::rust_i18n::t!(#i18n_key, locale = "zh-CN").to_string();
-            if zh_fallback != #i18n_key {
-                translation = zh_fallback;
-            } else {
-                let en_fallback = ::rust_i18n::t!(#i18n_key, locale = "en").to_string();
-                if en_fallback != #i18n_key {
-                    translation = en_fallback;
-                }
-            }
-        }
-        #target.push((
-            #display_name.to_string(),
-            translation,
-        ));
+        ::qexed_config::tool::autodoc_push_translated(
+            &mut #target,
+            #display_name,
+            #i18n_key,
+            lang,
+        );
     }
 }
 
@@ -422,10 +412,7 @@ fn push_literal_entry(target: &str, display_name: &LitStr, value: &str) -> Token
     let value = LitStr::new(value, Span::call_site());
 
     quote! {
-        #target.push((
-            #display_name.to_string(),
-            #value.to_string(),
-        ));
+        ::qexed_config::tool::autodoc_push_literal(&mut #target, #display_name, #value);
     }
 }
 
@@ -434,10 +421,7 @@ fn push_value_type_entry(target: &str, display_name: &LitStr, value_type: &str) 
     let value_type = LitStr::new(value_type, Span::call_site());
 
     quote! {
-        #target.push((
-            #display_name.to_string(),
-            #value_type,
-        ));
+        ::qexed_config::tool::autodoc_push_value_type(&mut #target, #display_name, #value_type);
     }
 }
 
@@ -462,9 +446,11 @@ fn push_recursive_type_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            for (sub_key, sub_value_type) in <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types() {
-                #target.push((format!("{}.{}", #prefix, sub_key), sub_value_type));
-            }
+            ::qexed_config::tool::autodoc_extend_prefixed_value_types(
+                &mut #target,
+                #prefix,
+                <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types(),
+            );
         },
         None => quote! {
             #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::field_value_types());
@@ -484,9 +470,11 @@ fn push_recursive_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            for (sub_key, sub_desc) in <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang) {
-                #target.push((format!("{}.{}", #prefix, sub_key), sub_desc));
-            }
+            ::qexed_config::tool::autodoc_extend_prefixed_strings(
+                &mut #target,
+                #prefix,
+                <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang),
+            );
         },
         None => quote! {
             #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::#method(lang));
@@ -504,9 +492,11 @@ fn push_recursive_sensitive_entries(
 
     match prefix {
         Some(prefix) => quote! {
-            for sub_key in <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields() {
-                #target.push(format!("{}.{}", #prefix, sub_key));
-            }
+            ::qexed_config::tool::autodoc_extend_prefixed_sensitive(
+                &mut #target,
+                #prefix,
+                <#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields(),
+            );
         },
         None => quote! {
             #target.extend(<#trait_target as ::qexed_config::tool::AutoDocConfigTrait>::sensitive_fields());

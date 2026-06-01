@@ -143,6 +143,7 @@ fn read_only_world_allows_runtime_edit_regions() {
         "minecraft:overworld",
         &inside,
         WorldEditKind::Break,
+        true,
     );
     let place_mode = world_write_mode(
         &manager,
@@ -151,6 +152,7 @@ fn read_only_world_allows_runtime_edit_regions() {
         "minecraft:overworld",
         &inside,
         WorldEditKind::Place,
+        true,
     );
     let outside_mode = world_write_mode(
         &manager,
@@ -159,6 +161,7 @@ fn read_only_world_allows_runtime_edit_regions() {
         "minecraft:overworld",
         &outside,
         WorldEditKind::Break,
+        true,
     );
 
     assert!(break_mode.allowed);

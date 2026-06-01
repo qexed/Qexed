@@ -103,6 +103,224 @@ pub struct BlockDropItem {
     pub count: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemStackPayload {
+    pub item_id: i32,
+    #[serde(default)]
+    pub item_name: String,
+    #[serde(default = "one")]
+    pub count: i32,
+    #[serde(default)]
+    pub damage: i32,
+    #[serde(default)]
+    pub max_damage: i32,
+    #[serde(default)]
+    pub enchantments: Vec<ItemEnchantment>,
+    #[serde(default)]
+    pub plugin_enchantments: Vec<PluginEnchantment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CraftingRecipeQuery {
+    pub player: PlayerPayloadOwned,
+    pub width: usize,
+    pub height: usize,
+    #[serde(default)]
+    pub ingredients: Vec<ItemStackPayload>,
+    #[serde(default)]
+    pub vanilla_result: Option<ItemStackPayload>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CraftingRecipeResponse {
+    #[serde(default)]
+    pub replace: bool,
+    #[serde(default)]
+    pub result: Option<BlockDropItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CraftItemQuery {
+    pub player: PlayerPayloadOwned,
+    pub recipe_id: String,
+    pub result: ItemStackPayload,
+    #[serde(default)]
+    pub ingredients: Vec<ItemStackPayload>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CraftItemResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub result: Option<BlockDropItem>,
+    #[serde(default)]
+    pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FurnaceRecipeQuery {
+    pub player: PlayerPayloadOwned,
+    pub input: ItemStackPayload,
+    pub fuel: ItemStackPayload,
+    #[serde(default)]
+    pub vanilla_result: Option<ItemStackPayload>,
+    #[serde(default)]
+    pub cook_time: i32,
+    #[serde(default)]
+    pub experience: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FurnaceRecipeResponse {
+    #[serde(default)]
+    pub replace: bool,
+    #[serde(default)]
+    pub result: Option<BlockDropItem>,
+    #[serde(default)]
+    pub cook_time: Option<i32>,
+    #[serde(default)]
+    pub experience: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FurnaceTickPayload {
+    pub player: PlayerPayloadOwned,
+    pub input: Option<ItemStackPayload>,
+    pub fuel: Option<ItemStackPayload>,
+    pub output: Option<ItemStackPayload>,
+    pub burn_time: i32,
+    pub cook_time: i32,
+    pub cook_time_total: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemDurabilityQuery {
+    pub player: PlayerPayloadOwned,
+    pub item: ItemStackPayload,
+    pub reason: String,
+    #[serde(default = "one")]
+    pub amount: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ItemDurabilityResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub amount: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerAttackQuery {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub target_entity_id: i32,
+    #[serde(default)]
+    pub target_uuid: String,
+    #[serde(default)]
+    pub target_type: String,
+    pub weapon: ItemStackPayload,
+    pub damage: f32,
+    pub knockback: f32,
+    #[serde(default)]
+    pub fire_ticks: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlayerAttackResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub damage: Option<f32>,
+    #[serde(default)]
+    pub knockback: Option<f32>,
+    #[serde(default)]
+    pub fire_ticks: Option<i32>,
+    #[serde(default)]
+    pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerOxygenTickQuery {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub air: i32,
+    pub max_air: i32,
+    pub underwater: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlayerOxygenTickResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub air: Option<i32>,
+    #[serde(default)]
+    pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundPayload {
+    pub player: Option<PlayerPayloadOwned>,
+    pub sound: String,
+    pub source: String,
+    pub dimension: String,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub volume: f32,
+    pub pitch: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SoundResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub sound: Option<String>,
+    #[serde(default)]
+    pub volume: Option<f32>,
+    #[serde(default)]
+    pub pitch: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvancementGrantQuery {
+    pub player: PlayerPayloadOwned,
+    pub id: String,
+    pub title: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdvancementGrantResponse {
+    #[serde(default)]
+    pub cancel: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PotionEffectTickQuery {
+    pub player: PlayerPayloadOwned,
+    pub effect: String,
+    pub amplifier: i32,
+    pub duration_ticks: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PotionEffectTickResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub duration_ticks: Option<i32>,
+    #[serde(default)]
+    pub amplifier: Option<i32>,
+    #[serde(default)]
+    pub actions: Vec<PlayerAction>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BlockStepPosition {
     pub x: i32,

@@ -1,4 +1,3 @@
-use shadow_rs::ShadowBuilder;
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -6,11 +5,73 @@ use std::{
 };
 
 fn main() {
-    ShadowBuilder::builder().build().unwrap();
+    write_build_info().expect("failed to write build info");
 
     if std::env::var("TARGET").unwrap().contains("windows") {
         compile_qexed_config_to_mdx_resource().expect("无法编译 Windows 资源文件");
     }
+}
+
+fn write_build_info() -> io::Result<()> {
+    print_git_rerun_paths();
+    println!("cargo:rerun-if-changed=Cargo.toml");
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let commit_hash = run_command("git", &["rev-parse", "HEAD"])
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    let build_time = run_command("git", &["show", "-s", "--format=%cI", "HEAD"])
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    fs::write(
+        out_dir.join("build_info.rs"),
+        format!(
+            r#"
+pub mod build {{
+    pub const COMMIT_HASH: &str = "{}";
+    pub const BUILD_TIME: &str = "{}";
+}}
+
+pub const COMMIT_HASH: &str = build::COMMIT_HASH;
+pub const BUILD_TIME: &str = build::BUILD_TIME;
+"#,
+            commit_hash.trim(),
+            build_time.trim()
+        ),
+    )
+}
+
+fn print_git_rerun_paths() {
+    if let Ok(head_path) = run_command("git", &["rev-parse", "--git-path", "HEAD"]) {
+        println!("cargo:rerun-if-changed={}", head_path.trim());
+    }
+
+    if let Ok(head_ref) = run_command("git", &["symbolic-ref", "-q", "HEAD"]) {
+        let head_ref = head_ref.trim();
+        if !head_ref.is_empty() {
+            if let Ok(ref_path) = run_command("git", &["rev-parse", "--git-path", head_ref]) {
+                println!("cargo:rerun-if-changed={}", ref_path.trim());
+            }
+        }
+    }
+
+    if let Ok(packed_refs) = run_command("git", &["rev-parse", "--git-path", "packed-refs"]) {
+        println!("cargo:rerun-if-changed={}", packed_refs.trim());
+    }
+}
+
+fn run_command(cmd: &str, args: &[&str]) -> io::Result<String> {
+    let output = Command::new(cmd).args(args).output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("{cmd} failed with status {}", output.status),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn compile_qexed_config_to_mdx_resource() -> io::Result<()> {
