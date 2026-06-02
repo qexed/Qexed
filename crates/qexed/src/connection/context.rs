@@ -47,7 +47,6 @@ impl ServerContext {
             config.world.path.clone(),
             crate::world::WorldLightMode::from(&config.world.light),
             crate::world::WorldLightAlgorithm::from(&config.world.light_algorithm),
-            crate::world::light_gpu_from_config(&config.world.gpu),
             config.world.read_only,
             world_generator,
         )

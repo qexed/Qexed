@@ -1,50 +1,5 @@
 pub mod chunk_nbt;
 pub mod generator;
-#[cfg(feature = "gpu")]
-mod gpu_light;
-#[cfg(not(feature = "gpu"))]
-mod gpu_light {
-    use anyhow::{Result, bail};
-    use qexed_config::app::qexed::server::GpuDeviceSelector;
-
-    use super::LightDampeningNeighborhood;
-
-    #[derive(Debug)]
-    pub struct GpuLightEngine;
-
-    impl GpuLightEngine {
-        pub fn new(_selector: &GpuDeviceSelector) -> Result<Self> {
-            bail!("gpu feature is disabled at compile time")
-        }
-
-        pub fn fast_sky_light(
-            &self,
-            _neighbourhood: &LightDampeningNeighborhood,
-        ) -> Result<Vec<u8>> {
-            bail!("gpu feature is disabled at compile time")
-        }
-    }
-}
-#[cfg(feature = "gpu")]
-mod gpu_worldgen;
-#[cfg(not(feature = "gpu"))]
-mod gpu_worldgen {
-    use anyhow::{Result, bail};
-    use qexed_config::app::qexed::server::GpuDeviceSelector;
-
-    #[derive(Debug)]
-    pub(crate) struct GpuWorldgenEngine;
-
-    impl GpuWorldgenEngine {
-        pub(crate) fn new(_selector: &GpuDeviceSelector, _height: i32) -> Result<Self> {
-            bail!("gpu feature is disabled at compile time")
-        }
-
-        pub(crate) fn first_available_heights(&self, _solid_mask: &[u32]) -> Result<Vec<i32>> {
-            bail!("gpu feature is disabled at compile time")
-        }
-    }
-}
 mod light;
 mod manager;
 mod ore_pits;
@@ -60,7 +15,7 @@ pub(crate) use light::{
     light_update_data, replace_sky_light, section_count, sky_light_from_dampening,
     sky_light_from_neighbourhood, write_empty_section, write_fixed_long_array,
 };
-pub use light::{WorldLightAlgorithm, WorldLightMode, light_gpu_from_config};
+pub use light::{WorldLightAlgorithm, WorldLightMode};
 pub use manager::{PrecompiledChunkSettings, RuntimeEditRegion, WorldManager, WorldSession};
 pub use ore_pits::{OrePitBlockUpdate, OrePitManager};
 pub use rules::WorldRulesManager;
