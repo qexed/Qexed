@@ -153,6 +153,7 @@ impl crate::plugins::host::PathfindingService for ServerPathfindingService {
             start: query.start,
             goal: query.goal,
             max_nodes: query.max_nodes,
+            cached_only: false,
         })
         .map(|path| {
             path.into_iter()

@@ -95,17 +95,12 @@ pub extern "C" fn qexed_plugin_entity_ai_tick(ptr: i32, len: i32) -> i64 {
         .and_then(serde_json::Value::as_f64)
         .unwrap_or(0.05)
         .clamp(0.0, 0.5);
-    if let Some(iq) = payload
+    let _iq = payload
         .entity
         .ai_params
         .get("iq")
         .and_then(serde_json::Value::as_i64)
-    {
-        qexed_plugin_sdk::log(&format!(
-            "demo patrol ai params: key={}, iq={iq}",
-            payload.entity.key
-        ));
-    }
+        .unwrap_or_default();
 
     let direction = if payload.entity.position.x > patrol_max_x {
         -1.0

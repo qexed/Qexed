@@ -91,6 +91,7 @@ mod tests {
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),
             language: "zh-CN".to_string(),
+            displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
         };
         let plugins = crate::plugins::PluginManager::empty_for_tests();
         assert!(damage_item(
@@ -125,6 +126,7 @@ mod tests {
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),
             language: "zh-CN".to_string(),
+            displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
         };
         let plugins = crate::plugins::PluginManager::empty_for_tests();
         assert!(!damage_item(

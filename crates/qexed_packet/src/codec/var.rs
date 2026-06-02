@@ -22,6 +22,9 @@ impl PacketCodec for VarInt {
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
         let mut value = 0_i32;
         for position in 0..5 {
+            if !r.buf.has_remaining() {
+                return Err(DecodeError::IncompletePacket.into());
+            }
             let byte = r.buf.get_u8();
             value |= ((byte & 0x7F) as i32) << (7 * position);
             if (byte & 0x80) == 0 {
@@ -52,6 +55,9 @@ impl PacketCodec for VarLong {
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
         let mut value = 0_i64;
         for position in 0..10 {
+            if !r.buf.has_remaining() {
+                return Err(DecodeError::IncompletePacket.into());
+            }
             let byte = r.buf.get_u8();
             value |= ((byte & 0x7F) as i64) << (7 * position);
             if (byte & 0x80) == 0 {

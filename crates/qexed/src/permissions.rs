@@ -52,6 +52,16 @@ impl PermissionManager {
         self.check(profile.uuid, &permission).await
     }
 
+    pub fn can_run_console_command(&self, command: &str) -> bool {
+        crate::commands::permission_node(command)
+            .as_deref()
+            .is_none_or(|permission| self.check_console(permission))
+    }
+
+    fn check_console(&self, _permission: &str) -> bool {
+        true
+    }
+
     pub async fn check(&self, uuid: uuid::Uuid, permission: &str) -> Result<bool> {
         let snapshot = self.store.load_user(uuid).await?;
         let result = resolve_permission(&snapshot.nodes, permission);

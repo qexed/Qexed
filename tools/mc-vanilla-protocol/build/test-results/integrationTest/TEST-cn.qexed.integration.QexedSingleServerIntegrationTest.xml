@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="cn.qexed.integration.QexedSingleServerIntegrationTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-06-01T16:04:35.444Z" hostname="LAPTOP-JN7528PU" time="17.688">
+  <properties/>
+  <testcase name="threeThousandAiEntitiesDoNotBlockProtocolInteractions()" classname="cn.qexed.integration.QexedSingleServerIntegrationTest" time="17.678"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

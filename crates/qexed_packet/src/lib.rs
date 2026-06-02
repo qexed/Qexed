@@ -44,4 +44,6 @@ pub enum DecodeError {
     InvalidVarInt,
     #[error("Invalid VarLong - too many bytes")]
     InvalidVarLong,
+    #[error("Incomplete packet")]
+    IncompletePacket,
 }

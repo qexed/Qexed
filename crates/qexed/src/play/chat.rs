@@ -318,6 +318,10 @@ where
                         .player_by_uuid(profile.uuid)
                         .map(|player| player.language)
                         .unwrap_or_else(|| config.language.clone()),
+                    displayed_skin_parts: players
+                        .player_by_uuid(profile.uuid)
+                        .map(|player| player.displayed_skin_parts)
+                        .unwrap_or(crate::players::DEFAULT_DISPLAYED_SKIN_PARTS),
                 },
                 &name,
                 argument.as_str(),
@@ -675,6 +679,7 @@ fn command_source_player(
         dimension: dimension.to_string(),
         equipment: Vec::new(),
         language,
+        displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
     }
 }
 

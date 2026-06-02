@@ -74,6 +74,7 @@ fn empty_plugin_manager_allows_item_pickup() {
         dimension: "minecraft:overworld".to_string(),
         equipment: Vec::new(),
         language: "zh-CN".to_string(),
+        displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
     };
     let item = crate::entities::DroppedItemEntity {
         entity_id: 2,

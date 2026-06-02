@@ -27,10 +27,6 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
         &[]
     }
 
-    fn obsolete_root_paths() -> &'static [&'static str] {
-        &[]
-    }
-
     fn dynamic_split_config_files(
         _doc: &DocumentMut,
         _split_dir: &std::path::Path,
@@ -40,10 +36,6 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
 
     fn sensitive_fields() -> Vec<String> {
         Vec::new()
-    }
-
-    fn load_legacy_config(_base_dir: &std::path::Path) -> Result<Option<Self>> {
-        Ok(None)
     }
 
     fn load_or_create_default(
@@ -61,10 +53,6 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
         let split_dir = split_dir_for(&path)?;
 
         if !path.exists() {
-            if let Some(config) = Self::load_legacy_config(&base_dir)? {
-                config.save_to_config(None, None, Some(base_dir))?;
-                return Ok(config);
-            }
             return Self::create_new_config(&path, &secrets_path, &split_dir, None, None);
         }
 
@@ -89,7 +77,6 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
         );
         apply_sensitive_display_values(&mut doc, &effective_secrets, &sensitive_fields);
         write_secrets_doc(&secrets_path, &effective_secrets)?;
-        prune_obsolete_config_items(&mut doc, Self::obsolete_root_paths());
         remove_root_items_by_prefix(&mut doc, "auto_doc_");
         write_config_documents::<Self>(&doc, &path, &split_dir)?;
 
@@ -325,12 +312,6 @@ fn overlay_split_config_files<T: AppConfigTrait>(
 fn prune_split_config_items(doc: &mut DocumentMut, split_files: &[OwnedSplitConfigFile]) {
     for split_file in split_files {
         let _ = take_item_by_dotted_path(doc, &split_file.root_path);
-    }
-}
-
-fn prune_obsolete_config_items(doc: &mut DocumentMut, root_paths: &[&str]) {
-    for root_path in root_paths {
-        let _ = take_item_by_dotted_path(doc, root_path);
     }
 }
 

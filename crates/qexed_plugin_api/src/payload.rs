@@ -218,7 +218,7 @@ pub struct PlayerAttackQuery {
     pub position: PlayerPositionPayload,
     pub target_entity_id: i32,
     #[serde(default)]
-    pub target_uuid: String,
+    pub target_uuid: [u8; 16],
     #[serde(default)]
     pub target_type: String,
     pub weapon: ItemStackPayload,

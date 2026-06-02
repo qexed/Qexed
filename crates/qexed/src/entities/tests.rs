@@ -923,7 +923,7 @@ fn follow_nearest_player_ai_uses_path_around_wall() {
     let world = empty_world();
     for x in -1..=4 {
         for z in -2..=2 {
-            world.place_block(
+            world.set_runtime_block(
                 "minecraft:overworld",
                 qexed_packet::net_types::Position { x, y: 63, z },
                 stone_block_state(),
@@ -1270,6 +1270,211 @@ fn entity_ai_auto_jump_defaults_to_enabled_for_spawn_rules() {
     };
 
     assert!(rule.auto_jump);
+}
+
+#[test]
+fn entity_ai_handles_three_thousand_active_entities_with_bounded_tick_time() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    for x in -64..=64 {
+        for z in -64..=64 {
+            world.place_block(
+                "minecraft:overworld",
+                qexed_packet::net_types::Position { x, y: 63, z },
+                stone_block_state(),
+            );
+        }
+    }
+
+    let mut initial_positions = std::collections::HashMap::new();
+    for index in 0..3_000 {
+        let x = f64::from((index % 100) as i32 - 50) + 0.5;
+        let z = f64::from((index / 100) as i32 - 15) + 0.5;
+        let key = format!("stress_follower_{index}");
+        initial_positions.insert(key.clone(), (x, z));
+        manager
+            .spawn_local(EntitySpawnRequest {
+                key,
+                kind: ManagedEntityKind::Entity,
+                entity_type: "minecraft:zombie".to_string(),
+                entity_type_id_override: None,
+                dimension: "minecraft:overworld".to_string(),
+                position: EntityPosition {
+                    x,
+                    y: 64.0,
+                    z,
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    on_ground: true,
+                },
+                name: format!("Stress {index}"),
+                display_name: String::new(),
+                skin_textures: String::new(),
+                skin_signature: String::new(),
+                data: 0,
+                ai: "follow_nearest_player".to_string(),
+                ai_params: Default::default(),
+                auto_jump: true,
+                spawn_rule: "stress".to_string(),
+                custom_type: String::new(),
+                look_at_players: false,
+                main_hand_event: "interact".to_string(),
+                off_hand_event: "interact_off_hand".to_string(),
+                attack_event: "attack".to_string(),
+            })
+            .unwrap();
+    }
+
+    let rendering = qexed_config::app::qexed::server::EntityRendering {
+        default_distance: 128.0,
+        stack_threshold: usize::MAX,
+        ..Default::default()
+    };
+    let mut max_tick = std::time::Duration::ZERO;
+    let started = std::time::Instant::now();
+    for _ in 0..8 {
+        let tick_started = std::time::Instant::now();
+        manager
+            .tick_ai(
+                &players,
+                &world,
+                &crate::plugins::PluginManager::empty_for_tests(),
+                &rendering,
+                50,
+            )
+            .unwrap();
+        max_tick = max_tick.max(tick_started.elapsed());
+        std::thread::sleep(std::time::Duration::from_millis(55));
+    }
+    let total = started.elapsed();
+
+    assert!(
+        max_tick <= std::time::Duration::from_millis(120),
+        "3000 active entity AI tick exceeded budget: max={max_tick:?}, total={total:?}"
+    );
+
+    let moved = manager
+        .list_for_dimension("minecraft:overworld")
+        .into_iter()
+        .filter(|entity| {
+            let Some((initial_x, initial_z)) = initial_positions.get(&entity.key) else {
+                return false;
+            };
+            (entity.position.x - initial_x).abs() > 0.0001
+                || (entity.position.z - initial_z).abs() > 0.0001
+        })
+        .count();
+    assert!(moved > 0, "stress entities should continue ticking");
+}
+
+#[test]
+fn killed_entity_stays_until_death_animation_delay_expires() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Viewer".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let entity = manager
+        .spawn_local(EntitySpawnRequest {
+            key: "death_animation_target".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Target".to_string(),
+            display_name: "Target".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "none".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: "test".to_string(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    let result = manager
+        .damage_managed_entity(
+            &players,
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            entity.entity_id,
+            100.0,
+        )
+        .unwrap()
+        .expect("damage result");
+
+    assert!(result.killed);
+    assert!(manager.entity_by_runtime_id(entity.entity_id).is_some());
+
+    std::thread::sleep(std::time::Duration::from_millis(1_050));
+    manager
+        .tick_ai(
+            &players,
+            &empty_world(),
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+
+    assert!(manager.entity_by_runtime_id(entity.entity_id).is_none());
 }
 
 #[test]

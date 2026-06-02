@@ -6,6 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::{OnlinePlayer, PlayerEvent, PlayerSession, model::PlayerHandle};
 
+pub const DEFAULT_DISPLAYED_SKIN_PARTS: u8 = 0x7f;
+
 #[derive(Debug, Default)]
 pub struct PlayerManager {
     entity_ids: std::sync::Arc<qexed_entity::EntityIdAllocator>,
@@ -28,6 +30,25 @@ impl PlayerManager {
         equipment: Vec<Equipment>,
         language: String,
     ) -> PlayerSession {
+        self.join_with_skin_parts(
+            profile,
+            position,
+            dimension,
+            equipment,
+            language,
+            DEFAULT_DISPLAYED_SKIN_PARTS,
+        )
+    }
+
+    pub fn join_with_skin_parts(
+        &self,
+        profile: qexed_packet::net_types::GameProfile,
+        position: EntityPosition,
+        dimension: String,
+        equipment: Vec<Equipment>,
+        language: String,
+        displayed_skin_parts: u8,
+    ) -> PlayerSession {
         let entity_id = self.entity_ids.next();
         let player = OnlinePlayer {
             profile,
@@ -36,6 +57,7 @@ impl PlayerManager {
             dimension,
             equipment,
             language,
+            displayed_skin_parts,
         };
         let (sender, receiver) = mpsc::unbounded_channel();
 

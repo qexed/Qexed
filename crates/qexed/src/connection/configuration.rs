@@ -21,7 +21,7 @@ pub(super) async fn handle_configuration<R, W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     context: &ServerContext,
     login_host: &str,
-) -> anyhow::Result<Option<String>>
+) -> anyhow::Result<ClientConfiguration>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -71,7 +71,7 @@ where
 
     if let Some(code_of_conduct) = context
         .code_of_conducts
-        .select(configuration_start.client_locale.as_deref())
+        .select(configuration_start.client.locale.as_deref())
     {
         log::debug!("send code of conduct and wait for client acceptance");
         sink.send(to_client::configuration::code_of_conduct::CodeOfConduct {
@@ -91,7 +91,7 @@ where
     wait_for_finish_configuration(packets).await?;
     log::debug!("client finished configuration");
 
-    Ok(configuration_start.client_locale)
+    Ok(configuration_start.client)
 }
 
 async fn send_configured_resource_pack<R, W>(
@@ -251,7 +251,7 @@ async fn wait_for_known_packs<R>(
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let mut client_locale = None;
+    let mut client = ClientConfiguration::default();
     loop {
         let Some(mut payload) = packets.read_packet().await? else {
             anyhow::bail!("connection closed while waiting for known-pack selection");
@@ -261,14 +261,15 @@ where
         if packet_id == ServerboundSelectKnownPacks::ID {
             return Ok(ConfigurationStart {
                 selected_packs: decode_payload::<ServerboundSelectKnownPacks>(&mut payload)?,
-                client_locale,
+                client,
             });
         }
 
         if packet_id == ServerboundSettings::ID {
             let settings = decode_payload::<ServerboundSettings>(&mut payload)?;
             log::debug!("client locale: {}", settings.locale);
-            client_locale = Some(settings.locale);
+            client.locale = Some(settings.locale);
+            client.displayed_skin_parts = settings.displayed_skin_parts;
             continue;
         }
 
@@ -281,7 +282,22 @@ where
 #[derive(Debug)]
 struct ConfigurationStart {
     selected_packs: ServerboundSelectKnownPacks,
-    client_locale: Option<String>,
+    client: ClientConfiguration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ClientConfiguration {
+    pub locale: Option<String>,
+    pub displayed_skin_parts: u8,
+}
+
+impl Default for ClientConfiguration {
+    fn default() -> Self {
+        Self {
+            locale: None,
+            displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
+        }
+    }
 }
 
 async fn wait_for_code_of_conduct_accept<R>(

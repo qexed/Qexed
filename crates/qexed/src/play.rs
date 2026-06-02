@@ -84,7 +84,7 @@ use util::{
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 const CHUNK_SEND_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
-const ENTITY_SERVICE_TICK_INTERVAL: Duration = Duration::from_millis(50);
+const GAMEPLAY_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const MIN_PLAYER_DATA_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(10);
@@ -198,6 +198,7 @@ pub async fn initialize<R, W>(
     content_filter: &crate::content_filter::ContentFilter,
     profile: &qexed_packet::net_types::GameProfile,
     client_language: Option<String>,
+    displayed_skin_parts: u8,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()>
 where
@@ -235,12 +236,13 @@ where
     };
     let spawn_chunk_x = chunk_coord(player_position.x);
     let spawn_chunk_z = chunk_coord(player_position.z);
-    let session = players.join(
+    let session = players.join_with_skin_parts(
         profile.clone(),
         player_position,
         play_dimension.clone(),
         inventory.visible_equipment(),
         client_language.unwrap_or_else(|| config.language.clone()),
+        displayed_skin_parts,
     );
     let world_session = world.begin_session();
     plugins.emit_player_join(&session.player);
@@ -417,9 +419,9 @@ where
     let mut chunk_send_tick = tokio::time::interval(CHUNK_SEND_TICK_INTERVAL);
     chunk_send_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     chunk_send_tick.tick().await;
-    let mut entity_service_tick = tokio::time::interval(ENTITY_SERVICE_TICK_INTERVAL);
-    entity_service_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    entity_service_tick.tick().await;
+    let mut gameplay_tick = tokio::time::interval(GAMEPLAY_TICK_INTERVAL);
+    gameplay_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    gameplay_tick.tick().await;
     let mut survival_tick = tokio::time::interval(SURVIVAL_TICK_INTERVAL);
     survival_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     survival_tick.tick().await;
@@ -605,26 +607,7 @@ where
                     pending_dig = None;
                 }
             }
-            _ = entity_service_tick.tick() => {
-                let spawning = &config.server.entities.spawning;
-                entities.spawn_from_rules(
-                    players,
-                    world,
-                    &config.server.entity_rendering,
-                    spawning,
-                    &config.world.default_play_dimension(),
-                )?;
-                entities.tick_ai(
-                    players,
-                    world,
-                    plugins,
-                    &config.server.entity_rendering,
-                    spawning.ai_tick_interval_ms,
-                )?;
-                let ore_now = Instant::now();
-                evacuate_ore_pit_players(ore_pits, world, players, ore_now);
-                let ore_updates = ore_pits.tick(world, ore_now);
-                broadcast_ore_pit_updates(world, world_rules, players, ore_updates)?;
+            _ = gameplay_tick.tick() => {
                 if gameplay_runtime.should_tick_furnace(&config.server.gameplay) {
                     let mut outcome = gameplay_runtime
                         .furnace
@@ -2758,16 +2741,20 @@ fn command_suggestion_candidates(
     lobby_status: &lobby::LobbyStatusSnapshot,
 ) -> Vec<String> {
     let trimmed = text.trim_start_matches('/').trim_start();
+    let has_argument_separator = trimmed.chars().any(char::is_whitespace);
     let mut parts = trimmed.split_whitespace();
+    if trimmed.is_empty() || !has_argument_separator {
+        return crate::commands::command_names_for_suggestions()
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+    }
     match parts
         .next()
         .map(crate::commands::normalize_command_name)
         .as_deref()
     {
-        None | Some("") => crate::commands::command_names_for_suggestions()
-            .into_iter()
-            .map(ToString::to_string)
-            .collect(),
+        None | Some("") => Vec::new(),
         Some("teleport") => {
             let mut values = default_dimension_suggestions();
             values.extend(players.online_names());
@@ -5337,57 +5324,6 @@ where
     };
     players.broadcast_block_changed(actor, dimension, position, block_state, light_update);
     Ok(true)
-}
-
-fn broadcast_ore_pit_updates(
-    world: &WorldManager,
-    world_rules: &crate::world::WorldRulesManager,
-    players: &PlayerManager,
-    updates: Vec<crate::world::OrePitBlockUpdate>,
-) -> Result<()> {
-    if updates.is_empty() {
-        return Ok(());
-    }
-
-    let mut light_chunks = HashSet::new();
-    for update in updates {
-        let chunk_x = update.position.x.div_euclid(16);
-        let chunk_z = update.position.z.div_euclid(16);
-        let light_update = if world.dynamic_light_enabled()
-            && light_chunks.insert((update.dimension.clone(), chunk_x, chunk_z))
-            && matches!(
-                world_rules.snapshot(&update.dimension).light,
-                qexed_config::app::qexed::server::LightMode::Dynamic
-            ) {
-            let packet = world.light_update(&update.dimension, chunk_x, chunk_z);
-            Some(qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(packet)?)
-        } else {
-            None
-        };
-        players.broadcast_block_changed(
-            uuid::Uuid::nil(),
-            &update.dimension,
-            update.position,
-            update.block_state,
-            light_update,
-        );
-    }
-    Ok(())
-}
-
-fn evacuate_ore_pit_players(
-    ore_pits: &crate::world::OrePitManager,
-    world: &WorldManager,
-    players: &PlayerManager,
-    now: Instant,
-) {
-    for player in players.list_except(uuid::Uuid::nil()) {
-        if let Some(target) =
-            ore_pits.evacuation_target_for_player(world, &player.dimension, player.position, now)
-        {
-            players.teleport_player(player.profile.uuid, player.dimension, target);
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

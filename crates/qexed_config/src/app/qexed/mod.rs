@@ -61,10 +61,6 @@ impl Default for Qexed {
 impl qexed_config::tool::AppConfigTrait for Qexed {
     const PATH: &'static str = "/";
     const NAME: &'static str = "qexed";
-
-    fn obsolete_root_paths() -> &'static [&'static str] {
-        &["plugin_download", "server"]
-    }
 }
 
 #[cfg(test)]

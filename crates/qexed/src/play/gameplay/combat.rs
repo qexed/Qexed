@@ -63,7 +63,7 @@ where
         target_entity_id,
         target_uuid: target
             .as_ref()
-            .map(|entity| entity.uuid.to_string())
+            .map(|entity| *entity.uuid.as_bytes())
             .unwrap_or_default(),
         target_type,
         weapon: items::item_stack_payload(&held),
@@ -121,15 +121,37 @@ where
         }
         if fire_ticks > 0 {
             sink.send(EntityEvent {
-                entity_id: VarInt(target_entity_id),
+                entity_id: target_entity_id,
                 event_id: 37,
             })
             .await?;
+        }
+        if result.killed {
+            send_death_animation(sink, players, player, target_entity_id).await?;
         }
         outcome.killed = result.killed;
         outcome.damaged_held_item = true;
     }
     Ok(outcome)
+}
+
+async fn send_death_animation<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &crate::players::PlayerManager,
+    player: &crate::players::OnlinePlayer,
+    target_entity_id: i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let packet = EntityEvent {
+        entity_id: target_entity_id,
+        event_id: 3,
+    };
+    let bytes = crate::players::packet_bytes(packet.clone())?;
+    sink.send(packet).await?;
+    players.broadcast_packets_except(player.profile.uuid, vec![bytes]);
+    Ok(())
 }
 
 async fn send_damage_feedback<W>(

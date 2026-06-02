@@ -172,6 +172,24 @@ async fn local_engine_default_policy_allows_help_and_denies_teleport() {
 }
 
 #[tokio::test]
+async fn console_has_wildcard_permission() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = PermissionConfig::default();
+    config.engine = PermissionEngine::Local;
+    config.local_path = dir
+        .path()
+        .join("missing-permissions.toml")
+        .to_string_lossy()
+        .to_string();
+    config.allow_by_default = false;
+
+    let manager = PermissionManager::from_config(&config).await.unwrap();
+
+    assert!(manager.can_run_console_command("tp Steve Alex"));
+    assert!(manager.can_run_console_command("/any_plugin_command"));
+}
+
+#[tokio::test]
 async fn local_engine_empty_policy_file_uses_builtin_default_group() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("qexed_permissions.toml");

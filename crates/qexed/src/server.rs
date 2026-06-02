@@ -1,11 +1,12 @@
 use rust_i18n::t;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::connection::ServerContext;
 
 const CONNECTION_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const SERVICE_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub async fn run(context: ServerContext) -> anyhow::Result<()> {
     let tcp_server: TcpListener = qexed_tcp_connect::bind(&context.config.server.ip).await?;
@@ -16,6 +17,8 @@ pub async fn run(context: ServerContext) -> anyhow::Result<()> {
     let semaphore = std::sync::Arc::new(Semaphore::new(max_connections));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let mut connections = JoinSet::new();
+    let global_services =
+        crate::services::spawn_global_services(context.clone(), shutdown_rx.clone());
     crate::console::spawn(context.clone(), shutdown_tx.clone());
     crate::console::spawn_ctrl_c_shutdown(shutdown_tx.clone());
 
@@ -70,6 +73,7 @@ pub async fn run(context: ServerContext) -> anyhow::Result<()> {
     }
 
     drain_connections(&mut connections).await;
+    drain_global_services(global_services).await;
     context.world.flush_block_writes();
 
     Ok(())
@@ -102,6 +106,25 @@ async fn drain_connections(connections: &mut JoinSet<()>) {
                 if !err.is_cancelled() {
                     log::warn!("connection task failed after abort: {err:#}");
                 }
+            }
+        }
+    }
+}
+
+async fn drain_global_services(mut services: JoinHandle<()>) {
+    tokio::select! {
+        result = &mut services => {
+            if let Err(err) = result {
+                log::warn!("global service task failed during shutdown: {err:#}");
+            }
+        }
+        _ = tokio::time::sleep(SERVICE_SHUTDOWN_TIMEOUT) => {
+            log::warn!("aborting global service task after shutdown timeout");
+            services.abort();
+            if let Err(err) = services.await
+                && !err.is_cancelled()
+            {
+                log::warn!("global service task failed after abort: {err:#}");
             }
         }
     }

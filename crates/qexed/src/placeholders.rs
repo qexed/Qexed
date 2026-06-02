@@ -204,6 +204,7 @@ mod tests {
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),
             language: language.to_string(),
+            displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
         }
     }
 }

@@ -19,22 +19,34 @@ pub struct PathQuery<'a> {
     pub start: Position,
     pub goal: Position,
     pub max_nodes: usize,
+    pub cached_only: bool,
 }
 
 pub fn find_path(query: PathQuery<'_>) -> Option<Vec<Position>> {
     let max_nodes = query.max_nodes.max(1).min(DEFAULT_MAX_NODES);
-    let mut walkable = HashMap::new();
+    let mut walkable = HashMap::with_capacity(max_nodes);
     let start = PositionKey::from(&query.start);
     let goal = PositionKey::from(&query.goal);
-    if !is_walkable_cached(query.world, query.dimension, start, &mut walkable)
-        || !is_walkable_cached(query.world, query.dimension, goal, &mut walkable)
+    if !is_walkable_cached(
+        query.world,
+        query.dimension,
+        start,
+        query.cached_only,
+        &mut walkable,
+    ) || !is_walkable_cached(
+        query.world,
+        query.dimension,
+        goal,
+        query.cached_only,
+        &mut walkable,
+    )
     {
         return None;
     }
 
     let mut frontier = BinaryHeap::new();
-    let mut came_from = HashMap::<PositionKey, Option<PositionKey>>::new();
-    let mut cost_so_far = HashMap::<PositionKey, i32>::new();
+    let mut came_from = HashMap::<PositionKey, Option<PositionKey>>::with_capacity(max_nodes);
+    let mut cost_so_far = HashMap::<PositionKey, i32>::with_capacity(max_nodes);
     let mut sequence = 0u64;
     frontier.push(PathNode {
         position: start,
@@ -61,9 +73,16 @@ pub fn find_path(query: PathQuery<'_>) -> Option<Vec<Position>> {
             query.dimension,
             current.position,
             goal,
+            query.cached_only,
             &mut walkable,
         ) {
-            if !is_walkable_cached(query.world, query.dimension, next, &mut walkable) {
+            if !is_walkable_cached(
+                query.world,
+                query.dimension,
+                next,
+                query.cached_only,
+                &mut walkable,
+            ) {
                 continue;
             }
             let new_cost = current.cost + movement_cost(current.position, next);
@@ -114,17 +133,19 @@ fn neighbours_toward(
     dimension: &str,
     position: PositionKey,
     goal: PositionKey,
+    cached_only: bool,
     walkable: &mut HashMap<PositionKey, bool>,
 ) -> Vec<PositionKey> {
     let mut neighbours = Vec::with_capacity(20);
+    let (offsets, offset_len) = candidate_y_offsets(position, goal);
     for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        for dy in candidate_y_offsets(position, goal) {
+        for dy in offsets[..offset_len].iter().copied() {
             let candidate = PositionKey {
                 x: position.x + dx,
                 y: position.y + dy,
                 z: position.z + dz,
             };
-            if is_walkable_cached(world, dimension, candidate, walkable) {
+            if is_walkable_cached(world, dimension, candidate, cached_only, walkable) {
                 neighbours.push(candidate);
                 break;
             }
@@ -142,40 +163,44 @@ fn movement_cost(from: PositionKey, to: PositionKey) -> i32 {
     10 + (to.y - from.y).abs() * 4
 }
 
-fn candidate_y_offsets(position: PositionKey, goal: PositionKey) -> Vec<i32> {
-    let mut offsets = Vec::with_capacity(usize::try_from(2 + MAX_DROP_BLOCKS).unwrap_or(6));
+fn candidate_y_offsets(position: PositionKey, goal: PositionKey) -> ([i32; 5], usize) {
+    let mut offsets = [0; 5];
+    let mut len = 0usize;
     let preferred_vertical = (goal.y - position.y).clamp(-MAX_DROP_BLOCKS, MAX_STEP_UP_BLOCKS);
-    offsets.push(preferred_vertical);
+    push_unique_offset(&mut offsets, &mut len, preferred_vertical);
     for offset in 0..=MAX_STEP_UP_BLOCKS {
-        push_unique_offset(&mut offsets, offset);
+        push_unique_offset(&mut offsets, &mut len, offset);
     }
     for offset in 1..=MAX_DROP_BLOCKS {
-        push_unique_offset(&mut offsets, -offset);
+        push_unique_offset(&mut offsets, &mut len, -offset);
     }
-    offsets
+    (offsets, len)
 }
 
-fn push_unique_offset(offsets: &mut Vec<i32>, offset: i32) {
-    if !offsets.contains(&offset) {
-        offsets.push(offset);
+fn push_unique_offset(offsets: &mut [i32; 5], len: &mut usize, offset: i32) {
+    if offsets[..*len].contains(&offset) || *len >= offsets.len() {
+        return;
     }
+    offsets[*len] = offset;
+    *len += 1;
 }
 
 fn is_walkable_cached(
     world: &WorldManager,
     dimension: &str,
     position: PositionKey,
+    cached_only: bool,
     cache: &mut HashMap<PositionKey, bool>,
 ) -> bool {
     if let Some(walkable) = cache.get(&position) {
         return *walkable;
     }
-    let walkable = is_walkable(world, dimension, &position.position());
+    let walkable = is_walkable(world, dimension, &position.position(), cached_only);
     cache.insert(position, walkable);
     walkable
 }
 
-fn is_walkable(world: &WorldManager, dimension: &str, feet: &Position) -> bool {
+fn is_walkable(world: &WorldManager, dimension: &str, feet: &Position, cached_only: bool) -> bool {
     let head = Position {
         x: feet.x,
         y: feet.y + 1,
@@ -187,9 +212,9 @@ fn is_walkable(world: &WorldManager, dimension: &str, feet: &Position) -> bool {
         z: feet.z,
     };
 
-    let feet_shape = collision_shape_at(world, dimension, feet);
-    let head_shape = collision_shape_at(world, dimension, &head);
-    let below_shape = collision_shape_at(world, dimension, &below);
+    let feet_shape = collision_shape_at(world, dimension, feet, cached_only);
+    let head_shape = collision_shape_at(world, dimension, &head, cached_only);
+    let below_shape = collision_shape_at(world, dimension, &below, cached_only);
 
     let feet_clear = feet_shape.is_none_or(|shape| shape.max_y <= STEPABLE_COLLISION_HEIGHT);
     let head_clear = head_shape.is_none();
@@ -202,10 +227,14 @@ fn collision_shape_at(
     world: &WorldManager,
     dimension: &str,
     position: &Position,
+    cached_only: bool,
 ) -> Option<crate::inventory::BlockCollisionShape> {
-    world
-        .block_state_at(dimension, position)
-        .and_then(crate::inventory::block_collision_shape)
+    let block_state = if cached_only {
+        world.cached_block_state_at(dimension, position)
+    } else {
+        world.block_state_at(dimension, position)
+    };
+    block_state.and_then(crate::inventory::block_collision_shape)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -305,6 +334,7 @@ mod tests {
             start: Position { x: 0, y: 64, z: 0 },
             goal: Position { x: 4, y: 64, z: 0 },
             max_nodes: 256,
+            cached_only: false,
         })
         .expect("path");
 
@@ -337,6 +367,7 @@ mod tests {
             start: Position { x: 0, y: 64, z: 0 },
             goal: Position { x: 1, y: 65, z: 0 },
             max_nodes: 64,
+            cached_only: false,
         })
         .expect("path");
 

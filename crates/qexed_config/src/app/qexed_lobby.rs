@@ -18,8 +18,4 @@ impl Default for QexedLobby {
 impl qexed_config::tool::AppConfigTrait for QexedLobby {
     const PATH: &'static str = "/";
     const NAME: &'static str = "qexed_lobby";
-
-    fn obsolete_root_paths() -> &'static [&'static str] {
-        &["lobby.servers"]
-    }
 }

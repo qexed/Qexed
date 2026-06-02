@@ -54,6 +54,7 @@ pub struct OnlinePlayer {
     pub dimension: String,
     pub equipment: Vec<Equipment>,
     pub language: String,
+    pub displayed_skin_parts: u8,
 }
 
 #[derive(Debug)]

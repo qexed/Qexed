@@ -21,6 +21,7 @@ mod registry_sync;
 mod resource_pack;
 mod secure_chat;
 mod server;
+mod services;
 mod status;
 mod structures;
 mod world;

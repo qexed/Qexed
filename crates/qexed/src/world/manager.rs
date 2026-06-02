@@ -6,7 +6,7 @@ use qexed_protocol::to_client::play::{
     map_chunk::{Light, MapChunk},
 };
 use std::sync::{
-    Arc, Mutex,
+    Arc, Mutex, RwLock,
     atomic::{AtomicU64, AtomicUsize, Ordering},
     mpsc,
 };
@@ -36,7 +36,7 @@ pub struct WorldManager {
         Arc<Mutex<std::collections::HashMap<ChunkKey, std::collections::BTreeSet<i32>>>>,
     precompiled_chunks: PrecompiledChunkSettings,
     chunk_light_dampening: Arc<Mutex<std::collections::HashMap<ChunkKey, Vec<u8>>>>,
-    region_locks: Arc<Mutex<std::collections::HashMap<RegionKey, Arc<Mutex<()>>>>>,
+    region_locks: Arc<Mutex<std::collections::HashMap<RegionKey, Arc<RwLock<()>>>>>,
     block_write_queue: WorldWriteQueue,
     block_write_revision: Arc<AtomicU64>,
     active_sessions: Arc<AtomicUsize>,
@@ -908,7 +908,7 @@ impl WorldManager {
         chunk_z: i32,
     ) -> Result<Option<region::ChunkData>> {
         if !self.should_cache_full_region_chunks() {
-            return self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+            return self.with_region_read_lock(dimension, chunk_x, chunk_z, || {
                 self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
             });
         }
@@ -923,7 +923,7 @@ impl WorldManager {
             return Ok(Some(chunk));
         }
 
-        let loaded = self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+        let loaded = self.with_region_read_lock(dimension, chunk_x, chunk_z, || {
             self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
         })?;
         if let Some(chunk) = loaded.as_ref() {
@@ -939,7 +939,7 @@ impl WorldManager {
         chunk_z: i32,
     ) -> Result<Option<region::ChunkData>> {
         if self.precompiled_chunk_packets_enabled() {
-            return self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+            return self.with_region_read_lock(dimension, chunk_x, chunk_z, || {
                 self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)
             });
         }
@@ -1003,7 +1003,7 @@ impl WorldManager {
             anyhow::bail!("world is read-only");
         }
 
-        self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+        self.with_region_write_lock(dimension, chunk_x, chunk_z, || {
             self.write_region_chunk_unlocked(dimension, chunk_x, chunk_z, chunk)
         })
     }
@@ -1431,6 +1431,57 @@ impl WorldManager {
         block_state
     }
 
+    pub(crate) fn cached_block_state_at(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<i32> {
+        if let Some(block_state) = self
+            .placed_blocks
+            .lock()
+            .expect("world block store poisoned")
+            .get(&BlockKey::new(dimension, position))
+            .map(|pending| pending.block_state)
+        {
+            return Some(block_state);
+        }
+
+        let block_key = BlockKey::new(dimension, position);
+        if let Some(block_state) = self
+            .block_state_cache
+            .lock()
+            .expect("world block state cache poisoned")
+            .get(&block_key)
+        {
+            return Some(block_state);
+        }
+
+        let chunk_key = ChunkKey::new(
+            dimension,
+            position.x.div_euclid(16),
+            position.z.div_euclid(16),
+        );
+        let chunk = self
+            .region_chunk_cache
+            .lock()
+            .expect("world region chunk cache poisoned")
+            .get(&chunk_key)?;
+        let block_state = match chunk_nbt::block_state_at_from_region(&chunk, position) {
+            Ok(block_state) => block_state,
+            Err(err) => {
+                log::debug!(
+                    "failed to read cached block state: dimension={dimension}, position=({}, {}, {}), error={err:#}",
+                    position.x,
+                    position.y,
+                    position.z
+                );
+                None
+            }
+        }?;
+        self.remember_block_state(block_key, block_state);
+        Some(block_state)
+    }
+
     pub fn placed_block_updates(
         &self,
         dimension: &str,
@@ -1656,7 +1707,7 @@ impl WorldManager {
                 self.generator.region_chunk(dimension, chunk_x, chunk_z)?
             };
 
-        self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+        self.with_region_write_lock(dimension, chunk_x, chunk_z, || {
             let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
             let chunk = chunk_nbt::set_block_state_in_region(
                 chunk_x,
@@ -1697,7 +1748,7 @@ impl WorldManager {
                 } else {
                     self.generator.region_chunk(dimension, chunk_x, chunk_z)?
                 };
-            self.with_region_io_lock(dimension, chunk_x, chunk_z, || {
+            self.with_region_write_lock(dimension, chunk_x, chunk_z, || {
                 let existing = self.load_region_chunk_unlocked(dimension, chunk_x, chunk_z)?;
                 let chunk = chunk_nbt::set_block_states_in_region(
                     chunk_x,
@@ -1712,26 +1763,40 @@ impl WorldManager {
         Ok(())
     }
 
-    fn with_region_io_lock<T>(
+    fn with_region_read_lock<T>(
         &self,
         dimension: &str,
         chunk_x: i32,
         chunk_z: i32,
         action: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
-        let key = RegionKey::from_chunk(dimension, chunk_x, chunk_z);
-        let lock = {
-            let mut locks = self
-                .region_locks
-                .lock()
-                .expect("world region locks poisoned");
-            locks
-                .entry(key)
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone()
-        };
-        let _guard = lock.lock().expect("world region lock poisoned");
+        let lock = self.region_lock(dimension, chunk_x, chunk_z);
+        let _guard = lock.read().expect("world region read lock poisoned");
         action()
+    }
+
+    fn with_region_write_lock<T>(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let lock = self.region_lock(dimension, chunk_x, chunk_z);
+        let _guard = lock.write().expect("world region write lock poisoned");
+        action()
+    }
+
+    fn region_lock(&self, dimension: &str, chunk_x: i32, chunk_z: i32) -> Arc<RwLock<()>> {
+        let key = RegionKey::from_chunk(dimension, chunk_x, chunk_z);
+        let mut locks = self
+            .region_locks
+            .lock()
+            .expect("world region locks poisoned");
+        locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .clone()
     }
 
     pub(crate) fn remember_chunk_light_dampening(

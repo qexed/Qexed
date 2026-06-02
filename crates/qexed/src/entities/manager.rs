@@ -33,16 +33,24 @@ const ENTITY_HORIZONTAL_FRICTION: f64 = 0.72;
 const ENTITY_MAX_HORIZONTAL_SPEED: f64 = 0.28;
 const ENTITY_MAX_YAW_TURN_PER_TICK: f32 = 18.0;
 const ENTITY_MAX_PITCH_TURN_PER_TICK: f32 = 12.0;
-const COLLISION_BLOCK_CACHE_LIMIT: usize = 16_384;
-const COLLISION_AABB_CACHE_LIMIT: usize = 8_192;
+const COLLISION_BLOCK_CACHE_LIMIT: usize = 262_144;
+const COLLISION_AABB_CACHE_LIMIT: usize = 65_536;
 const ENTITY_TARGET_RESELECT_INTERVAL: Duration = Duration::from_millis(750);
 const ENTITY_TARGET_RESELECT_JITTER_MS: u64 = 350;
 const ENTITY_TARGET_SWITCH_ADVANTAGE: f64 = 0.65;
-const ENTITY_TARGET_RESELECTS_PER_TICK: usize = 16;
-const ENTITY_PATH_RECALC_INTERVAL: Duration = Duration::from_millis(650);
-const ENTITY_PATH_RECALCS_PER_TICK: usize = 8;
+const ENTITY_TARGET_RESELECTS_PER_TICK: usize = 4;
+const ENTITY_PATH_RECALC_INTERVAL: Duration = Duration::from_millis(1_500);
+const ENTITY_PATH_RECALCS_PER_TICK: usize = 2;
 const ENTITY_PATH_MAX_NODES: usize = 512;
 const ENTITY_PATH_WAYPOINT_REACHED: f64 = 0.65;
+const ENTITY_PATH_TARGET_REPLAN_DISTANCE_SQ: i32 = 16;
+const ENTITY_DIRECT_FOLLOW_DISTANCE: f64 = 10.0;
+const ENTITY_DIRECT_FOLLOW_SAMPLES_PER_BLOCK: f64 = 2.0;
+const ENTITY_DEATH_REMOVE_DELAY: Duration = Duration::from_millis(1_000);
+const ENTITY_AI_MAX_ENTITIES_PER_TICK: usize = 256;
+const ENTITY_PLUGIN_AI_DEFAULT_INTERVAL: Duration = Duration::from_millis(500);
+const ENTITY_PLUGIN_AI_CALLS_PER_TICK: usize = 16;
+const ENTITY_PLUGIN_AI_NEARBY_RANGE: f64 = 64.0;
 
 #[derive(Debug)]
 pub struct EntityManager {
@@ -57,9 +65,12 @@ pub struct EntityManager {
     last_rule_spawn_tick: Mutex<HashMap<String, Instant>>,
     entity_motion: Mutex<HashMap<String, EntityMotion>>,
     entity_health: Mutex<HashMap<String, f32>>,
+    entity_deaths: Mutex<HashMap<String, Instant>>,
     entity_targets: Mutex<HashMap<String, EntityTargetMemory>>,
     entity_paths: Mutex<HashMap<String, EntityPathMemory>>,
+    entity_plugin_ai: Mutex<HashMap<String, EntityPluginAiMemory>>,
     collision_cache: Mutex<CollisionCache>,
+    ai_cursor: Mutex<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +103,12 @@ struct EntityPathMemory {
     calculated_at: Instant,
     waypoints: Vec<BlockPosition>,
     cursor: usize,
+}
+
+#[derive(Debug, Clone)]
+struct EntityPluginAiMemory {
+    last_tick: Instant,
+    operations: Vec<crate::plugins::EntityAiOperation>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -268,9 +285,12 @@ impl EntityManager {
             last_rule_spawn_tick: Mutex::new(HashMap::new()),
             entity_motion: Mutex::new(HashMap::new()),
             entity_health: Mutex::new(HashMap::new()),
+            entity_deaths: Mutex::new(HashMap::new()),
             entity_targets: Mutex::new(HashMap::new()),
             entity_paths: Mutex::new(HashMap::new()),
+            entity_plugin_ai: Mutex::new(HashMap::new()),
             collision_cache: Mutex::new(CollisionCache::default()),
+            ai_cursor: Mutex::new(0),
         };
 
         if !config.enable {
@@ -472,7 +492,13 @@ impl EntityManager {
         rendering: &qexed_config::app::qexed::server::EntityRendering,
         entity: &ManagedEntity,
     ) -> Result<()> {
-        self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
+        let packets = entity.spawn_packets()?;
+        for player in players.list_except(uuid::Uuid::nil()) {
+            if entity_visible_to_player(entity, &player, rendering) {
+                players.send_packets_to(player.profile.uuid, packets.clone());
+            }
+        }
+        Ok(())
     }
 
     pub fn refresh_managed_entities_for_viewers(
@@ -504,7 +530,13 @@ impl EntityManager {
         rendering: &qexed_config::app::qexed::server::EntityRendering,
         entity: &ManagedEntity,
     ) -> Result<()> {
-        self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
+        let packets = entity.position_packets()?;
+        for player in players.list_except(uuid::Uuid::nil()) {
+            if entity_visible_to_player(entity, &player, rendering) {
+                players.send_packets_to(player.profile.uuid, packets.clone());
+            }
+        }
+        Ok(())
     }
 
     pub fn update_look_at_npcs(
@@ -591,11 +623,11 @@ impl EntityManager {
     ) -> Result<()> {
         let remove_packets = entity.remove_packets()?;
         for player in players.list_except(uuid::Uuid::nil()) {
-            if player.dimension == entity.dimension {
+            if entity_visible_to_player(entity, &player, rendering) {
                 players.send_packets_to(player.profile.uuid, remove_packets.clone());
             }
         }
-        self.refresh_managed_entities_for_viewers(players, rendering, &[entity.dimension.clone()])
+        Ok(())
     }
 
     #[cfg(test)]
@@ -825,6 +857,10 @@ impl EntityManager {
             .lock()
             .expect("entity health state poisoned")
             .remove(&entity.key);
+        self.entity_deaths
+            .lock()
+            .expect("entity death state poisoned")
+            .remove(&entity.key);
         self.entity_targets
             .lock()
             .expect("entity target state poisoned")
@@ -833,13 +869,17 @@ impl EntityManager {
             .lock()
             .expect("entity path state poisoned")
             .remove(&entity.key);
+        self.entity_plugin_ai
+            .lock()
+            .expect("entity plugin ai state poisoned")
+            .remove(&entity.key);
         Ok(entity)
     }
 
     pub fn damage_managed_entity(
         &self,
-        players: &crate::players::PlayerManager,
-        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        _players: &crate::players::PlayerManager,
+        _rendering: &qexed_config::app::qexed::server::EntityRendering,
         entity_id: i32,
         damage: f32,
     ) -> Result<Option<EntityDamageResult>> {
@@ -850,6 +890,14 @@ impl EntityManager {
             return Ok(None);
         };
         if entity.kind != ManagedEntityKind::Entity {
+            return Ok(None);
+        }
+        if self
+            .entity_deaths
+            .lock()
+            .expect("entity death state poisoned")
+            .contains_key(&entity.key)
+        {
             return Ok(None);
         }
 
@@ -863,14 +911,18 @@ impl EntityManager {
         *current = (*current - damage).max(0.0);
         let killed = *current <= 0.0;
         if killed {
-            health.remove(&entity.key);
+            *current = 0.0;
         }
         drop(health);
 
         if killed {
-            if let Ok(removed) = self.remove_local(&entity.key) {
-                self.send_remove_to_rendered_viewers(players, rendering, &removed)?;
-            }
+            self.entity_deaths
+                .lock()
+                .expect("entity death state poisoned")
+                .insert(
+                    entity.key.clone(),
+                    Instant::now() + ENTITY_DEATH_REMOVE_DELAY,
+                );
         }
 
         Ok(Some(EntityDamageResult { entity, killed }))
@@ -1151,6 +1203,13 @@ impl EntityManager {
         if !self.should_run_ai_tick(tick_ms) {
             return Ok(());
         }
+        let now = Instant::now();
+        for key in self.expired_death_keys(now) {
+            if let Ok(entity) = self.remove_local(&key) {
+                self.send_remove_to_rendered_viewers(players, rendering, &entity)?;
+            }
+        }
+
         let viewers = players.list_except(uuid::Uuid::nil());
         if viewers.is_empty() {
             return Ok(());
@@ -1160,15 +1219,14 @@ impl EntityManager {
         let mut removes = Vec::new();
         let mut tick_updates = Vec::new();
         let mut motion_updates = Vec::new();
-        let now = Instant::now();
-        let snapshot = self
-            .entities
+        let dying_keys = self
+            .entity_deaths
             .lock()
-            .expect("entity manager poisoned")
-            .iter()
-            .filter(|entity| entity.kind == ManagedEntityKind::Entity)
+            .expect("entity death state poisoned")
+            .keys()
             .cloned()
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
+        let snapshot = self.active_ai_snapshot(&viewers, rendering, &dying_keys);
         {
             let mut motion = self
                 .entity_motion
@@ -1185,6 +1243,11 @@ impl EntityManager {
                 .lock()
                 .expect("entity path state poisoned")
                 .clone();
+            let mut plugin_ai_memory = self
+                .entity_plugin_ai
+                .lock()
+                .expect("entity plugin ai state poisoned")
+                .clone();
             let mut collision_cache = std::mem::take(
                 &mut *self
                     .collision_cache
@@ -1194,6 +1257,7 @@ impl EntityManager {
             collision_cache.sync_world_epoch(world.cache_epoch());
             let mut target_reselects = 0usize;
             let mut path_recalcs = 0usize;
+            let mut plugin_ai_calls = 0usize;
             for mut entity in snapshot {
                 let previous = entity.position;
                 let mut movement = EntityMovement::default();
@@ -1228,59 +1292,35 @@ impl EntityManager {
                             &mut target_reselects,
                             &mut path_recalcs,
                             world,
+                            &mut collision_cache,
                             now,
                         );
                     }
                     EntityAiKind::Plugin => {
                         target_memory.remove(&entity.key);
                         path_memory.remove(&entity.key);
-                        for operation in plugins
-                            .handle_entity_ai_tick(entity_ai_query(&entity, &viewers, tick_ms))
-                        {
-                            match operation {
-                                crate::plugins::EntityAiOperation::MoveDelta {
-                                    x,
-                                    y,
-                                    z,
-                                    yaw,
-                                    pitch,
-                                } => {
-                                    movement.x += finite_or_zero(x).clamp(-4.0, 4.0);
-                                    movement.y += finite_or_zero(y).clamp(-4.0, 4.0);
-                                    movement.z += finite_or_zero(z).clamp(-4.0, 4.0);
-                                    if let Some(yaw) = yaw.filter(|value| value.is_finite()) {
-                                        entity.position.yaw = yaw;
-                                    }
-                                    if let Some(pitch) = pitch.filter(|value| value.is_finite()) {
-                                        entity.position.pitch = pitch;
-                                    }
-                                }
-                                crate::plugins::EntityAiOperation::LookAt { x, y, z } => {
-                                    if x.is_finite() && y.is_finite() && z.is_finite() {
-                                        let target = EntityPosition {
-                                            x,
-                                            y,
-                                            z,
-                                            yaw: 0.0,
-                                            pitch: 0.0,
-                                            on_ground: true,
-                                        };
-                                        let (yaw, pitch) = look_rotation(entity.position, target);
-                                        entity.position.yaw = yaw;
-                                        entity.position.pitch = pitch;
-                                    }
-                                }
-                                crate::plugins::EntityAiOperation::Remove => {
-                                    remove = true;
-                                }
-                            }
-                        }
+                        let operations = plugin_ai_operations(
+                            &entity,
+                            &viewers,
+                            tick_ms,
+                            plugins,
+                            &mut plugin_ai_memory,
+                            &mut plugin_ai_calls,
+                            now,
+                        );
+                        apply_plugin_ai_operations(
+                            &mut entity,
+                            &mut movement,
+                            &mut remove,
+                            operations.as_slice(),
+                        );
                     }
                 }
 
                 if remove {
                     target_memory.remove(&entity.key);
                     path_memory.remove(&entity.key);
+                    plugin_ai_memory.remove(&entity.key);
                     removes.push(entity.key.clone());
                     continue;
                 }
@@ -1327,46 +1367,47 @@ impl EntityManager {
                 .entity_paths
                 .lock()
                 .expect("entity path state poisoned") = path_memory;
+            *self
+                .entity_plugin_ai
+                .lock()
+                .expect("entity plugin ai state poisoned") = plugin_ai_memory;
         }
 
-        if !tick_updates.is_empty() {
+        if !tick_updates.is_empty() || !motion_updates.is_empty() {
             let mut entities = self.entities.lock().expect("entity manager poisoned");
             let mut motion = self
                 .entity_motion
                 .lock()
                 .expect("entity motion state poisoned");
+            let entity_index = entities
+                .iter()
+                .enumerate()
+                .map(|(index, entity)| (entity.key.clone(), index))
+                .collect::<HashMap<_, _>>();
             for tick_update in tick_updates {
-                let Some(entity) = entities
-                    .iter_mut()
-                    .find(|entity| entity.key == tick_update.key)
-                else {
+                let Some(index) = entity_index.get(&tick_update.key).copied() else {
                     continue;
                 };
+                let entity = &mut entities[index];
                 if entity.kind != ManagedEntityKind::Entity
                     || position_changed(entity.position, tick_update.previous)
                 {
                     continue;
                 }
                 entity.position = tick_update.next;
-                if let Some(next_motion) = tick_update.motion {
+                let current_motion = if let Some(next_motion) = tick_update.motion {
                     motion.insert(entity.key.clone(), next_motion);
-                }
-                updates.push(entity.clone());
+                    next_motion
+                } else {
+                    motion.get(&entity.key).copied().unwrap_or_default()
+                };
+                updates.push((entity.clone(), current_motion));
             }
-        }
-        if !motion_updates.is_empty() {
-            let entities = self.entities.lock().expect("entity manager poisoned");
-            let mut motion = self
-                .entity_motion
-                .lock()
-                .expect("entity motion state poisoned");
             for motion_update in motion_updates {
-                let Some(entity) = entities
-                    .iter()
-                    .find(|entity| entity.key == motion_update.key)
-                else {
+                let Some(index) = entity_index.get(&motion_update.key).copied() else {
                     continue;
                 };
+                let entity = &entities[index];
                 if entity.kind == ManagedEntityKind::Entity
                     && !position_changed(entity.position, motion_update.previous)
                 {
@@ -1375,16 +1416,7 @@ impl EntityManager {
             }
         }
 
-        let motion_snapshot = self
-            .entity_motion
-            .lock()
-            .expect("entity motion state poisoned")
-            .clone();
-        for entity in updates {
-            let motion = motion_snapshot
-                .get(&entity.key)
-                .copied()
-                .unwrap_or_default();
+        for (entity, motion) in updates {
             let packets = entity.position_packets_with_velocity(
                 motion.velocity_x,
                 motion.velocity_y,
@@ -1410,6 +1442,60 @@ impl EntityManager {
         }
 
         Ok(())
+    }
+
+    fn active_ai_snapshot(
+        &self,
+        viewers: &[crate::players::OnlinePlayer],
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        dying_keys: &HashSet<String>,
+    ) -> Vec<ManagedEntity> {
+        let entities = self.entities.lock().expect("entity manager poisoned");
+        let active_indexes = entities
+            .iter()
+            .enumerate()
+            .filter(|(_, entity)| entity.kind == ManagedEntityKind::Entity)
+            .filter(|(_, entity)| !dying_keys.contains(&entity.key))
+            .filter(|(_, entity)| entity_has_active_viewer(entity, viewers, rendering))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+
+        if active_indexes.is_empty() {
+            return Vec::new();
+        }
+        if active_indexes.len() <= ENTITY_AI_MAX_ENTITIES_PER_TICK {
+            let mut cursor = self.ai_cursor.lock().expect("entity ai cursor poisoned");
+            *cursor = 0;
+            return active_indexes
+                .into_iter()
+                .map(|index| entities[index].clone())
+                .collect();
+        }
+
+        let quota = ENTITY_AI_MAX_ENTITIES_PER_TICK.min(active_indexes.len());
+        let mut cursor = self.ai_cursor.lock().expect("entity ai cursor poisoned");
+        let start = *cursor % active_indexes.len();
+        let snapshot = (0..quota)
+            .map(|offset| active_indexes[(start + offset) % active_indexes.len()])
+            .map(|index| entities[index].clone())
+            .collect::<Vec<_>>();
+        *cursor = (start + quota) % active_indexes.len();
+        snapshot
+    }
+
+    fn expired_death_keys(&self, now: Instant) -> Vec<String> {
+        let mut deaths = self
+            .entity_deaths
+            .lock()
+            .expect("entity death state poisoned");
+        let expired = deaths
+            .iter()
+            .filter_map(|(key, remove_at)| (*remove_at <= now).then(|| key.clone()))
+            .collect::<Vec<_>>();
+        for key in &expired {
+            deaths.remove(key);
+        }
+        expired
     }
 
     fn custom_registration(&self, id: &str) -> Option<CustomEntityRegistration> {
@@ -1566,7 +1652,7 @@ impl CollisionCache {
         }
         let position = BlockPosition { x, y, z };
         let shape = world
-            .block_state_at(dimension, &position)
+            .cached_block_state_at(dimension, &position)
             .and_then(crate::inventory::block_collision_shape);
         if self.blocks.len() >= COLLISION_BLOCK_CACHE_LIMIT {
             self.blocks.clear();
@@ -1866,6 +1952,7 @@ mod tests {
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),
             language: "en_us".to_string(),
+            displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
         }
     }
 }
@@ -2092,6 +2179,7 @@ fn apply_follow_nearest_player(
     target_reselects: &mut usize,
     path_recalcs: &mut usize,
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     now: Instant,
 ) -> EntityMovement {
     const FOLLOW_RANGE: f64 = 32.0;
@@ -2122,7 +2210,15 @@ fn apply_follow_nearest_player(
         return EntityMovement::default();
     }
 
-    let move_target = follow_move_target(entity, target, world, path_memory, path_recalcs, now);
+    let move_target = follow_move_target(
+        entity,
+        target,
+        world,
+        collision_cache,
+        path_memory,
+        path_recalcs,
+        now,
+    );
     let dx = move_target.x - entity.position.x;
     let dz = move_target.z - entity.position.z;
     let horizontal = (dx * dx + dz * dz).sqrt();
@@ -2141,17 +2237,24 @@ fn follow_move_target(
     entity: &ManagedEntity,
     target: &crate::players::OnlinePlayer,
     world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
     path_memory: &mut HashMap<String, EntityPathMemory>,
     path_recalcs: &mut usize,
     now: Instant,
 ) -> EntityPosition {
+    if let Some(position) = direct_follow_move_target(entity, target, world, collision_cache) {
+        path_memory.remove(&entity.key);
+        return position;
+    }
+
     let target_block = position_block(target.position);
     let entity_block = position_block(entity.position);
     let should_recalculate = path_memory.get(&entity.key).is_none_or(|path| {
         path.target_player_id != target.profile.uuid
-            || path.target_block != target_block
-            || now.duration_since(path.calculated_at) >= ENTITY_PATH_RECALC_INTERVAL
             || path.cursor >= path.waypoints.len()
+            || (now.duration_since(path.calculated_at) >= ENTITY_PATH_RECALC_INTERVAL
+                && block_horizontal_distance_sq(&path.target_block, &target_block)
+                    >= ENTITY_PATH_TARGET_REPLAN_DISTANCE_SQ)
     });
 
     if should_recalculate && *path_recalcs < ENTITY_PATH_RECALCS_PER_TICK {
@@ -2163,6 +2266,7 @@ fn follow_move_target(
                 start: entity_block,
                 goal: target_block.clone(),
                 max_nodes: ENTITY_PATH_MAX_NODES,
+                cached_only: true,
             })
         {
             let waypoints = path.into_iter().skip(1).collect::<Vec<_>>();
@@ -2195,6 +2299,68 @@ fn follow_move_target(
     target.position
 }
 
+fn direct_follow_move_target(
+    entity: &ManagedEntity,
+    target: &crate::players::OnlinePlayer,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+) -> Option<EntityPosition> {
+    let dx = target.position.x - entity.position.x;
+    let dz = target.position.z - entity.position.z;
+    let distance = (dx * dx + dz * dz).sqrt();
+    if distance <= f64::EPSILON || distance > ENTITY_DIRECT_FOLLOW_DISTANCE {
+        return None;
+    }
+    if (target.position.y.floor() - entity.position.y.floor()).abs() > 1.0 {
+        return None;
+    }
+
+    let steps = (distance * ENTITY_DIRECT_FOLLOW_SAMPLES_PER_BLOCK)
+        .ceil()
+        .clamp(1.0, 24.0) as usize;
+    for step in 1..=steps {
+        let ratio = step as f64 / steps as f64;
+        let position = BlockPosition {
+            x: (entity.position.x + dx * ratio).floor() as i32,
+            y: entity.position.y.floor() as i32,
+            z: (entity.position.z + dz * ratio).floor() as i32,
+        };
+        if !direct_follow_block_is_walkable(world, collision_cache, &entity.dimension, &position) {
+            return None;
+        }
+    }
+
+    Some(target.position)
+}
+
+fn direct_follow_block_is_walkable(
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    dimension: &str,
+    feet: &BlockPosition,
+) -> bool {
+    const STEPABLE_COLLISION_HEIGHT: f64 = 0.6;
+    let head = BlockPosition {
+        x: feet.x,
+        y: feet.y + 1,
+        z: feet.z,
+    };
+    let below = BlockPosition {
+        x: feet.x,
+        y: feet.y - 1,
+        z: feet.z,
+    };
+    let feet_shape = collision_cache.block_collision_shape(world, dimension, feet.x, feet.y, feet.z);
+    let head_shape = collision_cache.block_collision_shape(world, dimension, head.x, head.y, head.z);
+    let below_shape =
+        collision_cache.block_collision_shape(world, dimension, below.x, below.y, below.z);
+
+    let feet_clear = feet_shape.is_none_or(|shape| shape.max_y <= STEPABLE_COLLISION_HEIGHT);
+    let head_clear = head_shape.is_none();
+    let has_support = below_shape.is_some() || feet_shape.is_some_and(|shape| shape.max_y > 0.0);
+    feet_clear && head_clear && has_support
+}
+
 fn advance_path_cursor(path: &mut EntityPathMemory, position: EntityPosition) {
     while let Some(waypoint) = path.waypoints.get(path.cursor) {
         let waypoint_position = block_center_position(waypoint);
@@ -2213,6 +2379,12 @@ fn position_block(position: EntityPosition) -> BlockPosition {
         y: position.y.floor() as i32,
         z: position.z.floor() as i32,
     }
+}
+
+fn block_horizontal_distance_sq(left: &BlockPosition, right: &BlockPosition) -> i32 {
+    let dx = left.x - right.x;
+    let dz = left.z - right.z;
+    dx * dx + dz * dz
 }
 
 fn block_center_position(position: &BlockPosition) -> EntityPosition {
@@ -2520,6 +2692,100 @@ fn can_entity_auto_jump(
     )
 }
 
+fn plugin_ai_operations(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_ms: u64,
+    plugins: &crate::plugins::PluginManager,
+    plugin_ai_memory: &mut HashMap<String, EntityPluginAiMemory>,
+    plugin_ai_calls: &mut usize,
+    now: Instant,
+) -> Vec<crate::plugins::EntityAiOperation> {
+    let interval = plugin_ai_interval(entity);
+    let cached = plugin_ai_memory.get(&entity.key);
+    let should_call = cached.is_none_or(|memory| now.duration_since(memory.last_tick) >= interval);
+    if should_call && *plugin_ai_calls < ENTITY_PLUGIN_AI_CALLS_PER_TICK {
+        *plugin_ai_calls = plugin_ai_calls.saturating_add(1);
+        let elapsed_ms = cached
+            .map(|memory| now.duration_since(memory.last_tick).as_millis() as u64)
+            .unwrap_or(tick_ms)
+            .max(tick_ms)
+            .min(10_000);
+        let operations =
+            plugins.handle_entity_ai_tick(entity_ai_query(entity, viewers, elapsed_ms));
+        plugin_ai_memory.insert(
+            entity.key.clone(),
+            EntityPluginAiMemory {
+                last_tick: now,
+                operations: operations.clone(),
+            },
+        );
+        return operations;
+    }
+
+    cached
+        .map(|memory| memory.operations.clone())
+        .unwrap_or_default()
+}
+
+fn plugin_ai_interval(entity: &ManagedEntity) -> Duration {
+    let interval_ms = entity
+        .ai_params
+        .get("tick_interval_ms")
+        .or_else(|| entity.ai_params.get("ai_tick_interval_ms"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(ENTITY_PLUGIN_AI_DEFAULT_INTERVAL.as_millis() as u64)
+        .clamp(50, 10_000);
+    Duration::from_millis(interval_ms)
+}
+
+fn apply_plugin_ai_operations(
+    entity: &mut ManagedEntity,
+    movement: &mut EntityMovement,
+    remove: &mut bool,
+    operations: &[crate::plugins::EntityAiOperation],
+) {
+    for operation in operations {
+        match operation {
+            crate::plugins::EntityAiOperation::MoveDelta {
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+            } => {
+                movement.x += finite_or_zero(*x).clamp(-4.0, 4.0);
+                movement.y += finite_or_zero(*y).clamp(-4.0, 4.0);
+                movement.z += finite_or_zero(*z).clamp(-4.0, 4.0);
+                if let Some(yaw) = yaw.filter(|value| value.is_finite()) {
+                    entity.position.yaw = yaw;
+                }
+                if let Some(pitch) = pitch.filter(|value| value.is_finite()) {
+                    entity.position.pitch = pitch;
+                }
+            }
+            crate::plugins::EntityAiOperation::LookAt { x, y, z } => {
+                if x.is_finite() && y.is_finite() && z.is_finite() {
+                    let target = EntityPosition {
+                        x: *x,
+                        y: *y,
+                        z: *z,
+                        yaw: 0.0,
+                        pitch: 0.0,
+                        on_ground: true,
+                    };
+                    let (yaw, pitch) = look_rotation(entity.position, target);
+                    entity.position.yaw = yaw;
+                    entity.position.pitch = pitch;
+                }
+            }
+            crate::plugins::EntityAiOperation::Remove => {
+                *remove = true;
+            }
+        }
+    }
+}
+
 fn entity_has_ground(
     world: &crate::world::WorldManager,
     collision_cache: &mut CollisionCache,
@@ -2578,7 +2844,13 @@ fn entity_ai_query(
     let nearby_players = viewers
         .iter()
         .filter(|player| player.dimension == entity.dimension)
-        .filter(|player| within_render_distance(entity.position, player.position, 64.0))
+        .filter(|player| {
+            within_render_distance(
+                entity.position,
+                player.position,
+                ENTITY_PLUGIN_AI_NEARBY_RANGE,
+            )
+        })
         .map(|player| crate::plugins::EntityAiPlayerPayload {
             player: qexed_plugin_api::player_payload_owned(player),
             position: qexed_plugin_api::player_position_payload(player.position),
@@ -2599,6 +2871,31 @@ fn entity_ai_query(
         nearby_players,
         tick_ms,
     }
+}
+
+fn entity_has_active_viewer(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> bool {
+    let range = render_distance_for_entity(entity, rendering).max(32.0);
+    viewers.iter().any(|player| {
+        player.dimension == entity.dimension
+            && within_render_distance(entity.position, player.position, range)
+    })
+}
+
+fn entity_visible_to_player(
+    entity: &ManagedEntity,
+    player: &crate::players::OnlinePlayer,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> bool {
+    player.dimension == entity.dimension
+        && within_render_distance(
+            entity.position,
+            player.position,
+            render_distance_for_entity(entity, rendering),
+        )
 }
 
 fn finite_or_zero(value: f64) -> f64 {

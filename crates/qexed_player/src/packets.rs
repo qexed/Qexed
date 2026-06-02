@@ -3,10 +3,14 @@ use qexed_packet::{Packet, PacketCodec};
 use qexed_protocol::to_client::play::{
     add_entity::{EntityPositionSync, PlayerInfoRemove, RemoveEntities, RotateHead},
     player_info_update::{PlayerInfoActions, PlayerInfoEntry, PlayerInfoUpdate},
+    set_entity_data::SetEntityData,
     set_equipment::SetEquipment,
 };
+use qexed_protocol::types::{EntityMetadata, EntityMetadataEnum, EntityMetadataSub};
 
 use crate::{OnlinePlayer, PlayerEvent};
+
+const PLAYER_SKIN_PARTS_METADATA_INDEX: u8 = 17;
 
 impl PlayerEvent {
     pub fn packets(
@@ -123,6 +127,10 @@ pub fn spawn_player_packets(
             ),
         )?,
         packet_bytes(RotateHead::new(player.entity_id, player.position.yaw))?,
+        packet_bytes(SetEntityData {
+            entity_id: qexed_packet::net_types::VarInt(player.entity_id),
+            metadata: player_skin_parts_metadata(player.displayed_skin_parts),
+        })?,
         packet_bytes(SetEquipment {
             entity_id: qexed_packet::net_types::VarInt(player.entity_id),
             slots: player.equipment.clone(),
@@ -135,6 +143,21 @@ fn player_info_packet(player: &OnlinePlayer) -> anyhow::Result<Bytes> {
         actions: PlayerInfoActions::player_initializing(),
         entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
     })
+}
+
+fn player_skin_parts_metadata(displayed_skin_parts: u8) -> EntityMetadata {
+    EntityMetadata {
+        data: vec![
+            EntityMetadataSub {
+                index: PLAYER_SKIN_PARTS_METADATA_INDEX,
+                data: Some(EntityMetadataEnum::Byte(displayed_skin_parts)),
+            },
+            EntityMetadataSub {
+                index: 0xff,
+                data: None,
+            },
+        ],
+    }
 }
 
 pub fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {

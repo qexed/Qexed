@@ -24,6 +24,7 @@ const SLOW_CHUNK_PAYLOAD_LOG_THRESHOLD: Duration = Duration::from_millis(250);
 const MIN_CHUNKS_PER_TICK: f32 = 0.01;
 const MAX_CHUNKS_PER_TICK: f32 = 64.0;
 const START_CHUNKS_PER_TICK: f32 = 9.0;
+const MAX_CHUNKS_PER_SEND_BATCH: usize = 4;
 const INITIAL_MAX_UNACKNOWLEDGED_BATCHES: usize = 1;
 const MAX_UNACKNOWLEDGED_BATCHES: usize = 10;
 const MAX_CHUNK_LOAD_THREADS: usize = 4;
@@ -197,34 +198,53 @@ impl ChunkTask {
                 compression_threshold,
                 reply,
             } => {
-                match build_saved_chunk_payload_sync(
-                    &world,
-                    &dimension,
-                    chunk_x,
-                    chunk_z,
-                    cache_epoch,
-                    compression_threshold,
-                ) {
-                    Ok(Some(payload)) => reply.send(chunk_x, chunk_z, Ok(payload)),
-                    Ok(None) => {
-                        if generate_sender
-                            .send(ChunkGenerateTask::BuildPayload {
-                                world,
-                                dimension,
+                let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    build_saved_chunk_payload_sync(
+                        &world,
+                        &dimension,
+                        chunk_x,
+                        chunk_z,
+                        cache_epoch,
+                        compression_threshold,
+                    )
+                }));
+                match loaded {
+                    Ok(Ok(Some(payload))) => reply.send(chunk_x, chunk_z, Ok(payload)),
+                    Ok(Ok(None)) => {
+                        let task = ChunkGenerateTask::BuildPayload {
+                            world,
+                            dimension,
+                            chunk_x,
+                            chunk_z,
+                            cache_epoch,
+                            compression_threshold,
+                            reply,
+                        };
+                        if let Err(err) = generate_sender.send(task) {
+                            let ChunkGenerateTask::BuildPayload {
                                 chunk_x,
                                 chunk_z,
-                                cache_epoch,
-                                compression_threshold,
                                 reply,
-                            })
-                            .is_err()
-                        {
-                            log::warn!(
-                                "failed to queue chunk generation task because generation pool stopped"
+                                ..
+                            } = err.0;
+                            reply.send(
+                                chunk_x,
+                                chunk_z,
+                                Err(anyhow::anyhow!(
+                                    "failed to queue chunk generation task because generation pool stopped"
+                                )),
                             );
                         }
                     }
-                    Err(err) => reply.send(chunk_x, chunk_z, Err(err)),
+                    Ok(Err(err)) => reply.send(chunk_x, chunk_z, Err(err)),
+                    Err(panic) => reply.send(
+                        chunk_x,
+                        chunk_z,
+                        Err(anyhow::anyhow!(
+                            "chunk payload load task panicked: {}",
+                            panic_payload_message(panic)
+                        )),
+                    ),
                 }
             }
         }
@@ -255,18 +275,36 @@ impl ChunkGenerateTask {
                 compression_threshold,
                 reply,
             } => {
-                let payload = build_generated_chunk_payload_sync(
-                    world,
-                    dimension,
-                    chunk_x,
-                    chunk_z,
-                    cache_epoch,
-                    compression_threshold,
-                );
+                let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    build_generated_chunk_payload_sync(
+                        world,
+                        dimension,
+                        chunk_x,
+                        chunk_z,
+                        cache_epoch,
+                        compression_threshold,
+                    )
+                }))
+                .unwrap_or_else(|panic| {
+                    Err(anyhow::anyhow!(
+                        "chunk payload generation task panicked: {}",
+                        panic_payload_message(panic)
+                    ))
+                });
                 reply.send(chunk_x, chunk_z, payload);
             }
         }
     }
+}
+
+fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = panic.downcast_ref::<&'static str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = panic.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_string()
 }
 
 enum ChunkTaskReply {
@@ -824,7 +862,8 @@ impl ChunkSendState {
             return Ok(0);
         }
 
-        let selected = self.take_ready_chunks(self.batch_quota.floor() as usize);
+        let selected = self
+            .take_ready_chunks((self.batch_quota.floor() as usize).min(MAX_CHUNKS_PER_SEND_BATCH));
         if selected.is_empty() {
             self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
             return Ok(0);
@@ -836,11 +875,12 @@ impl ChunkSendState {
                 Ok(frame) => chunks.push((loaded.chunk_x, loaded.chunk_z, frame)),
                 Err(err) if is_expired_world_session_error(&err) => {
                     log::debug!(
-                        "discarded expired chunk load result: dimension={}, chunk=({}, {})",
+                        "requeue expired chunk load result: dimension={}, chunk=({}, {})",
                         self.dimension,
                         loaded.chunk_x,
                         loaded.chunk_z
                     );
+                    self.requeue_chunk_if_needed((loaded.chunk_x, loaded.chunk_z));
                 }
                 Err(err) => return Err(err),
             }
@@ -896,6 +936,17 @@ impl ChunkSendState {
         let remaining = ready.split_off(split_at);
         self.ready_chunks = remaining.into();
         ready
+    }
+
+    fn requeue_chunk_if_needed(&mut self, chunk: (i32, i32)) {
+        if !self.chunk_in_current_view(chunk)
+            || self.visible_chunks.contains(&chunk)
+            || self.loading_chunks.contains(&chunk)
+            || self.pending_chunks.contains(&chunk)
+        {
+            return;
+        }
+        self.pending_chunks.push_front(chunk);
     }
 
     pub(super) fn on_chunk_batch_received(&mut self, desired_chunks_per_tick: f32) {
@@ -1378,6 +1429,24 @@ mod tests {
         assert_eq!(selected.len(), 1);
         assert_eq!((selected[0].chunk_x, selected[0].chunk_z), (1, 0));
         assert!(state.ready_chunks.is_empty());
+    }
+
+    #[test]
+    fn expired_current_view_chunk_is_requeued() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+
+        state.requeue_chunk_if_needed((1, 0));
+
+        assert_eq!(state.pending_chunks.front(), Some(&(1, 0)));
+    }
+
+    #[test]
+    fn expired_stale_chunk_is_not_requeued() {
+        let mut state = ChunkSendState::new("minecraft:overworld".to_string(), 0, 0, 1, 4);
+
+        state.requeue_chunk_if_needed((3, 0));
+
+        assert!(state.pending_chunks.is_empty());
     }
 
     #[test]

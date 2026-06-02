@@ -1,10 +1,8 @@
 use anyhow::Context;
 use qexed_packet::{Packet, PacketCodec};
 use qexed_protocol::{to_client::play::system_chat::SystemChat, types::TextComponent};
-use tokio::{
-    io::{self, AsyncBufReadExt},
-    sync::watch,
-};
+use std::io::BufRead;
+use tokio::sync::{mpsc, watch};
 
 use crate::connection::ServerContext;
 
@@ -39,11 +37,24 @@ impl ConsoleCommand {
             _ => Self::Unknown(command.to_string()),
         }
     }
+
+    fn permission_command(&self) -> Option<&str> {
+        match self {
+            Self::Empty => None,
+            Self::Help => Some("help"),
+            Self::Status => Some("status"),
+            Self::List => Some("list"),
+            Self::Say(_) => Some("say"),
+            Self::Stop => Some("stop"),
+            Self::Unknown(command) => Some(command),
+        }
+    }
 }
 
 pub(crate) fn spawn(context: ServerContext, shutdown: watch::Sender<bool>) {
+    let shutdown_rx = shutdown.subscribe();
     tokio::spawn(async move {
-        if let Err(err) = run(context, shutdown).await {
+        if let Err(err) = run(context, shutdown, shutdown_rx).await {
             log::warn!("terminal console stopped: {err:#}");
         }
     });
@@ -60,23 +71,53 @@ pub(crate) fn spawn_ctrl_c_shutdown(shutdown: watch::Sender<bool>) {
     });
 }
 
-async fn run(context: ServerContext, shutdown: watch::Sender<bool>) -> anyhow::Result<()> {
+async fn run(
+    context: ServerContext,
+    shutdown: watch::Sender<bool>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
     let locale = crate::commands::i18n_locale(&context.config.language);
     print_console(rust_i18n::t!("qexed.console.enabled", locale = locale));
-    let stdin = io::BufReader::new(io::stdin());
-    let mut lines = stdin.lines();
+    let mut lines = spawn_stdin_reader()?;
 
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .context("read terminal console input")?
-    {
-        if execute(ConsoleCommand::parse(&line), &context, &shutdown)? {
-            break;
+    loop {
+        tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+            line = lines.recv() => {
+                let Some(line) = line else {
+                    break;
+                };
+                let line = line?;
+                if execute(ConsoleCommand::parse(&line), &context, &shutdown)? {
+                    break;
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+fn spawn_stdin_reader() -> anyhow::Result<mpsc::UnboundedReceiver<anyhow::Result<String>>> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    std::thread::Builder::new()
+        .name("qexed-console-stdin".to_string())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            let reader = std::io::BufReader::new(stdin.lock());
+            for line in reader.lines() {
+                let line = line.context("read terminal console input");
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        })
+        .context("spawn terminal console stdin reader")?;
+    Ok(receiver)
 }
 
 fn execute(
@@ -85,6 +126,12 @@ fn execute(
     shutdown: &watch::Sender<bool>,
 ) -> anyhow::Result<bool> {
     let locale = crate::commands::i18n_locale(&context.config.language);
+    if let Some(command_name) = command.permission_command()
+        && !context.permissions.can_run_console_command(command_name)
+    {
+        print_console(context.permissions.denied_message());
+        return Ok(false);
+    }
     match command {
         ConsoleCommand::Empty => {}
         ConsoleCommand::Help => print_help(context),

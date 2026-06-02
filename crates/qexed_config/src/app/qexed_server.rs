@@ -94,9 +94,7 @@ impl Default for QexedServerCore {
             rate_limit_window_secs: server.rate_limit_window_secs,
             rate_limit_max_attempts: server.rate_limit_max_attempts,
             click_detection: server.click_detection,
-            motd: vec![
-                "qexed服务端awa".to_string()
-            ],
+            motd: vec!["qexed服务端awa".to_string()],
             code_of_conduct: server.code_of_conduct,
             favicon: server.favicon,
         }
@@ -106,15 +104,6 @@ impl Default for QexedServerCore {
 impl qexed_config::tool::AppConfigTrait for QexedServer {
     const PATH: &'static str = "/";
     const NAME: &'static str = "qexed_server";
-
-    fn obsolete_root_paths() -> &'static [&'static str] {
-        &[
-            "server.proxy",
-            "server.proxy_protocol",
-            "server.proxy_server_id",
-            "server.proxy_token",
-        ]
-    }
 }
 
 fn default_mojang_cache_path() -> String {

@@ -18,6 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{DroppedItemEntity, ManagedEntity, ManagedEntityKind};
 
 const ITEM_ENTITY_METADATA_ITEM_INDEX: u8 = 8;
+const PLAYER_SKIN_PARTS_METADATA_INDEX: u8 = 17;
 const DISPLAY_BILLBOARD_METADATA_INDEX: u8 = 15;
 const DISPLAY_VIEW_RANGE_METADATA_INDEX: u8 = 17;
 const DISPLAY_WIDTH_METADATA_INDEX: u8 = 20;
@@ -28,6 +29,7 @@ const TEXT_DISPLAY_BACKGROUND_METADATA_INDEX: u8 = 25;
 const TEXT_DISPLAY_OPACITY_METADATA_INDEX: u8 = 26;
 const TEXT_DISPLAY_STYLE_METADATA_INDEX: u8 = 27;
 const DISPLAY_BILLBOARD_CENTER: u8 = 3;
+const PLAYER_ALL_SKIN_PARTS: u8 = 0x7f;
 const TEXT_DISPLAY_DEFAULT_BACKGROUND: i32 = 0x40000000;
 const TEXT_DISPLAY_DEFAULT_OPACITY: u8 = 0xff;
 const TEXT_DISPLAY_SEE_THROUGH: u8 = 0x02;
@@ -70,6 +72,9 @@ impl ManagedEntity {
 
         let metadata = match self.kind {
             ManagedEntityKind::Hologram => Some(hologram_metadata(self.display_name())),
+            ManagedEntityKind::Npc | ManagedEntityKind::Entity if player_npc => {
+                Some(player_entity_metadata(self.display_name()))
+            }
             ManagedEntityKind::Npc | ManagedEntityKind::Entity => {
                 self.display_name().map(named_entity_metadata)
             }
@@ -291,6 +296,31 @@ fn named_entity_metadata(name: &str) -> EntityMetadata {
             },
         ],
     }
+}
+
+fn player_entity_metadata(name: Option<&str>) -> EntityMetadata {
+    let mut data = Vec::new();
+    if let Some(name) = name {
+        data.push(EntityMetadataSub {
+            index: 2,
+            data: Some(EntityMetadataEnum::OptionTextComponent(Some(
+                text_component_or_json(name),
+            ))),
+        });
+        data.push(EntityMetadataSub {
+            index: 3,
+            data: Some(EntityMetadataEnum::Boolean(true)),
+        });
+    }
+    data.push(EntityMetadataSub {
+        index: PLAYER_SKIN_PARTS_METADATA_INDEX,
+        data: Some(EntityMetadataEnum::Byte(PLAYER_ALL_SKIN_PARTS)),
+    });
+    data.push(EntityMetadataSub {
+        index: 0xff,
+        data: None,
+    });
+    EntityMetadata { data }
 }
 
 fn item_entity_metadata(item: qexed_protocol::types::Slot) -> EntityMetadata {

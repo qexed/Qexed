@@ -70,7 +70,12 @@ async fn empty_code_of_conduct_skips_prompt_but_finishes_configuration() {
         .unwrap();
     client_sink.flush().await.unwrap();
 
-    server_task.await.unwrap().unwrap();
+    let client_config = server_task.await.unwrap().unwrap();
+    assert_eq!(client_config.locale.as_deref(), None);
+    assert_eq!(
+        client_config.displayed_skin_parts,
+        crate::players::DEFAULT_DISPLAYED_SKIN_PARTS
+    );
 }
 
 #[tokio::test]
@@ -211,7 +216,12 @@ async fn code_of_conduct_uses_client_language_with_english_fallback() {
         .unwrap();
     client_sink.flush().await.unwrap();
 
-    server_task.await.unwrap().unwrap();
+    let client_config = server_task.await.unwrap().unwrap();
+    assert_eq!(client_config.locale.as_deref(), Some("zh_CN"));
+    assert_eq!(
+        client_config.displayed_skin_parts,
+        crate::players::DEFAULT_DISPLAYED_SKIN_PARTS
+    );
 }
 
 #[tokio::test]

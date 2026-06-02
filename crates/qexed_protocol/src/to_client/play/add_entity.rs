@@ -317,7 +317,7 @@ fn pack_degrees(degrees: f32) -> u8 {
     ((degrees * 256.0 / 360.0).floor() as i32 & 0xff) as u8
 }
 
-fn write_lp_vec3(w: &mut PacketWriter, x: f64, y: f64, z: f64) -> anyhow::Result<()> {
+pub(crate) fn write_lp_vec3(w: &mut PacketWriter, x: f64, y: f64, z: f64) -> anyhow::Result<()> {
     const ABS_MIN_VALUE: f64 = 3.051944088384301E-5;
     const ABS_MAX_VALUE: f64 = 1.7179869183E10;
     const DATA_MASK: f64 = 32766.0;
@@ -348,7 +348,7 @@ fn write_lp_vec3(w: &mut PacketWriter, x: f64, y: f64, z: f64) -> anyhow::Result
     Ok(())
 }
 
-fn read_lp_vec3(r: &mut PacketReader) -> anyhow::Result<(f64, f64, f64)> {
+pub(crate) fn read_lp_vec3(r: &mut PacketReader) -> anyhow::Result<(f64, f64, f64)> {
     let lowest = r.buf.get_u8();
     if lowest == 0 {
         return Ok((0.0, 0.0, 0.0));
