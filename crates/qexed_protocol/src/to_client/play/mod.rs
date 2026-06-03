@@ -15,6 +15,7 @@ pub mod container_set_data;
 pub mod container_set_slot;
 pub mod custom_payload;
 pub mod damage_event;
+pub mod disconnect;
 pub mod entity_event;
 pub mod forget_level_chunk;
 pub mod game_state_change;

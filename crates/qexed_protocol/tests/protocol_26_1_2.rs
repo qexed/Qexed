@@ -407,7 +407,7 @@ fn recipe_book_packets_round_trip_with_26_1_2_slot_display_ids() {
                         crafting_station: qexed_protocol::types::SlotDisplay::Empty,
                     },
                 ),
-                group: qexed_packet::net_types::VarInt(0),
+                group: None,
                 category: qexed_packet::net_types::VarInt(0),
                 ingredients: Some(vec![qexed_protocol::types::IDSet {
                     r#type: qexed_packet::net_types::VarInt(2),

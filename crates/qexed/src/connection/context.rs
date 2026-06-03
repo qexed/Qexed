@@ -22,6 +22,7 @@ pub struct ServerContext {
     pub content_filter: Arc<crate::content_filter::ContentFilter>,
     pub resource_pack: Arc<crate::resource_pack::ResourcePackManager>,
     pub code_of_conducts: Arc<crate::code_of_conduct::CodeOfConductTexts>,
+    pub warden: Arc<crate::warden::WardenManager>,
     plugin_startup_applied: Arc<OnceLock<()>>,
 }
 
@@ -73,6 +74,7 @@ impl ServerContext {
             crate::audit::PlayerAuditLogger::from_config(&config.server.player_audit);
         let content_filter =
             crate::content_filter::ContentFilter::from_config(&config.server.content_filter)?;
+        let warden = crate::warden::WardenManager::from_config(config.warden.clone());
         let entity_ids = Arc::new(crate::entities::EntityIdAllocator::default());
         let players = Arc::new(crate::players::PlayerManager::new(entity_ids.clone()));
         plugins.set_world_edit_service(Arc::new(ServerWorldEditService {
@@ -107,6 +109,7 @@ impl ServerContext {
             content_filter: Arc::new(content_filter),
             resource_pack: Arc::new(resource_pack),
             code_of_conducts: Arc::new(code_of_conducts),
+            warden: Arc::new(warden),
             plugin_startup_applied: Arc::new(OnceLock::new()),
         })
     }

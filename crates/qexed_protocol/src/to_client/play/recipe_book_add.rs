@@ -14,7 +14,7 @@ pub struct RecipeBookAdd {
 pub struct Recipes {
     pub recipe: VarInt,
     pub display: RecipeDisplay,
-    pub group: VarInt,
+    pub group: Option<VarInt>,
     pub category: VarInt,
     pub ingredients: Option<Vec<IDSet>>,
     pub flags: u8,

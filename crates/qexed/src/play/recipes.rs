@@ -252,7 +252,7 @@ impl RawRecipe {
                 RecipeDisplay::MinecraftCraftingShapeless(CraftingShapeless {
                     ingredients,
                     result,
-                    crafting_station: SlotDisplay::Empty,
+                    crafting_station: crafting_station(item_ids),
                 })
             }
             "minecraft:crafting_shaped" => {
@@ -282,7 +282,7 @@ impl RawRecipe {
                     height: VarInt(height as i32),
                     ingredients,
                     result,
-                    crafting_station: SlotDisplay::Empty,
+                    crafting_station: crafting_station(item_ids),
                 })
             }
             "minecraft:smelting"
@@ -314,7 +314,7 @@ impl RawRecipe {
         Some(Recipes {
             recipe: VarInt(recipe_id),
             display,
-            group: VarInt(group),
+            group: (!self.group.as_deref().unwrap_or_default().is_empty()).then_some(VarInt(group)),
             category: VarInt(category),
             ingredients: self.ingredient_sets(item_ids),
             flags: 0,
@@ -517,6 +517,10 @@ fn furnace_station(recipe_type: &str, item_ids: &HashMap<String, i32>) -> SlotDi
     item_slot_display(station, item_ids).unwrap_or(SlotDisplay::Empty)
 }
 
+fn crafting_station(item_ids: &HashMap<String, i32>) -> SlotDisplay {
+    item_slot_display("minecraft:crafting_table", item_ids).unwrap_or(SlotDisplay::Empty)
+}
+
 fn recipe_book_category(
     recipe_type: &str,
     category: Option<&str>,
@@ -596,6 +600,36 @@ mod tests {
                 .iter()
                 .any(|entry| matches!(entry.display, RecipeDisplay::MinecraftCraftingShapeless(_)))
         );
+    }
+
+    #[test]
+    fn crafting_recipe_book_entries_use_crafting_table_station_icon() {
+        let packet = recipe_book_add_packet();
+        let mut checked = 0;
+
+        for entry in &packet.entries {
+            match &entry.display {
+                RecipeDisplay::MinecraftCraftingShaped(recipe) => {
+                    assert!(
+                        !matches!(recipe.crafting_station, SlotDisplay::Empty),
+                        "shaped recipe {:?} has empty station icon",
+                        entry.recipe
+                    );
+                    checked += 1;
+                }
+                RecipeDisplay::MinecraftCraftingShapeless(recipe) => {
+                    assert!(
+                        !matches!(recipe.crafting_station, SlotDisplay::Empty),
+                        "shapeless recipe {:?} has empty station icon",
+                        entry.recipe
+                    );
+                    checked += 1;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(checked > 0);
     }
 
     #[test]

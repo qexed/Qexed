@@ -5,9 +5,8 @@ use qexed_protocol::to_client::play::{
     light_update::LightUpdateData,
     map_chunk::{Chunk, Heightmaps, LIGHT_ARRAY_BYTES, Light, LightArray, MapChunk},
 };
-use std::{collections::VecDeque, sync::Arc};
+use std::collections::VecDeque;
 
-use super::gpu_light;
 use super::{
     AIR_BLOCK_STATE_ID, CHUNK_DAMPENING_LEN, LIGHT_SECTION_COUNT, MIN_LIGHT_SECTION_Y,
     OVERWORLD_HEIGHT, PLAINS_BIOME_ID, SECTION_HEIGHT, WORLD_MAX_Y, WORLD_MIN_Y,
@@ -31,23 +30,6 @@ impl From<&qexed_config::app::qexed::server::LightAlgorithm> for WorldLightAlgor
         match value {
             qexed_config::app::qexed::server::LightAlgorithm::Fast => Self::Fast,
             qexed_config::app::qexed::server::LightAlgorithm::RayTrace => Self::RayTrace,
-        }
-    }
-}
-
-pub fn light_gpu_from_config(
-    config: &qexed_config::app::qexed::server::WorldGpu,
-) -> Option<Arc<gpu_light::GpuLightEngine>> {
-    if !config.enable {
-        log::debug!("GPU 光照已在配置中关闭");
-        return None;
-    }
-
-    match gpu_light::GpuLightEngine::new(&config.device) {
-        Ok(engine) => Some(Arc::new(engine)),
-        Err(err) => {
-            log::warn!("GPU 光照初始化失败，已回退到 CPU: {err:#}");
-            None
         }
     }
 }

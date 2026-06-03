@@ -14,8 +14,7 @@ use std::sync::{
 use super::{
     AIR_BLOCK_STATE_ID, CHUNK_DAMPENING_LEN, LightDampeningNeighborhood, WORLD_MAX_Y, WORLD_MIN_Y,
     WorldLightAlgorithm, WorldLightMode, block_light_dampening_index, chunk_nbt, generator,
-    gpu_light, light_for_mode, light_from_sky_values, light_update_data, region, replace_sky_light,
-    sky_light_from_neighbourhood,
+    light_for_mode, light_update_data, region, replace_sky_light, sky_light_from_neighbourhood,
 };
 #[derive(Clone, Debug)]
 pub struct WorldManager {
@@ -25,7 +24,6 @@ pub struct WorldManager {
     read_only: bool,
     light_mode: WorldLightMode,
     light_algorithm: WorldLightAlgorithm,
-    light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
     generator: Arc<dyn generator::WorldChunkGenerator>,
     placed_blocks: Arc<Mutex<std::collections::HashMap<BlockKey, PendingBlock>>>,
     edit_regions: Arc<Mutex<Vec<RuntimeEditRegion>>>,
@@ -375,7 +373,6 @@ impl WorldManager {
             save_path,
             WorldLightMode::default(),
             WorldLightAlgorithm::default(),
-            None,
             false,
         )
     }
@@ -385,14 +382,12 @@ impl WorldManager {
         save_path: impl Into<std::path::PathBuf>,
         light_mode: WorldLightMode,
         light_algorithm: WorldLightAlgorithm,
-        light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
         read_only: bool,
     ) -> Self {
         Self::with_generator(
             save_path,
             light_mode,
             light_algorithm,
-            light_gpu,
             read_only,
             Arc::new(generator::EmptyWorldGenerator),
         )
@@ -402,7 +397,6 @@ impl WorldManager {
         save_path: impl Into<std::path::PathBuf>,
         light_mode: WorldLightMode,
         light_algorithm: WorldLightAlgorithm,
-        light_gpu: Option<Arc<gpu_light::GpuLightEngine>>,
         read_only: bool,
         generator: Arc<dyn generator::WorldChunkGenerator>,
     ) -> Self {
@@ -413,7 +407,6 @@ impl WorldManager {
             read_only,
             light_mode,
             light_algorithm,
-            light_gpu,
             generator,
             placed_blocks: Default::default(),
             edit_regions: Default::default(),
@@ -1070,7 +1063,9 @@ impl WorldManager {
             .lock()
             .expect("world edit region store poisoned");
         if !region.id.is_empty()
-            && let Some(existing) = regions.iter_mut().find(|existing| existing.id == region.id)
+            && let Some(existing) = regions
+                .iter_mut()
+                .find(|existing| existing.id == region.id && existing.dimension == region.dimension)
         {
             *existing = region;
             return;
@@ -1876,13 +1871,6 @@ impl WorldManager {
             WorldLightAlgorithm::Fast => {
                 let neighbourhood =
                     self.chunk_light_neighbourhood(dimension, chunk_x, chunk_z, cache_epoch);
-                if let Some(light) = self
-                    .light_gpu
-                    .as_ref()
-                    .and_then(|engine| engine.fast_sky_light(&neighbourhood).ok())
-                {
-                    return light_from_sky_values(&light);
-                }
                 sky_light_from_neighbourhood(&neighbourhood, WorldLightAlgorithm::Fast)
             }
             WorldLightAlgorithm::RayTrace => {

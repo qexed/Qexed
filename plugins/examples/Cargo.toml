@@ -6,6 +6,7 @@ members = [
     "player_audit",
     "chunk_trace",
     "command_npc_demo",
+    "prison_mine_selector",
     "slime_jump",
     "double_jump",
 ]

@@ -34,7 +34,6 @@ fn generated_flat_chunk_is_used_when_save_chunk_is_missing() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         true,
         Arc::new(generator::VanillaFlatGenerator::from_preset(
             "minecraft:classic_flat",
@@ -547,7 +546,6 @@ fn world_manager_uses_generated_chunk_cache_for_block_state_queries() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         false,
         Arc::new(CachedGeneratedChunkGenerator {
             position: position.clone(),
@@ -578,7 +576,6 @@ fn world_manager_persists_edits_on_top_of_generated_chunk_cache() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         false,
         Arc::new(CachedGeneratedChunkGenerator {
             position: generated_position.clone(),
@@ -739,7 +736,6 @@ fn read_only_world_rejects_region_writes_and_block_changes() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         true,
     );
     let chunk = super::region::ChunkData::zlib(b"chunk").unwrap();
@@ -765,7 +761,6 @@ fn runtime_block_change_overlays_read_only_world_without_persisting() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         true,
     );
     let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
@@ -784,7 +779,6 @@ fn runtime_block_change_overlays_read_only_world_without_persisting() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         true,
     );
     assert_eq!(
@@ -800,7 +794,6 @@ fn runtime_block_change_invalidates_runtime_caches() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         true,
     );
     let epoch = manager.cache_epoch();
@@ -855,13 +848,47 @@ fn runtime_edit_regions_can_be_registered_and_replaced() {
 }
 
 #[test]
+fn runtime_edit_regions_with_same_id_are_scoped_by_dimension() {
+    let manager = WorldManager::new("world");
+    let position = qexed_packet::net_types::Position { x: 3, y: 64, z: 4 };
+    let mut region = super::RuntimeEditRegion {
+        id: "mine".to_string(),
+        dimension: "qexed:mine_a".to_string(),
+        min_x: 0,
+        max_x: 10,
+        min_y: 60,
+        max_y: 70,
+        min_z: 0,
+        max_z: 10,
+        allow_player_break: true,
+        allow_player_place: false,
+        allow_plugin_write: true,
+        runtime_only: true,
+    };
+
+    manager.register_edit_region(region.clone());
+    region.dimension = "qexed:mine_b".to_string();
+    manager.register_edit_region(region);
+
+    assert!(
+        manager
+            .editable_region_for_player_break("qexed:mine_a", &position)
+            .is_some()
+    );
+    assert!(
+        manager
+            .editable_region_for_player_break("qexed:mine_b", &position)
+            .is_some()
+    );
+}
+
+#[test]
 fn precompiled_read_only_world_skips_full_region_chunk_cache() {
     let dir = tempfile::tempdir().unwrap();
     let manager = WorldManager::with_generator(
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         true,
         Arc::new(generator::VanillaFlatGenerator::from_preset(
             "minecraft:classic_flat",
@@ -917,7 +944,6 @@ fn block_change_invalidates_precompiled_chunk_packet_and_block_state_cache() {
         world_file.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         false,
         Arc::new(generator::VanillaFlatGenerator::from_preset(
             "minecraft:classic_flat",
@@ -988,7 +1014,6 @@ fn block_change_advances_runtime_cache_epoch_without_precompiled_cache() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         false,
         Arc::new(generator::EmptyWorldGenerator),
     );
@@ -1010,7 +1035,6 @@ fn dirty_precompiled_chunk_is_not_recached_before_persist_finishes() {
         dir.path(),
         WorldLightMode::Static,
         WorldLightAlgorithm::Fast,
-        None,
         false,
         Arc::new(generator::VanillaFlatGenerator::from_preset(
             "minecraft:classic_flat",
@@ -1161,7 +1185,6 @@ fn precompiled_packet_without_light_rebuilds_light_payload() {
         dir.path(),
         WorldLightMode::Dynamic,
         WorldLightAlgorithm::Fast,
-        None,
         false,
         Arc::new(generator::EmptyWorldGenerator),
     )

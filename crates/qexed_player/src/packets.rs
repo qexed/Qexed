@@ -3,14 +3,10 @@ use qexed_packet::{Packet, PacketCodec};
 use qexed_protocol::to_client::play::{
     add_entity::{EntityPositionSync, PlayerInfoRemove, RemoveEntities, RotateHead},
     player_info_update::{PlayerInfoActions, PlayerInfoEntry, PlayerInfoUpdate},
-    set_entity_data::SetEntityData,
     set_equipment::SetEquipment,
 };
-use qexed_protocol::types::{EntityMetadata, EntityMetadataEnum, EntityMetadataSub};
 
 use crate::{OnlinePlayer, PlayerEvent};
-
-const PLAYER_SKIN_PARTS_METADATA_INDEX: u8 = 17;
 
 impl PlayerEvent {
     pub fn packets(
@@ -127,10 +123,6 @@ pub fn spawn_player_packets(
             ),
         )?,
         packet_bytes(RotateHead::new(player.entity_id, player.position.yaw))?,
-        packet_bytes(SetEntityData {
-            entity_id: qexed_packet::net_types::VarInt(player.entity_id),
-            metadata: player_skin_parts_metadata(player.displayed_skin_parts),
-        })?,
         packet_bytes(SetEquipment {
             entity_id: qexed_packet::net_types::VarInt(player.entity_id),
             slots: player.equipment.clone(),
@@ -145,25 +137,49 @@ fn player_info_packet(player: &OnlinePlayer) -> anyhow::Result<Bytes> {
     })
 }
 
-fn player_skin_parts_metadata(displayed_skin_parts: u8) -> EntityMetadata {
-    EntityMetadata {
-        data: vec![
-            EntityMetadataSub {
-                index: PLAYER_SKIN_PARTS_METADATA_INDEX,
-                data: Some(EntityMetadataEnum::Byte(displayed_skin_parts)),
-            },
-            EntityMetadataSub {
-                index: 0xff,
-                data: None,
-            },
-        ],
-    }
-}
-
 pub fn packet_bytes<T: Packet>(packet: T) -> anyhow::Result<Bytes> {
     let mut buf = BytesMut::new();
     let mut writer = qexed_packet::PacketWriter::new(&mut buf);
     qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;
     packet.serialize(&mut writer)?;
     Ok(buf.freeze())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn player_spawn_packets_do_not_send_removed_skin_parts_metadata() {
+        let player = OnlinePlayer {
+            profile: qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::from_u128(1),
+                username: "Player".to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 1,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: "zh-CN".to_string(),
+            displayed_skin_parts: 0x7f,
+        };
+
+        let packets = spawn_player_packets(&player, 155).unwrap();
+        let set_entity_data_id =
+            qexed_protocol::to_client::play::set_entity_data::SetEntityData::ID as u8;
+
+        assert!(
+            packets
+                .iter()
+                .all(|packet| packet.first() != Some(&set_entity_data_id))
+        );
+    }
 }

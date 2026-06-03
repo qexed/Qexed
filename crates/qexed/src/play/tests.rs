@@ -4,9 +4,10 @@ use super::{
     world_write_mode,
 };
 use qexed_config::app::qexed::server::GameMode;
-use qexed_packet::net_types::Position;
+use qexed_packet::net_types::{Position, VarInt};
 use qexed_protocol::to_client::play::add_entity::EntityPosition;
 use qexed_protocol::to_client::play::player_abilities::PlayerAbilities;
+use qexed_protocol::types::{ComponentsToAdd, IDSet, Slot, minecraft};
 use std::time::{Duration, Instant};
 
 #[test]
@@ -181,6 +182,69 @@ fn destroy_timing_follows_game_mode() {
 }
 
 #[test]
+fn can_break_component_allows_only_matching_adventure_block() {
+    let stone_state = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
+    let dirt_state = crate::world::chunk_nbt::default_block_state_id("minecraft:dirt");
+    let block_ids = crate::registry_sync::load_registry_id_map("minecraft:block").unwrap();
+    let stone_id = block_ids["minecraft:stone"];
+    let slot = Slot {
+        item_count: VarInt(1),
+        item_id: Some(VarInt(1)),
+        number_of_components_to_add: Some(VarInt(1)),
+        number_of_components_to_remove: Some(VarInt(0)),
+        components_to_add: Some(vec![ComponentsToAdd::MinecraftCanBreak(
+            minecraft::CanBreak {
+                block_predicates: vec![minecraft::BlockPredicate {
+                    blocks: Some(IDSet {
+                        r#type: VarInt(2),
+                        tag_name: None,
+                        ids: Some(vec![VarInt(stone_id)]),
+                    }),
+                    properties: None,
+                    nbt: None,
+                }],
+                show_in_tooltip: true,
+            },
+        )]),
+        components_to_remove: None,
+    };
+
+    assert!(super::mining::held_item_allows_adventure_break(
+        &slot,
+        stone_state
+    ));
+    assert!(!super::mining::held_item_allows_adventure_break(
+        &slot, dirt_state
+    ));
+}
+
+#[test]
+fn adventure_destroy_packet_without_can_break_is_violation() {
+    let temp = tempfile::tempdir().unwrap();
+    let world = crate::world::WorldManager::new(temp.path().join("world"));
+    let position = Position { x: 0, y: 64, z: 0 };
+    let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
+    world.set_runtime_block("minecraft:overworld", position.clone(), stone);
+
+    assert!(super::adventure_destroy_packet_violates_can_break(
+        &world,
+        GameMode::Adventure,
+        "minecraft:overworld",
+        &position,
+        super::PLAYER_ACTION_START_DESTROY_BLOCK,
+        &Slot::default(),
+    ));
+    assert!(!super::adventure_destroy_packet_violates_can_break(
+        &world,
+        GameMode::Survival,
+        "minecraft:overworld",
+        &position,
+        super::PLAYER_ACTION_START_DESTROY_BLOCK,
+        &Slot::default(),
+    ));
+}
+
+#[test]
 fn placement_collision_checks_player_body() {
     let player = EntityPosition {
         x: 0.5,
@@ -277,6 +341,32 @@ fn dropped_item_position_is_lifted_out_of_solid_block() {
         &world,
         "minecraft:overworld",
         lifted
+    ));
+}
+
+#[test]
+fn dropped_item_position_settles_to_ground_before_spawn() {
+    let temp = tempfile::tempdir().unwrap();
+    let world = crate::world::WorldManager::new(temp.path().join("world"));
+    let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
+    world.set_runtime_block("minecraft:overworld", Position { x: 0, y: 63, z: 0 }, stone);
+    let position = EntityPosition {
+        x: 0.5,
+        y: 70.375,
+        z: 0.5,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: false,
+    };
+
+    let settled = super::settle_drop_position_on_ground(&world, "minecraft:overworld", position);
+
+    assert!(settled.y >= 64.0);
+    assert!(settled.y < 64.5);
+    assert!(!super::drop_item_intersects_blocks(
+        &world,
+        "minecraft:overworld",
+        settled
     ));
 }
 

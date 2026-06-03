@@ -21,7 +21,6 @@ qexed_ip_connection_speed_test.rename = "qexed_log.modern.qexed_ip_connection_sp
 qexed_wasm_runtime.rename = "qexed_log.modern.qexed_wasm_runtime"
 qexed_players.rename = "qexed_log.modern.qexed_players"
 qexed_packet_split.rename = "qexed_log.modern.qexed_packet_split"
-wgpu_hal.rename= "qexed_log.modern.wgpu_hal"
 [dependencies]
 colored.workspace = true
 chrono.workspace = true

@@ -232,10 +232,6 @@ final class QexedServerProcess implements AutoCloseable {
                 max_cached_packet_bytes = 16777216
                 block_state_cache_limit = 65536
 
-                [gpu]
-                enable = false
-                device = "discrete"
-
                 [spawn]
                 x = 0.0
                 y = 64.0

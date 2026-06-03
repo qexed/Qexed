@@ -49,23 +49,6 @@ pub(crate) fn from_config(config: &WorldConfig) -> Arc<dyn WorldChunkGenerator> 
     }
 }
 
-fn worldgen_gpu_from_config(
-    config: &WorldGpu,
-    height: i32,
-) -> Option<Arc<gpu_worldgen::GpuWorldgenEngine>> {
-    if !config.enable {
-        return None;
-    }
-
-    match gpu_worldgen::GpuWorldgenEngine::new(&config.device, height) {
-        Ok(engine) => Some(Arc::new(engine)),
-        Err(err) => {
-            log::warn!("GPU 世界生成后处理初始化失败，已回退 CPU: {err:#}");
-            None
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct EmptyWorldGenerator;
 
@@ -195,7 +178,6 @@ impl WorldChunkGenerator for VanillaFlatGenerator {
 #[derive(Debug)]
 pub(crate) struct VanillaNoiseGenerator {
     settings: NoiseSettings,
-    gpu_worldgen: Option<Arc<gpu_worldgen::GpuWorldgenEngine>>,
 }
 
 impl VanillaNoiseGenerator {
@@ -224,12 +206,8 @@ impl VanillaNoiseGenerator {
         }
     }
 
-    fn from_settings(settings: NoiseSettings, config: &WorldConfig) -> Self {
-        let gpu_worldgen = worldgen_gpu_from_config(&config.gpu, settings.height);
-        Self {
-            settings,
-            gpu_worldgen,
-        }
+    fn from_settings(settings: NoiseSettings, _config: &WorldConfig) -> Self {
+        Self { settings }
     }
 
     fn supported_dimension(dimension: &str) -> Option<NoiseDimension> {
@@ -273,9 +251,7 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
         }
 
         let total_start = Instant::now();
-        let (chunk, timings) =
-            self.settings
-                .generate_chunk_profiled(chunk_x, chunk_z, self.gpu_worldgen.as_deref());
+        let (chunk, timings) = self.settings.generate_chunk_profiled(chunk_x, chunk_z);
 
         let root_start = Instant::now();
         let mut root = noise_chunk_root(&chunk, self.settings.biome.as_str());
@@ -352,9 +328,7 @@ impl WorldChunkGenerator for VanillaNoiseGenerator {
             )?));
         }
 
-        let (chunk, _) =
-            self.settings
-                .generate_chunk_profiled(chunk_x, chunk_z, self.gpu_worldgen.as_deref());
+        let (chunk, _) = self.settings.generate_chunk_profiled(chunk_x, chunk_z);
         let mut root = noise_chunk_root(&chunk, self.settings.biome.as_str());
         append_block_entities_to_chunk_root(&mut root, &chunk);
         Ok(Some(chunk_nbt::region_chunk_from_nbt(
@@ -553,24 +527,13 @@ impl NoiseSettings {
 
     #[cfg(test)]
     fn generate_chunk(&self, chunk_x: i32, chunk_z: i32) -> NoiseChunkBlocks {
-        self.generate_chunk_with_gpu(chunk_x, chunk_z, None)
-    }
-
-    #[cfg(test)]
-    fn generate_chunk_with_gpu(
-        &self,
-        chunk_x: i32,
-        chunk_z: i32,
-        gpu: Option<&gpu_worldgen::GpuWorldgenEngine>,
-    ) -> NoiseChunkBlocks {
-        self.generate_chunk_profiled(chunk_x, chunk_z, gpu).0
+        self.generate_chunk_profiled(chunk_x, chunk_z).0
     }
 
     fn generate_chunk_profiled(
         &self,
         chunk_x: i32,
         chunk_z: i32,
-        gpu: Option<&gpu_worldgen::GpuWorldgenEngine>,
     ) -> (NoiseChunkBlocks, NoiseChunkTimings) {
         let base_start = Instant::now();
         let (mut chunk, preliminary_surfaces) = self.generate_base_chunk(chunk_x, chunk_z);
@@ -590,7 +553,7 @@ impl NoiseSettings {
         let features = features_start.elapsed();
 
         let heightmap_start = Instant::now();
-        chunk.recompute_first_available_heights_accelerated(self.min_y, self.height, gpu);
+        chunk.recompute_first_available_heights(self.min_y, self.height);
         let heightmap = heightmap_start.elapsed();
 
         (

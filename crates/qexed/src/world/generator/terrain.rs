@@ -270,52 +270,6 @@ impl NoiseChunkBlocks {
         min_y + self.column(x, z).first_available_height
     }
 
-    fn recompute_first_available_heights_accelerated(
-        &mut self,
-        min_y: i32,
-        height: i32,
-        gpu: Option<&gpu_worldgen::GpuWorldgenEngine>,
-    ) {
-        if let Some(gpu) = gpu
-            && height as usize * HEIGHTMAP_ENTRY_COUNT == CHUNK_DAMPENING_LEN
-        {
-            match gpu.first_available_heights(&self.occupied_mask(height)) {
-                Ok(heights) if heights.len() == HEIGHTMAP_ENTRY_COUNT => {
-                    for (column, height) in self.columns.iter_mut().zip(heights) {
-                        column.first_available_height = height;
-                    }
-                    return;
-                }
-                Ok(heights) => {
-                    log::warn!(
-                        "GPU 世界生成后处理返回高度图长度异常，已回退 CPU: expected={}, got={}",
-                        HEIGHTMAP_ENTRY_COUNT,
-                        heights.len()
-                    );
-                }
-                Err(err) => {
-                    log::warn!("GPU 世界生成后处理失败，已回退 CPU: {err:#}");
-                }
-            }
-        }
-
-        self.recompute_first_available_heights(min_y, height);
-    }
-
-    fn occupied_mask(&self, height: i32) -> Vec<u32> {
-        let mut mask = vec![0_u32; height as usize * HEIGHTMAP_ENTRY_COUNT];
-        for z in 0..16 {
-            for x in 0..16 {
-                for (y, layer) in self.column(x, z).blocks.iter().enumerate() {
-                    if !layer.is_air {
-                        mask[y * HEIGHTMAP_ENTRY_COUNT + z * 16 + x] = 1;
-                    }
-                }
-            }
-        }
-        mask
-    }
-
     fn recompute_first_available_heights(&mut self, min_y: i32, height: i32) {
         for column in &mut self.columns {
             let highest = column

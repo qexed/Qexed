@@ -18,7 +18,6 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{DroppedItemEntity, ManagedEntity, ManagedEntityKind};
 
 const ITEM_ENTITY_METADATA_ITEM_INDEX: u8 = 8;
-const PLAYER_SKIN_PARTS_METADATA_INDEX: u8 = 17;
 const DISPLAY_BILLBOARD_METADATA_INDEX: u8 = 15;
 const DISPLAY_VIEW_RANGE_METADATA_INDEX: u8 = 17;
 const DISPLAY_WIDTH_METADATA_INDEX: u8 = 20;
@@ -29,7 +28,6 @@ const TEXT_DISPLAY_BACKGROUND_METADATA_INDEX: u8 = 25;
 const TEXT_DISPLAY_OPACITY_METADATA_INDEX: u8 = 26;
 const TEXT_DISPLAY_STYLE_METADATA_INDEX: u8 = 27;
 const DISPLAY_BILLBOARD_CENTER: u8 = 3;
-const PLAYER_ALL_SKIN_PARTS: u8 = 0x7f;
 const TEXT_DISPLAY_DEFAULT_BACKGROUND: i32 = 0x40000000;
 const TEXT_DISPLAY_DEFAULT_OPACITY: u8 = 0xff;
 const TEXT_DISPLAY_SEE_THROUGH: u8 = 0x02;
@@ -312,10 +310,6 @@ fn player_entity_metadata(name: Option<&str>) -> EntityMetadata {
             data: Some(EntityMetadataEnum::Boolean(true)),
         });
     }
-    data.push(EntityMetadataSub {
-        index: PLAYER_SKIN_PARTS_METADATA_INDEX,
-        data: Some(EntityMetadataEnum::Byte(PLAYER_ALL_SKIN_PARTS)),
-    });
     data.push(EntityMetadataSub {
         index: 0xff,
         data: None,

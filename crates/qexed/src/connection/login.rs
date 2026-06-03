@@ -47,6 +47,10 @@ where
             return Ok(());
         }
     };
+    if let Some(ban) = context.warden.ban_for(login.profile.uuid) {
+        disconnect_login(sink, ban_disconnect_reason(&ban)).await?;
+        return Ok(());
+    }
 
     if context.config.server.network_compression_threshold >= 0 {
         let threshold = context.config.server.network_compression_threshold as i32;
@@ -81,6 +85,7 @@ where
         &context.plugins,
         &context.player_audit,
         &context.content_filter,
+        &context.warden,
         &login.profile,
         client_config.locale,
         client_config.displayed_skin_parts,
@@ -89,6 +94,14 @@ where
     .await?;
 
     Ok(())
+}
+
+fn ban_disconnect_reason(ban: &qexed_config::app::qexed_warden::data::BanRecord) -> String {
+    if ban.reason.is_empty() {
+        "You are banned from this server.".to_string()
+    } else {
+        format!("You are banned from this server: {}", ban.reason)
+    }
 }
 
 #[derive(Debug)]

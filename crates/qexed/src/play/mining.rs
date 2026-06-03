@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -119,6 +120,149 @@ pub(super) fn mining_context(block_state: i32, held_item: &Slot) -> MiningContex
     }
 }
 
+pub(super) fn held_item_allows_adventure_break(held_item: &Slot, block_state: i32) -> bool {
+    let Some(components) = held_item.components_to_add.as_deref() else {
+        return false;
+    };
+    let Some(block_name) = crate::inventory::block_name_for_state(block_state) else {
+        return false;
+    };
+    let Some(block_id) = block_registry_id(&block_name) else {
+        return false;
+    };
+    let block_properties =
+        crate::inventory::block_properties_for_state(block_state).unwrap_or_default();
+
+    components.iter().any(|component| {
+        let ComponentsToAdd::MinecraftCanBreak(can_break) = component else {
+            return false;
+        };
+        can_break
+            .block_predicates
+            .iter()
+            .any(|predicate| block_predicate_allows(predicate, block_id, &block_properties))
+    })
+}
+
+fn block_predicate_allows(
+    predicate: &qexed_protocol::types::minecraft::BlockPredicate,
+    block_id: i32,
+    block_properties: &HashMap<String, String>,
+) -> bool {
+    if predicate.nbt.is_some() {
+        return false;
+    }
+    if !predicate
+        .blocks
+        .as_ref()
+        .is_none_or(|blocks| block_id_set_contains(blocks, block_id))
+    {
+        return false;
+    }
+    predicate
+        .properties
+        .as_ref()
+        .is_none_or(|properties| state_properties_match(properties, block_properties))
+}
+
+fn block_id_set_contains(id_set: &qexed_protocol::types::IDSet, block_id: i32) -> bool {
+    if let Some(ids) = &id_set.ids {
+        return ids.iter().any(|id| id.0 == block_id);
+    }
+    id_set
+        .tag_name
+        .as_deref()
+        .is_some_and(|tag| block_tag_contains(tag, block_id))
+}
+
+fn state_properties_match(
+    predicate: &qexed_protocol::types::minecraft::StatePropertiesPredicate,
+    block_properties: &HashMap<String, String>,
+) -> bool {
+    predicate.properties.iter().all(|property| {
+        let Some(value) = block_properties.get(&property.name) else {
+            return false;
+        };
+        match &property.matcher {
+            qexed_protocol::types::minecraft::StatePropertyMatcherValue::Exact(expected) => {
+                value == expected
+            }
+            qexed_protocol::types::minecraft::StatePropertyMatcherValue::Range { min, max } => {
+                property_range_contains(value, min.as_deref(), max.as_deref())
+            }
+        }
+    })
+}
+
+fn property_range_contains(value: &str, min: Option<&str>, max: Option<&str>) -> bool {
+    if let Ok(value) = value.parse::<i64>() {
+        if let Some(min) = min.and_then(|min| min.parse::<i64>().ok())
+            && value < min
+        {
+            return false;
+        }
+        if let Some(max) = max.and_then(|max| max.parse::<i64>().ok())
+            && value > max
+        {
+            return false;
+        }
+        return true;
+    }
+
+    min.is_none_or(|min| value >= min) && max.is_none_or(|max| value <= max)
+}
+
+fn block_registry_id(block_name: &str) -> Option<i32> {
+    static BLOCK_IDS: OnceLock<Option<HashMap<String, i32>>> = OnceLock::new();
+    BLOCK_IDS
+        .get_or_init(|| crate::registry_sync::load_registry_id_map("minecraft:block").ok())
+        .as_ref()?
+        .get(block_name)
+        .copied()
+}
+
+fn block_tag_contains(tag_name: &str, block_id: i32) -> bool {
+    static BLOCK_TAGS: OnceLock<HashMap<String, HashSet<i32>>> = OnceLock::new();
+    let tag_name = normalize_tag_name(tag_name);
+    BLOCK_TAGS
+        .get_or_init(load_block_tags)
+        .get(&tag_name)
+        .is_some_and(|ids| ids.contains(&block_id))
+}
+
+fn load_block_tags() -> HashMap<String, HashSet<i32>> {
+    let Ok(packet) = crate::registry_sync::load_tag_packet() else {
+        return HashMap::new();
+    };
+    let Some(block_registry) = packet
+        .tags
+        .into_iter()
+        .find(|registry| registry.registry == "minecraft:block")
+    else {
+        return HashMap::new();
+    };
+
+    block_registry
+        .tags
+        .into_iter()
+        .map(|tag| {
+            (
+                tag.name,
+                tag.entries.into_iter().map(|entry| entry.0).collect(),
+            )
+        })
+        .collect()
+}
+
+fn normalize_tag_name(tag_name: &str) -> String {
+    let tag_name = tag_name.strip_prefix('#').unwrap_or(tag_name);
+    if tag_name.contains(':') {
+        tag_name.to_string()
+    } else {
+        format!("minecraft:{tag_name}")
+    }
+}
+
 pub(super) fn required_break_duration(
     block_state: i32,
     held_item: &Slot,
@@ -143,12 +287,30 @@ pub(super) fn required_break_duration(
     break_duration(block_hardness(&context.block_name), speed)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn default_block_drops(
     block_state: i32,
     position: &BlockPosition,
     held_item: &Slot,
     plugins: &crate::plugins::PluginManager,
 ) -> Vec<Slot> {
+    block_drop_outcome(block_state, position, held_item, plugins, None, None).drops
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct BlockDropOutcome {
+    pub(super) drops: Vec<Slot>,
+    pub(super) break_positions: Vec<BlockPosition>,
+}
+
+pub(super) fn block_drop_outcome(
+    block_state: i32,
+    position: &BlockPosition,
+    held_item: &Slot,
+    plugins: &crate::plugins::PluginManager,
+    player: Option<crate::plugins::PlayerPayloadOwned>,
+    player_position: Option<qexed_plugin_api::PlayerPositionPayload>,
+) -> BlockDropOutcome {
     let context = mining_context(block_state, held_item);
     let default_item_id = vanilla_drop_item_id(&context)
         .or_else(|| crate::inventory::picked_item_for_block_state(block_state));
@@ -161,6 +323,8 @@ pub(super) fn default_block_drops(
         })
         .unwrap_or_default();
     let query = BlockDropQuery {
+        player,
+        player_position,
         block_state,
         block_name: context.block_name.clone(),
         position: BlockDropPosition {
@@ -175,20 +339,52 @@ pub(super) fn default_block_drops(
     };
 
     let Some(plugin_result) = plugins.apply_block_drops(query) else {
-        return drops;
+        return BlockDropOutcome {
+            drops,
+            break_positions: Vec::new(),
+        };
     };
     let plugin_drops = plugin_result
         .items
         .into_iter()
-        .filter(|item| item.item_id >= 0 && item.count > 0)
-        .map(|item| crate::inventory::simple_item(item.item_id, item.count.min(64)))
+        .filter(|item| item.count > 0)
+        .filter_map(|item| {
+            let item_id = if item.item_id >= 0 {
+                Some(item.item_id)
+            } else {
+                crate::inventory::item_id_for_name(&normalize_item_name(&item.item_name))
+            }?;
+            Some(crate::inventory::simple_item(item_id, item.count.min(64)))
+        })
         .collect::<Vec<_>>();
 
-    if plugin_result.replace {
+    drops = if plugin_result.replace {
         plugin_drops
     } else {
         drops.extend(plugin_drops);
         drops
+    };
+    let break_positions = plugin_result
+        .break_positions
+        .into_iter()
+        .map(|position| BlockPosition {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+        })
+        .collect();
+    BlockDropOutcome {
+        drops,
+        break_positions,
+    }
+}
+
+fn normalize_item_name(value: &str) -> String {
+    let value = value.trim();
+    if value.contains(':') {
+        value.to_string()
+    } else {
+        format!("minecraft:{value}")
     }
 }
 

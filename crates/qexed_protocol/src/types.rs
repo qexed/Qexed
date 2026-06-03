@@ -794,7 +794,10 @@ pub enum RecipeDisplay {
     Unknown,
 }
 pub mod minecraft {
-    use qexed_packet::net_types::{Position, VarInt};
+    use qexed_packet::{
+        PacketCodec,
+        net_types::{Position, VarInt},
+    };
     use uuid::Uuid;
 
     use crate::types::{Slot, SlotDisplay, TextComponent};
@@ -870,20 +873,120 @@ pub mod minecraft {
         pub enchantments: Vec<Enchantment>,
     }
 
-    #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
-    pub struct BlockPredicate;
+    pub struct BlockPredicate {
+        pub blocks: Option<super::IDSet>,
+        pub properties: Option<StatePropertiesPredicate>,
+        pub nbt: Option<qexed_nbt::Tag>,
+    }
+
+    impl PacketCodec for BlockPredicate {
+        fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+            self.blocks.serialize(w)?;
+            self.properties.serialize(w)?;
+            self.nbt.serialize(w)
+        }
+
+        fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+            self.blocks.deserialize(r)?;
+            self.properties.deserialize(r)?;
+            self.nbt.deserialize(r)
+        }
+    }
+
+    #[derive(Debug, Default, PartialEq, Clone)]
+    pub struct StatePropertiesPredicate {
+        pub properties: Vec<StatePropertyMatcher>,
+    }
+
+    impl PacketCodec for StatePropertiesPredicate {
+        fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+            self.properties.serialize(w)
+        }
+
+        fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+            self.properties.deserialize(r)
+        }
+    }
+
+    #[derive(Debug, Default, PartialEq, Clone)]
+    pub struct StatePropertyMatcher {
+        pub name: String,
+        pub matcher: StatePropertyMatcherValue,
+    }
+
+    impl PacketCodec for StatePropertyMatcher {
+        fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+            self.name.serialize(w)?;
+            self.matcher.serialize(w)
+        }
+
+        fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+            self.name.deserialize(r)?;
+            self.matcher.deserialize(r)
+        }
+    }
+
+    #[derive(Debug, PartialEq, Clone)]
+    pub enum StatePropertyMatcherValue {
+        Exact(String),
+        Range {
+            min: Option<String>,
+            max: Option<String>,
+        },
+    }
+
+    impl Default for StatePropertyMatcherValue {
+        fn default() -> Self {
+            Self::Exact(String::new())
+        }
+    }
+
+    impl PacketCodec for StatePropertyMatcherValue {
+        fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+            match self {
+                Self::Exact(value) => {
+                    true.serialize(w)?;
+                    value.serialize(w)
+                }
+                Self::Range { min, max } => {
+                    false.serialize(w)?;
+                    min.serialize(w)?;
+                    max.serialize(w)
+                }
+            }
+        }
+
+        fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+            let mut is_exact = false;
+            is_exact.deserialize(r)?;
+            if is_exact {
+                let mut value = String::new();
+                value.deserialize(r)?;
+                *self = Self::Exact(value);
+            } else {
+                let mut min = Option::<String>::default();
+                let mut max = Option::<String>::default();
+                min.deserialize(r)?;
+                max.deserialize(r)?;
+                *self = Self::Range { min, max };
+            }
+            Ok(())
+        }
+    }
 
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
     pub struct CanPlaceOn {
         pub block_predicates: Vec<BlockPredicate>,
+        pub show_in_tooltip: bool,
     }
 
     #[qexed_packet_macros::substruct]
     #[derive(Debug, Default, PartialEq, Clone)]
     pub struct CanBreak {
         pub block_predicates: Vec<BlockPredicate>,
+        pub show_in_tooltip: bool,
     }
 
     #[qexed_packet_macros::substruct]
@@ -1583,7 +1686,7 @@ pub enum SlotDisplay {
 mod tests {
     use qexed_packet::{PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 
-    use super::{ComponentsToAdd, Slot, minecraft};
+    use super::{ComponentsToAdd, IDSet, Slot, minecraft};
 
     #[test]
     fn slot_item_name_and_lore_use_data_component_registry_ids() {
@@ -1630,6 +1733,48 @@ mod tests {
         assert_eq!(remove_count.0, 0);
         assert_eq!(first_component.0, 9);
         assert_eq!(second_component.0, 11);
+    }
+
+    #[test]
+    fn slot_can_break_round_trips_block_predicate() {
+        let slot = Slot {
+            item_count: VarInt(1),
+            item_id: Some(VarInt(1)),
+            number_of_components_to_add: Some(VarInt(1)),
+            number_of_components_to_remove: Some(VarInt(0)),
+            components_to_add: Some(vec![ComponentsToAdd::MinecraftCanBreak(
+                minecraft::CanBreak {
+                    block_predicates: vec![minecraft::BlockPredicate {
+                        blocks: Some(IDSet {
+                            r#type: VarInt(2),
+                            tag_name: None,
+                            ids: Some(vec![VarInt(1)]),
+                        }),
+                        properties: Some(minecraft::StatePropertiesPredicate {
+                            properties: vec![minecraft::StatePropertyMatcher {
+                                name: "axis".to_string(),
+                                matcher: minecraft::StatePropertyMatcherValue::Exact(
+                                    "y".to_string(),
+                                ),
+                            }],
+                        }),
+                        nbt: None,
+                    }],
+                    show_in_tooltip: true,
+                },
+            )]),
+            components_to_remove: None,
+        };
+
+        let mut buf = bytes::BytesMut::new();
+        let mut writer = PacketWriter::new(&mut buf);
+        slot.serialize(&mut writer).unwrap();
+        let mut bytes = buf.freeze();
+        let mut reader = PacketReader::new(&mut bytes);
+        let mut decoded = Slot::default();
+        decoded.deserialize(&mut reader).unwrap();
+
+        assert_eq!(decoded, slot);
     }
 
     fn text_component(text: &str) -> super::TextComponent {

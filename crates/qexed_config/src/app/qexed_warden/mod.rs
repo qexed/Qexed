@@ -2,10 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedWarden {
+    #[serde(default)]
     pub version: i32,
 
+    #[serde(default)]
     pub data: data::Data,
 }
 

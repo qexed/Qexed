@@ -39,8 +39,7 @@ pub fn find_path(query: PathQuery<'_>) -> Option<Vec<Position>> {
         goal,
         query.cached_only,
         &mut walkable,
-    )
-    {
+    ) {
         return None;
     }
 

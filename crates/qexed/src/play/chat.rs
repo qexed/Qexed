@@ -2371,6 +2371,10 @@ where
             *active_config_menu = opened;
             Ok(false)
         }
+        crate::plugins::PlayerAction::GiveItem { .. } => {
+            log::debug!("plugin GiveItem action ignored outside inventory-aware context");
+            Ok(false)
+        }
         crate::plugins::PlayerAction::SetPlayersVisible { visible } => {
             super::set_other_players_visible(
                 sink,

@@ -144,6 +144,7 @@ impl CraftingRuntime {
                     outcome.handled |= matches!(
                         action,
                         crate::plugins::PlayerAction::SystemMessage { .. }
+                            | crate::plugins::PlayerAction::GiveItem { .. }
                             | crate::plugins::PlayerAction::Velocity { .. }
                     );
                 }
@@ -233,6 +234,7 @@ impl CraftingRuntime {
                     outcome.handled |= matches!(
                         action,
                         crate::plugins::PlayerAction::SystemMessage { .. }
+                            | crate::plugins::PlayerAction::GiveItem { .. }
                             | crate::plugins::PlayerAction::Velocity { .. }
                     );
                 }

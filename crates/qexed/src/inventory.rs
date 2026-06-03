@@ -527,6 +527,13 @@ pub fn block_name_for_state(block_state: i32) -> Option<String> {
         .cloned()
 }
 
+pub fn block_properties_for_state(block_state: i32) -> Option<HashMap<String, String>> {
+    block_item_registry()
+        .properties_by_block_state
+        .get(&block_state)
+        .cloned()
+}
+
 pub fn item_id_name_map() -> HashMap<i32, String> {
     block_item_registry().item_name_by_id.clone()
 }

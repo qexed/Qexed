@@ -11,9 +11,9 @@ mod vanilla_noise;
 pub(crate) use light::empty_chunk_section_bytes;
 pub(crate) use light::{
     LightDampeningNeighborhood, block_light_dampening_index, empty_chunk_packet, empty_heightmaps,
-    light_for_mode, light_from_layers, light_from_sky_values, light_section_index,
-    light_update_data, replace_sky_light, section_count, sky_light_from_dampening,
-    sky_light_from_neighbourhood, write_empty_section, write_fixed_long_array,
+    light_for_mode, light_from_layers, light_section_index, light_update_data, replace_sky_light,
+    section_count, sky_light_from_dampening, sky_light_from_neighbourhood, write_empty_section,
+    write_fixed_long_array,
 };
 pub use light::{WorldLightAlgorithm, WorldLightMode};
 pub use manager::{PrecompiledChunkSettings, RuntimeEditRegion, WorldManager, WorldSession};

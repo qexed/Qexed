@@ -79,6 +79,10 @@ pub struct BlockDropPosition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockDropQuery {
+    #[serde(default)]
+    pub player: Option<PlayerPayloadOwned>,
+    #[serde(default)]
+    pub player_position: Option<PlayerPositionPayload>,
     pub block_state: i32,
     pub block_name: String,
     pub position: BlockDropPosition,
@@ -94,11 +98,15 @@ pub struct BlockDropResponse {
     pub replace: bool,
     #[serde(default)]
     pub items: Vec<BlockDropItem>,
+    #[serde(default)]
+    pub break_positions: Vec<BlockDropPosition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockDropItem {
     pub item_id: i32,
+    #[serde(default)]
+    pub item_name: String,
     #[serde(default = "one")]
     pub count: i32,
 }
@@ -404,6 +412,8 @@ pub struct PlayerItemPickupResponse {
     #[serde(default)]
     pub cancel: bool,
     #[serde(default)]
+    pub consume: bool,
+    #[serde(default)]
     pub actions: Vec<PlayerAction>,
 }
 
@@ -674,6 +684,19 @@ pub enum PlayerAction {
     },
     OpenMenu {
         menu: String,
+    },
+    GiveItem {
+        item: String,
+        #[serde(default = "one")]
+        count: i32,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        lore: Vec<String>,
+        #[serde(default)]
+        enchantments: Vec<ItemEnchantment>,
+        #[serde(default)]
+        plugin_enchantments: Vec<PluginEnchantment>,
     },
     SetPlayersVisible {
         visible: bool,

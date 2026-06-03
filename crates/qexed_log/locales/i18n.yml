@@ -35,6 +35,3 @@ qexed_log:
     qexed_packet_split:
       en: "Packet Split"
       zh-CN: "数据包分流"
-    wgpu_hal:
-      en: "GPU Driver Interface"
-      zh-CN: "GPU 驱动接口"

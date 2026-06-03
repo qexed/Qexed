@@ -80,26 +80,5 @@ ENTRYPOINT ["/usr/local/bin/qexed"]
 
 FROM runtime-base AS runtime-cpu
 
-LABEL org.opencontainers.image.title="Qexed CPU Runtime"
-LABEL org.opencontainers.image.description="Qexed server runtime without GPU userspace libraries."
-
-FROM runtime-base AS runtime-gpu
-
-USER root
-
-RUN set -eux; \
-    find /etc/apt -type f \( -name "*.list" -o -name "*.sources" \) \
-        -exec sed -i "s|https://deb.debian.org|http://deb.debian.org|g" {} +; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        libvulkan1 \
-        mesa-vulkan-drivers; \
-    rm -rf /var/lib/apt/lists/*
-
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
-
-USER qexed
-
-LABEL org.opencontainers.image.title="Qexed GPU Runtime"
-LABEL org.opencontainers.image.description="Qexed server runtime with Vulkan userspace libraries for GPU world lighting."
+LABEL org.opencontainers.image.title="Qexed Runtime"
+LABEL org.opencontainers.image.description="Qexed server runtime."

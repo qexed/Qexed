@@ -733,6 +733,30 @@ impl EntityManager {
             .push(item);
     }
 
+    pub fn settle_collectable_dropped_items<F>(
+        &self,
+        dimension: &str,
+        collector: EntityPosition,
+        mut settle: F,
+    ) where
+        F: FnMut(EntityPosition) -> EntityPosition,
+    {
+        let now = Instant::now();
+        let mut dropped_items = self
+            .dropped_items
+            .lock()
+            .expect("entity manager dropped items poisoned");
+        for item in dropped_items.iter_mut() {
+            if item.dimension == dimension
+                && item.pickup_ready_at <= now
+                && (collector.x - item.position.x).abs() <= ITEM_PICKUP_RADIUS_XZ
+                && (collector.z - item.position.z).abs() <= ITEM_PICKUP_RADIUS_XZ
+            {
+                item.position = settle(item.position);
+            }
+        }
+    }
+
     pub fn spawn(
         &self,
         players: &crate::players::PlayerManager,
@@ -2350,8 +2374,10 @@ fn direct_follow_block_is_walkable(
         y: feet.y - 1,
         z: feet.z,
     };
-    let feet_shape = collision_cache.block_collision_shape(world, dimension, feet.x, feet.y, feet.z);
-    let head_shape = collision_cache.block_collision_shape(world, dimension, head.x, head.y, head.z);
+    let feet_shape =
+        collision_cache.block_collision_shape(world, dimension, feet.x, feet.y, feet.z);
+    let head_shape =
+        collision_cache.block_collision_shape(world, dimension, head.x, head.y, head.z);
     let below_shape =
         collision_cache.block_collision_shape(world, dimension, below.x, below.y, below.z);
 

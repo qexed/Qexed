@@ -182,6 +182,59 @@ fn dropped_items_are_collected_once_when_reachable() {
 }
 
 #[test]
+fn dropped_items_can_be_settled_before_collection() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let high_position = EntityPosition {
+        x: 0.5,
+        y: 70.0,
+        z: 0.5,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: false,
+    };
+    let collector = EntityPosition {
+        y: 64.0,
+        on_ground: true,
+        ..high_position
+    };
+
+    let updates = manager
+        .drop_item(
+            &players,
+            uuid::Uuid::new_v4(),
+            "minecraft:overworld",
+            high_position,
+            crate::inventory::simple_item(1, 1),
+        )
+        .unwrap();
+    assert_eq!(updates.len(), 1);
+
+    std::thread::sleep(std::time::Duration::from_millis(550));
+    assert!(
+        manager
+            .collect_reachable_items("minecraft:overworld", collector)
+            .unwrap()
+            .is_empty()
+    );
+
+    manager.settle_collectable_dropped_items("minecraft:overworld", collector, |mut position| {
+        position.y = 64.0;
+        position
+    });
+    let collected = manager
+        .collect_reachable_items("minecraft:overworld", collector)
+        .unwrap();
+
+    assert_eq!(collected.len(), 1);
+}
+
+#[test]
 fn dropped_items_merge_until_configured_stack_limit() {
     let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
     let manager = EntityManager::from_config(
@@ -1715,6 +1768,51 @@ fn npc_spawn_packets_include_skin_textures_in_player_info() {
             .any(|w| w == signature),
         "PlayerInfoUpdate packet should contain textures signature"
     );
+}
+
+#[test]
+fn player_npc_does_not_send_removed_skin_parts_metadata() {
+    let entity = ManagedEntity {
+        key: "player-npc".to_string(),
+        entity_id: 2,
+        uuid: uuid::Uuid::new_v4(),
+        kind: ManagedEntityKind::Npc,
+        entity_type: "minecraft:player".to_string(),
+        entity_type_id: 155,
+        dimension: "minecraft:overworld".to_string(),
+        position: EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        name: "player_npc".to_string(),
+        display_name: "Player NPC".to_string(),
+        skin_textures: String::new(),
+        skin_signature: String::new(),
+        data: 0,
+        ai: String::new(),
+        ai_params: Default::default(),
+        auto_jump: false,
+        spawn_rule: String::new(),
+        custom_type: String::new(),
+        look_at_players: false,
+        main_hand_event: "interact".to_string(),
+        off_hand_event: "interact_off_hand".to_string(),
+        attack_event: "attack".to_string(),
+    };
+
+    let packets = entity.spawn_packets().unwrap();
+    let set_entity_data = decode_clientbound_packet::<SetEntityData>(&packets[3]);
+    let removed_skin_parts_metadata = set_entity_data
+        .metadata
+        .data
+        .iter()
+        .any(|metadata| metadata.data == Some(EntityMetadataEnum::Byte(0x7f)));
+
+    assert!(!removed_skin_parts_metadata);
 }
 
 #[test]

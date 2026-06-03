@@ -545,6 +545,7 @@ pub enum MenuActionKind {
     None,
     OpenMenu,
     Transfer,
+    Command,
     Message,
     HidePlayers,
     ShowPlayers,
@@ -2763,9 +2764,9 @@ mod tests {
         ContentFilter, ContentFilterEngine, CustomAdvancementTrigger, Entities, EntityKind,
         ForwardingMode, GameMode, Gameplay, LightAlgorithm, LightMode, LobbyActionKind,
         LobbyBossBarColor, LobbyBossBarOverlay, MenuActionKind, Npcs, PermissionEngine,
-        Permissions, PlayerAudit, PlayerAuditStorage, PlayerData, PlayerDataEngine,
-        PlayerMessages, PrecompiledChunks, ResourcePack, ResourcePackObjectStorageProvider,
-        ResourcePackSource, Server, World, WorldGenerator,
+        Permissions, PlayerAudit, PlayerAuditStorage, PlayerData, PlayerDataEngine, PlayerMessages,
+        PrecompiledChunks, ResourcePack, ResourcePackObjectStorageProvider, ResourcePackSource,
+        Server, World, WorldGenerator,
     };
 
     #[test]
@@ -3755,6 +3756,20 @@ target = "survival"
             super::MenuActionKind::Transfer
         );
         assert_eq!(menus.chests[0].items[0].action.target, "survival");
+    }
+
+    #[test]
+    fn parses_menu_command_action() {
+        let action: super::MenuAction = toml::from_str(
+            r#"
+kind = "command"
+target = "prison lottery"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.kind, super::MenuActionKind::Command);
+        assert_eq!(action.target, "prison lottery");
     }
 
     #[test]

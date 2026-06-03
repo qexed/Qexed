@@ -41,6 +41,7 @@ use crate::players::OnlinePlayer;
 
 pub struct PluginManager {
     plugins: OnceLock<Mutex<Vec<PluginInstance>>>,
+    supported_events: OnceLock<std::collections::HashSet<PluginEvent>>,
     initialized: Mutex<bool>,
     path: std::path::PathBuf,
     services: Arc<host::PluginHostServices>,
@@ -54,6 +55,7 @@ impl PluginManager {
     pub fn from_dir(path: impl AsRef<Path>) -> Self {
         Self {
             plugins: OnceLock::new(),
+            supported_events: OnceLock::new(),
             initialized: Mutex::new(false),
             path: path.as_ref().to_path_buf(),
             services: Arc::new(host::PluginHostServices::default()),
@@ -94,8 +96,29 @@ impl PluginManager {
     }
 
     fn ensure_loaded(&self) -> &Mutex<Vec<PluginInstance>> {
-        self.plugins
-            .get_or_init(|| Mutex::new(load_plugins(&self.path, self.services.clone())))
+        self.plugins.get_or_init(|| {
+            let plugins = load_plugins(&self.path, self.services.clone());
+            let supported_events = plugins
+                .iter()
+                .flat_map(|plugin| {
+                    PluginEvent::ALL
+                        .iter()
+                        .copied()
+                        .filter(|event| plugin.supports_event(*event))
+                })
+                .collect::<std::collections::HashSet<_>>();
+            let _ = self.supported_events.set(supported_events);
+            Mutex::new(plugins)
+        })
+    }
+
+    fn supports_event(&self, event: PluginEvent) -> bool {
+        if self.supported_events.get().is_none() {
+            self.ensure_loaded();
+        }
+        self.supported_events
+            .get()
+            .is_some_and(|events| events.contains(&event))
     }
 }
 
@@ -226,12 +249,14 @@ impl PluginManager {
             let current = result.get_or_insert_with(|| BlockDropResponse {
                 replace: false,
                 items: Vec::new(),
+                break_positions: Vec::new(),
             });
             if response.replace {
                 current.replace = true;
                 current.items.clear();
             }
             current.items.extend(response.items);
+            current.break_positions.extend(response.break_positions);
         }
         result
     }
@@ -594,12 +619,14 @@ impl PluginManager {
         };
         let mut result = PlayerItemPickupResponse {
             cancel: false,
+            consume: false,
             actions: Vec::new(),
         };
         for response in
             self.query_encoded::<_, PlayerItemPickupResponse>(PluginEvent::PlayerItemPickup, &query)
         {
             result.cancel |= response.cancel;
+            result.consume |= response.consume;
             result.actions.extend(response.actions);
         }
         result
@@ -621,6 +648,12 @@ impl PluginManager {
         hand: &str,
         configured_event: &str,
     ) -> PluginCommandResponse {
+        if !self.supports_event(PluginEvent::NpcInteract) {
+            return PluginCommandResponse {
+                handled: false,
+                actions: Vec::new(),
+            };
+        }
         let payload = match encode_plugin_payload(&NpcInteractPayload {
             player: player_payload_owned(player),
             entity,
@@ -647,6 +680,9 @@ impl PluginManager {
             .lock()
             .expect("plugin manager poisoned");
         for plugin in plugins.iter_mut() {
+            if !plugin.supports_event(PluginEvent::NpcInteract) {
+                continue;
+            }
             let response = match plugin.call_event_or_query(PluginEvent::NpcInteract, &payload) {
                 Ok(Some(response)) => response,
                 Ok(None) => continue,
@@ -680,8 +716,11 @@ impl PluginManager {
     fn empty() -> Self {
         let plugins = OnceLock::new();
         let _ = plugins.set(Mutex::new(Vec::new()));
+        let supported_events = OnceLock::new();
+        let _ = supported_events.set(std::collections::HashSet::new());
         Self {
             plugins,
+            supported_events,
             initialized: Mutex::new(true),
             path: std::path::PathBuf::new(),
             services: Arc::new(host::PluginHostServices::default()),
@@ -704,11 +743,17 @@ impl PluginManager {
     }
 
     fn emit(&self, event: PluginEvent, payload: &[u8]) {
+        if !self.supports_event(event) {
+            return;
+        }
         let mut plugins = self
             .ensure_loaded()
             .lock()
             .expect("plugin manager poisoned");
         for plugin in plugins.iter_mut() {
+            if !plugin.supports_event(event) {
+                continue;
+            }
             if let Err(err) = plugin.call_event(event, payload) {
                 log::warn!(
                     "WASM plugin event failed: plugin={}, event={event:?}, error={err:#}",
@@ -723,6 +768,9 @@ impl PluginManager {
         T: Serialize,
         R: DeserializeOwned,
     {
+        if !self.supports_event(event) {
+            return Vec::new();
+        }
         let payload = match encode_plugin_payload(payload) {
             Ok(payload) => payload,
             Err(err) => {
@@ -736,6 +784,9 @@ impl PluginManager {
             .expect("plugin manager poisoned");
         let mut responses = Vec::new();
         for plugin in plugins.iter_mut() {
+            if !plugin.supports_event(event) {
+                continue;
+            }
             let response = match plugin.call_query(event, &payload) {
                 Ok(Some(response)) => response,
                 Ok(None) => continue,

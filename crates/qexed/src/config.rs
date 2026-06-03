@@ -18,6 +18,7 @@ use qexed_config::{
         qexed_resource_pack::QexedResourcePack,
         qexed_scoreboard::QexedScoreboard,
         qexed_server::QexedServer,
+        qexed_warden::QexedWarden,
     },
     tool::AppConfigTrait,
 };
@@ -27,6 +28,7 @@ pub struct RuntimeConfig {
     pub qexed: Qexed,
     pub world: World,
     pub npcs: qexed_config::app::qexed::server::Npcs,
+    pub warden: QexedWarden,
 }
 
 impl RuntimeConfig {
@@ -84,8 +86,14 @@ impl RuntimeConfig {
         qexed.server.lobby =
             QexedLobby::load_or_create_default(language.clone(), None, None)?.lobby;
         let world = World::load_or_create_default(language, None, None)?;
+        let warden = QexedWarden::load_or_create_default(None, None, None)?;
         qexed.server.world = world.clone();
-        Ok(Self { qexed, world, npcs })
+        Ok(Self {
+            qexed,
+            world,
+            npcs,
+            warden,
+        })
     }
 }
 
@@ -119,8 +127,14 @@ impl From<Qexed> for RuntimeConfig {
     fn from(mut qexed: Qexed) -> Self {
         let world = qexed.server.world.clone();
         let npcs = qexed_config::app::qexed::server::Npcs::default();
+        let warden = QexedWarden::default();
         qexed.server.world = world.clone();
-        Self { qexed, world, npcs }
+        Self {
+            qexed,
+            world,
+            npcs,
+            warden,
+        }
     }
 }
 

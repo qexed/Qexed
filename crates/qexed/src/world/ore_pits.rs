@@ -450,7 +450,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
@@ -511,7 +510,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let diamond = crate::world::chunk_nbt::default_block_state_id("minecraft:diamond_ore");
@@ -550,7 +548,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let diamond = crate::world::chunk_nbt::default_block_state_id("minecraft:diamond_ore");
@@ -612,7 +609,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let diamond = crate::world::chunk_nbt::default_block_state_id("minecraft:diamond_ore");
@@ -663,7 +659,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");
@@ -706,7 +701,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let manager = OrePitManager::from_config(&[WorldOrePit {
@@ -758,7 +752,6 @@ mod tests {
             dir.path(),
             crate::world::WorldLightMode::Static,
             crate::world::WorldLightAlgorithm::Fast,
-            None,
             true,
         );
         let stone = crate::world::chunk_nbt::default_block_state_id("minecraft:stone");

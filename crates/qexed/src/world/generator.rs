@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use qexed_config::app::qexed::server::{
-    World as WorldConfig, WorldGenerator as WorldGeneratorConfig, WorldGpu,
+    World as WorldConfig, WorldGenerator as WorldGeneratorConfig,
 };
 use qexed_nbt::{ListHeader, Tag, tag_id};
 use qexed_packet::net_types::{OptionalNbt, VarInt};
@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use super::{
     CHUNK_DAMPENING_LEN, SECTION_HEIGHT, WORLD_MAX_Y, WORLD_MIN_SECTION_Y, WORLD_MIN_Y,
-    WorldLightAlgorithm, chunk_nbt, empty_chunk_packet, gpu_worldgen, section_count, vanilla_noise,
+    WorldLightAlgorithm, chunk_nbt, empty_chunk_packet, section_count, vanilla_noise,
 };
 
 include!("generator/constants.rs");

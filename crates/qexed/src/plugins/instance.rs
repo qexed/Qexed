@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
@@ -21,6 +21,7 @@ const MAX_QUERY_RESPONSE_BYTES: usize = 1024 * 1024;
 pub(super) struct PluginInstance {
     pub(super) name: String,
     pub(super) priority: i32,
+    supported_events: HashSet<PluginEvent>,
     store: Store<PluginState>,
     instance: Instance,
     memory: Memory,
@@ -110,6 +111,15 @@ impl PluginInstance {
             .to_string();
         let module = Module::from_file(engine, &path)
             .with_context(|| format!("编译插件 {}", path.display()))?;
+        let exported_names = module
+            .exports()
+            .map(|export| export.name().to_string())
+            .collect::<HashSet<_>>();
+        let supported_events = PluginEvent::ALL
+            .iter()
+            .copied()
+            .filter(|event| exported_names.contains(event.export_name()))
+            .collect::<HashSet<_>>();
         let mut store = Store::new(
             engine,
             PluginState {
@@ -145,12 +155,17 @@ impl PluginInstance {
         Ok(Self {
             name,
             priority,
+            supported_events,
             store,
             instance,
             memory,
             alloc,
             dealloc,
         })
+    }
+
+    pub(super) fn supports_event(&self, event: PluginEvent) -> bool {
+        self.supported_events.contains(&event)
     }
 
     pub(super) fn call_event(&mut self, event: PluginEvent, payload: &[u8]) -> Result<()> {

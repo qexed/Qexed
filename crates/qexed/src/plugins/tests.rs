@@ -38,9 +38,33 @@ fn empty_plugin_manager_keeps_mining_speed_unchanged() {
 }
 
 #[test]
+fn missing_plugin_event_does_not_wait_for_plugin_lock() {
+    let manager = PluginManager::empty_for_tests();
+    let _locked_plugins = manager
+        .plugins
+        .get()
+        .expect("empty plugin manager should be initialized")
+        .try_lock()
+        .expect("test should own plugin lock");
+
+    let speed = manager.apply_mining_speed(MiningSpeedQuery {
+        block_state: 1,
+        block_name: "minecraft:stone".to_string(),
+        item_id: None,
+        enchantments: Vec::new(),
+        plugin_enchantments: Vec::new(),
+        speed: 3.0,
+    });
+
+    assert_eq!(speed, 3.0);
+}
+
+#[test]
 fn empty_plugin_manager_keeps_block_drops_default() {
     let manager = PluginManager::empty_for_tests();
     let drops = manager.apply_block_drops(BlockDropQuery {
+        player: None,
+        player_position: None,
         block_state: 1,
         block_name: "minecraft:stone".to_string(),
         position: super::BlockDropPosition { x: 0, y: 64, z: 0 },

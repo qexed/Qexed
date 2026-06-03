@@ -26,14 +26,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: cpu
+          - variant: runtime
             target: runtime-cpu
             tag_suffix: ""
             latest_tag: latest
-          - variant: gpu
-            target: runtime-gpu
-            tag_suffix: "-gpu"
-            latest_tag: latest-gpu
 
     steps:
       - name: Checkout repository

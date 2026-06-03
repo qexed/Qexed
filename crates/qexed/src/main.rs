@@ -24,6 +24,7 @@ mod server;
 mod services;
 mod status;
 mod structures;
+mod warden;
 mod world;
 
 rust_i18n::i18n!("locales");
