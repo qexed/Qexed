@@ -78,6 +78,7 @@ where
         &context.world,
         &context.world_rules,
         &context.ore_pits,
+        context.cluster_entities.as_deref(),
         &context.players,
         &context.entities,
         &context.player_data,

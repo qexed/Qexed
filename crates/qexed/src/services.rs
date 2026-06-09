@@ -64,20 +64,30 @@ async fn initialize_plugins(context: &ServerContext) {
 
 fn run_global_service_tick(context: &ServerContext) -> Result<()> {
     let spawning = &context.config.server.entities.spawning;
-    context.entities.spawn_from_rules(
-        &context.players,
-        &context.world,
-        &context.config.server.entity_rendering,
-        spawning,
-        &context.config.world.default_play_dimension(),
-    )?;
-    context.entities.tick_ai(
-        &context.players,
-        &context.world,
-        &context.plugins,
-        &context.config.server.entity_rendering,
-        spawning.ai_tick_interval_ms,
-    )?;
+    if let Some(cluster_entities) = &context.cluster_entities {
+        cluster_entities.tick(
+            &context.players,
+            &context.config.server.entity_rendering,
+            spawning,
+            &context.config.world.default_play_dimension(),
+            context.config.world.simulation_distance,
+        )?;
+    } else {
+        context.entities.spawn_from_rules(
+            &context.players,
+            &context.world,
+            &context.config.server.entity_rendering,
+            spawning,
+            &context.config.world.default_play_dimension(),
+        )?;
+        context.entities.tick_ai(
+            &context.players,
+            &context.world,
+            &context.plugins,
+            &context.config.server.entity_rendering,
+            spawning.ai_tick_interval_ms,
+        )?;
+    }
 
     let now = Instant::now();
     evacuate_ore_pit_players(context, now);

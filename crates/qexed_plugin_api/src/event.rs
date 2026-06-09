@@ -17,6 +17,7 @@ pub enum PluginEvent {
     Placeholders,
     PlayerBlockStep,
     PlayerMove,
+    PlayerTick,
     PlayerInput,
     ClickDetected,
     PlayerItemPickup,
@@ -33,6 +34,7 @@ pub enum PluginEvent {
     Pathfinding,
     CustomEntities,
     EntityAiTick,
+    ApiCall,
 }
 
 impl PluginEvent {
@@ -54,6 +56,7 @@ impl PluginEvent {
         Self::Placeholders,
         Self::PlayerBlockStep,
         Self::PlayerMove,
+        Self::PlayerTick,
         Self::PlayerInput,
         Self::ClickDetected,
         Self::PlayerItemPickup,
@@ -70,6 +73,7 @@ impl PluginEvent {
         Self::Pathfinding,
         Self::CustomEntities,
         Self::EntityAiTick,
+        Self::ApiCall,
     ];
 
     pub fn export_name(self) -> &'static str {
@@ -91,6 +95,7 @@ impl PluginEvent {
             Self::Placeholders => "qexed_plugin_placeholders",
             Self::PlayerBlockStep => "qexed_plugin_player_block_step",
             Self::PlayerMove => "qexed_plugin_player_move",
+            Self::PlayerTick => "qexed_plugin_player_tick",
             Self::PlayerInput => "qexed_plugin_player_input",
             Self::ClickDetected => "qexed_plugin_click_detected",
             Self::PlayerItemPickup => "qexed_plugin_player_item_pickup",
@@ -107,6 +112,7 @@ impl PluginEvent {
             Self::Pathfinding => "qexed_plugin_pathfinding",
             Self::CustomEntities => "qexed_plugin_custom_entities",
             Self::EntityAiTick => "qexed_plugin_entity_ai_tick",
+            Self::ApiCall => "qexed_plugin_api_call",
         }
     }
 }

@@ -50,6 +50,7 @@ pub enum PlayerEvent {
 pub struct OnlinePlayer {
     pub profile: qexed_packet::net_types::GameProfile,
     pub entity_id: i32,
+    pub game_mode: i32,
     pub position: EntityPosition,
     pub dimension: String,
     pub equipment: Vec<Equipment>,

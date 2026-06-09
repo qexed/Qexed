@@ -133,7 +133,10 @@ pub fn spawn_player_packets(
 fn player_info_packet(player: &OnlinePlayer) -> anyhow::Result<Bytes> {
     packet_bytes(PlayerInfoUpdate {
         actions: PlayerInfoActions::player_initializing(),
-        entries: vec![PlayerInfoEntry::from_profile(&player.profile, 1)],
+        entries: vec![PlayerInfoEntry::from_profile(
+            &player.profile,
+            player.game_mode,
+        )],
     })
 }
 
@@ -158,6 +161,7 @@ mod tests {
                 properties: Vec::new(),
             },
             entity_id: 1,
+            game_mode: 0,
             position: qexed_protocol::to_client::play::add_entity::EntityPosition {
                 x: 0.0,
                 y: 64.0,
@@ -181,5 +185,39 @@ mod tests {
                 .iter()
                 .all(|packet| packet.first() != Some(&set_entity_data_id))
         );
+    }
+
+    #[test]
+    fn player_info_uses_player_game_mode() {
+        let player = OnlinePlayer {
+            profile: qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::from_u128(2),
+                username: "SurvivalPlayer".to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 2,
+            game_mode: 0,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: "zh-CN".to_string(),
+            displayed_skin_parts: 0x7f,
+        };
+
+        let packet = player_info_packet(&player).unwrap();
+        let mut payload = packet.slice(1..);
+        let mut decoded = PlayerInfoUpdate::default();
+        decoded
+            .deserialize(&mut qexed_packet::PacketReader::new(&mut payload))
+            .unwrap();
+
+        assert_eq!(decoded.entries[0].game_mode.0, 0);
     }
 }

@@ -15,7 +15,7 @@ minecraft {
     runs {
         server()
         client() {
-            args("--quickPlayMultiplayer", "127.0.0.1:25565")
+            args("--quickPlayMultiplayer", providers.gradleProperty("qexedQuickPlay").orElse("127.0.0.1:25565").get())
         }
     }
 }
@@ -34,7 +34,16 @@ test {
 
 tasks.register("buildQexedForIntegration", Exec) {
     workingDir = rootProject.projectDir.parentFile.parentFile
+    if (providers.gradleProperty("qexedTargetDir").isPresent()) {
+        environment "CARGO_TARGET_DIR", providers.gradleProperty("qexedTargetDir").get()
+    }
     commandLine "cargo", "build", "-p", "qexed"
+}
+
+tasks.register("buildWasmPluginsForIntegration", Exec) {
+    workingDir = rootProject.projectDir.parentFile.parentFile
+    commandLine "cargo", "build", "--manifest-path", "plugins/examples/Cargo.toml",
+            "--target", "wasm32-unknown-unknown", "--release"
 }
 
 tasks.register("integrationTest", Test) {
@@ -45,9 +54,15 @@ tasks.register("integrationTest", Test) {
     useJUnitPlatform {
         includeTags "integration"
     }
-    dependsOn tasks.named("buildQexedForIntegration")
+    dependsOn tasks.named("buildQexedForIntegration"), tasks.named("buildWasmPluginsForIntegration")
     shouldRunAfter tasks.named("test")
     systemProperty "qexed.repoRoot", rootProject.projectDir.parentFile.parentFile.absolutePath
+    if (providers.gradleProperty("qexedTargetDir").isPresent()) {
+        systemProperty "qexed.binary", file("${providers.gradleProperty("qexedTargetDir").get()}/debug/qexed.exe").absolutePath
+    }
+    if (providers.gradleProperty("qexedPort").isPresent()) {
+        systemProperty "qexed.port", providers.gradleProperty("qexedPort").get()
+    }
     testLogging {
         events "passed", "skipped", "failed"
         showStandardStreams = true

@@ -77,11 +77,10 @@ pub fn accepts_vanilla_core_pack(packs: &[KnownPacks]) -> bool {
 
 pub(crate) fn ensure_data_ready() -> anyhow::Result<()> {
     let roots = data_roots();
-    if roots.iter().any(|root| {
-        root.join("dimension_type").is_dir()
-            && root.join("damage_type").is_dir()
-            && root.join("tags/damage_type").is_dir()
-    }) {
+    if roots
+        .iter()
+        .any(|root| data_root_has_required_registries(root))
+    {
         return Ok(());
     }
 
@@ -107,18 +106,29 @@ pub(super) fn configured_mojang_cache_path() -> Option<PathBuf> {
 
 fn data_roots() -> Vec<PathBuf> {
     let root = util::workspace_root();
-    let mut roots = Vec::new();
+    let mut roots = vec![root.join(DATA_ROOT), root.join(VANILLA_JSON_ROOT)];
+
+    if roots
+        .iter()
+        .any(|root| data_root_has_required_registries(root))
+    {
+        return roots;
+    }
 
     match mojang_data_root() {
-        Ok(path) => roots.push(path),
+        Ok(path) => roots.insert(0, path),
         Err(err) => {
-            log::warn!("Mojang registry data is unavailable, falling back to local assets: {err}")
+            log::warn!("Mojang registry data is unavailable, using local assets only: {err}")
         }
     }
 
-    roots.push(root.join(DATA_ROOT));
-    roots.push(root.join(VANILLA_JSON_ROOT));
     roots
+}
+
+fn data_root_has_required_registries(root: &std::path::Path) -> bool {
+    root.join("dimension_type").is_dir()
+        && root.join("damage_type").is_dir()
+        && root.join("tags/damage_type").is_dir()
 }
 
 fn mojang_data_root() -> Result<PathBuf, String> {

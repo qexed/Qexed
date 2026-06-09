@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.zip.DataFormatException;
+import java.util.zip.Inflater;
 
 final class QexedProtocolClient implements Closeable {
     static final int PROTOCOL_VERSION = 775;
@@ -39,20 +41,30 @@ final class QexedProtocolClient implements Closeable {
     static final int CLIENTBOUND_PLAY_SYSTEM_CHAT = 0x79;
     static final int CLIENTBOUND_PLAY_TAKE_ITEM_ENTITY = 0x7c;
     static final int CLIENTBOUND_PLAY_UPDATE_RECIPES = 0x85;
+    static final int PLAYER_INPUT_LEFT = 0x04;
+    static final int PLAYER_INPUT_RIGHT = 0x08;
 
     private final Socket socket;
     private final InputStream input;
     private final OutputStream output;
+    private final int port;
     private final List<PacketRecord> seenPackets = new ArrayList<>();
+    private final List<String> loginPackets = new ArrayList<>();
 
     private boolean play;
+    private boolean compressed;
     private int entityId = -1;
     private int teleportId = -1;
     private boolean initialPositionAccepted;
 
     QexedProtocolClient(String username) throws IOException {
+        this(username, 25565);
+    }
+
+    QexedProtocolClient(String username, int port) throws IOException {
+        this.port = port;
         socket = new Socket();
-        socket.connect(new InetSocketAddress("127.0.0.1", 25565), 5_000);
+        socket.connect(new InetSocketAddress("127.0.0.1", port), 5_000);
         socket.setSoTimeout(1_000);
         input = socket.getInputStream();
         output = socket.getOutputStream();
@@ -143,6 +155,16 @@ final class QexedProtocolClient implements Closeable {
         body.writeDouble(z);
         body.writeByte(onGround ? 1 : 0);
         sendPacket(0x1e, body);
+    }
+
+    void sendPlayerInput(int flags) throws IOException {
+        PacketBuffer body = new PacketBuffer();
+        body.writeByte(flags);
+        sendPacket(0x2b, body);
+    }
+
+    void sendPlayerLoaded() throws IOException {
+        sendPacket(0x2c, new PacketBuffer());
     }
 
     void sendAttack(int targetEntityId) throws IOException {
@@ -245,6 +267,25 @@ final class QexedProtocolClient implements Closeable {
                         .toList());
     }
 
+    SystemChatMessage waitForAnySystemChat(Duration timeout) throws IOException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        int consumed = 0;
+        while (System.nanoTime() < deadline) {
+            for (; consumed < seenPackets.size(); consumed++) {
+                PacketRecord packet = seenPackets.get(consumed);
+                if (packet.id == CLIENTBOUND_PLAY_SYSTEM_CHAT) {
+                    return parseSystemChat(packet);
+                }
+            }
+            try {
+                readOne();
+            } catch (SocketTimeoutException ignored) {
+            }
+        }
+        throw new AssertionError("timed out waiting for any system chat, seen="
+                + seenPackets.stream().map(PacketRecord::idHex).toList());
+    }
+
     CommandSuggestions waitForCommandSuggestions(int requestId, Duration timeout) throws IOException {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
@@ -284,7 +325,7 @@ final class QexedProtocolClient implements Closeable {
         PacketBuffer handshake = new PacketBuffer();
         handshake.writeVarInt(PROTOCOL_VERSION);
         handshake.writeString("127.0.0.1");
-        handshake.writeShort(25565);
+        handshake.writeShort(port);
         handshake.writeVarInt(2);
         sendPacket(0x00, handshake);
 
@@ -293,10 +334,13 @@ final class QexedProtocolClient implements Closeable {
         loginStart.writeUuid(UUID.nameUUIDFromBytes(("OfflinePlayer:" + username).getBytes()));
         sendPacket(0x00, loginStart);
 
+        long loginDeadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
         while (true) {
-            PacketRecord packet = readRawPacket();
+            PacketRecord packet = readRawPacketUntil(loginDeadline, "login success");
+            loginPackets.add("login:" + packet.idHex());
             if (packet.id == CLIENTBOUND_LOGIN_COMPRESS) {
-                throw new AssertionError("integration config must disable network compression");
+                compressed = true;
+                continue;
             }
             if (packet.id == CLIENTBOUND_LOGIN_SUCCESS) {
                 break;
@@ -307,8 +351,10 @@ final class QexedProtocolClient implements Closeable {
         sendClientSettings();
 
         boolean selectedPacks = false;
+        long configDeadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
         while (true) {
-            PacketRecord packet = readRawPacket();
+            PacketRecord packet = readRawPacketUntil(configDeadline, "configuration finish");
+            loginPackets.add("config:" + packet.idHex());
             if (packet.id == CLIENTBOUND_CONFIG_SELECT_KNOWN_PACKS && !selectedPacks) {
                 PacketBuffer selected = new PacketBuffer();
                 selected.writeVarInt(0);
@@ -323,8 +369,9 @@ final class QexedProtocolClient implements Closeable {
         }
 
         play = true;
+        long playDeadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
         while (true) {
-            PacketRecord packet = readOne();
+            PacketRecord packet = readOneUntil(playDeadline, "initial play position");
             if (packet.id == CLIENTBOUND_PLAY_LOGIN) {
                 PacketBuffer body = new PacketBuffer(packet.payload);
                 entityId = body.readInt();
@@ -391,6 +438,16 @@ final class QexedProtocolClient implements Closeable {
         return packet;
     }
 
+    private PacketRecord readOneUntil(long deadlineNanos, String phase) throws IOException {
+        while (System.nanoTime() < deadlineNanos) {
+            try {
+                return readOne();
+            } catch (SocketTimeoutException ignored) {
+            }
+        }
+        throw new SocketTimeoutException("timed out waiting for " + phase + "; loginPackets=" + loginPackets);
+    }
+
     private static SystemChatMessage parseSystemChat(PacketRecord packet) {
         PacketBuffer body = new PacketBuffer(packet.payload);
         String text = body.readNbtStrings().stream().collect(Collectors.joining("\n"));
@@ -430,7 +487,12 @@ final class QexedProtocolClient implements Closeable {
     }
 
     private PacketRecord readRawPacket() throws IOException {
-        int length = readVarInt(input);
+        int length;
+        try {
+            length = readVarInt(input);
+        } catch (SocketTimeoutException error) {
+            throw new SocketTimeoutException(error.getMessage() + "; loginPackets=" + loginPackets);
+        }
         if (length < 0 || length > 8 * 1024 * 1024) {
             throw new IOException("invalid packet length: " + length);
         }
@@ -438,9 +500,29 @@ final class QexedProtocolClient implements Closeable {
         if (payload.length != length) {
             throw new EOFException("connection closed inside packet");
         }
+        if (compressed) {
+            PacketBuffer compressedFrame = new PacketBuffer(payload);
+            int uncompressedLength = compressedFrame.readVarInt();
+            byte[] compressedPayload = compressedFrame.readRemaining();
+            if (uncompressedLength > 0) {
+                payload = inflate(compressedPayload, uncompressedLength);
+            } else {
+                payload = compressedPayload;
+            }
+        }
         PacketBuffer buffer = new PacketBuffer(payload);
         int id = buffer.readVarInt();
         return new PacketRecord(id, buffer.readRemaining());
+    }
+
+    private PacketRecord readRawPacketUntil(long deadlineNanos, String phase) throws IOException {
+        while (System.nanoTime() < deadlineNanos) {
+            try {
+                return readRawPacket();
+            } catch (SocketTimeoutException ignored) {
+            }
+        }
+        throw new SocketTimeoutException("timed out waiting for " + phase + "; loginPackets=" + loginPackets);
     }
 
     private void sendPacket(int packetId, PacketBuffer body) throws IOException {
@@ -449,10 +531,40 @@ final class QexedProtocolClient implements Closeable {
         payload.writeBytes(body.toByteArray());
         byte[] payloadBytes = payload.toByteArray();
         PacketBuffer frame = new PacketBuffer();
-        frame.writeVarInt(payloadBytes.length);
-        frame.writeBytes(payloadBytes);
+        if (compressed) {
+            PacketBuffer compressedFrame = new PacketBuffer();
+            compressedFrame.writeVarInt(0);
+            compressedFrame.writeBytes(payloadBytes);
+            byte[] compressedPayload = compressedFrame.toByteArray();
+            frame.writeVarInt(compressedPayload.length);
+            frame.writeBytes(compressedPayload);
+        } else {
+            frame.writeVarInt(payloadBytes.length);
+            frame.writeBytes(payloadBytes);
+        }
         output.write(frame.toByteArray());
         output.flush();
+    }
+
+    private static byte[] inflate(byte[] payload, int expectedLength) throws IOException {
+        if (expectedLength < 0 || expectedLength > 16 * 1024 * 1024) {
+            throw new IOException("invalid uncompressed packet length: " + expectedLength);
+        }
+        Inflater inflater = new Inflater();
+        inflater.setInput(payload);
+        byte[] out = new byte[expectedLength];
+        try {
+            int written = inflater.inflate(out);
+            if (written != expectedLength || !inflater.finished()) {
+                throw new IOException("compressed packet length mismatch: expected="
+                        + expectedLength + ", actual=" + written);
+            }
+            return out;
+        } catch (DataFormatException error) {
+            throw new IOException("failed to inflate packet", error);
+        } finally {
+            inflater.end();
+        }
     }
 
     private static void writeSlot(PacketBuffer body, int itemId, int count) {

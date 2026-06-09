@@ -1050,7 +1050,7 @@ impl EntityManager {
         simplify_stacked_entities(entities, rendering)
     }
 
-    fn managed_entity_view_packets(
+    pub(crate) fn managed_entity_view_packets(
         &self,
         dimension: &str,
         viewer_position: EntityPosition,
@@ -1965,6 +1965,7 @@ mod tests {
                 properties: Vec::new(),
             },
             entity_id: 1,
+            game_mode: 0,
             position: EntityPosition {
                 x,
                 y: 64.0,

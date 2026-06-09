@@ -19,6 +19,7 @@ pub mod move_player_status_only;
 pub mod pick_item_from_block;
 pub mod player_action;
 pub mod player_input;
+pub mod player_loaded;
 pub mod pong;
 pub mod set_carried_item;
 pub mod set_creative_mode_slot;

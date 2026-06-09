@@ -364,6 +364,14 @@ pub struct PlayerMovePayload {
     pub position: PlayerPositionPayload,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTickPayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub tick_millis: u64,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PlayerInputState {
     pub forward: bool,
@@ -454,6 +462,55 @@ pub struct PluginCommandResponse {
     pub handled: bool,
     #[serde(default)]
     pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginManifest {
+    pub id: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub depends: Vec<PluginDependency>,
+    #[serde(default)]
+    pub optional_depends: Vec<PluginDependency>,
+    #[serde(default)]
+    pub services: Vec<PluginServiceDefinition>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginDependency {
+    pub id: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginServiceDefinition {
+    pub id: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub methods: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginApiCallQuery {
+    pub service: String,
+    pub method: String,
+    #[serde(default)]
+    pub payload: Vec<u8>,
+    #[serde(default)]
+    pub caller: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginApiCallResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub payload: Vec<u8>,
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,6 +764,20 @@ pub enum PlayerAction {
         z: f64,
         #[serde(default)]
         additive: bool,
+    },
+    BossBar {
+        id: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        progress: f32,
+        #[serde(default)]
+        color: String,
+        #[serde(default)]
+        overlay: String,
+    },
+    RemoveBossBar {
+        id: String,
     },
 }
 

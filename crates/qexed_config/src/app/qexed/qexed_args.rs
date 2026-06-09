@@ -17,4 +17,7 @@ pub struct ServerArgs {
 
     #[arg(long)]
     pub language: Option<String>,
+
+    #[arg(long)]
+    pub config_path: Option<std::path::PathBuf>,
 }

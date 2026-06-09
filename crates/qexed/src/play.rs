@@ -50,7 +50,7 @@ use qexed_protocol::to_server::play::{
     move_player_pos::MovePlayerPos, move_player_pos_rot::MovePlayerPosRot,
     move_player_rot::MovePlayerRot, move_player_status_only::MovePlayerStatusOnly,
     pick_item_from_block::PickItemFromBlock, player_action::PlayerAction,
-    player_input::PlayerInput, set_carried_item::SetCarriedItem,
+    player_input::PlayerInput, player_loaded::PlayerLoaded, set_carried_item::SetCarriedItem,
     set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
@@ -87,6 +87,7 @@ const CHUNK_UNLOAD_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 const GAMEPLAY_TICK_INTERVAL: Duration = Duration::from_millis(50);
 const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const SIDEBAR_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const MIN_PLAYER_DATA_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(10);
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
 const PLAYER_ACTION_START_DESTROY_BLOCK: i32 = 0;
@@ -180,6 +181,69 @@ fn pending_chunk_center_update_sleep(chunk_state: &ChunkSendState) -> tokio::tim
         .unwrap_or_else(Instant::now);
     tokio::time::sleep_until(tokio::time::Instant::from_std(deadline))
 }
+
+async fn send_initial_cluster_entity_view_after_chunks<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
+    sent: &mut bool,
+    player: &mut crate::players::OnlinePlayer,
+    dimension: &str,
+    position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+    simulation_distance: i32,
+    chunk_state: &ChunkSendState,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if *sent || !chunk_state.initial_view_complete() {
+        return Ok(());
+    }
+    *sent = true;
+    let Some(cluster_entities) = cluster_entities else {
+        return Ok(());
+    };
+
+    player.position = position;
+    player.dimension = dimension.to_string();
+    let packets = cluster_entities.spawn_view_for_player(player, rendering, simulation_distance);
+    for packet in packets.iter().cloned() {
+        sink.send_raw(packet).await?;
+    }
+    if !packets.is_empty() {
+        log::debug!(
+            "initial cluster entity view sent: player={}, packets={}",
+            player.profile.username,
+            packets.len()
+        );
+        sink.flush().await?;
+    }
+    Ok(())
+}
+
+async fn refresh_cluster_entity_view<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
+    player: &crate::players::OnlinePlayer,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+    simulation_distance: i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Some(cluster_entities) = cluster_entities else {
+        return Ok(());
+    };
+    let packets = cluster_entities.spawn_view_for_player(player, rendering, simulation_distance);
+    for packet in packets.iter().cloned() {
+        sink.send_raw(packet).await?;
+    }
+    if !packets.is_empty() {
+        sink.flush().await?;
+    }
+    Ok(())
+}
+
 const PLAYER_HEIGHT_BLOCKS: f64 = 1.8;
 
 pub async fn initialize<R, W>(
@@ -190,6 +254,7 @@ pub async fn initialize<R, W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     ore_pits: &crate::world::OrePitManager,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     players: &PlayerManager,
     entities: &crate::entities::EntityManager,
     player_data: &PlayerDataManager,
@@ -245,6 +310,7 @@ where
         inventory.visible_equipment(),
         client_language.unwrap_or_else(|| config.language.clone()),
         displayed_skin_parts,
+        world_config.game_mode.protocol_id() as i32,
     );
     let world_session = world.begin_session();
     plugins.emit_player_join(&session.player);
@@ -287,6 +353,22 @@ where
     })
     .await?;
 
+    let mut next_teleport_id = 1;
+    sink.send(Position {
+        teleport_id: VarInt(next_teleport_id),
+        x: player_position.x,
+        y: player_position.y,
+        z: player_position.z,
+        dx: 0.0,
+        dy: 0.0,
+        dz: 0.0,
+        yaw: player_position.yaw,
+        pitch: player_position.pitch,
+        flags: 0,
+    })
+    .await?;
+    next_teleport_id += 1;
+
     send_initial_player_state(
         sink,
         config,
@@ -319,22 +401,6 @@ where
     )
     .await?;
 
-    let mut next_teleport_id = 1;
-    sink.send(Position {
-        teleport_id: VarInt(next_teleport_id),
-        x: player_position.x,
-        y: player_position.y,
-        z: player_position.z,
-        dx: 0.0,
-        dy: 0.0,
-        dz: 0.0,
-        yaw: player_position.yaw,
-        pitch: player_position.pitch,
-        flags: 0,
-    })
-    .await?;
-    next_teleport_id += 1;
-
     // sink.send(SystemChat {
     //     content: text_component("Qexed: loading world"),
     //     overlay: false,
@@ -359,6 +425,7 @@ where
         world,
         world_rules,
         ore_pits,
+        cluster_entities,
         players,
         player_data,
         entities,
@@ -391,6 +458,7 @@ async fn wait_for_play_packets<R, W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     ore_pits: &crate::world::OrePitManager,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     players: &PlayerManager,
     player_data: &PlayerDataManager,
     entities: &crate::entities::EntityManager,
@@ -432,6 +500,9 @@ where
     let mut world_time_tick = tokio::time::interval(WORLD_TIME_TICK_INTERVAL);
     world_time_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     world_time_tick.tick().await;
+    let mut sidebar_refresh_tick = tokio::time::interval(SIDEBAR_REFRESH_INTERVAL);
+    sidebar_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    sidebar_refresh_tick.tick().await;
     let mut player_data_autosave =
         tokio::time::interval(player_data_autosave_interval(&config.server.player_data));
     player_data_autosave.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -442,9 +513,12 @@ where
     let enforce_secure_chat = effective_online_mode(&config.server);
     let mut chat_rate_limit = ChatRateLimit::new(&config.server.player_messages);
     let world_config = &config.world;
+    let simulation_distance = world_config.simulation_distance.max(1);
     let mut position = session.player.position;
+    let mut initial_cluster_entity_view_sent = false;
     let mut last_stepped_block: Option<BlockPosition> = None;
     let mut last_input_flags = 0u8;
+    let mut movement_observation_logs = 0u8;
     let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
     let mut gameplay_runtime = gameplay::GameplayRuntime::new(&config.server.gameplay);
@@ -544,11 +618,35 @@ where
                 chunk_state
                     .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
                     .await?;
+                send_initial_cluster_entity_view_after_chunks(
+                    sink,
+                    cluster_entities,
+                    &mut initial_cluster_entity_view_sent,
+                    &mut session.player,
+                    &play_dimension,
+                    position,
+                    &config.server.entity_rendering,
+                    simulation_distance,
+                    &chunk_state,
+                )
+                .await?;
             }
             _ = chunk_send_tick.tick(), if chunk_state.has_ready_chunks() => {
                 chunk_state
                     .send_ready_chunks(sink, world, plugins, &chunk_sender, true)
                     .await?;
+                send_initial_cluster_entity_view_after_chunks(
+                    sink,
+                    cluster_entities,
+                    &mut initial_cluster_entity_view_sent,
+                    &mut session.player,
+                    &play_dimension,
+                    position,
+                    &config.server.entity_rendering,
+                    simulation_distance,
+                    &chunk_state,
+                )
+                .await?;
             }
             _ = chunk_unload_sweep.tick(), if chunk_state.has_pending_unloads() => {
                 let unloaded = chunk_state
@@ -612,6 +710,40 @@ where
                 }
             }
             _ = gameplay_tick.tick() => {
+                let mut tick_player = session.player.clone();
+                tick_player.position = position;
+                tick_player.dimension = play_dimension.clone();
+                let response = plugins.handle_player_tick(
+                    &tick_player,
+                    GAMEPLAY_TICK_INTERVAL.as_millis() as u64,
+                );
+                let handled = handle_plugin_response_actions(
+                    sink,
+                    world,
+                    world_rules,
+                    &config.server,
+                    world_config,
+                    players,
+                    plugins,
+                    &tick_player,
+                    response,
+                    &chunk_sender,
+                    &mut chunk_state,
+                    &mut position,
+                    &mut next_teleport_id,
+                    &mut play_dimension,
+                    &menus,
+                    &mut active_config_menu,
+                    &mut players_hidden,
+                    &mut visible_player_entities,
+                    config.server.entity_rendering.player_distance,
+                    &inventory,
+                )
+                .await?;
+                if handled {
+                    pending_dig = None;
+                }
+
                 if gameplay_runtime.should_tick_furnace(&config.server.gameplay) {
                     let mut outcome = gameplay_runtime
                         .furnace
@@ -697,6 +829,24 @@ where
                     clock_updates: Vec::new(),
                 })
                 .await?;
+                sink.flush().await?;
+            }
+            _ = sidebar_refresh_tick.tick() => {
+                let mut sidebar_player = session.player.clone();
+                sidebar_player.position = position;
+                sidebar_player.dimension = play_dimension.clone();
+                for packet in scoreboard::refresh_lobby_sidebar_packets(
+                    &config.server.scoreboard,
+                    &lobby,
+                    &lobby_status,
+                    config.server.placeholders.enable,
+                    plugins,
+                    &sidebar_player,
+                    players.online_count(),
+                    config.server.max_player,
+                )? {
+                    sink.send_raw(packet).await?;
+                }
                 sink.flush().await?;
             }
             _ = player_data_autosave.tick() => {
@@ -891,10 +1041,43 @@ where
                     chunk_state
                         .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
                         .await?;
+                    send_initial_cluster_entity_view_after_chunks(
+                        sink,
+                        cluster_entities,
+                        &mut initial_cluster_entity_view_sent,
+                        &mut session.player,
+                        &play_dimension,
+                        position,
+                        &config.server.entity_rendering,
+                        simulation_distance,
+                        &chunk_state,
+                    )
+                    .await?;
                     log::debug!(
                         "client acknowledged chunk batch, desired rate: {} chunks/tick",
                         batch.desired_chunks_per_tick
                     );
+                    continue;
+                }
+
+                if packet_id == PlayerLoaded::ID {
+                    let _loaded = crate::connection::decode_payload::<PlayerLoaded>(&mut payload)?;
+                    chunk_state
+                        .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
+                        .await?;
+                    send_initial_cluster_entity_view_after_chunks(
+                        sink,
+                        cluster_entities,
+                        &mut initial_cluster_entity_view_sent,
+                        &mut session.player,
+                        &play_dimension,
+                        position,
+                        &config.server.entity_rendering,
+                        simulation_distance,
+                        &chunk_state,
+                    )
+                    .await?;
+                    log::debug!("client reported player loaded: player={}", profile.username);
                     continue;
                 }
 
@@ -1247,6 +1430,7 @@ where
                             sink,
                             world,
                             players,
+                            cluster_entities,
                             entities,
                             &play_dimension,
                             profile.uuid,
@@ -1255,6 +1439,7 @@ where
                             &mut inventory,
                             action.status.0,
                             &config.server.entity_rendering,
+                            simulation_distance,
                         )
                         .await?;
                         pending_dig = None;
@@ -1462,6 +1647,7 @@ where
                                         &lobby_status,
                                         players,
                                         plugins,
+                                        cluster_entities,
                                         entities,
                                         profile.uuid,
                                         session.player.entity_id,
@@ -1476,6 +1662,7 @@ where
                                         &mut visible_player_entities,
                                         &mut inventory,
                                         config.server.entity_rendering.player_distance,
+                                        simulation_distance,
                                     )
                                     .await?;
                                 }
@@ -1539,6 +1726,8 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
+                            session.player.entity_id,
                             deferred_actions,
                         )
                         .await?;
@@ -1812,6 +2001,7 @@ where
                         let combat_outcome = gameplay::combat::attack_entity(
                             sink,
                             players,
+                            cluster_entities,
                             entities,
                             &session.player,
                             &mut inventory,
@@ -1820,6 +2010,7 @@ where
                             &gameplay_runtime.effects,
                             attack.entity_id.0,
                             &config.server.entity_rendering,
+                            simulation_distance,
                         )
                         .await?;
                         if combat_outcome.handled {
@@ -1982,6 +2173,8 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
+                            session.player.entity_id,
                             deferred_actions,
                         )
                         .await?;
@@ -2040,6 +2233,11 @@ where
 
                 if packet_id == ContainerClose::ID {
                     let close = crate::connection::decode_payload::<ContainerClose>(&mut payload)?;
+                    log::debug!(
+                        "client closed container: player={}, window_id={}",
+                        profile.username,
+                        close.window_id.0
+                    );
                     let mut gameplay_outcome = gameplay::GameplayActionOutcome::default();
                     if close.window_id.0 == gameplay::crafting::CRAFTING_WINDOW_ID {
                         gameplay_outcome.merge(
@@ -2116,6 +2314,14 @@ where
                     position.y = movement.y;
                     position.z = movement.z;
                     position.on_ground = movement.flags & 0x01 != 0;
+                    log_player_movement_observation(
+                        &profile.username,
+                        "pos",
+                        &mut movement_observation_logs,
+                        previous,
+                        position,
+                        None,
+                    );
                     apply_survival_movement(
                         sink,
                         world,
@@ -2154,6 +2360,7 @@ where
                         &mut visible_player_entities,
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
+                        &inventory,
                     )
                     .await?
                     {
@@ -2180,6 +2387,7 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
                         )
                         .await?
                     {
@@ -2191,6 +2399,14 @@ where
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
                     session.player.dimension = play_dimension.clone();
+                    refresh_cluster_entity_view(
+                        sink,
+                        cluster_entities,
+                        &session.player,
+                        &config.server.entity_rendering,
+                        simulation_distance,
+                    )
+                    .await?;
                     entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !players_hidden {
                         refresh_visible_players(
@@ -2216,6 +2432,7 @@ where
                             &lobby_status,
                             players,
                             plugins,
+                            cluster_entities,
                             entities,
                             profile.uuid,
                             session.player.entity_id,
@@ -2230,6 +2447,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            simulation_distance,
                         )
                         .await?;
                     }
@@ -2245,6 +2463,14 @@ where
                     position.yaw = movement.yaw;
                     position.pitch = movement.pitch;
                     position.on_ground = movement.flags & 0x01 != 0;
+                    log_player_movement_observation(
+                        &profile.username,
+                        "pos_rot",
+                        &mut movement_observation_logs,
+                        previous,
+                        position,
+                        None,
+                    );
                     apply_survival_movement(
                         sink,
                         world,
@@ -2283,6 +2509,7 @@ where
                         &mut visible_player_entities,
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
+                        &inventory,
                     )
                     .await?
                     {
@@ -2309,6 +2536,7 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
                         )
                         .await?
                     {
@@ -2320,6 +2548,14 @@ where
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
                     session.player.dimension = play_dimension.clone();
+                    refresh_cluster_entity_view(
+                        sink,
+                        cluster_entities,
+                        &session.player,
+                        &config.server.entity_rendering,
+                        simulation_distance,
+                    )
+                    .await?;
                     entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !players_hidden {
                         refresh_visible_players(
@@ -2345,6 +2581,7 @@ where
                             &lobby_status,
                             players,
                             plugins,
+                            cluster_entities,
                             entities,
                             profile.uuid,
                             session.player.entity_id,
@@ -2359,6 +2596,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            simulation_distance,
                         )
                         .await?;
                     }
@@ -2371,6 +2609,14 @@ where
                     position.yaw = movement.yaw;
                     position.pitch = movement.pitch;
                     position.on_ground = movement.flags & 0x01 != 0;
+                    log_player_movement_observation(
+                        &profile.username,
+                        "rot",
+                        &mut movement_observation_logs,
+                        previous,
+                        position,
+                        None,
+                    );
                     apply_survival_movement(
                         sink,
                         world,
@@ -2409,6 +2655,7 @@ where
                         &mut visible_player_entities,
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
+                        &inventory,
                     )
                     .await?
                     {
@@ -2435,6 +2682,7 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
                         )
                         .await?
                     {
@@ -2443,6 +2691,14 @@ where
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
                     session.player.dimension = play_dimension.clone();
+                    refresh_cluster_entity_view(
+                        sink,
+                        cluster_entities,
+                        &session.player,
+                        &config.server.entity_rendering,
+                        simulation_distance,
+                    )
+                    .await?;
                     entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !survival.is_dead() {
                         collect_nearby_drops(
@@ -2455,6 +2711,7 @@ where
                             &lobby_status,
                             players,
                             plugins,
+                            cluster_entities,
                             entities,
                             profile.uuid,
                             session.player.entity_id,
@@ -2469,6 +2726,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            simulation_distance,
                         )
                         .await?;
                     }
@@ -2479,6 +2737,14 @@ where
                     let movement = crate::connection::decode_payload::<MovePlayerStatusOnly>(&mut payload)?;
                     let previous = position;
                     position.on_ground = movement.flags & 0x01 != 0;
+                    log_player_movement_observation(
+                        &profile.username,
+                        "status",
+                        &mut movement_observation_logs,
+                        previous,
+                        position,
+                        None,
+                    );
                     apply_survival_movement(
                         sink,
                         world,
@@ -2517,6 +2783,7 @@ where
                         &mut visible_player_entities,
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
+                        &inventory,
                     )
                     .await?
                     {
@@ -2543,6 +2810,7 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
                         )
                         .await?
                     {
@@ -2551,6 +2819,14 @@ where
                     players.update_position(profile.uuid, position);
                     session.player.position = position;
                     session.player.dimension = play_dimension.clone();
+                    refresh_cluster_entity_view(
+                        sink,
+                        cluster_entities,
+                        &session.player,
+                        &config.server.entity_rendering,
+                        simulation_distance,
+                    )
+                    .await?;
                     entities.update_look_at_npcs(players, &config.server.entity_rendering)?;
                     if !survival.is_dead() {
                         collect_nearby_drops(
@@ -2563,6 +2839,7 @@ where
                             &lobby_status,
                             players,
                             plugins,
+                            cluster_entities,
                             entities,
                             profile.uuid,
                             session.player.entity_id,
@@ -2577,6 +2854,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            simulation_distance,
                         )
                         .await?;
                     }
@@ -2585,6 +2863,14 @@ where
 
                 if packet_id == PlayerInput::ID {
                     let input = crate::connection::decode_payload::<PlayerInput>(&mut payload)?;
+                    log_player_movement_observation(
+                        &profile.username,
+                        "input",
+                        &mut movement_observation_logs,
+                        position,
+                        position,
+                        Some(input.flags),
+                    );
                     if !survival.is_dead() {
                         let previous_flags = last_input_flags;
                         last_input_flags = input.flags;
@@ -2609,6 +2895,7 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &inventory,
                         )
                         .await?
                         {
@@ -2658,7 +2945,7 @@ where
                     };
                     if let Some(chat_session) = chat_session.as_mut() {
                         let verified = chat_session.verify_message(profile.uuid, &chat)?;
-                        sink.send(PlayerChat::pass_through(
+                        let packet = PlayerChat::pass_through(
                             next_chat_global_index,
                             profile.uuid,
                             verified.index,
@@ -2672,16 +2959,26 @@ where
                             chat.timestamp,
                             chat.salt,
                             text_component(&profile.username),
-                        )).await?;
+                        );
+                        players.broadcast_packets_except(
+                            profile.uuid,
+                            vec![crate::players::packet_bytes(packet.clone())?],
+                        );
+                        sink.send(packet).await?;
                         chat_session.add_pending_signature(&verified.signature);
                         next_chat_global_index += 1;
                     } else if enforce_secure_chat {
                         anyhow::bail!("client did not initialize Mojang secure chat session");
                     } else {
-                        sink.send(SystemChat {
+                        let packet = SystemChat {
                             content: text_component(format!("<{}> {}", profile.username, filtered_message)),
                             overlay: false,
-                        }).await?;
+                        };
+                        players.broadcast_packets_except(
+                            profile.uuid,
+                            vec![crate::players::packet_bytes(packet.clone())?],
+                        );
+                        sink.send(packet).await?;
                     }
                     sink.flush().await?;
                     continue;
@@ -4203,6 +4500,8 @@ async fn apply_deferred_menu_actions<W>(
     players_hidden: &mut bool,
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
+    inventory: &crate::inventory::PlayerInventory,
+    actor_entity_id: i32,
     actions: Vec<crate::plugins::PlayerAction>,
 ) -> Result<()>
 where
@@ -4210,6 +4509,7 @@ where
 {
     for action in actions {
         let viewer_position = *position;
+        let before_dimension = play_dimension.clone();
         chat::apply_plugin_action(
             sink,
             Some(server_config),
@@ -4233,6 +4533,9 @@ where
             action,
         )
         .await?;
+        if before_dimension != *play_dimension {
+            resync_inventory_state(sink, players, actor, actor_entity_id, inventory).await?;
+        }
     }
     Ok(())
 }
@@ -4663,6 +4966,7 @@ async fn handle_plugin_player_block_step<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
     last_stepped_block: &mut Option<BlockPosition>,
+    inventory: &crate::inventory::PlayerInventory,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -4701,6 +5005,7 @@ where
 
     let mut handled = response.handled || !response.actions.is_empty();
     for action in response.actions {
+        let before_dimension = play_dimension.clone();
         handled |= chat::apply_plugin_action(
             sink,
             Some(server_config),
@@ -4724,6 +5029,16 @@ where
             action,
         )
         .await?;
+        if before_dimension != *play_dimension {
+            resync_inventory_state(
+                sink,
+                players,
+                player.profile.uuid,
+                player.entity_id,
+                inventory,
+            )
+            .await?;
+        }
     }
     Ok(handled)
 }
@@ -4749,6 +5064,7 @@ async fn handle_plugin_player_move<W>(
     players_hidden: &mut bool,
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
+    inventory: &crate::inventory::PlayerInventory,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -4759,6 +5075,7 @@ where
     let response = plugins.handle_player_move(&player, previous);
     let mut handled = response.handled || !response.actions.is_empty();
     for action in response.actions {
+        let before_dimension = play_dimension.clone();
         handled |= chat::apply_plugin_action(
             sink,
             Some(server_config),
@@ -4782,6 +5099,82 @@ where
             action,
         )
         .await?;
+        if before_dimension != *play_dimension {
+            resync_inventory_state(
+                sink,
+                players,
+                player.profile.uuid,
+                player.entity_id,
+                inventory,
+            )
+            .await?;
+        }
+    }
+    Ok(handled)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_plugin_response_actions<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    response: crate::plugins::PluginCommandResponse,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    render_distance: f64,
+    inventory: &crate::inventory::PlayerInventory,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut handled = response.handled || !response.actions.is_empty();
+    for action in response.actions {
+        let before_dimension = play_dimension.clone();
+        handled |= chat::apply_plugin_action(
+            sink,
+            Some(server_config),
+            world,
+            world_rules,
+            world_config,
+            players,
+            plugins,
+            player.profile.uuid,
+            chunk_sender,
+            chunk_state,
+            position,
+            next_teleport_id,
+            play_dimension,
+            menus,
+            active_config_menu,
+            players_hidden,
+            visible_player_entities,
+            player.position,
+            render_distance,
+            action,
+        )
+        .await?;
+        if before_dimension != *play_dimension {
+            resync_inventory_state(
+                sink,
+                players,
+                player.profile.uuid,
+                player.entity_id,
+                inventory,
+            )
+            .await?;
+        }
     }
     Ok(handled)
 }
@@ -4808,6 +5201,7 @@ async fn handle_plugin_player_input<W>(
     players_hidden: &mut bool,
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
+    inventory: &crate::inventory::PlayerInventory,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -4818,6 +5212,7 @@ where
     let response = plugins.handle_player_input(&player, previous_flags, flags);
     let mut handled = response.handled || !response.actions.is_empty();
     for action in response.actions {
+        let before_dimension = play_dimension.clone();
         handled |= chat::apply_plugin_action(
             sink,
             Some(server_config),
@@ -4841,6 +5236,16 @@ where
             action,
         )
         .await?;
+        if before_dimension != *play_dimension {
+            resync_inventory_state(
+                sink,
+                players,
+                player.profile.uuid,
+                player.entity_id,
+                inventory,
+            )
+            .await?;
+        }
     }
     Ok(handled)
 }
@@ -5358,6 +5763,7 @@ async fn collect_nearby_drops<W>(
     lobby_status: &lobby::LobbyStatusSnapshot,
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     entities: &crate::entities::EntityManager,
     actor: uuid::Uuid,
     collector_entity_id: i32,
@@ -5372,6 +5778,7 @@ async fn collect_nearby_drops<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     inventory: &mut crate::inventory::PlayerInventory,
     render_distance: f64,
+    simulation_distance: i32,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -5380,8 +5787,16 @@ where
     entities.settle_collectable_dropped_items(&collection_dimension, *position, |item_position| {
         settle_drop_position_on_ground(world, &collection_dimension, item_position)
     });
+    let mut remote_slots = Vec::new();
+    if let Some(cluster_entities) = cluster_entities
+        && let Some(mut collector) = players.player_by_uuid(actor)
+    {
+        collector.position = *position;
+        collector.dimension = play_dimension.clone();
+        remote_slots = cluster_entities.collect_items(players, &collector, simulation_distance)?;
+    }
     let items = drops::collect_dropped_items(entities, &collection_dimension, *position)?;
-    if items.is_empty() {
+    if items.is_empty() && remote_slots.is_empty() {
         return Ok(());
     }
 
@@ -5447,6 +5862,13 @@ where
             }
         } else {
             entities.restore_dropped_item(item);
+        }
+    }
+
+    for slot in remote_slots {
+        let (mut item_changes, picked_count) = inventory.add_item_stack_partial(&slot);
+        if picked_count > 0 {
+            changes.append(&mut item_changes);
         }
     }
 
@@ -5518,6 +5940,7 @@ async fn drop_player_item<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
     players: &PlayerManager,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     entities: &crate::entities::EntityManager,
     dimension: &str,
     actor: uuid::Uuid,
@@ -5526,6 +5949,7 @@ async fn drop_player_item<W>(
     inventory: &mut crate::inventory::PlayerInventory,
     status: i32,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
+    simulation_distance: i32,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -5535,14 +5959,30 @@ where
     };
     let drop_position =
         settle_drop_position_on_ground(world, dimension, dropped_item_position(position));
-    let updates = entities.drop_item_with_rendering(
-        players,
-        actor,
-        dimension,
-        drop_position,
-        held,
-        rendering,
-    )?;
+    let mut updates = Vec::new();
+    let handled_by_cluster = if let Some(cluster_entities) = cluster_entities {
+        cluster_entities.drop_item(
+            players,
+            actor,
+            dimension,
+            drop_position,
+            rendering,
+            simulation_distance,
+            &held,
+        )?
+    } else {
+        false
+    };
+    if !handled_by_cluster {
+        updates = entities.drop_item_with_rendering(
+            players,
+            actor,
+            dimension,
+            drop_position,
+            held,
+            rendering,
+        )?;
+    }
     sync_inventory_changes(
         sink,
         players,
@@ -5594,6 +6034,39 @@ fn dropped_item_position(position: EntityPosition) -> EntityPosition {
         pitch: position.pitch,
         on_ground: false,
     }
+}
+
+fn log_player_movement_observation(
+    name: &str,
+    packet: &str,
+    logged: &mut u8,
+    previous: EntityPosition,
+    current: EntityPosition,
+    input_flags: Option<u8>,
+) {
+    if *logged >= 8 {
+        return;
+    }
+    *logged += 1;
+    if let Some(flags) = input_flags {
+        log::info!(
+            "client movement observed: player={name}, packet={packet}, input_flags={flags:#04x}, pos=({:.3},{:.3},{:.3})",
+            current.x,
+            current.y,
+            current.z
+        );
+        return;
+    }
+    log::info!(
+        "client movement observed: player={name}, packet={packet}, from=({:.3},{:.3},{:.3}), to=({:.3},{:.3},{:.3}), on_ground={}",
+        previous.x,
+        previous.y,
+        previous.z,
+        current.x,
+        current.y,
+        current.z,
+        current.on_ground
+    );
 }
 
 fn lift_drop_position_out_of_blocks(
@@ -5896,6 +6369,10 @@ async fn resync_inventory_state<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
+    sink.send(SetHeldSlot {
+        slot: VarInt(inventory.selected_slot() as i32),
+    })
+    .await?;
     for packet in inventory.set_player_inventory_packets() {
         sink.send(packet).await?;
     }

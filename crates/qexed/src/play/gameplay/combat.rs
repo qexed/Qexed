@@ -17,6 +17,7 @@ pub(in crate::play) struct CombatOutcome {
 pub(in crate::play) async fn attack_entity<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     players: &crate::players::PlayerManager,
+    cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     entities: &crate::entities::EntityManager,
     player: &crate::players::OnlinePlayer,
     inventory: &mut crate::inventory::PlayerInventory,
@@ -25,6 +26,7 @@ pub(in crate::play) async fn attack_entity<W>(
     effects: &super::effects::EffectRuntime,
     target_entity_id: i32,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
+    simulation_distance: i32,
 ) -> Result<CombatOutcome>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -129,6 +131,18 @@ where
         if result.killed {
             send_death_animation(sink, players, player, target_entity_id).await?;
         }
+        outcome.killed = result.killed;
+        outcome.damaged_held_item = true;
+    } else if let Some(cluster_entities) = cluster_entities
+        && let Some(result) = cluster_entities.damage_entity(
+            players,
+            player,
+            rendering,
+            simulation_distance,
+            target_entity_id,
+            damage,
+        )?
+    {
         outcome.killed = result.killed;
         outcome.damaged_held_item = true;
     }

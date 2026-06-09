@@ -7,6 +7,10 @@ members = [
     "chunk_trace",
     "command_npc_demo",
     "prison_mine_selector",
+    "maze_runner",
+    "temple_run",
     "slime_jump",
     "double_jump",
+    "api_provider_demo",
+    "api_consumer_demo",
 ]

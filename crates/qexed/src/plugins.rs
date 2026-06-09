@@ -1,12 +1,14 @@
 use std::{
+    collections::HashSet,
     fs,
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use serde::{Serialize, de::DeserializeOwned};
 use wasmtime::Engine;
 
+mod economy;
 mod event;
 mod files;
 pub(crate) mod host;
@@ -24,9 +26,9 @@ pub use qexed_plugin_api::{
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
     PlayerAttackResponse, PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse,
     PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse, PlayerPayloadOwned,
-    PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse, PluginEnchantment,
-    PotionEffectTickQuery, PotionEffectTickResponse, ProxyConnectResultPayload, SoundPayload,
-    SoundResponse,
+    PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
+    PluginEnchantment, PotionEffectTickQuery, PotionEffectTickResponse, ProxyConnectResultPayload,
+    SoundPayload, SoundResponse,
 };
 
 use event::PluginEvent;
@@ -40,7 +42,7 @@ use qexed_plugin_api::{
 use crate::players::OnlinePlayer;
 
 pub struct PluginManager {
-    plugins: OnceLock<Mutex<Vec<PluginInstance>>>,
+    plugins: Arc<OnceLock<Vec<Arc<Mutex<PluginInstance>>>>>,
     supported_events: OnceLock<std::collections::HashSet<PluginEvent>>,
     initialized: Mutex<bool>,
     path: std::path::PathBuf,
@@ -53,12 +55,17 @@ impl PluginManager {
     }
 
     pub fn from_dir(path: impl AsRef<Path>) -> Self {
+        let plugins = Arc::new(OnceLock::new());
+        let services = Arc::new(host::PluginHostServices::default());
+        services.set_plugin_api(Arc::new(PluginApiRouter {
+            plugins: Arc::downgrade(&plugins),
+        }));
         Self {
-            plugins: OnceLock::new(),
+            plugins,
             supported_events: OnceLock::new(),
             initialized: Mutex::new(false),
             path: path.as_ref().to_path_buf(),
-            services: Arc::new(host::PluginHostServices::default()),
+            services,
         }
     }
 
@@ -89,26 +96,25 @@ impl PluginManager {
     }
 
     pub fn plugin_count(&self) -> usize {
-        self.plugins
-            .get()
-            .map(|plugins| plugins.lock().expect("plugin manager poisoned").len())
-            .unwrap_or(0)
+        self.plugins.get().map(Vec::len).unwrap_or(0)
     }
 
-    fn ensure_loaded(&self) -> &Mutex<Vec<PluginInstance>> {
+    fn ensure_loaded(&self) -> &Vec<Arc<Mutex<PluginInstance>>> {
         self.plugins.get_or_init(|| {
             let plugins = load_plugins(&self.path, self.services.clone());
             let supported_events = plugins
                 .iter()
                 .flat_map(|plugin| {
+                    let plugin = plugin.lock().expect("plugin manager poisoned");
                     PluginEvent::ALL
                         .iter()
                         .copied()
                         .filter(|event| plugin.supports_event(*event))
+                        .collect::<Vec<_>>()
                 })
                 .collect::<std::collections::HashSet<_>>();
             let _ = self.supported_events.set(supported_events);
-            Mutex::new(plugins)
+            plugins
         })
     }
 
@@ -122,7 +128,10 @@ impl PluginManager {
     }
 }
 
-fn load_plugins(path: &Path, services: Arc<host::PluginHostServices>) -> Vec<PluginInstance> {
+fn load_plugins(
+    path: &Path,
+    services: Arc<host::PluginHostServices>,
+) -> Vec<Arc<Mutex<PluginInstance>>> {
     if let Err(err) = fs::create_dir_all(path) {
         log::warn!(
             "plugin directory create failed: path={}, error={err}",
@@ -145,6 +154,8 @@ fn load_plugins(path: &Path, services: Arc<host::PluginHostServices>) -> Vec<Plu
         )
         .collect::<Vec<_>>();
 
+    plugins = filter_plugins_with_dependencies(plugins);
+
     plugins.sort_by(|left, right| {
         right
             .priority
@@ -155,13 +166,122 @@ fn load_plugins(path: &Path, services: Arc<host::PluginHostServices>) -> Vec<Plu
     if !plugins.is_empty() {
         let summary = plugins
             .iter()
-            .map(|plugin| format!("{}({})", plugin.name, plugin.priority))
+            .map(|plugin| format!("{}({})", plugin.manifest.id, plugin.priority))
             .collect::<Vec<_>>()
             .join(", ");
         log::info!("loaded WASM plugins: {summary}");
     }
 
+    let plugin_ids = plugins
+        .iter()
+        .map(|plugin| plugin.manifest.id.clone())
+        .collect::<Vec<_>>();
+    let services_by_id = plugins
+        .iter()
+        .flat_map(|plugin| {
+            plugin
+                .manifest
+                .services
+                .iter()
+                .map(|service| (service.id.clone(), plugin.manifest.id.clone()))
+                .collect::<Vec<_>>()
+        })
+        .filter(|(service, _)| !service.trim().is_empty())
+        .collect::<Vec<_>>();
+    services.set_plugin_services(plugin_ids, services_by_id);
+
     plugins
+        .into_iter()
+        .map(|plugin| Arc::new(Mutex::new(plugin)))
+        .collect()
+}
+
+fn filter_plugins_with_dependencies(mut plugins: Vec<PluginInstance>) -> Vec<PluginInstance> {
+    let mut available = plugins
+        .iter()
+        .map(|plugin| plugin.manifest.id.clone())
+        .collect::<HashSet<_>>();
+
+    loop {
+        let before = plugins.len();
+        plugins.retain(|plugin| {
+            let missing = plugin
+                .manifest
+                .depends
+                .iter()
+                .find(|dependency| !available.contains(dependency.id.trim()));
+            if let Some(dependency) = missing {
+                log::warn!(
+                    "WASM plugin disabled because dependency is missing: plugin={}, dependency={}",
+                    plugin.manifest.id,
+                    dependency.id
+                );
+                return false;
+            }
+            true
+        });
+        let next_available = plugins
+            .iter()
+            .map(|plugin| plugin.manifest.id.clone())
+            .collect::<HashSet<_>>();
+        if plugins.len() == before && next_available == available {
+            break;
+        }
+        available = next_available;
+    }
+
+    plugins
+}
+
+#[derive(Debug)]
+struct PluginApiRouter {
+    plugins: Weak<OnceLock<Vec<Arc<Mutex<PluginInstance>>>>>,
+}
+
+impl host::PluginApiService for PluginApiRouter {
+    fn call(&self, caller: &str, service: &str, method: &str, payload: &[u8]) -> Option<Vec<u8>> {
+        let plugins = self.plugins.upgrade()?;
+        let plugins = plugins.get()?;
+        let query = qexed_plugin_api::PluginApiCallQuery {
+            service: service.to_string(),
+            method: method.to_string(),
+            payload: payload.to_vec(),
+            caller: caller.to_string(),
+        };
+        let encoded = encode_plugin_payload(&query).ok()?;
+
+        for plugin in plugins {
+            let Ok(mut plugin) = plugin.try_lock() else {
+                continue;
+            };
+            if plugin.manifest.id == caller {
+                continue;
+            }
+            let provides_service = plugin
+                .manifest
+                .services
+                .iter()
+                .any(|definition| definition.id == service);
+            if !provides_service || !plugin.supports_event(PluginEvent::ApiCall) {
+                continue;
+            }
+            let response = plugin.call_query(PluginEvent::ApiCall, &encoded).ok()??;
+            let response: qexed_plugin_api::PluginApiCallResponse =
+                decode_plugin_response(&response).ok()?;
+            if response.ok {
+                return Some(response.payload);
+            }
+            if !response.error.trim().is_empty() {
+                log::warn!(
+                    "WASM plugin API call failed: caller={caller}, service={service}, method={method}, provider={}, error={}",
+                    plugin.manifest.id,
+                    response.error
+                );
+            }
+            return None;
+        }
+        None
+    }
 }
 
 impl PluginManager {
@@ -553,6 +673,30 @@ impl PluginManager {
         result
     }
 
+    pub fn handle_player_tick(
+        &self,
+        player: &OnlinePlayer,
+        tick_millis: u64,
+    ) -> PluginCommandResponse {
+        let query = PlayerTickPayload {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            position: player_position_payload(player.position),
+            tick_millis,
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::PlayerTick, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
     pub fn handle_player_input(
         &self,
         player: &OnlinePlayer,
@@ -640,6 +784,14 @@ impl PluginManager {
         self.services.set_world_edit(service);
     }
 
+    pub fn set_entity_control_service(&self, service: Arc<dyn host::EntityControlService>) {
+        self.services.set_entity_control(service);
+    }
+
+    pub fn configure_economy(&self, config: &qexed_config::app::qexed::server::Economy) {
+        self.services.configure_economy(config);
+    }
+
     pub fn handle_npc_interact(
         &self,
         player: &OnlinePlayer,
@@ -675,11 +827,8 @@ impl PluginManager {
             handled: false,
             actions: Vec::new(),
         };
-        let mut plugins = self
-            .ensure_loaded()
-            .lock()
-            .expect("plugin manager poisoned");
-        for plugin in plugins.iter_mut() {
+        for plugin in self.ensure_loaded() {
+            let mut plugin = plugin.lock().expect("plugin manager poisoned");
             if !plugin.supports_event(PluginEvent::NpcInteract) {
                 continue;
             }
@@ -714,8 +863,12 @@ impl PluginManager {
     }
 
     fn empty() -> Self {
-        let plugins = OnceLock::new();
-        let _ = plugins.set(Mutex::new(Vec::new()));
+        let plugins = Arc::new(OnceLock::new());
+        let _ = plugins.set(Vec::new());
+        let services = Arc::new(host::PluginHostServices::default());
+        services.set_plugin_api(Arc::new(PluginApiRouter {
+            plugins: Arc::downgrade(&plugins),
+        }));
         let supported_events = OnceLock::new();
         let _ = supported_events.set(std::collections::HashSet::new());
         Self {
@@ -723,7 +876,7 @@ impl PluginManager {
             supported_events,
             initialized: Mutex::new(true),
             path: std::path::PathBuf::new(),
-            services: Arc::new(host::PluginHostServices::default()),
+            services,
         }
     }
 
@@ -746,11 +899,8 @@ impl PluginManager {
         if !self.supports_event(event) {
             return;
         }
-        let mut plugins = self
-            .ensure_loaded()
-            .lock()
-            .expect("plugin manager poisoned");
-        for plugin in plugins.iter_mut() {
+        for plugin in self.ensure_loaded() {
+            let mut plugin = plugin.lock().expect("plugin manager poisoned");
             if !plugin.supports_event(event) {
                 continue;
             }
@@ -778,12 +928,9 @@ impl PluginManager {
                 return Vec::new();
             }
         };
-        let mut plugins = self
-            .ensure_loaded()
-            .lock()
-            .expect("plugin manager poisoned");
         let mut responses = Vec::new();
-        for plugin in plugins.iter_mut() {
+        for plugin in self.ensure_loaded() {
+            let mut plugin = plugin.lock().expect("plugin manager poisoned");
             if !plugin.supports_event(event) {
                 continue;
             }

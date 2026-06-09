@@ -40,12 +40,213 @@ pub(crate) trait WorldChunkGenerator: Send + Sync + std::fmt::Debug {
 }
 
 pub(crate) fn from_config(config: &WorldConfig) -> Arc<dyn WorldChunkGenerator> {
-    match config.generator {
+    let generator: Arc<dyn WorldChunkGenerator> = match config.generator {
         WorldGeneratorConfig::Empty => Arc::new(EmptyWorldGenerator),
         WorldGeneratorConfig::VanillaFlat => Arc::new(VanillaFlatGenerator::from_preset(
             config.generator_preset.trim(),
         )),
         WorldGeneratorConfig::VanillaNoise => Arc::new(VanillaNoiseGenerator::from_config(config)),
+    };
+    SpawnPlatformGenerator::from_config(config, generator)
+}
+
+#[derive(Debug)]
+struct SpawnPlatformGenerator {
+    inner: Arc<dyn WorldChunkGenerator>,
+    platform: SpawnPlatform,
+}
+
+#[derive(Debug, Clone)]
+struct SpawnPlatform {
+    dimension: String,
+    block_state: i32,
+    min_x: i32,
+    max_x: i32,
+    y: i32,
+    min_z: i32,
+    max_z: i32,
+}
+
+impl SpawnPlatformGenerator {
+    fn from_config(
+        config: &WorldConfig,
+        inner: Arc<dyn WorldChunkGenerator>,
+    ) -> Arc<dyn WorldChunkGenerator> {
+        let Some(platform) = SpawnPlatform::from_config(config) else {
+            return inner;
+        };
+        Arc::new(Self { inner, platform })
+    }
+
+    fn platform_blocks_for_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Vec<(qexed_packet::net_types::Position, i32, Option<i32>)> {
+        if dimension.trim() != self.platform.dimension {
+            return Vec::new();
+        }
+
+        let chunk_min_x = chunk_x * 16;
+        let chunk_max_x = chunk_min_x + 15;
+        let chunk_min_z = chunk_z * 16;
+        let chunk_max_z = chunk_min_z + 15;
+        let min_x = self.platform.min_x.max(chunk_min_x);
+        let max_x = self.platform.max_x.min(chunk_max_x);
+        let min_z = self.platform.min_z.max(chunk_min_z);
+        let max_z = self.platform.max_z.min(chunk_max_z);
+        if min_x > max_x || min_z > max_z {
+            return Vec::new();
+        }
+
+        let mut blocks = Vec::with_capacity(((max_x - min_x + 1) * (max_z - min_z + 1)) as usize);
+        for z in min_z..=max_z {
+            for x in min_x..=max_x {
+                let position = qexed_packet::net_types::Position {
+                    x,
+                    y: self.platform.y,
+                    z,
+                };
+                blocks.push((
+                    position.clone(),
+                    self.platform.block_state,
+                    self.inner.block_state_at(dimension, &position),
+                ));
+            }
+        }
+        blocks
+    }
+}
+
+impl SpawnPlatform {
+    fn from_config(config: &WorldConfig) -> Option<Self> {
+        let configured = &config.spawn_platform;
+        if !configured.enable {
+            return None;
+        }
+        if !(super::WORLD_MIN_Y..=super::WORLD_MAX_Y).contains(&configured.y) {
+            log::warn!(
+                "spawn platform y is outside world height and will be ignored: y={}",
+                configured.y
+            );
+            return None;
+        }
+        let Some(block_state) =
+            chunk_nbt::default_block_state_id_if_known(configured.block.trim())
+        else {
+            log::warn!(
+                "spawn platform block is unknown and will be ignored: block={}",
+                configured.block
+            );
+            return None;
+        };
+        let dimension = configured.dimension.trim();
+        if dimension.is_empty() {
+            return None;
+        }
+        Some(Self {
+            dimension: dimension.to_string(),
+            block_state,
+            min_x: configured.min_x.min(configured.max_x),
+            max_x: configured.min_x.max(configured.max_x),
+            y: configured.y,
+            min_z: configured.min_z.min(configured.max_z),
+            max_z: configured.min_z.max(configured.max_z),
+        })
+    }
+
+    fn contains(&self, dimension: &str, position: &qexed_packet::net_types::Position) -> bool {
+        dimension.trim() == self.dimension
+            && position.y == self.y
+            && (self.min_x..=self.max_x).contains(&position.x)
+            && (self.min_z..=self.max_z).contains(&position.z)
+    }
+}
+
+impl WorldChunkGenerator for SpawnPlatformGenerator {
+    fn generate(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        light_algorithm: WorldLightAlgorithm,
+    ) -> Result<GeneratedChunk> {
+        let generated = self
+            .inner
+            .generate(dimension, chunk_x, chunk_z, light_algorithm)?;
+        let blocks = self.platform_blocks_for_chunk(dimension, chunk_x, chunk_z);
+        if blocks.is_empty() {
+            return Ok(generated);
+        }
+
+        let region_chunk = chunk_nbt::set_block_states_in_region(
+            chunk_x,
+            chunk_z,
+            generated.region_chunk.as_ref(),
+            &blocks,
+        )?;
+        let (packet, light_dampening) = chunk_nbt::network_chunk_and_light_dampening_from_region(
+            chunk_x,
+            chunk_z,
+            &region_chunk,
+            light_algorithm,
+        )?;
+        Ok(GeneratedChunk {
+            packet,
+            light_dampening,
+            region_chunk: Some(region_chunk),
+        })
+    }
+
+    fn light_dampening(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        light_algorithm: WorldLightAlgorithm,
+    ) -> Result<Vec<u8>> {
+        if self
+            .platform_blocks_for_chunk(dimension, chunk_x, chunk_z)
+            .is_empty()
+        {
+            return self
+                .inner
+                .light_dampening(dimension, chunk_x, chunk_z, light_algorithm);
+        }
+        Ok(self
+            .generate(dimension, chunk_x, chunk_z, light_algorithm)?
+            .light_dampening)
+    }
+
+    fn block_state_at(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<i32> {
+        if self.platform.contains(dimension, position) {
+            return Some(self.platform.block_state);
+        }
+        self.inner.block_state_at(dimension, position)
+    }
+
+    fn region_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Option<super::region::ChunkData>> {
+        let blocks = self.platform_blocks_for_chunk(dimension, chunk_x, chunk_z);
+        if blocks.is_empty() {
+            return self.inner.region_chunk(dimension, chunk_x, chunk_z);
+        }
+        let base = self.inner.region_chunk(dimension, chunk_x, chunk_z)?;
+        Ok(Some(chunk_nbt::set_block_states_in_region(
+            chunk_x,
+            chunk_z,
+            base.as_ref(),
+            &blocks,
+        )?))
     }
 }
 

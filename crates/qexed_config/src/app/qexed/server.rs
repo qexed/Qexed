@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use qexed_config::{public::mongodb::MongoConfig, public::mysql::MysqlConfig};
+use qexed_config::{
+    public::mongodb::MongoConfig, public::mysql::MysqlConfig, public::pika::PikaConfig,
+};
 use serde::{Deserialize, Serialize, de};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,6 +54,9 @@ pub struct Server {
 
     #[serde(default)]
     pub gameplay: Gameplay,
+
+    #[serde(default)]
+    pub economy: Economy,
 
     pub motd: Vec<String>,
 
@@ -121,6 +126,7 @@ impl Default for Server {
             rate_limit_max_attempts: 6,
             click_detection: ClickDetection::default(),
             gameplay: Gameplay::default(),
+            economy: Economy::default(),
             motd: vec![
                 "Qexed服务器awa".to_string()
             ],
@@ -142,6 +148,100 @@ impl Default for Server {
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Economy {
+    #[serde(default)]
+    pub currencies: Vec<EconomyCurrency>,
+
+    #[serde(default)]
+    pub mysql: MysqlConfig,
+
+    #[serde(default)]
+    pub mongodb: MongoConfig,
+
+    #[serde(default)]
+    pub redis: PikaConfig,
+}
+
+impl Default for Economy {
+    fn default() -> Self {
+        Self {
+            currencies: vec![EconomyCurrency::default()],
+            mysql: MysqlConfig {
+                username: "qexed".to_string(),
+                password: nanoid::nanoid!(),
+                database: "qexed".to_string(),
+                ..MysqlConfig::default()
+            },
+            mongodb: MongoConfig {
+                username: Some("qexed".to_string()),
+                password: Some(nanoid::nanoid!()),
+                database: "qexed".to_string(),
+                app_name: Some("qexed".to_string()),
+                auth_source: Some("admin".to_string()),
+                ..MongoConfig::default()
+            },
+            redis: PikaConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EconomyCurrency {
+    #[serde(default = "default_economy_currency_id")]
+    pub id: String,
+
+    #[serde(default = "default_economy_currency_name")]
+    pub name: String,
+
+    #[serde(default = "default_economy_currency_symbol")]
+    pub symbol: String,
+
+    #[serde(default = "default_economy_fractional_digits")]
+    pub fractional_digits: i32,
+
+    #[serde(default)]
+    pub storage: EconomyStorageEngine,
+}
+
+impl Default for EconomyCurrency {
+    fn default() -> Self {
+        Self {
+            id: default_economy_currency_id(),
+            name: default_economy_currency_name(),
+            symbol: default_economy_currency_symbol(),
+            fractional_digits: default_economy_fractional_digits(),
+            storage: EconomyStorageEngine::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EconomyStorageEngine {
+    #[default]
+    Sqlite,
+    Mysql,
+    Redis,
+    Mongodb,
+}
+
+fn default_economy_currency_id() -> String {
+    "qexed:coin".to_string()
+}
+
+fn default_economy_currency_name() -> String {
+    "Coin".to_string()
+}
+
+fn default_economy_currency_symbol() -> String {
+    "Q".to_string()
+}
+
+fn default_economy_fractional_digits() -> i32 {
+    2
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -2098,6 +2198,12 @@ pub struct World {
     #[serde(default)]
     pub precompiled_chunks: PrecompiledChunks,
 
+    #[serde(default)]
+    pub cluster: WorldCluster,
+
+    #[serde(default)]
+    pub spawn_platform: WorldSpawnPlatform,
+
     pub spawn: Spawn,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2131,6 +2237,8 @@ impl Default for World {
             light: LightMode::default(),
             light_algorithm: LightAlgorithm::default(),
             precompiled_chunks: PrecompiledChunks::default(),
+            cluster: WorldCluster::default(),
+            spawn_platform: WorldSpawnPlatform::default(),
             spawn: Spawn::default(),
             instances: Vec::new(),
             ore_pits: Vec::new(),
@@ -2243,6 +2351,139 @@ fn default_chunk_update_delay_ms() -> u64 {
 
 fn default_spawn_protection_radius() -> i32 {
     16
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorldCluster {
+    #[serde(default)]
+    pub enable: bool,
+
+    #[serde(default = "default_world_cluster_mode")]
+    pub mode: WorldClusterMode,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shards: Vec<WorldClusterShard>,
+}
+
+impl Default for WorldCluster {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            mode: default_world_cluster_mode(),
+            shards: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldClusterMode {
+    #[default]
+    Quadrant,
+    Regions,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorldClusterShard {
+    pub id: String,
+
+    #[serde(default)]
+    pub endpoint: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<WorldClusterAxisSide>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub z: Option<WorldClusterAxisSide>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_chunk_x: Option<i32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_chunk_x: Option<i32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_chunk_z: Option<i32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_chunk_z: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldClusterAxisSide {
+    Negative,
+    Positive,
+}
+
+fn default_world_cluster_mode() -> WorldClusterMode {
+    WorldClusterMode::Quadrant
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorldSpawnPlatform {
+    #[serde(default)]
+    pub enable: bool,
+
+    #[serde(default = "default_world_default_dimension")]
+    pub dimension: String,
+
+    #[serde(default = "default_world_spawn_platform_block")]
+    pub block: String,
+
+    #[serde(default = "default_world_spawn_platform_y")]
+    pub y: i32,
+
+    #[serde(default = "default_world_spawn_platform_min_x")]
+    pub min_x: i32,
+
+    #[serde(default = "default_world_spawn_platform_max_x")]
+    pub max_x: i32,
+
+    #[serde(default = "default_world_spawn_platform_min_z")]
+    pub min_z: i32,
+
+    #[serde(default = "default_world_spawn_platform_max_z")]
+    pub max_z: i32,
+}
+
+impl Default for WorldSpawnPlatform {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            dimension: default_world_default_dimension(),
+            block: default_world_spawn_platform_block(),
+            y: default_world_spawn_platform_y(),
+            min_x: default_world_spawn_platform_min_x(),
+            max_x: default_world_spawn_platform_max_x(),
+            min_z: default_world_spawn_platform_min_z(),
+            max_z: default_world_spawn_platform_max_z(),
+        }
+    }
+}
+
+fn default_world_spawn_platform_block() -> String {
+    "minecraft:grass_block".to_string()
+}
+
+fn default_world_spawn_platform_y() -> i32 {
+    254
+}
+
+fn default_world_spawn_platform_min_x() -> i32 {
+    -16
+}
+
+fn default_world_spawn_platform_max_x() -> i32 {
+    15
+}
+
+fn default_world_spawn_platform_min_z() -> i32 {
+    -16
+}
+
+fn default_world_spawn_platform_max_z() -> i32 {
+    15
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -3705,6 +3946,143 @@ timeout_ms = 250
         assert!(server.lobby.boss_bar.create_world_fog);
         assert_eq!(server.lobby.health_check.interval_secs, 5);
         assert_eq!(server.lobby.health_check.timeout_ms, 250);
+    }
+
+    #[test]
+    fn parses_world_cluster_quadrants_and_spawn_at_origin_top() {
+        let world: World = toml::from_str(
+            r#"
+default_dimension = "minecraft:overworld"
+path = "world"
+read_only = false
+generator = "vanilla_flat"
+generator_preset = "minecraft:classic_flat"
+seed = 0
+game_mode = "survival"
+spawn_protection_radius = 0
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+chunk_update_delay_ms = 50
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[cluster]
+enable = true
+mode = "quadrant"
+
+[[cluster.shards]]
+id = "A"
+endpoint = "127.0.0.1:26001"
+x = "negative"
+z = "negative"
+
+[[cluster.shards]]
+id = "B"
+endpoint = "127.0.0.1:26002"
+x = "negative"
+z = "positive"
+
+[[cluster.shards]]
+id = "C"
+endpoint = "127.0.0.1:26003"
+x = "positive"
+z = "negative"
+
+[[cluster.shards]]
+id = "D"
+endpoint = "127.0.0.1:26004"
+x = "positive"
+z = "positive"
+
+[spawn_platform]
+enable = true
+dimension = "minecraft:overworld"
+block = "minecraft:grass_block"
+y = 254
+min_x = -16
+max_x = 31
+min_z = -16
+max_z = 31
+
+[spawn]
+x = 0.0
+y = 255.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+        )
+        .unwrap();
+
+        assert!(world.cluster.enable);
+        assert_eq!(world.cluster.shards.len(), 4);
+        assert_eq!(world.cluster.shards[0].id, "A");
+        assert_eq!(
+            world.cluster.shards[0].x,
+            Some(super::WorldClusterAxisSide::Negative)
+        );
+        assert_eq!(
+            world.cluster.shards[0].z,
+            Some(super::WorldClusterAxisSide::Negative)
+        );
+        assert_eq!(world.cluster.shards[3].id, "D");
+        assert_eq!(
+            world.cluster.shards[3].x,
+            Some(super::WorldClusterAxisSide::Positive)
+        );
+        assert_eq!(
+            world.cluster.shards[3].z,
+            Some(super::WorldClusterAxisSide::Positive)
+        );
+        assert_eq!(world.spawn.x, 0.0);
+        assert_eq!(world.spawn.y, 255.0);
+        assert_eq!(world.spawn.z, 0.0);
+        assert!(world.spawn_platform.enable);
+        assert_eq!(world.spawn_platform.y, 254);
+        assert_eq!(world.spawn_platform.min_x, -16);
+        assert_eq!(world.spawn_platform.max_z, 31);
+    }
+
+    #[test]
+    fn parses_world_cluster_regions() {
+        let cluster: super::WorldCluster = toml::from_str(
+            r#"
+enable = true
+mode = "regions"
+
+[[shards]]
+id = "spawn"
+endpoint = "127.0.0.1:26001"
+max_chunk_x = 1
+max_chunk_z = 1
+
+[[shards]]
+id = "east"
+endpoint = "127.0.0.1:26002"
+min_chunk_x = 2
+max_chunk_x = 8
+max_chunk_z = 8
+
+[[shards]]
+id = "far"
+endpoint = "127.0.0.1:26003"
+min_chunk_x = 9
+min_chunk_z = 9
+"#,
+        )
+        .unwrap();
+
+        assert!(cluster.enable);
+        assert_eq!(cluster.mode, super::WorldClusterMode::Regions);
+        assert_eq!(cluster.shards.len(), 3);
+        assert_eq!(cluster.shards[0].id, "spawn");
+        assert_eq!(cluster.shards[0].max_chunk_x, Some(1));
+        assert_eq!(cluster.shards[0].max_chunk_z, Some(1));
+        assert_eq!(cluster.shards[2].min_chunk_x, Some(9));
+        assert_eq!(cluster.shards[2].min_chunk_z, Some(9));
     }
 
     #[test]

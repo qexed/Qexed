@@ -1,6 +1,9 @@
 mod audit;
 mod auth;
 mod bootstrap;
+mod cluster_entities;
+mod cluster_rpc;
+mod cluster_shard;
 mod code_of_conduct;
 mod commands;
 mod config;
@@ -30,6 +33,8 @@ mod world;
 rust_i18n::i18n!("locales");
 shadow_rs::shadow!(build);
 
+use clap::Parser;
+
 fn main() -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(runtime_worker_threads())
@@ -40,6 +45,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main() -> anyhow::Result<()> {
     if let Err(err) = run().await {
+        eprintln!("{err:#}");
         log::error!("{err}");
     }
     Ok(())
@@ -54,7 +60,8 @@ fn runtime_worker_threads() -> usize {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let Some(config) = bootstrap::load().await? else {
+    let args = qexed_config::app::qexed::qexed_args::ServerArgs::parse();
+    let Some(config) = bootstrap::load(&args).await? else {
         return Ok(());
     };
 

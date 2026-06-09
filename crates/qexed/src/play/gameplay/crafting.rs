@@ -28,7 +28,6 @@ pub(in crate::play) struct CraftingRuntime {
     grid: Vec<Slot>,
     result: Slot,
     current_recipe: Option<String>,
-    inventory_state_id: i32,
     inventory_grid: Vec<Slot>,
     inventory_result: Slot,
     inventory_recipe: Option<String>,
@@ -205,7 +204,7 @@ impl CraftingRuntime {
 
     async fn handle_inventory_click<W>(
         &mut self,
-        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        _sink: &mut qexed_tcp_connect::PacketSink<W>,
         click: &ContainerClick,
         inventory: &mut crate::inventory::PlayerInventory,
         player: &crate::players::OnlinePlayer,
@@ -281,7 +280,6 @@ impl CraftingRuntime {
         }
 
         self.recompute_inventory_result(player, plugins, config);
-        self.sync_inventory_crafting(sink).await?;
         Ok(outcome)
     }
 
@@ -431,40 +429,6 @@ impl CraftingRuntime {
             state_id: VarInt(self.state_id),
             slot: RESULT_SLOT,
             slot_data: self.result.clone(),
-        })
-        .await?;
-        Ok(())
-    }
-
-    async fn sync_inventory_crafting<W>(
-        &mut self,
-        sink: &mut qexed_tcp_connect::PacketSink<W>,
-    ) -> Result<()>
-    where
-        W: tokio::io::AsyncWrite + Unpin,
-    {
-        self.inventory_state_id = self.inventory_state_id.wrapping_add(1);
-        sink.send(container_set_slot::ContainerSetContent {
-            window_id: VarInt(PLAYER_INVENTORY_WINDOW_ID),
-            state_id: VarInt(self.inventory_state_id),
-            slot: RESULT_SLOT,
-            slot_data: self.inventory_result.clone(),
-        })
-        .await?;
-        for (index, slot) in self.inventory_grid.iter().enumerate() {
-            sink.send(container_set_slot::ContainerSetContent {
-                window_id: VarInt(PLAYER_INVENTORY_WINDOW_ID),
-                state_id: VarInt(self.inventory_state_id),
-                slot: GRID_START + i16::try_from(index).unwrap_or_default(),
-                slot_data: slot.clone(),
-            })
-            .await?;
-        }
-        sink.send(container_set_slot::ContainerSetContent {
-            window_id: VarInt(-1),
-            state_id: VarInt(0),
-            slot: -1,
-            slot_data: crate::inventory::empty_slot(),
         })
         .await?;
         Ok(())

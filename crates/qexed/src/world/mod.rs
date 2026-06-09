@@ -1,4 +1,5 @@
 pub mod chunk_nbt;
+mod cluster;
 pub mod generator;
 mod light;
 mod manager;
@@ -7,6 +8,7 @@ pub mod region;
 mod rules;
 mod vanilla_noise;
 
+pub(crate) use cluster::ClusteredWorldGenerator;
 #[cfg(test)]
 pub(crate) use light::empty_chunk_section_bytes;
 pub(crate) use light::{
@@ -19,6 +21,8 @@ pub use light::{WorldLightAlgorithm, WorldLightMode};
 pub use manager::{PrecompiledChunkSettings, RuntimeEditRegion, WorldManager, WorldSession};
 pub use ore_pits::{OrePitBlockUpdate, OrePitManager};
 pub use rules::WorldRulesManager;
+
+pub(crate) use cluster::ClusterRouter;
 
 const OVERWORLD_HEIGHT: i32 = 384;
 const SECTION_HEIGHT: i32 = 16;

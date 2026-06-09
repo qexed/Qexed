@@ -13,6 +13,7 @@ pub struct ServerContext {
     pub world: Arc<crate::world::WorldManager>,
     pub world_rules: Arc<crate::world::WorldRulesManager>,
     pub ore_pits: Arc<crate::world::OrePitManager>,
+    pub cluster_entities: Option<Arc<crate::cluster_entities::ClusterEntityController>>,
     pub players: Arc<crate::players::PlayerManager>,
     pub entities: Arc<crate::entities::EntityManager>,
     pub player_data: Arc<crate::player_data::PlayerDataManager>,
@@ -41,8 +42,22 @@ impl ServerContext {
     ) -> anyhow::Result<Self> {
         let config = config.into();
         let plugins = Arc::new(crate::plugins::PluginManager::load_default());
+        plugins.configure_economy(&config.server.economy);
 
-        let world_generator = crate::world::generator::from_config(&config.world);
+        let local_world_generator = crate::world::generator::from_config(&config.world);
+        let world_generator = crate::world::ClusteredWorldGenerator::from_config(
+            &config.world.cluster,
+            local_world_generator.clone(),
+        )
+        .map(|generator| std::sync::Arc::new(generator) as _)
+        .unwrap_or_else(|| {
+            if config.world.cluster.enable {
+                log::warn!(
+                    "world cluster is enabled but quadrant shard config is incomplete; using local world generator"
+                );
+            }
+            local_world_generator
+        });
         let world_rules = crate::world::WorldRulesManager::from_world_config(&config.world)?;
         let world = crate::world::WorldManager::with_generator(
             config.world.path.clone(),
@@ -59,6 +74,9 @@ impl ServerContext {
         ));
         world.ensure_configured_storage(&config.world)?;
         let ore_pits = crate::world::OrePitManager::from_config(&config.world.ore_pits);
+        let cluster_entities =
+            crate::cluster_entities::ClusterEntityController::from_config(&config.world.cluster)
+                .map(Arc::new);
         plugins.set_pathfinding_service(Arc::new(ServerPathfindingService {
             world: Arc::new(world.clone()),
             cache: Mutex::new(PathfindingCache::default()),
@@ -81,11 +99,23 @@ impl ServerContext {
             world: Arc::new(world.clone()),
             players: players.clone(),
         }));
-        let entities = crate::entities::EntityManager::from_config_with_skin_lookup(
-            &config.server.entities,
-            entity_ids.clone(),
-        )
-        .await?;
+        let gateway_entities = if cluster_entities.is_some() {
+            qexed_config::app::qexed::server::Entities::default()
+        } else {
+            config.server.entities.clone()
+        };
+        let entities = Arc::new(
+            crate::entities::EntityManager::from_config_with_skin_lookup(
+                &gateway_entities,
+                entity_ids.clone(),
+            )
+            .await?,
+        );
+        plugins.set_entity_control_service(Arc::new(ServerEntityControlService {
+            entities: entities.clone(),
+            players: players.clone(),
+            rendering: config.server.entity_rendering.clone(),
+        }));
         let mut resource_pack =
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
                 .await?;
@@ -100,8 +130,9 @@ impl ServerContext {
             world: Arc::new(world),
             world_rules: Arc::new(world_rules),
             ore_pits: Arc::new(ore_pits),
+            cluster_entities,
             players,
-            entities: Arc::new(entities),
+            entities,
             player_data: Arc::new(player_data),
             permissions: Arc::new(permissions),
             plugins,
@@ -198,6 +229,33 @@ impl crate::plugins::host::WorldEditService for ServerWorldEditService {
         0
     }
 
+    fn set_blocks(&self, query: &str) -> i32 {
+        let mut requests = Vec::new();
+        for line in query.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let Some(request) = ParsedWorldEditQuery::parse_set(line) else {
+                return -1;
+            };
+            let Some(region) = self
+                .world
+                .editable_region_for_plugin_write(&request.dimension, &request.position)
+            else {
+                return 1;
+            };
+            requests.push((request, region.runtime_only));
+        }
+
+        for (request, runtime_only) in requests {
+            self.write_block(
+                &request.dimension,
+                request.position.clone(),
+                request.block_state,
+                runtime_only,
+            );
+            self.broadcast_change(&request.dimension, request.position, request.block_state);
+        }
+        0
+    }
+
     fn break_block(&self, query: &str) -> i32 {
         let Some(request) = ParsedWorldEditQuery::parse_break(query) else {
             return -1;
@@ -267,6 +325,241 @@ impl ServerWorldEditService {
             block_state,
             light_update,
         );
+    }
+}
+
+#[derive(Debug)]
+struct ServerEntityControlService {
+    entities: Arc<crate::entities::EntityManager>,
+    players: Arc<crate::players::PlayerManager>,
+    rendering: qexed_config::app::qexed::server::EntityRendering,
+}
+
+impl crate::plugins::host::EntityControlService for ServerEntityControlService {
+    fn upsert(&self, plugin_name: &str, query: &str) -> i32 {
+        let Some(request) = ParsedEntityUpsert::parse(plugin_name, query) else {
+            return -1;
+        };
+        if let Some(existing) = self.entities.entity_by_key(&request.key) {
+            if let Err(err) = self.entities.send_remove_to_rendered_viewers(
+                &self.players,
+                &self.rendering,
+                &existing,
+            ) {
+                log::warn!(
+                    "plugin entity replacement remove packet failed: key={}, error={err:#}",
+                    request.key
+                );
+            }
+            if let Err(err) = self.entities.remove_local(&request.key) {
+                log::warn!(
+                    "plugin entity replacement remove failed: key={}, error={err:#}",
+                    request.key
+                );
+                return -1;
+            }
+        }
+
+        let spawn = crate::entities::EntitySpawnRequest {
+            key: request.key.clone(),
+            kind: crate::entities::ManagedEntityKind::Entity,
+            entity_type: request.entity_type,
+            entity_type_id_override: None,
+            dimension: request.dimension,
+            position: request.position,
+            name: request.name,
+            display_name: request.display_name,
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: String::new(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: String::new(),
+            off_hand_event: String::new(),
+            attack_event: String::new(),
+        };
+        let spawned = match self.entities.spawn_local(spawn) {
+            Ok(entity) => entity,
+            Err(err) => {
+                log::warn!(
+                    "plugin entity upsert failed: key={}, error={err:#}",
+                    request.key
+                );
+                return -1;
+            }
+        };
+        if let Err(err) =
+            self.entities
+                .send_spawn_to_rendered_viewers(&self.players, &self.rendering, &spawned)
+        {
+            log::warn!(
+                "plugin entity spawn packet failed: key={}, error={err:#}",
+                request.key
+            );
+            return -1;
+        }
+        0
+    }
+
+    fn move_entity(&self, plugin_name: &str, query: &str) -> i32 {
+        let Some(request) = ParsedEntityMove::parse(plugin_name, query) else {
+            return -1;
+        };
+        let moved = match self
+            .entities
+            .move_entity_local(&request.key, request.position)
+        {
+            Ok(entity) => entity,
+            Err(err) => {
+                log::warn!(
+                    "plugin entity move failed: key={}, error={err:#}",
+                    request.key
+                );
+                return 1;
+            }
+        };
+        if moved.dimension != request.dimension {
+            log::warn!(
+                "plugin entity move dimension mismatch: key={}, expected={}, actual={}",
+                request.key,
+                request.dimension,
+                moved.dimension
+            );
+            return -1;
+        }
+        if let Err(err) =
+            self.entities
+                .send_move_to_rendered_viewers(&self.players, &self.rendering, &moved)
+        {
+            log::warn!(
+                "plugin entity move packet failed: key={}, error={err:#}",
+                request.key
+            );
+            return -1;
+        }
+        0
+    }
+
+    fn remove(&self, plugin_name: &str, query: &str) -> i32 {
+        let Some(key) = plugin_entity_key(plugin_name, query.trim()) else {
+            return -1;
+        };
+        let entity = match self.entities.remove_local(&key) {
+            Ok(entity) => entity,
+            Err(_) => return 1,
+        };
+        if let Err(err) =
+            self.entities
+                .send_remove_to_rendered_viewers(&self.players, &self.rendering, &entity)
+        {
+            log::warn!("plugin entity remove packet failed: key={key}, error={err:#}");
+            return -1;
+        }
+        0
+    }
+}
+
+#[derive(Debug)]
+struct ParsedEntityUpsert {
+    key: String,
+    name: String,
+    dimension: String,
+    entity_type: String,
+    position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+    display_name: String,
+}
+
+impl ParsedEntityUpsert {
+    fn parse(plugin_name: &str, query: &str) -> Option<Self> {
+        let mut parts = query.splitn(9, '\t');
+        let raw_key = parts.next()?.trim();
+        let key = plugin_entity_key(plugin_name, raw_key)?;
+        let dimension = parts.next()?.trim().to_string();
+        let entity_type = normalize_plugin_resource_key(parts.next()?);
+        let x = parts.next()?.trim().parse().ok()?;
+        let y = parts.next()?.trim().parse().ok()?;
+        let z = parts.next()?.trim().parse().ok()?;
+        let yaw = parts.next()?.trim().parse().ok()?;
+        let pitch = parts.next()?.trim().parse().ok()?;
+        let display_name = parts.next().unwrap_or_default().trim().to_string();
+        if dimension.is_empty() || entity_type.is_empty() {
+            return None;
+        }
+        Some(Self {
+            key,
+            name: raw_key.to_string(),
+            dimension,
+            entity_type,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition {
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+                on_ground: false,
+            },
+            display_name,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ParsedEntityMove {
+    key: String,
+    dimension: String,
+    position: qexed_protocol::to_client::play::add_entity::EntityPosition,
+}
+
+impl ParsedEntityMove {
+    fn parse(plugin_name: &str, query: &str) -> Option<Self> {
+        let mut parts = query.split('\t');
+        let key = plugin_entity_key(plugin_name, parts.next()?.trim())?;
+        let dimension = parts.next()?.trim().to_string();
+        let x = parts.next()?.trim().parse().ok()?;
+        let y = parts.next()?.trim().parse().ok()?;
+        let z = parts.next()?.trim().parse().ok()?;
+        let yaw = parts.next()?.trim().parse().ok()?;
+        let pitch = parts.next()?.trim().parse().ok()?;
+        if dimension.is_empty() {
+            return None;
+        }
+        Some(Self {
+            key,
+            dimension,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition {
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+                on_ground: false,
+            },
+        })
+    }
+}
+
+fn plugin_entity_key(plugin_name: &str, local_key: &str) -> Option<String> {
+    let plugin_name = clean_plugin_entity_part(plugin_name)?;
+    let local_key = clean_plugin_entity_part(local_key)?;
+    Some(format!("plugin:{plugin_name}:{local_key}"))
+}
+
+fn clean_plugin_entity_part(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/'))
+    {
+        Some(value.to_string())
+    } else {
+        None
     }
 }
 

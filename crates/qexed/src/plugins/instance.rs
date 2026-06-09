@@ -8,18 +8,22 @@ use super::{
     host::{
         PluginHostServices, host_config_exists, host_config_read, host_config_write,
         host_economy_balance, host_economy_currency_info, host_economy_deposit,
-        host_economy_register_currency, host_economy_set_balance, host_economy_withdraw, host_log,
-        host_lottery_roll, host_pathfinding_find, host_random_pool_roll, host_storage_delete,
-        host_storage_exists, host_storage_get, host_storage_set, host_world_break_block,
-        host_world_register_edit_region, host_world_set_block,
+        host_economy_register_currency, host_economy_set_balance, host_economy_storage,
+        host_economy_withdraw, host_entity_move, host_entity_remove, host_entity_upsert, host_log,
+        host_lottery_roll, host_pathfinding_find, host_plugin_call, host_plugin_service_exists,
+        host_random_pool_roll, host_storage_delete, host_storage_exists, host_storage_get,
+        host_storage_set, host_time_millis, host_world_break_block,
+        host_world_register_edit_region, host_world_set_block, host_world_set_blocks,
     },
 };
+use qexed_plugin_api::PluginManifest;
 
 const MAX_EVENT_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_QUERY_RESPONSE_BYTES: usize = 1024 * 1024;
 
 pub(super) struct PluginInstance {
     pub(super) name: String,
+    pub(super) manifest: PluginManifest,
     pub(super) priority: i32,
     supported_events: HashSet<PluginEvent>,
     store: Store<PluginState>,
@@ -62,6 +66,9 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
         .func_wrap("qexed", "economy_currency_info", host_economy_currency_info)
         .context("register plugin economy_currency_info API")?;
     linker
+        .func_wrap("qexed", "economy_storage", host_economy_storage)
+        .context("register plugin economy_storage API")?;
+    linker
         .func_wrap("qexed", "economy_balance", host_economy_balance)
         .context("register plugin economy_balance API")?;
     linker
@@ -83,6 +90,9 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
         .func_wrap("qexed", "world_set_block", host_world_set_block)
         .context("register plugin world_set_block API")?;
     linker
+        .func_wrap("qexed", "world_set_blocks", host_world_set_blocks)
+        .context("register plugin world_set_blocks API")?;
+    linker
         .func_wrap("qexed", "world_break_block", host_world_break_block)
         .context("register plugin world_break_block API")?;
     linker
@@ -95,6 +105,24 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap("qexed", "random_pool_roll", host_random_pool_roll)
         .context("register plugin random_pool_roll API")?;
+    linker
+        .func_wrap("qexed", "entity_upsert", host_entity_upsert)
+        .context("register plugin entity_upsert API")?;
+    linker
+        .func_wrap("qexed", "entity_move", host_entity_move)
+        .context("register plugin entity_move API")?;
+    linker
+        .func_wrap("qexed", "entity_remove", host_entity_remove)
+        .context("register plugin entity_remove API")?;
+    linker
+        .func_wrap("qexed", "time_millis", host_time_millis)
+        .context("register plugin time_millis API")?;
+    linker
+        .func_wrap("qexed", "plugin_service_exists", host_plugin_service_exists)
+        .context("register plugin_service_exists API")?;
+    linker
+        .func_wrap("qexed", "plugin_call", host_plugin_call)
+        .context("register plugin_call API")?;
     Ok(())
 }
 
@@ -151,9 +179,28 @@ impl PluginInstance {
             .transpose()
             .with_context(|| format!("读取插件 {name} 优先级失败"))?
             .unwrap_or(0);
+        let manifest = read_manifest(
+            &instance,
+            &mut store,
+            &memory,
+            &alloc,
+            dealloc.as_ref(),
+            &name,
+        )
+        .unwrap_or_else(|err| {
+            log::warn!("WASM plugin manifest read failed: plugin={name}, error={err:#}");
+            PluginManifest {
+                id: name.clone(),
+                version: String::new(),
+                depends: Vec::new(),
+                optional_depends: Vec::new(),
+                services: Vec::new(),
+            }
+        });
 
         Ok(Self {
             name,
+            manifest,
             priority,
             supported_events,
             store,
@@ -334,5 +381,57 @@ impl PluginInstance {
         }
 
         Ok(None)
+    }
+}
+
+fn read_manifest(
+    instance: &Instance,
+    store: &mut Store<PluginState>,
+    memory: &Memory,
+    alloc: &TypedFunc<i32, i32>,
+    dealloc: Option<&TypedFunc<(i32, i32), ()>>,
+    name: &str,
+) -> Result<PluginManifest> {
+    let Ok(func) = instance.get_typed_func::<(i32, i32), i64>(&mut *store, "qexed_plugin_manifest")
+    else {
+        return Ok(default_manifest(name));
+    };
+
+    let ptr = alloc.call(&mut *store, 0)?;
+    let response = func.call(&mut *store, (ptr, 0))?;
+    if let Some(dealloc) = dealloc {
+        dealloc.call(&mut *store, (ptr, 0))?;
+    }
+    let response_ptr = (response >> 32) as i32;
+    let response_len = response as i32;
+    if response_ptr <= 0 || response_len <= 0 {
+        return Ok(default_manifest(name));
+    }
+
+    let response_len = usize::try_from(response_len).context("plugin manifest length")?;
+    if response_len > MAX_QUERY_RESPONSE_BYTES {
+        anyhow::bail!("plugin manifest response too large: {response_len}");
+    }
+    let response_offset = usize::try_from(response_ptr).context("plugin manifest pointer")?;
+    let mut bytes = vec![0; response_len];
+    memory.read(&mut *store, response_offset, &mut bytes)?;
+    if let Some(dealloc) = dealloc {
+        dealloc.call(&mut *store, (response_ptr, response_len as i32))?;
+    }
+
+    let mut manifest: PluginManifest = postcard::from_bytes(&bytes)?;
+    if manifest.id.trim().is_empty() {
+        manifest.id = name.to_string();
+    }
+    Ok(manifest)
+}
+
+fn default_manifest(name: &str) -> PluginManifest {
+    PluginManifest {
+        id: name.to_string(),
+        version: String::new(),
+        depends: Vec::new(),
+        optional_depends: Vec::new(),
+        services: Vec::new(),
     }
 }

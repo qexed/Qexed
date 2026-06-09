@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "api_consumer_demo"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+]
+
+[[package]]
+name = "api_provider_demo"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -132,6 +146,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
+]
+
+[[package]]
+name = "maze_runner"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -308,6 +331,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "temple_run"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
 ]
 
 [[package]]

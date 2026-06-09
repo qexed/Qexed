@@ -316,6 +316,7 @@ mod tests {
                 properties: Vec::new(),
             },
             entity_id: 1,
+            game_mode: 0,
             position: qexed_protocol::to_client::play::add_entity::EntityPosition::default(),
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),

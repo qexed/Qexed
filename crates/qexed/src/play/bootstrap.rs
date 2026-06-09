@@ -128,9 +128,10 @@ where
 
     sink.send(GameStateChange {
         reason: 13,
-        game_mode: world_config.game_mode.protocol_id() as f32,
+        game_mode: 0.0,
     })
     .await?;
+
     sink.send(TickingState::default()).await?;
 
     sink.send(SetHealth {

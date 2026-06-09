@@ -73,9 +73,8 @@ impl ManagedEntity {
             ManagedEntityKind::Npc | ManagedEntityKind::Entity if player_npc => {
                 Some(player_entity_metadata(self.display_name()))
             }
-            ManagedEntityKind::Npc | ManagedEntityKind::Entity => {
-                self.display_name().map(named_entity_metadata)
-            }
+            ManagedEntityKind::Npc => self.display_name().map(named_entity_metadata),
+            ManagedEntityKind::Entity => None,
         };
         if let Some(metadata) = metadata {
             packets.push(packet_bytes(SetEntityData {
@@ -494,6 +493,60 @@ mod tests {
     use qexed_protocol::to_client::play::add_entity::{EntityPosition, EntityPositionSync};
 
     use super::*;
+
+    #[test]
+    fn ordinary_entity_spawn_does_not_include_display_name_metadata() {
+        let entity = ManagedEntity {
+            key: "zombie".to_string(),
+            entity_id: 7,
+            uuid: uuid::Uuid::new_v4(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id: 1,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 1.0,
+                y: 64.0,
+                z: 2.0,
+                yaw: 90.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Zombie".to_string(),
+            display_name: "Cluster Zombie".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: String::new(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        };
+
+        let packets = entity.spawn_packets().unwrap();
+        let packet_ids = packets
+            .into_iter()
+            .map(|mut packet| {
+                let mut reader = qexed_packet::PacketReader::new(&mut packet);
+                let mut packet_id = VarInt::default();
+                packet_id.deserialize(&mut reader).unwrap();
+                packet_id.0
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            packet_ids,
+            vec![
+                qexed_protocol::to_client::play::add_entity::AddEntity::ID,
+                qexed_protocol::to_client::play::add_entity::RotateHead::ID,
+            ]
+        );
+    }
 
     #[test]
     fn position_packets_include_velocity() {

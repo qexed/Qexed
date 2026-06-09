@@ -173,6 +173,10 @@ fn existing_packet_types_use_26_1_2_ids() {
         0x24
     );
     assert_eq!(
+        qexed_protocol::to_server::play::player_loaded::PlayerLoaded::ID,
+        0x2C
+    );
+    assert_eq!(
         qexed_protocol::to_server::play::set_carried_item::SetCarriedItem::ID,
         0x35
     );
@@ -381,6 +385,26 @@ fn recipe_book_packets_round_trip_with_26_1_2_slot_display_ids() {
         .unwrap();
     assert_eq!(item_display_buf[0], 4);
 
+    let item_stack_display = qexed_protocol::types::SlotDisplay::ItemStack(
+        qexed_protocol::types::slot_display_types::minecraft::ItemStack {
+            item_stack: qexed_protocol::types::Slot {
+                item_count: qexed_packet::net_types::VarInt(1),
+                item_id: Some(qexed_packet::net_types::VarInt(36)),
+                number_of_components_to_add: Some(qexed_packet::net_types::VarInt(0)),
+                number_of_components_to_remove: Some(qexed_packet::net_types::VarInt(0)),
+                components_to_add: None,
+                components_to_remove: None,
+            },
+        },
+    );
+    let mut item_stack_display_buf = bytes::BytesMut::new();
+    item_stack_display
+        .serialize(&mut qexed_packet::PacketWriter::new(
+            &mut item_stack_display_buf,
+        ))
+        .unwrap();
+    assert_eq!(item_stack_display_buf.as_ref(), &[5, 36, 1, 0, 0]);
+
     let recipe = round_trip(
         qexed_protocol::to_client::play::recipe_book_add::RecipeBookAdd {
             entries: vec![qexed_protocol::to_client::play::recipe_book_add::Recipes {
@@ -407,7 +431,7 @@ fn recipe_book_packets_round_trip_with_26_1_2_slot_display_ids() {
                         crafting_station: qexed_protocol::types::SlotDisplay::Empty,
                     },
                 ),
-                group: None,
+                group: qexed_packet::net_types::OptionalVarInt(None),
                 category: qexed_packet::net_types::VarInt(0),
                 ingredients: Some(vec![qexed_protocol::types::IDSet {
                     r#type: qexed_packet::net_types::VarInt(2),
@@ -422,6 +446,12 @@ fn recipe_book_packets_round_trip_with_26_1_2_slot_display_ids() {
 
     assert!(recipe.replace);
     assert_eq!(recipe.entries.len(), 1);
+
+    let mut group_buf = bytes::BytesMut::new();
+    qexed_packet::net_types::OptionalVarInt(Some(qexed_packet::net_types::VarInt(37)))
+        .serialize(&mut qexed_packet::PacketWriter::new(&mut group_buf))
+        .unwrap();
+    assert_eq!(group_buf.as_ref(), &[38]);
 
     let update_recipes = round_trip(
         qexed_protocol::to_client::play::update_recipes::UpdateRecipes {

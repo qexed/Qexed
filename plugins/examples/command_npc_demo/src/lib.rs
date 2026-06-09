@@ -257,6 +257,7 @@ pub extern "C" fn qexed_plugin_player_item_pickup(ptr: i32, len: i32) -> i64 {
 
     qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse {
         cancel: true,
+        consume: false,
         actions: vec![PlayerAction::SystemMessage {
             text: format!(
                 "插件已拦截钻石拾取，本地记录 {} 次。",

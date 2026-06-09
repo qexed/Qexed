@@ -1,5 +1,5 @@
 use qexed_packet::PacketCodec;
-use qexed_packet::net_types::VarInt;
+use qexed_packet::net_types::{OptionalVarInt, VarInt};
 
 use crate::types::{IDSet, RecipeDisplay};
 #[qexed_packet_macros::packet(id = 0x4a)]
@@ -14,7 +14,7 @@ pub struct RecipeBookAdd {
 pub struct Recipes {
     pub recipe: VarInt,
     pub display: RecipeDisplay,
-    pub group: Option<VarInt>,
+    pub group: OptionalVarInt,
     pub category: VarInt,
     pub ingredients: Option<Vec<IDSet>>,
     pub flags: u8,

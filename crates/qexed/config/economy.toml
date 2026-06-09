@@ -1,0 +1,8 @@
+balances = []
+
+[[currencies]]
+id = "qexed:coin"
+name = "Coin"
+symbol = "Q"
+fractional_digits = 2
+storage = "sqlite"

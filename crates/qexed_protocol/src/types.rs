@@ -1798,10 +1798,81 @@ pub mod slot_display_types {
         pub struct Item {
             pub item_type: VarInt,
         }
-        #[qexed_packet_macros::substruct]
         #[derive(Debug, Default, PartialEq, Clone)]
         pub struct ItemStack {
             pub item_stack: Slot,
+        }
+        impl qexed_packet::PacketCodec for ItemStack {
+            fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> anyhow::Result<()> {
+                let item_id =
+                    self.item_stack.item_id.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("item_id is required for item stack display")
+                    })?;
+                item_id.serialize(w)?;
+                self.item_stack.item_count.serialize(w)?;
+
+                let add_count = self
+                    .item_stack
+                    .number_of_components_to_add
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
+                let remove_count = self
+                    .item_stack
+                    .number_of_components_to_remove
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
+                add_count.serialize(w)?;
+                remove_count.serialize(w)?;
+
+                if let Some(components_to_add) = &self.item_stack.components_to_add {
+                    for component in components_to_add {
+                        component.serialize(w)?;
+                    }
+                }
+                if let Some(components_to_remove) = &self.item_stack.components_to_remove {
+                    for component in components_to_remove {
+                        component.serialize(w)?;
+                    }
+                }
+                Ok(())
+            }
+
+            fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> anyhow::Result<()> {
+                let mut item_id = VarInt::default();
+                item_id.deserialize(r)?;
+                let mut item_count = VarInt::default();
+                item_count.deserialize(r)?;
+                let mut add_count = VarInt::default();
+                add_count.deserialize(r)?;
+                let mut remove_count = VarInt::default();
+                remove_count.deserialize(r)?;
+
+                let mut components_to_add = Vec::with_capacity(add_count.0.max(0) as usize);
+                for _ in 0..add_count.0 {
+                    let mut component = crate::types::ComponentsToAdd::default();
+                    component.deserialize(r)?;
+                    components_to_add.push(component);
+                }
+                let mut components_to_remove = Vec::with_capacity(remove_count.0.max(0) as usize);
+                for _ in 0..remove_count.0 {
+                    let mut component = VarInt::default();
+                    component.deserialize(r)?;
+                    components_to_remove.push(component);
+                }
+
+                self.item_stack = Slot {
+                    item_count,
+                    item_id: Some(item_id),
+                    number_of_components_to_add: Some(add_count),
+                    number_of_components_to_remove: Some(remove_count),
+                    components_to_add: (!components_to_add.is_empty()).then_some(components_to_add),
+                    components_to_remove: (!components_to_remove.is_empty())
+                        .then_some(components_to_remove),
+                };
+                Ok(())
+            }
         }
         #[qexed_packet_macros::substruct]
         #[derive(Debug, Default, PartialEq, Clone)]

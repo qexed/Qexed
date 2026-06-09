@@ -48,6 +48,7 @@ pub(super) struct ChunkSendState {
     pub(super) batch_quota: f32,
     pub(super) unacknowledged_batches: usize,
     pub(super) max_unacknowledged_batches: usize,
+    initial_view_logged: bool,
 }
 
 pub(super) struct ChunkLoadResult {
@@ -354,6 +355,7 @@ impl ChunkSendState {
             batch_quota: 0.0,
             unacknowledged_batches: 0,
             max_unacknowledged_batches: INITIAL_MAX_UNACKNOWLEDGED_BATCHES,
+            initial_view_logged: false,
         }
     }
 
@@ -603,6 +605,7 @@ impl ChunkSendState {
         self.pending_unloads.clear();
         self.loading_chunks.clear();
         self.reset_batch_flow_control();
+        self.initial_view_logged = false;
         self.refresh_pending_chunks();
     }
 
@@ -648,6 +651,7 @@ impl ChunkSendState {
         })
         .await?;
         sink.flush().await?;
+        self.log_initial_view_progress();
         Ok(true)
     }
 
@@ -906,6 +910,7 @@ impl ChunkSendState {
         })
         .await?;
         sink.flush().await?;
+        self.log_initial_view_progress();
 
         self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
         Ok(chunks.len())
@@ -979,6 +984,54 @@ impl ChunkSendState {
 
     pub(super) fn has_pending_unloads(&self) -> bool {
         !self.pending_unloads.is_empty()
+    }
+
+    pub(super) fn initial_view_complete(&self) -> bool {
+        self.pending_chunks.is_empty()
+            && self.ready_chunks.is_empty()
+            && self.loading_chunks.is_empty()
+            && self.target_chunks().is_subset(&self.visible_chunks)
+    }
+
+    pub(super) fn log_initial_view_progress(&mut self) {
+        if self.initial_view_logged {
+            return;
+        }
+
+        let target = self.target_chunks();
+        let missing = target.difference(&self.visible_chunks).count();
+        if missing == 0
+            && self.pending_chunks.is_empty()
+            && self.ready_chunks.is_empty()
+            && self.loading_chunks.is_empty()
+        {
+            self.initial_view_logged = true;
+            log::info!(
+                "initial chunk view sent: dimension={}, center=({}, {}), view_distance={}, visible_chunks={}, target_chunks={}",
+                self.dimension,
+                self.center_x,
+                self.center_z,
+                self.view_distance,
+                self.visible_chunks.len(),
+                target.len()
+            );
+            return;
+        }
+
+        log::debug!(
+            "initial chunk view pending: dimension={}, center=({}, {}), view_distance={}, visible={}, target={}, missing={}, pending={}, ready={}, loading={}, unacked={}",
+            self.dimension,
+            self.center_x,
+            self.center_z,
+            self.view_distance,
+            self.visible_chunks.len(),
+            target.len(),
+            missing,
+            self.pending_chunks.len(),
+            self.ready_chunks.len(),
+            self.loading_chunks.len(),
+            self.unacknowledged_batches
+        );
     }
 
     fn chunk_in_current_view(&self, chunk: (i32, i32)) -> bool {

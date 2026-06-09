@@ -314,7 +314,9 @@ impl RawRecipe {
         Some(Recipes {
             recipe: VarInt(recipe_id),
             display,
-            group: (!self.group.as_deref().unwrap_or_default().is_empty()).then_some(VarInt(group)),
+            group: qexed_packet::net_types::OptionalVarInt(
+                (!self.group.as_deref().unwrap_or_default().is_empty()).then_some(VarInt(group)),
+            ),
             category: VarInt(category),
             ingredients: self.ingredient_sets(item_ids),
             flags: 0,

@@ -33,6 +33,32 @@ impl From<Vec<u8>> for ByteArray {
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
+pub struct OptionalVarInt(pub Option<VarInt>);
+
+impl PacketCodec for OptionalVarInt {
+    fn serialize(&self, w: &mut PacketWriter) -> anyhow::Result<()> {
+        let value = match self.0 {
+            Some(VarInt(value)) => value
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("optional varint value overflows"))?,
+            None => 0,
+        };
+        VarInt(value).serialize(w)
+    }
+
+    fn deserialize(&mut self, r: &mut PacketReader) -> anyhow::Result<()> {
+        let mut value = VarInt::default();
+        value.deserialize(r)?;
+        self.0 = if value.0 == 0 {
+            None
+        } else {
+            Some(VarInt(value.0 - 1))
+        };
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct JsonValue(pub serde_json::Value);
 
 impl PacketCodec for JsonValue {

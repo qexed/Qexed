@@ -37,6 +37,13 @@ unsafe extern "C" {
         out_ptr: i32,
         out_len: i32,
     ) -> i64;
+    #[link_name = "economy_storage"]
+    fn host_economy_storage(
+        currency_ptr: i32,
+        currency_len: i32,
+        out_ptr: i32,
+        out_len: i32,
+    ) -> i64;
     #[link_name = "economy_balance"]
     fn host_economy_balance(
         player_ptr: i32,
@@ -74,14 +81,33 @@ unsafe extern "C" {
     fn host_pathfinding_find(query_ptr: i32, query_len: i32, out_ptr: i32, out_len: i32) -> i64;
     #[link_name = "world_set_block"]
     fn host_world_set_block(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "world_set_blocks"]
+    fn host_world_set_blocks(query_ptr: i32, query_len: i32) -> i32;
     #[link_name = "world_break_block"]
     fn host_world_break_block(query_ptr: i32, query_len: i32) -> i32;
     #[link_name = "world_register_edit_region"]
     fn host_world_register_edit_region(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "entity_upsert"]
+    fn host_entity_upsert(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "entity_move"]
+    fn host_entity_move(query_ptr: i32, query_len: i32) -> i32;
+    #[link_name = "entity_remove"]
+    fn host_entity_remove(query_ptr: i32, query_len: i32) -> i32;
     #[link_name = "random_pool_roll"]
-    fn host_random_pool_roll(
-        request_ptr: i32,
-        request_len: i32,
+    fn host_random_pool_roll(request_ptr: i32, request_len: i32, out_ptr: i32, out_len: i32)
+    -> i64;
+    #[link_name = "time_millis"]
+    fn host_time_millis() -> i64;
+    #[link_name = "plugin_service_exists"]
+    fn host_plugin_service_exists(service_ptr: i32, service_len: i32) -> i32;
+    #[link_name = "plugin_call"]
+    fn host_plugin_call(
+        service_ptr: i32,
+        service_len: i32,
+        method_ptr: i32,
+        method_len: i32,
+        payload_ptr: i32,
+        payload_len: i32,
         out_ptr: i32,
         out_len: i32,
     ) -> i64;
@@ -103,6 +129,16 @@ macro_rules! qexed_plugin_memory {
             unsafe {
                 $crate::dealloc(ptr, len);
             }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! qexed_plugin_manifest {
+    ($manifest:expr) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn qexed_plugin_manifest(_ptr: i32, _len: i32) -> i64 {
+            $crate::response_ptr_len(&$manifest)
         }
     };
 }
@@ -144,6 +180,10 @@ pub fn log(message: &str) {
     unsafe {
         host_log(message.as_ptr() as i32, message.len() as i32);
     }
+}
+
+pub fn time_millis() -> i64 {
+    unsafe { host_time_millis() }
 }
 
 pub fn config_exists(path: &str) -> bool {
@@ -285,28 +325,52 @@ pub fn economy_currency_info(currency: &str) -> Option<CurrencyInfo> {
     })
 }
 
+pub fn economy_storage(currency: &str) -> Option<String> {
+    let currency_len = i32_len(currency.as_bytes())?;
+    let bytes = read_host_buffer(|out_ptr, out_len| unsafe {
+        host_economy_storage(currency.as_ptr() as i32, currency_len, out_ptr, out_len)
+    })?;
+    String::from_utf8(bytes).ok()
+}
+
 pub fn economy_balance(player: &str, currency: &str) -> Option<i64> {
-    economy_call(player, currency, |player_ptr, player_len, currency_ptr, currency_len| unsafe {
-        host_economy_balance(player_ptr, player_len, currency_ptr, currency_len)
-    })
+    economy_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_balance(player_ptr, player_len, currency_ptr, currency_len)
+        },
+    )
 }
 
 pub fn economy_set_balance(player: &str, currency: &str, amount: i64) -> Option<i64> {
-    economy_call(player, currency, |player_ptr, player_len, currency_ptr, currency_len| unsafe {
-        host_economy_set_balance(player_ptr, player_len, currency_ptr, currency_len, amount)
-    })
+    economy_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_set_balance(player_ptr, player_len, currency_ptr, currency_len, amount)
+        },
+    )
 }
 
 pub fn economy_deposit(player: &str, currency: &str, amount: i64) -> Option<i64> {
-    economy_call(player, currency, |player_ptr, player_len, currency_ptr, currency_len| unsafe {
-        host_economy_deposit(player_ptr, player_len, currency_ptr, currency_len, amount)
-    })
+    economy_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_deposit(player_ptr, player_len, currency_ptr, currency_len, amount)
+        },
+    )
 }
 
 pub fn economy_withdraw(player: &str, currency: &str, amount: i64) -> Option<i64> {
-    economy_call(player, currency, |player_ptr, player_len, currency_ptr, currency_len| unsafe {
-        host_economy_withdraw(player_ptr, player_len, currency_ptr, currency_len, amount)
-    })
+    economy_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_withdraw(player_ptr, player_len, currency_ptr, currency_len, amount)
+        },
+    )
 }
 
 pub fn lottery_roll(entries: &[(&str, u64)]) -> Option<String> {
@@ -369,6 +433,34 @@ pub fn world_set_block(dimension: &str, position: (i32, i32, i32), block: &str) 
     unsafe { host_world_set_block(query.as_ptr() as i32, query_len) == 0 }
 }
 
+pub fn world_set_blocks<'a>(
+    blocks: impl IntoIterator<Item = (&'a str, (i32, i32, i32), &'a str)>,
+) -> bool {
+    let mut query = String::new();
+    for (dimension, position, block) in blocks {
+        if dimension.trim().is_empty() || block.trim().is_empty() {
+            return false;
+        }
+        query.push_str(dimension.trim());
+        query.push(' ');
+        query.push_str(&position.0.to_string());
+        query.push(' ');
+        query.push_str(&position.1.to_string());
+        query.push(' ');
+        query.push_str(&position.2.to_string());
+        query.push(' ');
+        query.push_str(block.trim());
+        query.push('\n');
+    }
+    if query.is_empty() {
+        return true;
+    }
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_world_set_blocks(query.as_ptr() as i32, query_len) == 0 }
+}
+
 pub fn world_break_block(dimension: &str, position: (i32, i32, i32)) -> bool {
     let query = format!("{} {} {} {}", dimension, position.0, position.1, position.2);
     let Some(query_len) = i32_len(query.as_bytes()) else {
@@ -412,6 +504,92 @@ pub fn world_register_edit_region(region: &WorldEditRegion<'_>) -> bool {
         return false;
     };
     unsafe { host_world_register_edit_region(query.as_ptr() as i32, query_len) == 0 }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeEntity<'a> {
+    pub key: &'a str,
+    pub dimension: &'a str,
+    pub entity_type: &'a str,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub display_name: &'a str,
+}
+
+pub fn entity_upsert(entity: &RuntimeEntity<'_>) -> bool {
+    if !valid_runtime_entity_key(entity.key)
+        || entity.dimension.trim().is_empty()
+        || entity.entity_type.trim().is_empty()
+    {
+        return false;
+    }
+    let query = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        entity.key.trim(),
+        entity.dimension.trim(),
+        entity.entity_type.trim(),
+        entity.x,
+        entity.y,
+        entity.z,
+        entity.yaw,
+        entity.pitch,
+        entity.display_name.trim(),
+    );
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_entity_upsert(query.as_ptr() as i32, query_len) == 0 }
+}
+
+pub fn entity_move(
+    key: &str,
+    dimension: &str,
+    x: f64,
+    y: f64,
+    z: f64,
+    yaw: f32,
+    pitch: f32,
+) -> bool {
+    if !valid_runtime_entity_key(key) || dimension.trim().is_empty() {
+        return false;
+    }
+    let query = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        key.trim(),
+        dimension.trim(),
+        x,
+        y,
+        z,
+        yaw,
+        pitch
+    );
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_entity_move(query.as_ptr() as i32, query_len) == 0 }
+}
+
+pub fn entity_remove(key: &str) -> bool {
+    if !valid_runtime_entity_key(key) {
+        return false;
+    }
+    let key = key.trim();
+    let Some(query_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_entity_remove(key.as_ptr() as i32, query_len) == 0 }
+}
+
+fn valid_runtime_entity_key(key: &str) -> bool {
+    let key = key.trim();
+    !key.is_empty()
+        && key.len() <= 128
+        && key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/'))
 }
 
 pub fn random_block_pool_roll(
@@ -467,6 +645,31 @@ pub fn random_pool_roll(
         host_random_pool_roll(encoded.as_ptr() as i32, encoded_len, out_ptr, out_len)
     })?;
     String::from_utf8(bytes).ok()
+}
+
+pub fn plugin_service_exists(service: &str) -> bool {
+    let Some(service_len) = i32_len(service.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_plugin_service_exists(service.as_ptr() as i32, service_len) == 1 }
+}
+
+pub fn plugin_call(service: &str, method: &str, payload: &[u8]) -> Option<Vec<u8>> {
+    let service_len = i32_len(service.as_bytes())?;
+    let method_len = i32_len(method.as_bytes())?;
+    let payload_len = i32_len(payload)?;
+    read_host_buffer(|out_ptr, out_len| unsafe {
+        host_plugin_call(
+            service.as_ptr() as i32,
+            service_len,
+            method.as_ptr() as i32,
+            method_len,
+            payload.as_ptr() as i32,
+            payload_len,
+            out_ptr,
+            out_len,
+        )
+    })
 }
 
 pub unsafe fn payload_bytes<'a>(ptr: i32, len: i32) -> Option<&'a [u8]> {

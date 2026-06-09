@@ -2,6 +2,7 @@ use anyhow::Result;
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::to_client::play::{
     add_entity::EntityPosition,
+    boss_event::{BossBarColor, BossBarOverlay, BossBarProperties, BossEvent},
     custom_payload::CustomPayload,
     position::Position,
     respawn::{KEEP_NO_DATA, Respawn},
@@ -311,6 +312,7 @@ where
                 &crate::players::OnlinePlayer {
                     profile: profile.clone(),
                     entity_id: actor_entity_id,
+                    game_mode: config.world.game_mode.protocol_id() as i32,
                     position: *position,
                     dimension: play_dimension.to_string(),
                     equipment: Vec::new(),
@@ -675,6 +677,7 @@ fn command_source_player(
     crate::players::OnlinePlayer {
         profile: profile.clone(),
         entity_id: actor_entity_id,
+        game_mode: 0,
         position,
         dimension: dimension.to_string(),
         equipment: Vec::new(),
@@ -2394,6 +2397,59 @@ where
             send_player_velocity(sink, position, next_teleport_id, x, y, z, additive).await?;
             Ok(false)
         }
+        crate::plugins::PlayerAction::BossBar {
+            id,
+            title,
+            progress,
+            color,
+            overlay,
+        } => {
+            sink.send(BossEvent::add_with_options(
+                plugin_boss_bar_uuid(actor, &id),
+                text_component(if title.trim().is_empty() {
+                    "Loading"
+                } else {
+                    title.trim()
+                }),
+                progress.clamp(0.0, 1.0),
+                plugin_boss_bar_color(&color),
+                plugin_boss_bar_overlay(&overlay),
+                BossBarProperties::default(),
+            ))
+            .await?;
+            Ok(false)
+        }
+        crate::plugins::PlayerAction::RemoveBossBar { id } => {
+            sink.send(BossEvent::remove(plugin_boss_bar_uuid(actor, &id)))
+                .await?;
+            Ok(false)
+        }
+    }
+}
+
+fn plugin_boss_bar_uuid(player: uuid::Uuid, id: &str) -> uuid::Uuid {
+    uuid::Uuid::new_v3(&player, id.trim().as_bytes())
+}
+
+fn plugin_boss_bar_color(color: &str) -> BossBarColor {
+    match color.trim().to_ascii_lowercase().as_str() {
+        "pink" => BossBarColor::Pink,
+        "blue" => BossBarColor::Blue,
+        "red" => BossBarColor::Red,
+        "yellow" => BossBarColor::Yellow,
+        "purple" => BossBarColor::Purple,
+        "white" => BossBarColor::White,
+        _ => BossBarColor::Green,
+    }
+}
+
+fn plugin_boss_bar_overlay(overlay: &str) -> BossBarOverlay {
+    match overlay.trim().to_ascii_lowercase().as_str() {
+        "notched6" | "notched_6" => BossBarOverlay::Notched6,
+        "notched10" | "notched_10" => BossBarOverlay::Notched10,
+        "notched12" | "notched_12" => BossBarOverlay::Notched12,
+        "notched20" | "notched_20" => BossBarOverlay::Notched20,
+        _ => BossBarOverlay::Progress,
     }
 }
 

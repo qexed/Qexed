@@ -17,9 +17,11 @@ pub use payload::{
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
     PlayerAttackResponse, PlayerInputPayload, PlayerInputState, PlayerItemPickupQuery,
     PlayerItemPickupResponse, PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse,
-    PlayerPayload, PlayerPayloadOwned, PlayerPositionPayload, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, PotionEffectTickQuery,
-    PotionEffectTickResponse, ProxyConnectResultPayload, SoundPayload, SoundResponse,
+    PlayerPayload, PlayerPayloadOwned, PlayerPositionPayload, PlayerTickPayload,
+    PluginApiCallQuery, PluginApiCallResponse, PluginCommandDefinition, PluginCommandQuery,
+    PluginCommandResponse, PluginDependency, PluginEnchantment, PluginManifest,
+    PluginServiceDefinition, PotionEffectTickQuery, PotionEffectTickResponse,
+    ProxyConnectResultPayload, SoundPayload, SoundResponse,
 };
 pub use placeholders::{
     NATIVE_PLACEHOLDER_DOCS, PlaceholderDoc, PlaceholderScope, native_placeholder_docs,

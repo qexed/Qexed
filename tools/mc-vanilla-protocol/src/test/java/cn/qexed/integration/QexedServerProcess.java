@@ -23,16 +23,24 @@ import java.util.concurrent.TimeUnit;
 final class QexedServerProcess implements AutoCloseable {
     private final Path runDir;
     private final Process process;
+    private final List<Process> shardProcesses;
+    private final int port;
     private final List<String> logs = new CopyOnWriteArrayList<>();
     private boolean failed;
     private final boolean keepRunDir;
 
-    private QexedServerProcess(Path repoRoot, Path runDir, Process process, boolean keepRunDir) {
+    private QexedServerProcess(Path repoRoot, Path runDir, Process process, boolean keepRunDir, List<Process> shardProcesses, int port) {
         this.runDir = runDir;
         this.process = process;
         this.keepRunDir = keepRunDir;
+        this.shardProcesses = shardProcesses;
+        this.port = port;
         capture(process.getInputStream());
         capture(process.getErrorStream());
+        for (Process shard : shardProcesses) {
+            capture(shard.getInputStream());
+            capture(shard.getErrorStream());
+        }
     }
 
     static QexedServerProcess start(String name, boolean creative) throws IOException, InterruptedException {
@@ -44,32 +52,127 @@ final class QexedServerProcess implements AutoCloseable {
         return start(name, creative, allowAllCommands, false);
     }
 
+    static QexedServerProcess startWithPlugins(String name, boolean creative, boolean allowAllCommands, String... plugins)
+            throws IOException, InterruptedException {
+        return start(name, creative, allowAllCommands, false, plugins);
+    }
+
     static QexedServerProcess startWithAiStress(String name) throws IOException, InterruptedException {
         return start(name, true, true, true);
+    }
+
+    static QexedServerProcess startClusterGateway(String name) throws IOException, InterruptedException {
+        return start(name, false, true, false, true);
     }
 
     private static QexedServerProcess start(
             String name, boolean creative, boolean allowAllCommands, boolean aiStress)
             throws IOException, InterruptedException {
+        return start(name, creative, allowAllCommands, aiStress, false, new String[0]);
+    }
+
+    private static QexedServerProcess start(
+            String name, boolean creative, boolean allowAllCommands, boolean aiStress, String... plugins)
+            throws IOException, InterruptedException {
+        return start(name, creative, allowAllCommands, aiStress, false, plugins);
+    }
+
+    private static QexedServerProcess start(
+            String name,
+            boolean creative,
+            boolean allowAllCommands,
+            boolean aiStress,
+            boolean clusterGateway,
+            String... plugins)
+            throws IOException, InterruptedException {
         Path repoRoot = Path.of(System.getProperty("qexed.repoRoot", "../..")).toAbsolutePath().normalize();
         Path runDir = Files.createTempDirectory("qexed-it-" + name + "-");
         copyDirectory(repoRoot.resolve("run/config"), runDir.resolve("config"));
-        writeTestConfig(runDir.resolve("config"), creative, allowAllCommands, aiStress);
-        Path binary = repoRoot.resolve("target/debug/qexed.exe");
-        if (!Files.exists(binary)) {
-            binary = repoRoot.resolve("target/debug/qexed");
-        }
+        int port = Integer.parseInt(System.getProperty("qexed.port", "25565"));
+        writeTestConfig(runDir.resolve("config"), creative, allowAllCommands, aiStress, clusterGateway, port);
+        copyPlugins(repoRoot, runDir, plugins);
+        Path binary = qexedBinary(repoRoot);
         if (!Files.exists(binary)) {
             fail("qexed binary not found, run buildQexedForIntegration first: " + binary);
         }
 
+        List<Process> shards = clusterGateway ? startClusterShards(binary, runDir) : List.of();
         Process process = new ProcessBuilder(binary.toString(), "--language", "zh-CN")
                 .directory(runDir.toFile())
                 .redirectErrorStream(false)
                 .start();
-        QexedServerProcess server = new QexedServerProcess(repoRoot, runDir, process, false);
-        server.waitForPort(Duration.ofSeconds(30));
+        QexedServerProcess server = new QexedServerProcess(repoRoot, runDir, process, false, shards, port);
+        server.waitForPort(Duration.ofSeconds(90));
         return server;
+    }
+
+    private static Path qexedBinary(Path repoRoot) {
+        String configured = System.getProperty("qexed.binary", "").trim();
+        if (!configured.isEmpty()) {
+            return Path.of(configured).toAbsolutePath().normalize();
+        }
+        Path binary = repoRoot.resolve("target/debug/qexed.exe");
+        if (!Files.exists(binary)) {
+            binary = repoRoot.resolve("target/debug/qexed");
+        }
+        return binary;
+    }
+
+    private static List<Process> startClusterShards(Path binary, Path runDir) throws IOException, InterruptedException {
+        List<Process> shards = new ArrayList<>();
+        String[][] specs = {
+                {"far", "127.0.0.1:26006"},
+                {"spawn", "127.0.0.1:26001"},
+                {"east", "127.0.0.1:26002"},
+                {"north", "127.0.0.1:26003"},
+                {"west", "127.0.0.1:26004"},
+                {"south", "127.0.0.1:26005"},
+        };
+        for (String[] spec : specs) {
+            Process shard = new ProcessBuilder(
+                            binary.toString(),
+                            "--language", "zh-CN",
+                            "--cluster-shard-id", spec[0],
+                            "--cluster-shard-listen", spec[1])
+                    .directory(runDir.toFile())
+                    .redirectErrorStream(false)
+                    .start();
+            shards.add(shard);
+            waitForShardPort(shard, spec[1], Duration.ofSeconds(30));
+        }
+        return shards;
+    }
+
+    private static void waitForShardPort(Process process, String address, Duration timeout) throws InterruptedException {
+        String[] parts = address.split(":", 2);
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (!process.isAlive()) {
+                fail("cluster shard exited before opening port: " + address);
+            }
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(parts[0], Integer.parseInt(parts[1])), 250);
+                return;
+            } catch (IOException ignored) {
+                Thread.sleep(100);
+            }
+        }
+        fail("cluster shard did not open " + address);
+    }
+
+    private static void copyPlugins(Path repoRoot, Path runDir, String... plugins) throws IOException {
+        if (plugins.length == 0) {
+            return;
+        }
+        Path targetDir = runDir.resolve("plugins");
+        Files.createDirectories(targetDir);
+        for (String plugin : plugins) {
+            Path source = repoRoot.resolve("plugins/examples/target/wasm32-unknown-unknown/release/" + plugin + ".wasm");
+            if (!Files.exists(source)) {
+                fail("plugin wasm not found, run buildWasmPluginsForIntegration first: " + source);
+            }
+            Files.copy(source, targetDir.resolve(plugin + ".wasm"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     void sendConsole(String command) throws IOException {
@@ -109,6 +212,10 @@ final class QexedServerProcess implements AutoCloseable {
         return runDir;
     }
 
+    int port() {
+        return port;
+    }
+
     void markFailed() {
         failed = true;
     }
@@ -127,6 +234,14 @@ final class QexedServerProcess implements AutoCloseable {
                 process.destroyForcibly();
             }
         }
+        for (Process shard : shardProcesses) {
+            if (shard.isAlive()) {
+                shard.destroy();
+                if (!shard.waitFor(5, TimeUnit.SECONDS)) {
+                    shard.destroyForcibly();
+                }
+            }
+        }
         if (failed || keepRunDir) {
             System.err.println("qexed integration run kept for diagnosis: " + runDir);
             System.err.println(String.join("\n", logs));
@@ -143,7 +258,7 @@ final class QexedServerProcess implements AutoCloseable {
                 fail("qexed exited before opening port. logs:\n" + String.join("\n", logs));
             }
             try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress("127.0.0.1", 25565), 250);
+                socket.connect(new InetSocketAddress("127.0.0.1", port), 250);
                 return;
             } catch (IOException ignored) {
                 Thread.sleep(100);
@@ -169,10 +284,11 @@ final class QexedServerProcess implements AutoCloseable {
     }
 
     private static void writeTestConfig(
-            Path configDir, boolean creative, boolean allowAllCommands, boolean aiStress) throws IOException {
+            Path configDir, boolean creative, boolean allowAllCommands, boolean aiStress, boolean clusterGateway, int port)
+            throws IOException {
         Files.writeString(configDir.resolve("qexed_server.toml"), """
                 [server]
-                ip = "127.0.0.1:25565"
+                ip = "127.0.0.1:%d"
                 online = false
                 max_player = 40
                 display_players = true
@@ -192,7 +308,14 @@ final class QexedServerProcess implements AutoCloseable {
                 window_ms = 1000
                 max_clicks = 100
                 cancel_actions = false
-                """, StandardCharsets.UTF_8);
+
+                [[server.economy.currencies]]
+                id = "qexed:coin"
+                name = "Coin"
+                symbol = "Q"
+                fractional_digits = 2
+                storage = "redis"
+                """.formatted(port), StandardCharsets.UTF_8);
         Files.writeString(configDir.resolve("proxy.toml"), """
                 [proxy]
                 enable = false
@@ -232,13 +355,22 @@ final class QexedServerProcess implements AutoCloseable {
                 max_cached_packet_bytes = 16777216
                 block_state_cache_limit = 65536
 
+                %s
+
+                %s
+
                 [spawn]
                 x = 0.0
-                y = 64.0
+                y = %.1f
                 z = 0.0
                 yaw = 0.0
                 pitch = 0.0
-                """.formatted(creative ? "creative" : "survival"), StandardCharsets.UTF_8);
+                """.formatted(
+                        creative ? "creative" : "survival",
+                        clusterGateway ? clusterGatewayConfig() : "",
+                        clusterGateway ? spawnPlatformConfig() : "",
+                        clusterGateway ? 255.0 : 64.0),
+                StandardCharsets.UTF_8);
         if (aiStress) {
             writeAiStressEntityConfig(configDir);
         } else {
@@ -386,6 +518,69 @@ final class QexedServerProcess implements AutoCloseable {
 
                 """);
         Files.writeString(configDir.resolve("qexed_entity.toml"), config.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static String clusterGatewayConfig() {
+        return """
+                [cluster]
+                enable = true
+                mode = "regions"
+
+                [[cluster.shards]]
+                id = "far"
+                endpoint = "tcp://127.0.0.1:26006"
+                min_chunk_x = 9
+                min_chunk_z = 9
+
+                [[cluster.shards]]
+                id = "spawn"
+                endpoint = "tcp://127.0.0.1:26001"
+                min_chunk_x = 0
+                max_chunk_x = 1
+                min_chunk_z = 0
+                max_chunk_z = 1
+
+                [[cluster.shards]]
+                id = "east"
+                endpoint = "tcp://127.0.0.1:26002"
+                min_chunk_x = 2
+                max_chunk_x = 8
+                min_chunk_z = 0
+                max_chunk_z = 8
+
+                [[cluster.shards]]
+                id = "north"
+                endpoint = "tcp://127.0.0.1:26003"
+                min_chunk_x = 0
+                max_chunk_x = 1
+                min_chunk_z = 2
+                max_chunk_z = 8
+
+                [[cluster.shards]]
+                id = "west"
+                endpoint = "tcp://127.0.0.1:26004"
+                max_chunk_x = -1
+
+                [[cluster.shards]]
+                id = "south"
+                endpoint = "tcp://127.0.0.1:26005"
+                min_chunk_x = 0
+                max_chunk_z = -1
+                """;
+    }
+
+    private static String spawnPlatformConfig() {
+        return """
+                [spawn_platform]
+                enable = true
+                dimension = "minecraft:overworld"
+                block = "minecraft:grass_block"
+                y = 254
+                min_x = -16
+                max_x = 31
+                min_z = -16
+                max_z = 31
+                """;
     }
 
     private static void copyDirectory(Path from, Path to) throws IOException {

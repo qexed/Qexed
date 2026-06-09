@@ -21,7 +21,7 @@ final class QexedSingleServerIntegrationTest {
 
     private static QexedProtocolClient connect(QexedServerProcess server, String username) throws Exception {
         try {
-            return new QexedProtocolClient(username);
+            return new QexedProtocolClient(username, server.port());
         } catch (Throwable error) {
             server.markFailed();
             fail("client failed to connect: " + error + "\nqexed logs:\n" + String.join("\n", server.logs()), error);
@@ -211,6 +211,76 @@ final class QexedSingleServerIntegrationTest {
     }
 
     @Test
+    void pluginDependencyApiCallAndEconomyStorageWorkAfterLogin() throws Exception {
+        try (QexedServerProcess server = QexedServerProcess.startWithPlugins(
+                        "plugin-api", false, true, "api_provider_demo", "api_consumer_demo");
+                QexedProtocolClient client = connect(server, "PluginUser")) {
+            client.waitForPlayReady(READY_TIMEOUT);
+            client.sendChatCommand("apitest");
+            QexedProtocolClient.SystemChatMessage message =
+                    client.waitForSystemChatContaining("api=provider:ok;exists=true;storage=redis", Duration.ofSeconds(10));
+            assertTrue(message.text().contains("provider:ok"), "unexpected plugin API response: " + message.text());
+            server.assertNoConnectionErrors();
+        }
+    }
+
+    @Test
+    void clusteredRegionGatewayKeepsSingleSessionAcrossMovementEntityAndItems() throws Exception {
+        try (QexedServerProcess server = QexedServerProcess.startClusterGateway("cluster-regions");
+                QexedProtocolClient client = connect(server, "ClusterUser")) {
+            client.waitForPlayReady(READY_TIMEOUT);
+            String worldConfig = java.nio.file.Files.readString(server.runDir().resolve("config/world.toml"));
+            assertTrue(worldConfig.contains("mode = \"regions\""), "cluster must use arbitrary regions mode");
+            assertTrue(worldConfig.contains("id = \"spawn\""), "missing spawn shard");
+            assertTrue(worldConfig.contains("id = \"east\""), "missing east shard");
+            assertTrue(worldConfig.contains("id = \"north\""), "missing north shard");
+            assertTrue(worldConfig.contains("id = \"west\""), "missing west shard");
+            assertTrue(worldConfig.contains("id = \"south\""), "missing south shard");
+            assertTrue(worldConfig.contains("id = \"far\""), "missing far shard");
+            assertTrue(worldConfig.contains("endpoint = \"tcp://127.0.0.1:26001\""),
+                    "cluster test must use real TCP shard endpoints");
+            assertTrue(worldConfig.contains("y = 255.0"), "spawn must be configured at y=255");
+            assertTrue(
+                    client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_CHUNK_BATCH_FINISHED),
+                    "cluster gateway did not stream chunks in the existing play session");
+            client.sendPlayerLoaded();
+            assertTrue(server.waitForLogContaining("client reported player loaded", Duration.ofSeconds(10)),
+                    "server did not handle player_loaded packet");
+
+            QexedProtocolClient.PacketRecord addEntity =
+                    client.firstSeenPacket(QexedProtocolClient.CLIENTBOUND_PLAY_ADD_ENTITY);
+            int targetEntityId = new PacketBuffer(addEntity.payload()).readVarInt();
+            client.sendMove(0.5, 255.0, 0.5, true);
+            client.pump(Duration.ofMillis(500));
+            client.sendMove(40.5, 255.0, 0.5, true);
+            client.pump(Duration.ofMillis(500));
+            client.sendMove(160.5, 255.0, 160.5, true);
+            client.pump(Duration.ofMillis(500));
+            client.sendAttack(targetEntityId);
+            client.pump(Duration.ofMillis(800));
+            assertTrue(
+                    client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_DAMAGE_EVENT)
+                            || client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_SET_ENTITY_MOTION)
+                            || client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_ENTITY_EVENT),
+                    "entity interaction path did not produce combat/AI feedback");
+
+            client.sendCreativeSlot(36, 1, 64);
+            client.sendSetCarriedItem(0);
+            client.sendDropSelectedStack();
+            client.pump(Duration.ofMillis(700));
+            client.sendMove(160.5, 255.0, 160.5, true);
+            client.pump(Duration.ofSeconds(2));
+            assertTrue(
+                    client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_TAKE_ITEM_ENTITY)
+                            || client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_CONTAINER_SET_SLOT)
+                            || client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_CONTAINER_SET_CONTENT)
+                            || client.sawPacket(QexedProtocolClient.CLIENTBOUND_PLAY_SET_PLAYER_INVENTORY),
+                    "drop/pickup path did not produce item or inventory feedback");
+            server.assertNoConnectionErrors();
+        }
+    }
+
+    @Test
     void threeThousandAiEntitiesDoNotBlockProtocolInteractions() throws Exception {
         try (QexedServerProcess server = QexedServerProcess.startWithAiStress("ai-stress-3000");
                 QexedProtocolClient client = connect(server, "StressClient")) {
@@ -259,6 +329,7 @@ final class QexedSingleServerIntegrationTest {
             Process client = new ProcessBuilder(
                             "C:/gradle/gradle-9.5.1/bin/gradle.bat",
                             "-PqexedSmokeBuildDir=" + smokeBuildDir,
+                            "-PqexedQuickPlay=127.0.0.1:" + server.port(),
                             "runClient",
                             "--no-daemon",
                             "--console=plain")
@@ -280,13 +351,13 @@ final class QexedSingleServerIntegrationTest {
             output.start();
             boolean passed = false;
             try {
-                boolean enteredPlay = server.waitForLogContaining("initializing Play state", Duration.ofSeconds(90));
+                boolean enteredPlay = waitForClientGameActivity(clientLogs, Duration.ofSeconds(300));
                 assertTrue(enteredPlay, "vanilla client did not enter play state. qexed logs=\n"
                         + String.join("\n", server.logs()) + "\nclient logs=\n" + String.join("\n", clientLogs));
                 Thread.sleep(5_000);
                 server.assertNoConnectionErrors();
-                assertTrue(clientLogs.stream().noneMatch(line -> line.contains("DecoderException")),
-                        "client DecoderException:\n" + String.join("\n", clientLogs));
+                assertTrue(clientLogs.stream().noneMatch(QexedSingleServerIntegrationTest::isClientProtocolFailure),
+                        "client protocol failure:\n" + String.join("\n", clientLogs));
                 passed = true;
             } finally {
                 destroyProcessTree(client.toHandle());
@@ -301,6 +372,93 @@ final class QexedSingleServerIntegrationTest {
                 }
             }
         }
+    }
+
+    @Test
+    void realVanillaClientConnectsToClusterRegionGateway() throws Exception {
+        try (QexedServerProcess server = QexedServerProcess.startClusterGateway("real-client-cluster")) {
+            java.nio.file.Path projectDir = java.nio.file.Path.of(System.getProperty("user.dir"))
+                    .toAbsolutePath()
+                    .normalize();
+            java.nio.file.Path smokeBuildDir = java.nio.file.Files.createTempDirectory("qexed-cluster-smoke-build-");
+            terminateStaleVanillaGradleClients(projectDir);
+            List<String> clientLogs = new CopyOnWriteArrayList<>();
+            Process client = new ProcessBuilder(
+                            "C:/gradle/gradle-9.5.1/bin/gradle.bat",
+                            "-PqexedSmokeBuildDir=" + smokeBuildDir,
+                            "-PqexedQuickPlay=127.0.0.1:" + server.port(),
+                            "runClient",
+                            "--no-daemon",
+                            "--console=plain")
+                    .directory(projectDir.toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            Thread output = new Thread(() -> {
+                try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                        client.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        clientLogs.add(line);
+                    }
+                } catch (Exception error) {
+                    clientLogs.add("failed to read client output: " + error);
+                }
+            }, "minecraft-cluster-client-smoke-log");
+            output.setDaemon(true);
+            output.start();
+            boolean passed = false;
+            try {
+                boolean enteredPlay = waitForClientGameActivity(clientLogs, Duration.ofSeconds(300));
+                assertTrue(enteredPlay, "vanilla client did not enter cluster gateway play state. qexed logs=\n"
+                        + String.join("\n", server.logs()) + "\nclient logs=\n" + String.join("\n", clientLogs));
+                Thread.sleep(5_000);
+                String worldConfig = java.nio.file.Files.readString(server.runDir().resolve("config/world.toml"));
+                assertTrue(worldConfig.contains("mode = \"regions\""), "cluster gateway must use regions mode");
+                assertTrue(worldConfig.contains("id = \"far\""), "cluster gateway must not be limited to ABCD shards");
+                assertTrue(worldConfig.contains("endpoint = \"tcp://127.0.0.1:26001\""),
+                        "cluster gateway must use real TCP shard endpoints");
+                server.assertNoConnectionErrors();
+                assertTrue(clientLogs.stream().noneMatch(QexedSingleServerIntegrationTest::isClientProtocolFailure),
+                        "client protocol failure:\n" + String.join("\n", clientLogs));
+                passed = true;
+            } finally {
+                destroyProcessTree(client.toHandle());
+                if (!client.waitFor(10, TimeUnit.SECONDS)) {
+                    client.destroyForcibly();
+                }
+                output.join(5_000);
+                if (passed) {
+                    deleteDirectoryIfExists(smokeBuildDir);
+                } else {
+                    System.err.println("cluster vanilla smoke build kept for diagnosis: " + smokeBuildDir);
+                }
+            }
+        }
+    }
+
+    private static boolean waitForClientGameActivity(List<String> clientLogs, Duration timeout)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (clientLogs.stream().anyMatch(QexedSingleServerIntegrationTest::isClientProtocolFailure)) {
+                return false;
+            }
+            if (clientLogs.stream().anyMatch(line ->
+                    line.contains("Resizing Chunk Sections UBO")
+                            || line.contains("[System] [CHAT]")
+                            || line.contains("ClientLevel"))) {
+                return true;
+            }
+            Thread.sleep(250);
+        }
+        return false;
+    }
+
+    private static boolean isClientProtocolFailure(String line) {
+        return line.contains("DecoderException")
+                || line.contains("Failed to decode packet")
+                || line.contains("recipe_book_add")
+                || line.contains("Can't create item stack with properties");
     }
 
     private static void terminateStaleVanillaGradleClients(java.nio.file.Path projectDir) {

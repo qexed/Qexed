@@ -32,35 +32,54 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    pub fn load(language: Option<String>) -> anyhow::Result<Self> {
-        let mut qexed = Qexed::load_or_create_default(language.clone(), None, None)?;
-        qexed.plugin_download =
-            QexedPluginDownload::load_or_create_default(language.clone(), None, None)?
-                .plugin_download;
-        QexedServer::load_or_create_default(language.clone(), None, None)?
+    pub fn load(
+        language: Option<String>,
+        config_path: Option<std::path::PathBuf>,
+    ) -> anyhow::Result<Self> {
+        let mut qexed = Qexed::load_or_create_default(language.clone(), None, config_path.clone())?;
+        qexed.plugin_download = QexedPluginDownload::load_or_create_default(
+            language.clone(),
+            None,
+            config_path.clone(),
+        )?
+        .plugin_download;
+        QexedServer::load_or_create_default(language.clone(), None, config_path.clone())?
             .apply_to(&mut qexed.server);
-        QexedProxy::load_or_create_default(language.clone(), None, None)?
+        QexedProxy::load_or_create_default(language.clone(), None, config_path.clone())?
             .apply_to(&mut qexed.server);
         qexed.server.lan_discovery =
-            QexedLanDiscovery::load_or_create_default(language.clone(), None, None)?.lan_discovery;
+            QexedLanDiscovery::load_or_create_default(language.clone(), None, config_path.clone())?
+                .lan_discovery;
         qexed.server.player_data =
-            QexedPlayerData::load_or_create_default(language.clone(), None, None)?.player_data;
-        qexed.server.player_messages =
-            QexedPlayerMessages::load_or_create_default(language.clone(), None, None)?
-                .player_messages;
+            QexedPlayerData::load_or_create_default(language.clone(), None, config_path.clone())?
+                .player_data;
+        qexed.server.player_messages = QexedPlayerMessages::load_or_create_default(
+            language.clone(),
+            None,
+            config_path.clone(),
+        )?
+        .player_messages;
         qexed.server.player_audit =
-            QexedPlayerAudit::load_or_create_default(language.clone(), None, None)?.player_audit;
-        qexed.server.content_filter =
-            QexedContentFilter::load_or_create_default(language.clone(), None, None)?
-                .content_filter;
+            QexedPlayerAudit::load_or_create_default(language.clone(), None, config_path.clone())?
+                .player_audit;
+        qexed.server.content_filter = QexedContentFilter::load_or_create_default(
+            language.clone(),
+            None,
+            config_path.clone(),
+        )?
+        .content_filter;
         qexed.server.permissions =
-            QexedPermissions::load_or_create_default(language.clone(), None, None)?.permissions;
+            QexedPermissions::load_or_create_default(language.clone(), None, config_path.clone())?
+                .permissions;
         qexed.server.resource_pack =
-            QexedResourcePack::load_or_create_default(language.clone(), None, None)?.resource_pack;
-        qexed.server.entities = QexedEntity::load_or_create_default(language.clone(), None, None)?
-            .entities
-            .into();
-        let npcs = QexedNpc::load_or_create_default(language.clone(), None, None)?.npcs;
+            QexedResourcePack::load_or_create_default(language.clone(), None, config_path.clone())?
+                .resource_pack;
+        qexed.server.entities =
+            QexedEntity::load_or_create_default(language.clone(), None, config_path.clone())?
+                .entities
+                .into();
+        let npcs =
+            QexedNpc::load_or_create_default(language.clone(), None, config_path.clone())?.npcs;
         if npcs.enable {
             qexed.server.entities.enable = true;
             qexed
@@ -74,19 +93,24 @@ impl RuntimeConfig {
                 .list
                 .extend(npcs.list.iter().cloned().map(npc_to_entity));
         }
-        qexed.server.entity_rendering =
-            QexedEntityRendering::load_or_create_default(language.clone(), None, None)?
-                .entity_rendering;
+        qexed.server.entity_rendering = QexedEntityRendering::load_or_create_default(
+            language.clone(),
+            None,
+            config_path.clone(),
+        )?
+        .entity_rendering;
         qexed.server.scoreboard =
-            QexedScoreboard::load_or_create_default(language.clone(), None, None)?.scoreboard;
+            QexedScoreboard::load_or_create_default(language.clone(), None, config_path.clone())?
+                .scoreboard;
         qexed.server.menus =
-            QexedMenus::load_or_create_default(language.clone(), None, None)?.menus;
+            QexedMenus::load_or_create_default(language.clone(), None, config_path.clone())?.menus;
         qexed.server.placeholders =
-            QexedPlaceholders::load_or_create_default(language.clone(), None, None)?.placeholders;
+            QexedPlaceholders::load_or_create_default(language.clone(), None, config_path.clone())?
+                .placeholders;
         qexed.server.lobby =
-            QexedLobby::load_or_create_default(language.clone(), None, None)?.lobby;
-        let world = World::load_or_create_default(language, None, None)?;
-        let warden = QexedWarden::load_or_create_default(None, None, None)?;
+            QexedLobby::load_or_create_default(language.clone(), None, config_path.clone())?.lobby;
+        let world = World::load_or_create_default(language, None, config_path.clone())?;
+        let warden = QexedWarden::load_or_create_default(None, None, config_path)?;
         qexed.server.world = world.clone();
         Ok(Self {
             qexed,

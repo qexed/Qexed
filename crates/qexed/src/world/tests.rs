@@ -6,8 +6,9 @@ use super::{
     generator, light_for_mode, section_count, sky_light_from_dampening,
     sky_light_from_neighbourhood,
 };
+use crate::world::generator::WorldChunkGenerator;
 use qexed_protocol::to_client::play::map_chunk::LIGHT_ARRAY_BYTES;
-use std::sync::Arc;
+use std::{collections::HashMap, net::TcpListener, sync::Arc, thread};
 
 #[test]
 fn empty_chunk_has_all_overworld_sections() {
@@ -596,6 +597,397 @@ fn world_manager_persists_edits_on_top_of_generated_chunk_cache() {
         reloaded.block_state_at("minecraft:overworld", &edited_position),
         Some(dirt)
     );
+}
+
+#[derive(Debug)]
+struct MarkerChunkGenerator {
+    block_state: i32,
+}
+
+impl generator::WorldChunkGenerator for MarkerChunkGenerator {
+    fn generate(
+        &self,
+        _dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+        _light_algorithm: WorldLightAlgorithm,
+    ) -> anyhow::Result<generator::GeneratedChunk> {
+        let position = qexed_packet::net_types::Position {
+            x: chunk_x * 16,
+            y: 70,
+            z: chunk_z * 16,
+        };
+        let region_chunk = super::chunk_nbt::set_block_state_in_region(
+            chunk_x,
+            chunk_z,
+            None,
+            &position,
+            self.block_state,
+            None,
+        )?;
+        Ok(generator::GeneratedChunk {
+            packet: empty_chunk_packet(chunk_x, chunk_z, WorldLightMode::Static),
+            light_dampening: vec![0; CHUNK_DAMPENING_LEN],
+            region_chunk: Some(region_chunk),
+        })
+    }
+
+    fn block_state_at(
+        &self,
+        _dimension: &str,
+        _position: &qexed_packet::net_types::Position,
+    ) -> Option<i32> {
+        Some(self.block_state)
+    }
+
+    fn region_chunk(
+        &self,
+        _dimension: &str,
+        _chunk_x: i32,
+        _chunk_z: i32,
+    ) -> anyhow::Result<Option<super::region::ChunkData>> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn clustered_world_generator_routes_quadrants_without_rebuilding_player_session() {
+    let shards = vec![
+        qexed_config::app::qexed::server::WorldClusterShard {
+            id: "A".to_string(),
+            endpoint: "127.0.0.1:26001".to_string(),
+            x: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Negative),
+            z: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Negative),
+            min_chunk_x: None,
+            max_chunk_x: None,
+            min_chunk_z: None,
+            max_chunk_z: None,
+        },
+        qexed_config::app::qexed::server::WorldClusterShard {
+            id: "B".to_string(),
+            endpoint: "127.0.0.1:26002".to_string(),
+            x: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Negative),
+            z: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Positive),
+            min_chunk_x: None,
+            max_chunk_x: None,
+            min_chunk_z: None,
+            max_chunk_z: None,
+        },
+        qexed_config::app::qexed::server::WorldClusterShard {
+            id: "C".to_string(),
+            endpoint: "127.0.0.1:26003".to_string(),
+            x: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Positive),
+            z: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Negative),
+            min_chunk_x: None,
+            max_chunk_x: None,
+            min_chunk_z: None,
+            max_chunk_z: None,
+        },
+        qexed_config::app::qexed::server::WorldClusterShard {
+            id: "D".to_string(),
+            endpoint: "127.0.0.1:26004".to_string(),
+            x: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Positive),
+            z: Some(qexed_config::app::qexed::server::WorldClusterAxisSide::Positive),
+            min_chunk_x: None,
+            max_chunk_x: None,
+            min_chunk_z: None,
+            max_chunk_z: None,
+        },
+    ];
+    let router = super::ClusterRouter::require_quadrant(&shards).unwrap();
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let dirt = super::chunk_nbt::default_block_state_id("minecraft:dirt");
+    let granite = super::chunk_nbt::default_block_state_id("minecraft:granite");
+    let gold = super::chunk_nbt::default_block_state_id("minecraft:gold_block");
+    let mut shard_generators = HashMap::new();
+    shard_generators.insert(
+        "A".to_string(),
+        Arc::new(MarkerChunkGenerator { block_state: stone })
+            as Arc<dyn generator::WorldChunkGenerator>,
+    );
+    shard_generators.insert(
+        "B".to_string(),
+        Arc::new(MarkerChunkGenerator { block_state: dirt })
+            as Arc<dyn generator::WorldChunkGenerator>,
+    );
+    shard_generators.insert(
+        "C".to_string(),
+        Arc::new(MarkerChunkGenerator {
+            block_state: granite,
+        }) as Arc<dyn generator::WorldChunkGenerator>,
+    );
+    shard_generators.insert(
+        "D".to_string(),
+        Arc::new(MarkerChunkGenerator { block_state: gold })
+            as Arc<dyn generator::WorldChunkGenerator>,
+    );
+    let generator = super::ClusteredWorldGenerator::with_shard_generators(
+        Arc::new(generator::EmptyWorldGenerator),
+        router,
+        shard_generators,
+    );
+
+    let chunk_a = generator
+        .generate("minecraft:overworld", -1, -1, WorldLightAlgorithm::Fast)
+        .unwrap();
+    let chunk_b = generator
+        .generate("minecraft:overworld", -1, 0, WorldLightAlgorithm::Fast)
+        .unwrap();
+    let chunk_c = generator
+        .generate("minecraft:overworld", 0, -1, WorldLightAlgorithm::Fast)
+        .unwrap();
+    let chunk_d = generator
+        .generate("minecraft:overworld", 0, 0, WorldLightAlgorithm::Fast)
+        .unwrap();
+
+    assert_eq!(
+        super::chunk_nbt::block_state_at_from_region(
+            chunk_a.region_chunk.as_ref().unwrap(),
+            &qexed_packet::net_types::Position {
+                x: -16,
+                y: 70,
+                z: -16
+            },
+        )
+        .unwrap(),
+        Some(stone)
+    );
+    assert_eq!(
+        super::chunk_nbt::block_state_at_from_region(
+            chunk_b.region_chunk.as_ref().unwrap(),
+            &qexed_packet::net_types::Position {
+                x: -16,
+                y: 70,
+                z: 0
+            },
+        )
+        .unwrap(),
+        Some(dirt)
+    );
+    assert_eq!(
+        super::chunk_nbt::block_state_at_from_region(
+            chunk_c.region_chunk.as_ref().unwrap(),
+            &qexed_packet::net_types::Position {
+                x: 0,
+                y: 70,
+                z: -16
+            },
+        )
+        .unwrap(),
+        Some(granite)
+    );
+    assert_eq!(
+        super::chunk_nbt::block_state_at_from_region(
+            chunk_d.region_chunk.as_ref().unwrap(),
+            &qexed_packet::net_types::Position { x: 0, y: 70, z: 0 },
+        )
+        .unwrap(),
+        Some(gold)
+    );
+    assert_eq!(
+        generator
+            .route_log()
+            .into_iter()
+            .map(|route| route.shard_id)
+            .collect::<Vec<_>>(),
+        vec!["A", "B", "C", "D"]
+    );
+}
+
+#[test]
+fn clustered_world_generator_routes_arbitrary_regions() {
+    let shards = vec![
+        region_shard("far", Some(9), None, Some(9), None),
+        region_shard("spawn", Some(0), Some(1), Some(0), Some(1)),
+        region_shard("east", Some(2), Some(8), Some(0), Some(8)),
+        region_shard("north", Some(0), Some(1), Some(2), Some(8)),
+        region_shard("west", None, Some(-1), None, None),
+        region_shard("south", Some(0), None, None, Some(-1)),
+    ];
+    let router = super::ClusterRouter::require_regions(&shards).unwrap();
+
+    assert_eq!(router.route(0, 0), Some("spawn"));
+    assert_eq!(router.route(4, 4), Some("east"));
+    assert_eq!(router.route(0, 4), Some("north"));
+    assert_eq!(router.route(12, 12), Some("far"));
+    assert_eq!(router.route(-3, 2), Some("west"));
+    assert_eq!(router.route(2, -3), Some("south"));
+}
+
+#[test]
+fn clustered_world_generator_loads_chunk_from_remote_tcp_shard() {
+    let remote_block = super::chunk_nbt::default_block_state_id("minecraft:diamond_block");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("tcp://{}", listener.local_addr().unwrap());
+    let shard = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request: crate::cluster_rpc::ClusterRequest =
+            crate::cluster_rpc::read_frame(&mut stream).unwrap();
+        let crate::cluster_rpc::ClusterRequest::LoadChunk {
+            dimension,
+            chunk_x,
+            chunk_z,
+            ..
+        } = request
+        else {
+            panic!("unexpected cluster request");
+        };
+        assert_eq!(dimension, "minecraft:overworld");
+        assert_eq!((chunk_x, chunk_z), (0, 0));
+        let generated = MarkerChunkGenerator {
+            block_state: remote_block,
+        }
+        .generate(
+            "minecraft:overworld",
+            chunk_x,
+            chunk_z,
+            WorldLightAlgorithm::Fast,
+        )
+        .unwrap();
+        let mut map_chunk = bytes::BytesMut::new();
+        generated
+            .packet
+            .serialize(&mut qexed_packet::PacketWriter::new(&mut map_chunk))
+            .unwrap();
+        crate::cluster_rpc::write_frame(
+            &mut stream,
+            &crate::cluster_rpc::ClusterResponse::Chunk {
+                chunk_x,
+                chunk_z,
+                map_chunk: map_chunk.to_vec(),
+                light_dampening: generated.light_dampening,
+            },
+        )
+        .unwrap();
+    });
+    let mut config = qexed_config::app::qexed::server::WorldCluster {
+        enable: true,
+        mode: qexed_config::app::qexed::server::WorldClusterMode::Regions,
+        shards: Vec::new(),
+    };
+    config
+        .shards
+        .push(region_shard("remote", Some(0), Some(0), Some(0), Some(0)));
+    config.shards[0].endpoint = endpoint;
+    let local_block = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let local = Arc::new(MarkerChunkGenerator {
+        block_state: local_block,
+    }) as Arc<dyn generator::WorldChunkGenerator>;
+    let generator = super::ClusteredWorldGenerator::from_config(&config, local).unwrap();
+
+    let generated = generator
+        .generate("minecraft:overworld", 0, 0, WorldLightAlgorithm::Fast)
+        .unwrap();
+
+    assert_eq!(generated.packet.chunk_x, 0);
+    assert_eq!(generated.packet.chunk_z, 0);
+    assert!(generated.region_chunk.is_none());
+    assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
+    shard.join().unwrap();
+}
+
+#[test]
+fn clustered_world_generator_falls_back_when_remote_shard_is_unavailable() {
+    let mut config = qexed_config::app::qexed::server::WorldCluster {
+        enable: true,
+        mode: qexed_config::app::qexed::server::WorldClusterMode::Regions,
+        shards: Vec::new(),
+    };
+    config
+        .shards
+        .push(region_shard("remote", Some(0), Some(0), Some(0), Some(0)));
+    config.shards[0].endpoint = "tcp://127.0.0.1:9".to_string();
+    let fallback_block = super::chunk_nbt::default_block_state_id("minecraft:emerald_block");
+    let local = Arc::new(MarkerChunkGenerator {
+        block_state: fallback_block,
+    }) as Arc<dyn generator::WorldChunkGenerator>;
+    let generator = super::ClusteredWorldGenerator::from_config(&config, local).unwrap();
+
+    let generated = generator
+        .generate("minecraft:overworld", 0, 0, WorldLightAlgorithm::Fast)
+        .unwrap();
+
+    assert!(generated.region_chunk.is_some());
+    assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
+}
+
+#[test]
+fn spawn_platform_overlays_generated_chunk_and_block_queries() {
+    let grass = super::chunk_nbt::default_block_state_id("minecraft:grass_block");
+    let config: qexed_config::app::qexed::server::World = toml::from_str(
+        r#"
+default_dimension = "minecraft:overworld"
+path = "world"
+read_only = false
+generator = "vanilla_flat"
+generator_preset = "minecraft:classic_flat"
+seed = 0
+game_mode = "survival"
+spawn_protection_radius = 0
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+chunk_update_delay_ms = 50
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[spawn_platform]
+enable = true
+dimension = "minecraft:overworld"
+block = "minecraft:grass_block"
+y = 254
+min_x = -16
+max_x = 31
+min_z = -16
+max_z = 31
+
+[spawn]
+x = 0.0
+y = 255.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+    )
+    .unwrap();
+    let generator = generator::from_config(&config);
+    let position = qexed_packet::net_types::Position { x: 0, y: 254, z: 0 };
+
+    assert_eq!(
+        generator.block_state_at("minecraft:overworld", &position),
+        Some(grass)
+    );
+    let generated = generator
+        .generate("minecraft:overworld", 0, 0, WorldLightAlgorithm::Fast)
+        .unwrap();
+    let region_chunk = generated.region_chunk.as_ref().unwrap();
+
+    assert_eq!(
+        super::chunk_nbt::block_state_at_from_region(region_chunk, &position).unwrap(),
+        Some(grass)
+    );
+    assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
+}
+
+fn region_shard(
+    id: &str,
+    min_chunk_x: Option<i32>,
+    max_chunk_x: Option<i32>,
+    min_chunk_z: Option<i32>,
+    max_chunk_z: Option<i32>,
+) -> qexed_config::app::qexed::server::WorldClusterShard {
+    qexed_config::app::qexed::server::WorldClusterShard {
+        id: id.to_string(),
+        endpoint: String::new(),
+        x: None,
+        z: None,
+        min_chunk_x,
+        max_chunk_x,
+        min_chunk_z,
+        max_chunk_z,
+    }
 }
 
 #[test]

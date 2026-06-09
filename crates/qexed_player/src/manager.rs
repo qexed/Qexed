@@ -37,6 +37,7 @@ impl PlayerManager {
             equipment,
             language,
             DEFAULT_DISPLAYED_SKIN_PARTS,
+            0,
         )
     }
 
@@ -48,11 +49,36 @@ impl PlayerManager {
         equipment: Vec<Equipment>,
         language: String,
         displayed_skin_parts: u8,
+        game_mode: i32,
     ) -> PlayerSession {
-        let entity_id = self.entity_ids.next();
+        self.join_with_entity_id(
+            self.entity_ids.next(),
+            profile,
+            position,
+            dimension,
+            equipment,
+            language,
+            displayed_skin_parts,
+            game_mode,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn join_with_entity_id(
+        &self,
+        entity_id: i32,
+        profile: qexed_packet::net_types::GameProfile,
+        position: EntityPosition,
+        dimension: String,
+        equipment: Vec<Equipment>,
+        language: String,
+        displayed_skin_parts: u8,
+        game_mode: i32,
+    ) -> PlayerSession {
         let player = OnlinePlayer {
             profile,
             entity_id,
+            game_mode,
             position,
             dimension,
             equipment,

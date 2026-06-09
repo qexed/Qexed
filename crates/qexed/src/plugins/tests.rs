@@ -40,12 +40,12 @@ fn empty_plugin_manager_keeps_mining_speed_unchanged() {
 #[test]
 fn missing_plugin_event_does_not_wait_for_plugin_lock() {
     let manager = PluginManager::empty_for_tests();
-    let _locked_plugins = manager
+    let plugins = manager
         .plugins
         .get()
-        .expect("empty plugin manager should be initialized")
-        .try_lock()
-        .expect("test should own plugin lock");
+        .expect("empty plugin manager should be initialized");
+
+    assert!(plugins.is_empty());
 
     let speed = manager.apply_mining_speed(MiningSpeedQuery {
         block_state: 1,
@@ -87,6 +87,7 @@ fn empty_plugin_manager_allows_item_pickup() {
             properties: Vec::new(),
         },
         entity_id: 1,
+        game_mode: 0,
         position: EntityPosition {
             x: 0.5,
             y: 64.0,

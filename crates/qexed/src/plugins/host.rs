@@ -1,33 +1,60 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::{Component, Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver},
+    },
 };
 
-use serde::{Deserialize, Serialize};
 use wasmtime::Caller;
 
 use super::PluginState;
+use super::economy::{EconomyState, normalize_currency};
 
 const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
 const MAX_HOST_PATH_BYTES: usize = 1024;
 const MAX_HOST_CONFIG_BYTES: usize = 256 * 1024;
+const MAX_HOST_CURRENCY_BYTES: usize = 128;
 const MAX_HOST_PATHFINDING_BYTES: usize = 16 * 1024;
 const MAX_HOST_WORLD_EDIT_BYTES: usize = 8 * 1024;
+const MAX_HOST_WORLD_EDIT_BATCH_BYTES: usize = 1024 * 1024;
+const MAX_HOST_ENTITY_CONTROL_BYTES: usize = 16 * 1024;
 const MAX_HOST_RANDOM_POOL_BYTES: usize = 256 * 1024;
+const MAX_HOST_PLUGIN_API_BYTES: usize = 1024 * 1024;
 const MAX_HOST_STORAGE_KEY_BYTES: usize = 512;
 const MAX_HOST_STORAGE_VALUE_BYTES: usize = 1024 * 1024;
 const MAX_RANDOM_POOL_PRECOMPUTE_COUNT: usize = 4096;
 const RANDOM_POOL_REFILL_BATCH: usize = 16;
-const DEFAULT_CURRENCY: &str = "qexed:coin";
+pub(super) const ECONOMY_ASYNC_PENDING: i64 = i64::MIN + 2;
 
 #[derive(Debug, Default)]
 pub(super) struct PluginHostServices {
     economy: Mutex<EconomyState>,
+    economy_async: Mutex<EconomyAsyncState>,
+    plugin_services: Mutex<PluginServiceState>,
+    plugin_api: Mutex<Option<std::sync::Arc<dyn PluginApiService>>>,
     pathfinding: Mutex<Option<std::sync::Arc<dyn PathfindingService>>>,
     world_edit: Mutex<Option<std::sync::Arc<dyn WorldEditService>>>,
+    entity_control: Mutex<Option<std::sync::Arc<dyn EntityControlService>>>,
     random_pools: Mutex<RandomPoolState>,
+}
+
+#[derive(Debug, Default)]
+struct EconomyAsyncState {
+    next_id: i64,
+    requests: HashMap<i64, Receiver<i64>>,
+}
+
+pub(crate) trait PluginApiService: Send + Sync + std::fmt::Debug {
+    fn call(&self, caller: &str, service: &str, method: &str, payload: &[u8]) -> Option<Vec<u8>>;
+}
+
+#[derive(Debug, Default)]
+struct PluginServiceState {
+    available_plugins: HashSet<String>,
+    providers: HashMap<String, String>,
 }
 
 pub(crate) trait PathfindingService: Send + Sync + std::fmt::Debug {
@@ -36,11 +63,64 @@ pub(crate) trait PathfindingService: Send + Sync + std::fmt::Debug {
 
 pub(crate) trait WorldEditService: Send + Sync + std::fmt::Debug {
     fn set_block(&self, query: &str) -> i32;
+    fn set_blocks(&self, query: &str) -> i32;
     fn break_block(&self, query: &str) -> i32;
     fn register_region(&self, query: &str) -> i32;
 }
 
+pub(crate) trait EntityControlService: Send + Sync + std::fmt::Debug {
+    fn upsert(&self, plugin_name: &str, query: &str) -> i32;
+    fn move_entity(&self, plugin_name: &str, query: &str) -> i32;
+    fn remove(&self, plugin_name: &str, query: &str) -> i32;
+}
+
 impl PluginHostServices {
+    pub(super) fn configure_economy(&self, config: &qexed_config::app::qexed::server::Economy) {
+        self.economy
+            .lock()
+            .expect("plugin economy state poisoned")
+            .configure(config);
+    }
+
+    pub(super) fn set_plugin_services(
+        &self,
+        plugins: impl IntoIterator<Item = String>,
+        services: impl IntoIterator<Item = (String, String)>,
+    ) {
+        let mut state = self
+            .plugin_services
+            .lock()
+            .expect("plugin service state poisoned");
+        state.available_plugins = plugins.into_iter().collect();
+        state.providers = services.into_iter().collect();
+    }
+
+    pub(super) fn set_plugin_api(&self, plugin_api: std::sync::Arc<dyn PluginApiService>) {
+        *self.plugin_api.lock().expect("plugin API service poisoned") = Some(plugin_api);
+    }
+
+    fn has_plugin_service(&self, service: &str) -> bool {
+        self.plugin_services
+            .lock()
+            .expect("plugin service state poisoned")
+            .providers
+            .contains_key(service.trim())
+    }
+
+    fn call_plugin_api(
+        &self,
+        caller: &str,
+        service: &str,
+        method: &str,
+        payload: &[u8],
+    ) -> Option<Vec<u8>> {
+        self.plugin_api
+            .lock()
+            .expect("plugin API service poisoned")
+            .as_ref()
+            .and_then(|api| api.call(caller, service, method, payload))
+    }
+
     pub(super) fn set_pathfinding(&self, pathfinding: std::sync::Arc<dyn PathfindingService>) {
         *self
             .pathfinding
@@ -69,6 +149,15 @@ impl PluginHostServices {
             .unwrap_or(-1)
     }
 
+    fn set_blocks(&self, query: &str) -> i32 {
+        self.world_edit
+            .lock()
+            .expect("world edit service poisoned")
+            .as_ref()
+            .map(|service| service.set_blocks(query))
+            .unwrap_or(-1)
+    }
+
     fn break_block(&self, query: &str) -> i32 {
         self.world_edit
             .lock()
@@ -86,12 +175,106 @@ impl PluginHostServices {
             .map(|service| service.register_region(query))
             .unwrap_or(-1)
     }
-}
 
-#[derive(Debug)]
-struct EconomyState {
-    currencies: BTreeMap<String, CurrencyInfo>,
-    balances: BTreeMap<(String, String), i64>,
+    pub(super) fn set_entity_control(
+        &self,
+        entity_control: std::sync::Arc<dyn EntityControlService>,
+    ) {
+        *self
+            .entity_control
+            .lock()
+            .expect("entity control service poisoned") = Some(entity_control);
+    }
+
+    fn entity_upsert(&self, plugin_name: &str, query: &str) -> i32 {
+        self.entity_control
+            .lock()
+            .expect("entity control service poisoned")
+            .as_ref()
+            .map(|service| service.upsert(plugin_name, query))
+            .unwrap_or(-1)
+    }
+
+    fn entity_move(&self, plugin_name: &str, query: &str) -> i32 {
+        self.entity_control
+            .lock()
+            .expect("entity control service poisoned")
+            .as_ref()
+            .map(|service| service.move_entity(plugin_name, query))
+            .unwrap_or(-1)
+    }
+
+    fn entity_remove(&self, plugin_name: &str, query: &str) -> i32 {
+        self.entity_control
+            .lock()
+            .expect("entity control service poisoned")
+            .as_ref()
+            .map(|service| service.remove(plugin_name, query))
+            .unwrap_or(-1)
+    }
+
+    fn submit_economy_async(
+        self: &Arc<Self>,
+        player: String,
+        currency: String,
+        amount: i64,
+        update: EconomyUpdate,
+    ) -> i64 {
+        let (sender, receiver) = mpsc::channel();
+        let id = {
+            let mut state = self
+                .economy_async
+                .lock()
+                .expect("plugin economy async state poisoned");
+            state.next_id = state.next_id.saturating_add(1).max(1);
+            let id = state.next_id;
+            state.requests.insert(id, receiver);
+            id
+        };
+        let services = Arc::clone(self);
+        std::thread::spawn(move || {
+            let result = economy_update_inner(&services, &player, &currency, amount, update);
+            let _ = sender.send(result);
+        });
+        id
+    }
+
+    fn poll_economy_async(&self, id: i64) -> i64 {
+        if id <= 0 {
+            return i64::MIN;
+        }
+        let mut state = self
+            .economy_async
+            .lock()
+            .expect("plugin economy async state poisoned");
+        let Some(receiver) = state.requests.get(&id) else {
+            return i64::MIN;
+        };
+        match receiver.try_recv() {
+            Ok(value) => {
+                state.requests.remove(&id);
+                value
+            }
+            Err(mpsc::TryRecvError::Empty) => ECONOMY_ASYNC_PENDING,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                state.requests.remove(&id);
+                i64::MIN
+            }
+        }
+    }
+
+    fn forget_economy_async(&self, id: i64) -> i32 {
+        if id <= 0 {
+            return -1;
+        }
+        self.economy_async
+            .lock()
+            .expect("plugin economy async state poisoned")
+            .requests
+            .remove(&id)
+            .map(|_| 0)
+            .unwrap_or(-1)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -252,118 +435,6 @@ fn weighted_pick(entries: &[RandomPoolEntry]) -> Option<String> {
     None
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct CurrencyInfo {
-    id: String,
-    name: String,
-    symbol: String,
-    fractional_digits: i32,
-}
-
-impl Default for EconomyState {
-    fn default() -> Self {
-        Self::load().unwrap_or_else(Self::with_default_currency)
-    }
-}
-
-impl EconomyState {
-    fn with_default_currency() -> Self {
-        let mut currencies = BTreeMap::new();
-        currencies.insert(
-            DEFAULT_CURRENCY.to_string(),
-            CurrencyInfo {
-                id: DEFAULT_CURRENCY.to_string(),
-                name: "Coin".to_string(),
-                symbol: "Q".to_string(),
-                fractional_digits: 2,
-            },
-        );
-        Self {
-            currencies,
-            balances: BTreeMap::new(),
-        }
-    }
-
-    fn load() -> Option<Self> {
-        let path = economy_storage_path()?;
-        let contents = fs::read_to_string(path).ok()?;
-        let storage: EconomyStorage = toml::from_str(&contents).ok()?;
-        let mut state = Self {
-            currencies: storage
-                .currencies
-                .into_iter()
-                .map(|currency| (normalize_currency(&currency.id), currency))
-                .collect(),
-            balances: storage
-                .balances
-                .into_iter()
-                .map(|balance| {
-                    (
-                        (balance.player, normalize_currency(&balance.currency)),
-                        balance.amount,
-                    )
-                })
-                .collect(),
-        };
-        state.ensure_default_currency();
-        Some(state)
-    }
-
-    fn save(&self) {
-        let Some(path) = economy_storage_path() else {
-            return;
-        };
-        let Some(parent) = path.parent() else {
-            return;
-        };
-        let storage = EconomyStorage {
-            currencies: self.currencies.values().cloned().collect(),
-            balances: self
-                .balances
-                .iter()
-                .map(|((player, currency), amount)| EconomyBalanceEntry {
-                    player: player.clone(),
-                    currency: currency.clone(),
-                    amount: *amount,
-                })
-                .collect(),
-        };
-        let Ok(contents) = toml::to_string_pretty(&storage) else {
-            log::warn!("plugin economy storage encode failed");
-            return;
-        };
-        if let Err(err) = fs::create_dir_all(parent).and_then(|_| fs::write(path, contents)) {
-            log::warn!("plugin economy storage write failed: {err}");
-        }
-    }
-
-    fn ensure_default_currency(&mut self) {
-        self.currencies
-            .entry(DEFAULT_CURRENCY.to_string())
-            .or_insert_with(|| CurrencyInfo {
-                id: DEFAULT_CURRENCY.to_string(),
-                name: "Coin".to_string(),
-                symbol: "Q".to_string(),
-                fractional_digits: 2,
-            });
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct EconomyStorage {
-    #[serde(default)]
-    currencies: Vec<CurrencyInfo>,
-    #[serde(default)]
-    balances: Vec<EconomyBalanceEntry>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct EconomyBalanceEntry {
-    player: String,
-    currency: String,
-    amount: i64,
-}
-
 pub(super) fn host_log(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) {
     let plugin_name = caller.data().name.clone();
     let Some(bytes) = host_memory_bytes(&mut caller, ptr, len, MAX_HOST_LOG_BYTES) else {
@@ -373,6 +444,62 @@ pub(super) fn host_log(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) 
         Ok(message) => log::info!("[WASM plugin:{plugin_name}] {message}"),
         Err(err) => log::warn!("[WASM plugin:{plugin_name}] log message is not UTF-8: {err}"),
     }
+}
+
+pub(super) fn host_time_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
+}
+
+pub(super) fn host_plugin_service_exists(
+    mut caller: Caller<'_, PluginState>,
+    service_ptr: i32,
+    service_len: i32,
+) -> i32 {
+    let Some(service) = host_string(&mut caller, service_ptr, service_len, 256) else {
+        return -1;
+    };
+    i32::from(caller.data().services.has_plugin_service(&service))
+}
+
+pub(super) fn host_plugin_call(
+    mut caller: Caller<'_, PluginState>,
+    service_ptr: i32,
+    service_len: i32,
+    method_ptr: i32,
+    method_len: i32,
+    payload_ptr: i32,
+    payload_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let caller_name = caller.data().name.clone();
+    let Some(service) = host_string(&mut caller, service_ptr, service_len, 256) else {
+        return -1;
+    };
+    let Some(method) = host_string(&mut caller, method_ptr, method_len, 256) else {
+        return -1;
+    };
+    let Some(payload) = host_memory_bytes(
+        &mut caller,
+        payload_ptr,
+        payload_len,
+        MAX_HOST_PLUGIN_API_BYTES,
+    )
+    .map(|payload| payload.to_vec()) else {
+        return -1;
+    };
+    let Some(response) =
+        caller
+            .data()
+            .services
+            .call_plugin_api(&caller_name, &service, &method, &payload)
+    else {
+        return -1;
+    };
+    write_host_response(&mut caller, out_ptr, out_len, &response)
 }
 
 pub(super) fn host_config_exists(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) -> i32 {
@@ -543,22 +670,13 @@ pub(super) fn host_economy_register_currency(
     if id.is_empty() {
         return -1;
     }
-    let mut economy = caller
+    caller
         .data()
         .services
         .economy
         .lock()
-        .expect("plugin economy state poisoned");
-    economy.currencies.insert(
-        id.clone(),
-        CurrencyInfo {
-            id,
-            name,
-            symbol,
-            fractional_digits: fractional_digits.clamp(0, 8),
-        },
-    );
-    economy.save();
+        .expect("plugin economy state poisoned")
+        .register_currency(id, name, symbol, fractional_digits);
     0
 }
 
@@ -572,7 +690,6 @@ pub(super) fn host_economy_currency_info(
     let Some(currency) = host_string(&mut caller, currency_ptr, currency_len, 128) else {
         return -1;
     };
-    let currency = normalize_currency(&currency);
     let info = {
         let economy = caller
             .data()
@@ -580,14 +697,7 @@ pub(super) fn host_economy_currency_info(
             .economy
             .lock()
             .expect("plugin economy state poisoned");
-        economy
-            .currencies
-            .get(if currency.is_empty() {
-                DEFAULT_CURRENCY
-            } else {
-                &currency
-            })
-            .cloned()
+        economy.currency_info(&currency)
     };
     let Some(info) = info else {
         return -1;
@@ -597,6 +707,31 @@ pub(super) fn host_economy_currency_info(
         info.id, info.name, info.symbol, info.fractional_digits
     );
     write_host_response(&mut caller, out_ptr, out_len, encoded.as_bytes())
+}
+
+pub(super) fn host_economy_storage(
+    mut caller: Caller<'_, PluginState>,
+    currency_ptr: i32,
+    currency_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(currency) = host_string(
+        &mut caller,
+        currency_ptr,
+        currency_len,
+        MAX_HOST_CURRENCY_BYTES,
+    ) else {
+        return -1;
+    };
+    let storage = caller
+        .data()
+        .services
+        .economy
+        .lock()
+        .expect("plugin economy state poisoned")
+        .storage_for(&currency);
+    write_host_response(&mut caller, out_ptr, out_len, storage.as_bytes())
 }
 
 pub(super) fn host_economy_balance(
@@ -616,14 +751,16 @@ pub(super) fn host_economy_balance(
     if player.is_empty() {
         return i64::MIN;
     }
-    let currency = normalized_existing_currency(&caller, &currency);
     let economy = caller
         .data()
         .services
         .economy
         .lock()
         .expect("plugin economy state poisoned");
-    *economy.balances.get(&(player, currency)).unwrap_or(&0)
+    let Some(currency) = economy.normalize_existing_currency(&currency) else {
+        return i64::MIN;
+    };
+    economy.balance(&player, &currency).unwrap_or(i64::MIN)
 }
 
 pub(super) fn host_economy_set_balance(
@@ -760,6 +897,22 @@ pub(super) fn host_world_set_block(
     caller.data().services.set_block(&query)
 }
 
+pub(super) fn host_world_set_blocks(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(
+        &mut caller,
+        query_ptr,
+        query_len,
+        MAX_HOST_WORLD_EDIT_BATCH_BYTES,
+    ) else {
+        return -1;
+    };
+    caller.data().services.set_blocks(&query)
+}
+
 pub(super) fn host_world_break_block(
     mut caller: Caller<'_, PluginState>,
     query_ptr: i32,
@@ -782,6 +935,57 @@ pub(super) fn host_world_register_edit_region(
         return -1;
     };
     caller.data().services.register_region(&query)
+}
+
+pub(super) fn host_entity_upsert(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(
+        &mut caller,
+        query_ptr,
+        query_len,
+        MAX_HOST_ENTITY_CONTROL_BYTES,
+    ) else {
+        return -1;
+    };
+    let plugin_name = caller.data().name.clone();
+    caller.data().services.entity_upsert(&plugin_name, &query)
+}
+
+pub(super) fn host_entity_move(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(
+        &mut caller,
+        query_ptr,
+        query_len,
+        MAX_HOST_ENTITY_CONTROL_BYTES,
+    ) else {
+        return -1;
+    };
+    let plugin_name = caller.data().name.clone();
+    caller.data().services.entity_move(&plugin_name, &query)
+}
+
+pub(super) fn host_entity_remove(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+) -> i32 {
+    let Some(query) = host_string(
+        &mut caller,
+        query_ptr,
+        query_len,
+        MAX_HOST_ENTITY_CONTROL_BYTES,
+    ) else {
+        return -1;
+    };
+    let plugin_name = caller.data().name.clone();
+    caller.data().services.entity_remove(&plugin_name, &query)
 }
 
 pub(super) fn host_random_pool_roll(
@@ -977,39 +1181,6 @@ fn clean_storage_key(key: &str) -> Option<PathBuf> {
     Some(clean)
 }
 
-fn economy_storage_path() -> Option<PathBuf> {
-    Some(
-        std::env::current_dir()
-            .ok()?
-            .join("config")
-            .join("economy.toml"),
-    )
-}
-
-fn normalize_currency(currency: &str) -> String {
-    let currency = currency.trim();
-    if currency.is_empty() {
-        DEFAULT_CURRENCY.to_string()
-    } else {
-        currency.to_ascii_lowercase()
-    }
-}
-
-fn normalized_existing_currency(caller: &Caller<'_, PluginState>, currency: &str) -> String {
-    let currency = normalize_currency(currency);
-    let economy = caller
-        .data()
-        .services
-        .economy
-        .lock()
-        .expect("plugin economy state poisoned");
-    if economy.currencies.contains_key(&currency) {
-        currency
-    } else {
-        DEFAULT_CURRENCY.to_string()
-    }
-}
-
 enum EconomyUpdate {
     Set,
     Deposit,
@@ -1035,29 +1206,24 @@ fn economy_update(
     if player.is_empty() || amount < 0 {
         return i64::MIN;
     }
-    let currency = normalized_existing_currency(caller, &currency);
-    let mut economy = caller
+    let economy = caller
         .data()
         .services
         .economy
         .lock()
         .expect("plugin economy state poisoned");
-    let new_balance = {
-        let balance = economy.balances.entry((player, currency)).or_insert(0);
-        match update {
-            EconomyUpdate::Set => *balance = amount,
-            EconomyUpdate::Deposit => *balance = balance.saturating_add(amount),
-            EconomyUpdate::Withdraw => {
-                if *balance < amount {
-                    return i64::MIN + 1;
-                }
-                *balance -= amount;
-            }
-        }
-        *balance
+    let Some(currency) = economy.normalize_existing_currency(&currency) else {
+        return i64::MIN;
     };
-    economy.save();
-    new_balance
+    let result = match update {
+        EconomyUpdate::Set => economy.set_balance(&player, &currency, amount),
+        EconomyUpdate::Deposit => economy.deposit(&player, &currency, amount),
+        EconomyUpdate::Withdraw => match economy.withdraw(&player, &currency, amount) {
+            Some(balance) => Some(balance),
+            None => return i64::MIN + 1,
+        },
+    };
+    result.unwrap_or(i64::MIN)
 }
 
 #[cfg(test)]
