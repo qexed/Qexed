@@ -7,6 +7,7 @@ pub mod chat_session_update;
 pub mod chunk_batch_received;
 pub mod client_command;
 pub mod command_suggestion;
+pub mod container_button_click;
 pub mod container_click;
 pub mod container_close;
 pub mod custom_payload;

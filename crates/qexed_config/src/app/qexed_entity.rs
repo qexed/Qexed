@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::app::qexed::server::{Entities, Entity, EntityKind, EntitySpawning};
+use crate::app::qexed::server::{Entities, Entity, EntityAiOverride, EntityKind, EntitySpawning};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedEntityConfig {
@@ -13,6 +13,12 @@ pub struct QexedEntityConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub list: Vec<QexedEntityEntry>,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_entity_types: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ai_overrides: Vec<EntityAiOverride>,
+
     #[serde(default)]
     pub spawning: EntitySpawning,
 }
@@ -23,6 +29,8 @@ impl Default for QexedEntityConfig {
             enable: false,
             dimension: default_entities_dimension(),
             list: Vec::new(),
+            disabled_entity_types: Vec::new(),
+            ai_overrides: Vec::new(),
             spawning: EntitySpawning::default(),
         }
     }
@@ -34,6 +42,8 @@ impl From<QexedEntityConfig> for Entities {
             enable: config.enable,
             dimension: config.dimension,
             list: config.list.into_iter().map(Into::into).collect(),
+            disabled_entity_types: config.disabled_entity_types,
+            ai_overrides: config.ai_overrides,
             spawning: config.spawning,
         }
     }

@@ -62,6 +62,8 @@ fn configured_entities_allocate_before_players() {
                 ..Default::default()
             },
         ],
+        disabled_entity_types: Vec::new(),
+        ai_overrides: Vec::new(),
         spawning: Default::default(),
     };
 
@@ -88,6 +90,8 @@ fn configured_npc_with_unknown_client_entity_type_falls_back_to_player() {
             entity_type: "demo:patrol_guard".to_string(),
             ..Default::default()
         }],
+        disabled_entity_types: Vec::new(),
+        ai_overrides: Vec::new(),
         spawning: Default::default(),
     };
 
@@ -115,6 +119,8 @@ fn configured_holograms_spawn_as_text_display_entities() {
             y: 67.0,
             ..Default::default()
         }],
+        disabled_entity_types: Vec::new(),
+        ai_overrides: Vec::new(),
         spawning: Default::default(),
     };
 
@@ -137,6 +143,48 @@ fn configured_holograms_spawn_as_text_display_entities() {
         packets[2][0],
         qexed_protocol::to_client::play::set_entity_data::SetEntityData::ID as u8
     );
+}
+
+#[test]
+fn configured_entities_respect_disabled_types_and_ai_overrides() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let config = qexed_config::app::qexed::server::Entities {
+        enable: true,
+        dimension: "minecraft:overworld".to_string(),
+        list: vec![
+            qexed_config::app::qexed::server::Entity {
+                id: "disabled-zombie".to_string(),
+                entity_type: "minecraft:zombie".to_string(),
+                ..Default::default()
+            },
+            qexed_config::app::qexed::server::Entity {
+                id: "arena-pig".to_string(),
+                entity_type: "minecraft:pig".to_string(),
+                ai: "random_stroll".to_string(),
+                auto_jump: true,
+                ..Default::default()
+            },
+        ],
+        disabled_entity_types: vec!["zombie".to_string()],
+        ai_overrides: vec![qexed_config::app::qexed::server::EntityAiOverride {
+            entity_type: "minecraft:pig".to_string(),
+            ai: "vanilla".to_string(),
+            ai_params: [("movement_speed".to_string(), serde_json::json!(0.25))]
+                .into_iter()
+                .collect(),
+            auto_jump: Some(false),
+        }],
+        spawning: Default::default(),
+    };
+
+    let manager = EntityManager::from_config(&config, entity_ids).unwrap();
+    let entities = manager.list_for_dimension("minecraft:overworld");
+
+    assert_eq!(entities.len(), 1);
+    assert_eq!(entities[0].entity_type, "minecraft:pig");
+    assert_eq!(entities[0].ai, "vanilla");
+    assert_eq!(entities[0].ai_params["movement_speed"], 0.25);
+    assert!(!entities[0].auto_jump);
 }
 
 #[test]
@@ -848,6 +896,87 @@ fn follow_nearest_player_ai_moves_entity_toward_player() {
         .unwrap();
 
     let entity = manager.entity_by_key("follower").unwrap();
+    assert!(entity.position.x > 0.0);
+    assert_eq!(entity.position.z, 0.0);
+}
+
+#[test]
+fn vanilla_hostile_ai_moves_entity_toward_player() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Target".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 10.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    world.place_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 0, y: 63, z: 0 },
+        stone_block_state(),
+    );
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "vanilla-zombie".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Zombie".to_string(),
+            display_name: "Zombie".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+
+    let entity = manager.entity_by_key("vanilla-zombie").unwrap();
     assert!(entity.position.x > 0.0);
     assert_eq!(entity.position.z, 0.0);
 }

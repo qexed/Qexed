@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -298,7 +298,17 @@ impl EntityManager {
         }
 
         for (index, entity) in config.list.iter().enumerate() {
-            manager.spawn_configured(index, &config.dimension, entity)?;
+            if entity.kind == qexed_config::app::qexed::server::EntityKind::Entity
+                && Self::entity_type_disabled(config, configured_entity_type(entity))
+            {
+                log::debug!(
+                    "skip disabled configured entity: id={}, entity_type={}",
+                    entity.id,
+                    configured_entity_type(entity)
+                );
+                continue;
+            }
+            manager.spawn_configured(index, &config.dimension, entity, config)?;
         }
 
         Ok(manager)
@@ -355,6 +365,32 @@ impl EntityManager {
         }
 
         Self::from_config(&resolved, entity_ids)
+    }
+
+    pub fn entity_type_disabled(
+        config: &qexed_config::app::qexed::server::Entities,
+        entity_type: &str,
+    ) -> bool {
+        entity_type_disabled(&config.disabled_entity_types, entity_type)
+    }
+
+    pub fn apply_entity_ai_overrides(
+        config: &qexed_config::app::qexed::server::Entities,
+        entity_type: &str,
+        ai: &mut String,
+        ai_params: &mut BTreeMap<String, serde_json::Value>,
+        auto_jump: &mut bool,
+    ) {
+        let Some(override_config) = entity_ai_override(config, entity_type) else {
+            return;
+        };
+        if !override_config.ai.trim().is_empty() {
+            *ai = override_config.ai.trim().to_string();
+        }
+        ai_params.extend(override_config.ai_params.clone());
+        if let Some(value) = override_config.auto_jump {
+            *auto_jump = value;
+        }
     }
 
     pub fn list_for_dimension(&self, dimension: &str) -> Vec<ManagedEntity> {
@@ -957,6 +993,7 @@ impl EntityManager {
         index: usize,
         dimension: &str,
         config: &qexed_config::app::qexed::server::Entity,
+        entities_config: &qexed_config::app::qexed::server::Entities,
     ) -> Result<ManagedEntity> {
         let key = configured_entity_key(index, config);
         let kind = match config.kind {
@@ -985,6 +1022,18 @@ impl EntityManager {
                 config.name.clone()
             }
         };
+        let mut ai = config.ai.clone();
+        let mut ai_params = config.ai_params.clone();
+        let mut auto_jump = config.auto_jump;
+        if kind == ManagedEntityKind::Entity {
+            Self::apply_entity_ai_overrides(
+                entities_config,
+                &entity_type,
+                &mut ai,
+                &mut ai_params,
+                &mut auto_jump,
+            );
+        }
         let entity = ManagedEntity {
             uuid: stable_entity_uuid(&key),
             entity_id: self.entity_ids.next(),
@@ -1006,9 +1055,9 @@ impl EntityManager {
             skin_textures: config.skin_textures.clone(),
             skin_signature: config.skin_signature.clone(),
             data: config.data,
-            ai: config.ai.clone(),
-            ai_params: config.ai_params.clone(),
-            auto_jump: config.auto_jump,
+            ai,
+            ai_params,
+            auto_jump,
             spawn_rule: String::new(),
             custom_type: String::new(),
             look_at_players: config.look_at_players,
@@ -1139,6 +1188,25 @@ impl EntityManager {
         spawning: &qexed_config::app::qexed::server::EntitySpawning,
         default_dimension: &str,
     ) -> Result<usize> {
+        self.spawn_from_rules_with_entity_config(
+            players,
+            world,
+            rendering,
+            spawning,
+            default_dimension,
+            None,
+        )
+    }
+
+    pub fn spawn_from_rules_with_entity_config(
+        &self,
+        players: &crate::players::PlayerManager,
+        world: &crate::world::WorldManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        spawning: &qexed_config::app::qexed::server::EntitySpawning,
+        default_dimension: &str,
+        entities_config: Option<&qexed_config::app::qexed::server::Entities>,
+    ) -> Result<usize> {
         if !self.should_run_spawn_tick(spawning.tick_interval_ms) {
             return Ok(0);
         }
@@ -1165,6 +1233,17 @@ impl EntityManager {
                 continue;
             }
             let custom = self.custom_registration(&rule.entity_type);
+            if let Some(entities_config) = entities_config {
+                let shell_entity_type = custom
+                    .as_ref()
+                    .map(|registration| registration.shell_entity_type.as_str())
+                    .unwrap_or(rule.entity_type.as_str());
+                if Self::entity_type_disabled(entities_config, &rule.entity_type)
+                    || Self::entity_type_disabled(entities_config, shell_entity_type)
+                {
+                    continue;
+                }
+            }
             if custom.is_none() && !is_known_minecraft_entity_type(&rule.entity_type) {
                 log::warn!(
                     "skip spawn rule with unknown entity type: rule={}, entity_type={}",
@@ -1200,14 +1279,25 @@ impl EntityManager {
                 continue;
             };
 
-            let entity = self.spawn_local(spawn_request_from_rule(
+            let mut spawn = spawn_request_from_rule(
                 rule,
                 &rule_id,
                 dimension,
                 self.next_spawn_sequence(),
                 custom,
                 position,
-            )?)?;
+            )?;
+            if let Some(entities_config) = entities_config {
+                Self::apply_entity_ai_overrides(
+                    entities_config,
+                    &spawn.entity_type,
+                    &mut spawn.ai,
+                    &mut spawn.ai_params,
+                    &mut spawn.auto_jump,
+                );
+            }
+
+            let entity = self.spawn_local(spawn)?;
             self.mark_rule_spawned(&rule_id);
             self.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
             spawned += 1;
@@ -1318,6 +1408,21 @@ impl EntityManager {
                             world,
                             &mut collision_cache,
                             now,
+                        );
+                    }
+                    EntityAiKind::Vanilla => {
+                        movement = apply_vanilla_ai(
+                            &mut entity,
+                            &viewers,
+                            tick_ms,
+                            &mut target_memory,
+                            &mut path_memory,
+                            &mut target_reselects,
+                            &mut path_recalcs,
+                            world,
+                            &mut collision_cache,
+                            now,
+                            rendering.default_distance,
                         );
                     }
                     EntityAiKind::Plugin => {
@@ -2125,6 +2230,65 @@ fn normalized_npc_event(value: &str, fallback: &str) -> String {
     }
 }
 
+fn configured_entity_type(config: &qexed_config::app::qexed::server::Entity) -> &str {
+    let entity_type = config.entity_type.trim();
+    if entity_type.is_empty() {
+        "minecraft:armor_stand"
+    } else {
+        entity_type
+    }
+}
+
+fn entity_type_disabled(disabled: &[String], entity_type: &str) -> bool {
+    let entity_type = normalized_entity_type(entity_type);
+    disabled.iter().any(|disabled_type| {
+        let disabled_type = disabled_type.trim();
+        disabled_type == "*" || normalized_entity_type(disabled_type) == entity_type
+    })
+}
+
+fn entity_ai_override<'a>(
+    config: &'a qexed_config::app::qexed::server::Entities,
+    entity_type: &str,
+) -> Option<&'a qexed_config::app::qexed::server::EntityAiOverride> {
+    let entity_type = normalized_entity_type(entity_type);
+    config
+        .ai_overrides
+        .iter()
+        .find(|override_config| normalized_entity_type(&override_config.entity_type) == entity_type)
+}
+
+fn normalized_entity_type(entity_type: &str) -> String {
+    let entity_type = entity_type.trim();
+    if entity_type.is_empty() {
+        return String::new();
+    }
+    if entity_type.contains(':') {
+        entity_type.to_string()
+    } else {
+        format!("minecraft:{entity_type}")
+    }
+}
+
+fn ai_param_f64(params: &BTreeMap<String, serde_json::Value>, key: &str, fallback: f64) -> f64 {
+    params
+        .get(key)
+        .and_then(|value| match value {
+            serde_json::Value::Number(number) => number.as_f64(),
+            serde_json::Value::String(value) => value.trim().parse().ok(),
+            _ => None,
+        })
+        .filter(|value| value.is_finite())
+        .unwrap_or(fallback)
+}
+
+fn ai_param_string(params: &BTreeMap<String, serde_json::Value>, key: &str) -> Option<String> {
+    params.get(key).and_then(|value| match value {
+        serde_json::Value::String(value) => Some(value.trim().to_string()),
+        _ => None,
+    })
+}
+
 fn should_run_tick(last_tick: &Mutex<Option<Instant>>, interval_ms: u64) -> bool {
     let now = Instant::now();
     let interval = Duration::from_millis(interval_ms.max(50));
@@ -2142,6 +2306,7 @@ enum EntityAiKind {
     RandomStroll,
     LookAtPlayer,
     FollowNearestPlayer,
+    Vanilla,
     Plugin,
 }
 
@@ -2155,6 +2320,10 @@ fn ai_kind(value: &str) -> EntityAiKind {
         "random_stroll" | "wander" => EntityAiKind::RandomStroll,
         "look_at_player" | "look_at_players" => EntityAiKind::LookAtPlayer,
         "follow_nearest_player" | "follow_player" => EntityAiKind::FollowNearestPlayer,
+        "vanilla" | "minecraft:vanilla" => EntityAiKind::Vanilla,
+        value if value.starts_with("vanilla:") || value.starts_with("minecraft:vanilla:") => {
+            EntityAiKind::Vanilla
+        }
         value if value.starts_with("plugin:") => EntityAiKind::Plugin,
         _ => EntityAiKind::None,
     }
@@ -2164,15 +2333,215 @@ fn should_apply_entity_physics(entity: &ManagedEntity, ai: EntityAiKind) -> bool
     ai != EntityAiKind::None || !entity.spawn_rule.is_empty()
 }
 
+fn vanilla_behavior_override(value: &str) -> Option<VanillaEntityBehavior> {
+    match value.trim() {
+        "none" | "static" => Some(VanillaEntityBehavior::Static),
+        "passive" | "ambient" | "animal" => Some(VanillaEntityBehavior::Passive),
+        "hostile" | "hostile_melee" | "melee" => Some(VanillaEntityBehavior::HostileMelee),
+        "hostile_ranged" | "ranged" => Some(VanillaEntityBehavior::HostileRanged),
+        "creeper" => Some(VanillaEntityBehavior::Creeper),
+        _ => None,
+    }
+}
+
+fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
+    let entity_type = normalized_entity_type(entity_type);
+    let mut profile = VanillaEntityAiProfile {
+        behavior: VanillaEntityBehavior::Passive,
+        movement_speed: 0.20,
+        follow_range: 16.0,
+        stop_distance: 2.0,
+        stroll_chance: 0.25,
+        stroll_min_speed: 0.06,
+        stroll_max_speed: 0.14,
+        look_range: 6.0,
+    };
+
+    match entity_type.as_str() {
+        "minecraft:armor_stand"
+        | "minecraft:area_effect_cloud"
+        | "minecraft:block_display"
+        | "minecraft:boat"
+        | "minecraft:chest_boat"
+        | "minecraft:command_block_minecart"
+        | "minecraft:dragon_fireball"
+        | "minecraft:egg"
+        | "minecraft:end_crystal"
+        | "minecraft:ender_pearl"
+        | "minecraft:evoker_fangs"
+        | "minecraft:experience_bottle"
+        | "minecraft:experience_orb"
+        | "minecraft:eye_of_ender"
+        | "minecraft:falling_block"
+        | "minecraft:fireball"
+        | "minecraft:firework_rocket"
+        | "minecraft:fishing_bobber"
+        | "minecraft:glow_item_frame"
+        | "minecraft:interaction"
+        | "minecraft:item"
+        | "minecraft:item_display"
+        | "minecraft:item_frame"
+        | "minecraft:leash_knot"
+        | "minecraft:llama_spit"
+        | "minecraft:marker"
+        | "minecraft:minecart"
+        | "minecraft:painting"
+        | "minecraft:player"
+        | "minecraft:potion"
+        | "minecraft:shulker_bullet"
+        | "minecraft:small_fireball"
+        | "minecraft:snowball"
+        | "minecraft:spectral_arrow"
+        | "minecraft:text_display"
+        | "minecraft:tnt"
+        | "minecraft:tnt_minecart"
+        | "minecraft:trident"
+        | "minecraft:wind_charge"
+        | "minecraft:wither_skull" => {
+            profile.behavior = VanillaEntityBehavior::Static;
+        }
+        "minecraft:pig" => {
+            profile.movement_speed = 0.25;
+        }
+        "minecraft:sheep" => {
+            profile.movement_speed = 0.23;
+        }
+        "minecraft:chicken" => {
+            profile.movement_speed = 0.25;
+            profile.stroll_max_speed = 0.16;
+        }
+        "minecraft:cow" | "minecraft:mooshroom" => {
+            profile.movement_speed = 0.20;
+        }
+        "minecraft:rabbit" => {
+            profile.movement_speed = 0.30;
+            profile.stroll_max_speed = 0.20;
+        }
+        "minecraft:horse"
+        | "minecraft:donkey"
+        | "minecraft:mule"
+        | "minecraft:skeleton_horse"
+        | "minecraft:zombie_horse"
+        | "minecraft:camel" => {
+            profile.movement_speed = 0.22;
+            profile.stroll_max_speed = 0.17;
+        }
+        "minecraft:fox" | "minecraft:ocelot" | "minecraft:cat" | "minecraft:wolf" => {
+            profile.movement_speed = 0.30;
+            profile.stroll_max_speed = 0.20;
+        }
+        "minecraft:villager" | "minecraft:wandering_trader" => {
+            profile.movement_speed = 0.20;
+            profile.look_range = 8.0;
+        }
+        "minecraft:creeper" => {
+            profile.behavior = VanillaEntityBehavior::Creeper;
+            profile.movement_speed = 0.25;
+            profile.follow_range = 16.0;
+            profile.stop_distance = 1.6;
+        }
+        "minecraft:zombie"
+        | "minecraft:zombie_villager"
+        | "minecraft:husk"
+        | "minecraft:drowned" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.23;
+            profile.follow_range = 35.0;
+            profile.stop_distance = 1.7;
+        }
+        "minecraft:spider" | "minecraft:cave_spider" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.30;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 1.6;
+        }
+        "minecraft:enderman" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.30;
+            profile.follow_range = 64.0;
+            profile.stop_distance = 1.8;
+        }
+        "minecraft:warden" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.30;
+            profile.follow_range = 48.0;
+            profile.stop_distance = 2.0;
+        }
+        "minecraft:ravager" | "minecraft:zoglin" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.30;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 2.4;
+        }
+        "minecraft:hoglin"
+        | "minecraft:piglin_brute"
+        | "minecraft:vindicator"
+        | "minecraft:evoker"
+        | "minecraft:silverfish"
+        | "minecraft:endermite"
+        | "minecraft:slime"
+        | "minecraft:magma_cube"
+        | "minecraft:wither_skeleton" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.26;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 1.8;
+        }
+        "minecraft:skeleton"
+        | "minecraft:stray"
+        | "minecraft:bogged"
+        | "minecraft:pillager"
+        | "minecraft:illusioner"
+        | "minecraft:witch"
+        | "minecraft:blaze"
+        | "minecraft:breeze"
+        | "minecraft:guardian"
+        | "minecraft:elder_guardian"
+        | "minecraft:ghast"
+        | "minecraft:shulker"
+        | "minecraft:wither" => {
+            profile.behavior = VanillaEntityBehavior::HostileRanged;
+            profile.movement_speed = 0.25;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 12.0;
+            profile.look_range = 32.0;
+        }
+        "minecraft:phantom" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_speed = 0.28;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 1.8;
+        }
+        _ => {}
+    }
+    profile
+}
+
 fn apply_random_stroll(entity: &mut ManagedEntity, tick_ms: u64) -> EntityMovement {
+    apply_random_stroll_with(entity, tick_ms, 0.35, 0.10, 0.20)
+}
+
+fn apply_random_stroll_with(
+    entity: &mut ManagedEntity,
+    tick_ms: u64,
+    chance: f64,
+    min_speed: f64,
+    max_speed: f64,
+) -> EntityMovement {
     let mut rng = rand::thread_rng();
-    if rand::Rng::gen_range(&mut rng, 0.0..1.0) > 0.35 {
+    if rand::Rng::gen_range(&mut rng, 0.0..1.0) > chance.clamp(0.0, 1.0) {
         return EntityMovement::default();
     }
     let target_yaw = rand::Rng::gen_range(&mut rng, -180.0..180.0);
     let (yaw, _) = smooth_rotation(entity.position, target_yaw, entity.position.pitch, tick_ms);
     let radians = f64::from(yaw).to_radians();
-    let speed = rand::Rng::gen_range(&mut rng, 0.10..0.20);
+    let min_speed = min_speed.max(0.0);
+    let max_speed = max_speed.max(min_speed);
+    let speed = if (max_speed - min_speed).abs() < f64::EPSILON {
+        min_speed
+    } else {
+        rand::Rng::gen_range(&mut rng, min_speed..max_speed)
+    };
     entity.position.yaw = yaw;
     EntityMovement {
         x: -radians.sin() * speed,
@@ -2195,6 +2564,128 @@ fn apply_look_at_nearest_player(
     entity.position.pitch = pitch;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VanillaEntityBehavior {
+    Static,
+    Passive,
+    HostileMelee,
+    HostileRanged,
+    Creeper,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VanillaEntityAiProfile {
+    behavior: VanillaEntityBehavior,
+    movement_speed: f64,
+    follow_range: f64,
+    stop_distance: f64,
+    stroll_chance: f64,
+    stroll_min_speed: f64,
+    stroll_max_speed: f64,
+    look_range: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_vanilla_ai(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_ms: u64,
+    target_memory: &mut HashMap<String, EntityTargetMemory>,
+    path_memory: &mut HashMap<String, EntityPathMemory>,
+    target_reselects: &mut usize,
+    path_recalcs: &mut usize,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    now: Instant,
+    default_look_range: f64,
+) -> EntityMovement {
+    let profile = vanilla_entity_ai_profile(&entity.entity_type);
+    let behavior = ai_param_string(&entity.ai_params, "behavior")
+        .and_then(|value| vanilla_behavior_override(&value))
+        .unwrap_or(profile.behavior);
+    let movement_speed = ai_param_f64(&entity.ai_params, "movement_speed", profile.movement_speed)
+        .clamp(0.0, ENTITY_MAX_HORIZONTAL_SPEED);
+    let follow_range =
+        ai_param_f64(&entity.ai_params, "follow_range", profile.follow_range).max(0.0);
+    let stop_distance =
+        ai_param_f64(&entity.ai_params, "stop_distance", profile.stop_distance).max(0.0);
+    let stroll_chance =
+        ai_param_f64(&entity.ai_params, "stroll_chance", profile.stroll_chance).clamp(0.0, 1.0);
+    let stroll_min_speed = ai_param_f64(
+        &entity.ai_params,
+        "stroll_min_speed",
+        profile.stroll_min_speed,
+    )
+    .max(0.0);
+    let stroll_max_speed = ai_param_f64(
+        &entity.ai_params,
+        "stroll_max_speed",
+        profile.stroll_max_speed,
+    )
+    .max(stroll_min_speed);
+    let look_range = ai_param_f64(
+        &entity.ai_params,
+        "look_range",
+        profile.look_range.max(default_look_range.min(8.0)),
+    )
+    .max(0.0);
+
+    match behavior {
+        VanillaEntityBehavior::Static => {
+            target_memory.remove(&entity.key);
+            path_memory.remove(&entity.key);
+            EntityMovement::default()
+        }
+        VanillaEntityBehavior::Passive => {
+            target_memory.remove(&entity.key);
+            path_memory.remove(&entity.key);
+            let movement = apply_random_stroll_with(
+                entity,
+                tick_ms,
+                stroll_chance,
+                stroll_min_speed,
+                stroll_max_speed,
+            );
+            if movement.x.abs() + movement.z.abs() <= 0.0001 {
+                apply_look_at_nearest_player(entity, viewers, look_range);
+            }
+            movement
+        }
+        VanillaEntityBehavior::HostileMelee | VanillaEntityBehavior::Creeper => {
+            apply_follow_nearest_player_with(
+                entity,
+                viewers,
+                tick_ms,
+                target_memory,
+                path_memory,
+                target_reselects,
+                path_recalcs,
+                world,
+                collision_cache,
+                now,
+                follow_range,
+                stop_distance,
+                movement_speed,
+            )
+        }
+        VanillaEntityBehavior::HostileRanged => apply_follow_nearest_player_with(
+            entity,
+            viewers,
+            tick_ms,
+            target_memory,
+            path_memory,
+            target_reselects,
+            path_recalcs,
+            world,
+            collision_cache,
+            now,
+            follow_range,
+            stop_distance.max(8.0),
+            movement_speed,
+        ),
+    }
+}
+
 fn apply_follow_nearest_player(
     entity: &mut ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
@@ -2207,17 +2698,46 @@ fn apply_follow_nearest_player(
     collision_cache: &mut CollisionCache,
     now: Instant,
 ) -> EntityMovement {
-    const FOLLOW_RANGE: f64 = 32.0;
-    const STOP_DISTANCE: f64 = 2.0;
-    const BASE_STEP: f64 = 0.22;
+    apply_follow_nearest_player_with(
+        entity,
+        viewers,
+        tick_ms,
+        target_memory,
+        path_memory,
+        target_reselects,
+        path_recalcs,
+        world,
+        collision_cache,
+        now,
+        32.0,
+        2.0,
+        0.22,
+    )
+}
 
+#[allow(clippy::too_many_arguments)]
+fn apply_follow_nearest_player_with(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_ms: u64,
+    target_memory: &mut HashMap<String, EntityTargetMemory>,
+    path_memory: &mut HashMap<String, EntityPathMemory>,
+    target_reselects: &mut usize,
+    path_recalcs: &mut usize,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    now: Instant,
+    follow_range: f64,
+    stop_distance: f64,
+    base_step: f64,
+) -> EntityMovement {
     let Some(target) = preferred_follow_target(
         entity,
         viewers,
         target_memory,
         target_reselects,
         now,
-        FOLLOW_RANGE,
+        follow_range.max(0.0),
     ) else {
         target_memory.remove(&entity.key);
         path_memory.remove(&entity.key);
@@ -2230,7 +2750,7 @@ fn apply_follow_nearest_player(
     let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, tick_ms);
     entity.position.yaw = yaw;
     entity.position.pitch = pitch;
-    if target_horizontal <= STOP_DISTANCE {
+    if target_horizontal <= stop_distance.max(0.0) {
         path_memory.remove(&entity.key);
         return EntityMovement::default();
     }
@@ -2250,7 +2770,7 @@ fn apply_follow_nearest_player(
     if horizontal <= f64::EPSILON {
         return EntityMovement::default();
     }
-    let speed = BASE_STEP.min(horizontal);
+    let speed = base_step.max(0.0).min(horizontal);
     EntityMovement {
         x: dx / horizontal * speed,
         y: 0.0,
@@ -3116,6 +3636,8 @@ fn spawn_request_from_rule(
         rule.ai.clone()
     } else if !default_ai.trim().is_empty() {
         default_ai
+    } else if is_known_minecraft_entity_type(&entity_type) {
+        "vanilla".to_string()
     } else {
         "random_stroll".to_string()
     };

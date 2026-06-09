@@ -73,12 +73,13 @@ fn run_global_service_tick(context: &ServerContext) -> Result<()> {
             context.config.world.simulation_distance,
         )?;
     } else {
-        context.entities.spawn_from_rules(
+        context.entities.spawn_from_rules_with_entity_config(
             &context.players,
             &context.world,
             &context.config.server.entity_rendering,
             spawning,
             &context.config.world.default_play_dimension(),
+            Some(&context.config.server.entities),
         )?;
         context.entities.tick_ai(
             &context.players,

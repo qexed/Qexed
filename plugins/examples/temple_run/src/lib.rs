@@ -1344,6 +1344,9 @@ fn spawn_runner_entity(player_uuid: &str, monster: &MonsterConfig, session: &Tem
         yaw: 0.0,
         pitch: 0.0,
         display_name: &monster.display_name,
+        ai: "none",
+        ai_params_json: "{}",
+        auto_jump: false,
     });
 }
 

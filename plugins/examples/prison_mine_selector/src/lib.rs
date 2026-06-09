@@ -1,12 +1,12 @@
 use qexed_plugin_sdk::{
-    BlockDropItem, BlockDropPosition, BlockDropQuery, BlockDropResponse,
-    ConfigReloadPayload, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
-    PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
-    PlayerItemPickupQuery, PlayerItemPickupResponse, PlayerPayload, PluginCommandDefinition,
-    PluginCommandQuery, PluginCommandResponse, WorldEditRegion, config_load_or_create,
-    config_read_to_string, economy_balance, economy_deposit, economy_register_currency,
-    economy_withdraw, lottery_roll, random_block_pool_roll, storage_get_typed, storage_set_typed,
-    world_register_edit_region, world_set_block,
+    BlockDropItem, BlockDropPosition, BlockDropQuery, BlockDropResponse, ConfigReloadPayload,
+    NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert, PlaceholderQuery,
+    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerItemPickupQuery,
+    PlayerItemPickupResponse, PlayerPayload, PluginCommandDefinition, PluginCommandQuery,
+    PluginCommandResponse, WorldEditRegion, config_load_or_create, config_read_to_string,
+    economy_balance, economy_deposit, economy_register_currency, economy_withdraw, lottery_roll,
+    random_block_pool_roll, storage_get_typed, storage_set_typed, world_register_edit_region,
+    world_set_block,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,8 @@ pub extern "C" fn qexed_plugin_init() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_config_reload(ptr: i32, len: i32) {
-    let Some(payload) = (unsafe { qexed_plugin_sdk::decode_payload::<ConfigReloadPayload>(ptr, len) })
+    let Some(payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<ConfigReloadPayload>(ptr, len) })
     else {
         return;
     };
@@ -130,8 +131,11 @@ pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
     };
     let config = load_config();
     let selection = payload.player.as_ref().and_then(|player| {
-        storage_get_typed::<MineSelection>(&selection_key(&player.uuid))
-            .or_else(|| config.mine_by_dimension(&player.dimension).map(MineSelection::from))
+        storage_get_typed::<MineSelection>(&selection_key(&player.uuid)).or_else(|| {
+            config
+                .mine_by_dimension(&player.dimension)
+                .map(MineSelection::from)
+        })
     });
 
     let (mine_id, label, dimension) = selection
@@ -158,7 +162,11 @@ pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
         .as_ref()
         .map(|player| player_progress(&player.uuid).level)
         .unwrap_or(0);
-    let money = format_money(balance, config.currency_fractional_digits, &config.currency_symbol);
+    let money = format_money(
+        balance,
+        config.currency_fractional_digits,
+        &config.currency_symbol,
+    );
 
     qexed_plugin_sdk::response_ptr_len(&PlaceholderResponse {
         replacements: vec![
@@ -306,9 +314,7 @@ pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
                 .unwrap_or_default();
             PluginCommandResponse {
                 handled: true,
-                actions: vec![message(format!(
-                    "已获得 100000 点券，当前点券: {balance}"
-                ))],
+                actions: vec![message(format!("已获得 100000 点券，当前点券: {balance}"))],
             }
         }
         "lottery" => lottery_command(&payload.player),
@@ -329,8 +335,8 @@ pub extern "C" fn qexed_plugin_block_drops(ptr: i32, len: i32) -> i64 {
     };
 
     let blast_level = plugin_enchantment_level(&payload.plugin_enchantments, "prison:blast");
-    let hell_furnace = plugin_enchantment_level(&payload.plugin_enchantments, "prison:hell_furnace")
-        > 0;
+    let hell_furnace =
+        plugin_enchantment_level(&payload.plugin_enchantments, "prison:hell_furnace") > 0;
     if blast_level <= 0 && !hell_furnace {
         return qexed_plugin_sdk::response_ptr_len(&BlockDropResponse::default());
     }
@@ -561,11 +567,7 @@ fn smelted_drop(block_name: &str) -> Option<&'static str> {
     }
 }
 
-fn blast_positions(
-    origin: BlockDropPosition,
-    yaw: f32,
-    level: i32,
-) -> Vec<BlockDropPosition> {
+fn blast_positions(origin: BlockDropPosition, yaw: f32, level: i32) -> Vec<BlockDropPosition> {
     let side = level.clamp(1, 5);
     let radius = side / 2;
     let yaw = yaw.rem_euclid(360.0);

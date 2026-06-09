@@ -67,9 +67,23 @@ impl PermissionManager {
         let result = resolve_permission(&snapshot.nodes, permission);
         Ok(result.unwrap_or(self.allow_by_default))
     }
+
+    pub async fn grant_global_wildcard(&self, uuid: uuid::Uuid, username: &str) -> Result<()> {
+        self.store
+            .grant_user_permission(uuid, username, "*", true)
+            .await
+    }
 }
 
 #[async_trait]
 trait PermissionStore: Send + Sync + std::fmt::Debug {
     async fn load_user(&self, uuid: uuid::Uuid) -> Result<PermissionSnapshot>;
+
+    async fn grant_user_permission(
+        &self,
+        uuid: uuid::Uuid,
+        username: &str,
+        permission: &str,
+        value: bool,
+    ) -> Result<()>;
 }

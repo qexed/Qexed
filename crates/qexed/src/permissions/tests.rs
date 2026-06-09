@@ -235,6 +235,31 @@ async fn local_engine_missing_file_can_still_allow_by_default() {
     assert!(manager.check(uuid, "qexed.command.teleport").await.unwrap());
 }
 
+#[tokio::test]
+async fn local_engine_can_grant_global_wildcard() {
+    let dir = tempfile::tempdir().unwrap();
+    let uuid = uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+    let mut config = PermissionConfig::default();
+    config.engine = PermissionEngine::Local;
+    config.local_path = dir
+        .path()
+        .join("permissions.toml")
+        .to_string_lossy()
+        .to_string();
+    config.allow_by_default = false;
+
+    let manager = PermissionManager::from_config(&config).await.unwrap();
+    assert!(!manager.check(uuid, "qexed.command.teleport").await.unwrap());
+
+    manager
+        .grant_global_wildcard(uuid, "Steve")
+        .await
+        .expect("grant wildcard");
+
+    assert!(manager.check(uuid, "qexed.command.teleport").await.unwrap());
+    assert!(manager.check(uuid, "qexed.anything").await.unwrap());
+}
+
 #[test]
 fn luckperms_table_prefix_rejects_unsafe_identifiers() {
     assert!(LuckPermsTables::new("").is_ok());

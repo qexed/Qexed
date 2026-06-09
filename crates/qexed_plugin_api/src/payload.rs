@@ -167,6 +167,46 @@ pub struct CraftItemResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnchantingQuery {
+    pub player: PlayerPayloadOwned,
+    pub item: ItemStackPayload,
+    #[serde(default)]
+    pub lapis_item: Option<ItemStackPayload>,
+    pub level: i32,
+    #[serde(default)]
+    pub bookshelf_count: i32,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EnchantingResponse {
+    #[serde(default)]
+    pub replace: bool,
+    #[serde(default)]
+    pub options: Vec<EnchantingOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnchantingOption {
+    pub id: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub level: i32,
+    #[serde(default)]
+    pub weight: i32,
+    #[serde(default)]
+    pub required_level: i32,
+    #[serde(default)]
+    pub lapis_cost: i32,
+    #[serde(default)]
+    pub item_damage_cost: i32,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FurnaceRecipeQuery {
     pub player: PlayerPayloadOwned,
     pub input: ItemStackPayload,

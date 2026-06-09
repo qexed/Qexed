@@ -1,4 +1,10 @@
-use std::{mem, slice};
+use std::{
+    future::Future,
+    mem,
+    pin::Pin,
+    slice,
+    task::{Context, Poll},
+};
 
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -20,6 +26,32 @@ unsafe extern "C" {
     fn host_storage_set(key_ptr: i32, key_len: i32, data_ptr: i32, data_len: i32) -> i32;
     #[link_name = "storage_delete"]
     fn host_storage_delete(key_ptr: i32, key_len: i32) -> i32;
+    #[link_name = "structured_storage_exists"]
+    fn host_structured_storage_exists(key_ptr: i32, key_len: i32) -> i32;
+    #[link_name = "structured_storage_get"]
+    fn host_structured_storage_get(key_ptr: i32, key_len: i32, out_ptr: i32, out_len: i32) -> i64;
+    #[link_name = "structured_storage_set"]
+    fn host_structured_storage_set(key_ptr: i32, key_len: i32, data_ptr: i32, data_len: i32)
+    -> i32;
+    #[link_name = "structured_storage_delete"]
+    fn host_structured_storage_delete(key_ptr: i32, key_len: i32) -> i32;
+    #[link_name = "structured_storage_exists_async"]
+    fn host_structured_storage_exists_async(key_ptr: i32, key_len: i32) -> i64;
+    #[link_name = "structured_storage_get_async"]
+    fn host_structured_storage_get_async(key_ptr: i32, key_len: i32) -> i64;
+    #[link_name = "structured_storage_set_async"]
+    fn host_structured_storage_set_async(
+        key_ptr: i32,
+        key_len: i32,
+        data_ptr: i32,
+        data_len: i32,
+    ) -> i64;
+    #[link_name = "structured_storage_delete_async"]
+    fn host_structured_storage_delete_async(key_ptr: i32, key_len: i32) -> i64;
+    #[link_name = "structured_storage_async_poll"]
+    fn host_structured_storage_async_poll(id: i64, out_ptr: i32, out_len: i32) -> i64;
+    #[link_name = "structured_storage_async_forget"]
+    fn host_structured_storage_async_forget(id: i64) -> i32;
     #[link_name = "economy_register_currency"]
     fn host_economy_register_currency(
         id_ptr: i32,
@@ -75,6 +107,41 @@ unsafe extern "C" {
         currency_len: i32,
         amount: i64,
     ) -> i64;
+    #[link_name = "economy_balance_async"]
+    fn host_economy_balance_async(
+        player_ptr: i32,
+        player_len: i32,
+        currency_ptr: i32,
+        currency_len: i32,
+    ) -> i64;
+    #[link_name = "economy_set_balance_async"]
+    fn host_economy_set_balance_async(
+        player_ptr: i32,
+        player_len: i32,
+        currency_ptr: i32,
+        currency_len: i32,
+        amount: i64,
+    ) -> i64;
+    #[link_name = "economy_deposit_async"]
+    fn host_economy_deposit_async(
+        player_ptr: i32,
+        player_len: i32,
+        currency_ptr: i32,
+        currency_len: i32,
+        amount: i64,
+    ) -> i64;
+    #[link_name = "economy_withdraw_async"]
+    fn host_economy_withdraw_async(
+        player_ptr: i32,
+        player_len: i32,
+        currency_ptr: i32,
+        currency_len: i32,
+        amount: i64,
+    ) -> i64;
+    #[link_name = "economy_async_poll"]
+    fn host_economy_async_poll(id: i64) -> i64;
+    #[link_name = "economy_async_forget"]
+    fn host_economy_async_forget(id: i64) -> i32;
     #[link_name = "lottery_roll"]
     fn host_lottery_roll(entries_ptr: i32, entries_len: i32, out_ptr: i32, out_len: i32) -> i64;
     #[link_name = "pathfinding_find"]
@@ -115,6 +182,8 @@ unsafe extern "C" {
 
 const HOST_READ_INITIAL_BYTES: usize = 4096;
 const ECONOMY_ERROR: i64 = i64::MIN + 1;
+const ECONOMY_ASYNC_PENDING: i64 = i64::MIN + 2;
+const STRUCTURED_STORAGE_ASYNC_PENDING: i64 = i64::MIN + 2;
 
 #[macro_export]
 macro_rules! qexed_plugin_memory {
@@ -282,6 +351,201 @@ pub fn storage_set_typed<T: Serialize>(key: &str, value: &T) -> bool {
     storage_set(key, &bytes)
 }
 
+pub fn structured_storage_exists(key: &str) -> bool {
+    let Some(key_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_structured_storage_exists(key.as_ptr() as i32, key_len) == 1 }
+}
+
+pub fn structured_storage_get(key: &str) -> Option<Vec<u8>> {
+    let key_len = i32_len(key.as_bytes())?;
+    read_host_buffer(|out_ptr, out_len| unsafe {
+        host_structured_storage_get(key.as_ptr() as i32, key_len, out_ptr, out_len)
+    })
+}
+
+pub fn structured_storage_set(key: &str, value: &[u8]) -> bool {
+    let Some(key_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    let Some(value_len) = i32_len(value) else {
+        return false;
+    };
+    unsafe {
+        host_structured_storage_set(
+            key.as_ptr() as i32,
+            key_len,
+            value.as_ptr() as i32,
+            value_len,
+        ) == 0
+    }
+}
+
+pub fn structured_storage_delete(key: &str) -> bool {
+    let Some(key_len) = i32_len(key.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_structured_storage_delete(key.as_ptr() as i32, key_len) == 0 }
+}
+
+pub fn structured_storage_get_typed<T: DeserializeOwned>(key: &str) -> Option<T> {
+    postcard::from_bytes(&structured_storage_get(key)?).ok()
+}
+
+pub fn structured_storage_set_typed<T: Serialize>(key: &str, value: &T) -> bool {
+    let Ok(bytes) = postcard::to_allocvec(value) else {
+        return false;
+    };
+    structured_storage_set(key, &bytes)
+}
+
+#[derive(Debug)]
+pub struct StructuredStorageAsync {
+    id: i64,
+}
+
+impl StructuredStorageAsync {
+    pub fn poll_bytes(&mut self) -> Option<Option<Vec<u8>>> {
+        if self.id <= 0 {
+            return Some(None);
+        }
+        let result = read_host_buffer_with_pending(|out_ptr, out_len| unsafe {
+            host_structured_storage_async_poll(self.id, out_ptr, out_len)
+        });
+        match result {
+            HostReadPoll::Pending => None,
+            HostReadPoll::Ready(bytes) => {
+                self.id = 0;
+                Some(Some(bytes))
+            }
+            HostReadPoll::Failed => {
+                self.id = 0;
+                Some(None)
+            }
+        }
+    }
+
+    pub fn poll_bool(&mut self) -> Option<bool> {
+        self.poll_bytes().map(|bytes| {
+            bytes
+                .and_then(|bytes| bytes.first().copied())
+                .map(|value| value == 1)
+                .unwrap_or(false)
+        })
+    }
+
+    pub fn poll_typed<T: DeserializeOwned>(&mut self) -> Option<Option<T>> {
+        self.poll_bytes()
+            .map(|bytes| bytes.and_then(|bytes| postcard::from_bytes(&bytes).ok()))
+    }
+
+    pub fn id(&self) -> i64 {
+        self.id
+    }
+}
+
+impl Future for StructuredStorageAsync {
+    type Output = Option<Vec<u8>>;
+
+    fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.poll_bytes() {
+            Some(result) => Poll::Ready(result),
+            None => {
+                _context.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+}
+
+impl Drop for StructuredStorageAsync {
+    fn drop(&mut self) {
+        if self.id > 0 {
+            let _ = unsafe { host_structured_storage_async_forget(self.id) };
+            self.id = 0;
+        }
+    }
+}
+
+pub fn structured_storage_exists_async(key: &str) -> Option<StructuredStorageAsync> {
+    let key_len = i32_len(key.as_bytes())?;
+    let id = unsafe { host_structured_storage_exists_async(key.as_ptr() as i32, key_len) };
+    (id > 0).then_some(StructuredStorageAsync { id })
+}
+
+pub fn structured_storage_get_async(key: &str) -> Option<StructuredStorageAsync> {
+    let key_len = i32_len(key.as_bytes())?;
+    let id = unsafe { host_structured_storage_get_async(key.as_ptr() as i32, key_len) };
+    (id > 0).then_some(StructuredStorageAsync { id })
+}
+
+pub fn structured_storage_set_async(key: &str, value: &[u8]) -> Option<StructuredStorageAsync> {
+    let key_len = i32_len(key.as_bytes())?;
+    let value_len = i32_len(value)?;
+    let id = unsafe {
+        host_structured_storage_set_async(
+            key.as_ptr() as i32,
+            key_len,
+            value.as_ptr() as i32,
+            value_len,
+        )
+    };
+    (id > 0).then_some(StructuredStorageAsync { id })
+}
+
+pub fn structured_storage_delete_async(key: &str) -> Option<StructuredStorageAsync> {
+    let key_len = i32_len(key.as_bytes())?;
+    let id = unsafe { host_structured_storage_delete_async(key.as_ptr() as i32, key_len) };
+    (id > 0).then_some(StructuredStorageAsync { id })
+}
+
+pub fn structured_storage_set_typed_async<T: Serialize>(
+    key: &str,
+    value: &T,
+) -> Option<StructuredStorageAsync> {
+    let Ok(bytes) = postcard::to_allocvec(value) else {
+        return None;
+    };
+    structured_storage_set_async(key, &bytes)
+}
+
+pub struct StructuredStorageTypedAsync<T> {
+    inner: StructuredStorageAsync,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> Unpin for StructuredStorageTypedAsync<T> {}
+
+impl<T: DeserializeOwned> StructuredStorageTypedAsync<T> {
+    pub fn poll_result(&mut self) -> Option<Option<T>> {
+        self.inner.poll_typed()
+    }
+}
+
+impl<T: DeserializeOwned> Future for StructuredStorageTypedAsync<T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut().inner.poll_typed() {
+            Some(result) => Poll::Ready(result),
+            None => {
+                _context.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+}
+
+pub fn structured_storage_get_typed_async<T: DeserializeOwned>(
+    key: &str,
+) -> Option<StructuredStorageTypedAsync<T>> {
+    Some(StructuredStorageTypedAsync {
+        inner: structured_storage_get_async(key)?,
+        _marker: std::marker::PhantomData,
+    })
+}
+
 pub fn economy_register_currency(
     id: &str,
     name: &str,
@@ -369,6 +633,102 @@ pub fn economy_withdraw(player: &str, currency: &str, amount: i64) -> Option<i64
         currency,
         |player_ptr, player_len, currency_ptr, currency_len| unsafe {
             host_economy_withdraw(player_ptr, player_len, currency_ptr, currency_len, amount)
+        },
+    )
+}
+
+#[derive(Debug)]
+pub struct EconomyAsync {
+    id: i64,
+}
+
+impl EconomyAsync {
+    pub fn poll_result(&mut self) -> Option<Option<i64>> {
+        if self.id <= 0 {
+            return Some(None);
+        }
+        let result = unsafe { host_economy_async_poll(self.id) };
+        if result == ECONOMY_ASYNC_PENDING {
+            return None;
+        }
+        self.id = 0;
+        Some(economy_result(result))
+    }
+
+    pub fn id(&self) -> i64 {
+        self.id
+    }
+}
+
+impl Future for EconomyAsync {
+    type Output = Option<i64>;
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.poll_result() {
+            Some(result) => Poll::Ready(result),
+            None => {
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+}
+
+impl Drop for EconomyAsync {
+    fn drop(&mut self) {
+        if self.id > 0 {
+            let _ = unsafe { host_economy_async_forget(self.id) };
+            self.id = 0;
+        }
+    }
+}
+
+pub fn economy_balance_async(player: &str, currency: &str) -> Option<EconomyAsync> {
+    economy_async_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_balance_async(player_ptr, player_len, currency_ptr, currency_len)
+        },
+    )
+}
+
+pub fn economy_set_balance_async(
+    player: &str,
+    currency: &str,
+    amount: i64,
+) -> Option<EconomyAsync> {
+    economy_async_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_set_balance_async(
+                player_ptr,
+                player_len,
+                currency_ptr,
+                currency_len,
+                amount,
+            )
+        },
+    )
+}
+
+pub fn economy_deposit_async(player: &str, currency: &str, amount: i64) -> Option<EconomyAsync> {
+    economy_async_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_deposit_async(player_ptr, player_len, currency_ptr, currency_len, amount)
+        },
+    )
+}
+
+pub fn economy_withdraw_async(player: &str, currency: &str, amount: i64) -> Option<EconomyAsync> {
+    economy_async_call(
+        player,
+        currency,
+        |player_ptr, player_len, currency_ptr, currency_len| unsafe {
+            host_economy_withdraw_async(player_ptr, player_len, currency_ptr, currency_len, amount)
         },
     )
 }
@@ -517,6 +877,9 @@ pub struct RuntimeEntity<'a> {
     pub yaw: f32,
     pub pitch: f32,
     pub display_name: &'a str,
+    pub ai: &'a str,
+    pub ai_params_json: &'a str,
+    pub auto_jump: bool,
 }
 
 pub fn entity_upsert(entity: &RuntimeEntity<'_>) -> bool {
@@ -527,7 +890,7 @@ pub fn entity_upsert(entity: &RuntimeEntity<'_>) -> bool {
         return false;
     }
     let query = format!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         entity.key.trim(),
         entity.dimension.trim(),
         entity.entity_type.trim(),
@@ -537,6 +900,9 @@ pub fn entity_upsert(entity: &RuntimeEntity<'_>) -> bool {
         entity.yaw,
         entity.pitch,
         entity.display_name.trim(),
+        entity.ai.trim(),
+        entity.ai_params_json.trim(),
+        bool_flag(entity.auto_jump),
     );
     let Some(query_len) = i32_len(query.as_bytes()) else {
         return false;
@@ -736,6 +1102,53 @@ fn read_host_buffer(mut read: impl FnMut(i32, i32) -> i64) -> Option<Vec<u8>> {
     Some(buffer)
 }
 
+enum HostReadPoll {
+    Pending,
+    Ready(Vec<u8>),
+    Failed,
+}
+
+fn read_host_buffer_with_pending(mut read: impl FnMut(i32, i32) -> i64) -> HostReadPoll {
+    let mut buffer = vec![0; HOST_READ_INITIAL_BYTES];
+    let len = match i32_len(&buffer) {
+        Some(buffer_len) => read(buffer.as_mut_ptr() as i32, buffer_len),
+        None => return HostReadPoll::Failed,
+    };
+    if len == STRUCTURED_STORAGE_ASYNC_PENDING {
+        return HostReadPoll::Pending;
+    }
+    if len >= 0 {
+        let Ok(len) = usize::try_from(len) else {
+            return HostReadPoll::Failed;
+        };
+        buffer.truncate(len);
+        return HostReadPoll::Ready(buffer);
+    }
+
+    let Some(needed) = required_host_buffer_len(len) else {
+        return HostReadPoll::Failed;
+    };
+    let mut buffer = vec![0; needed];
+    let len = match i32_len(&buffer) {
+        Some(buffer_len) => read(buffer.as_mut_ptr() as i32, buffer_len),
+        None => return HostReadPoll::Failed,
+    };
+    if len == STRUCTURED_STORAGE_ASYNC_PENDING {
+        return HostReadPoll::Pending;
+    }
+    if len < 0 {
+        return HostReadPoll::Failed;
+    }
+    let Ok(len) = usize::try_from(len) else {
+        return HostReadPoll::Failed;
+    };
+    if len > buffer.len() {
+        return HostReadPoll::Failed;
+    }
+    buffer.truncate(len);
+    HostReadPoll::Ready(buffer)
+}
+
 fn required_host_buffer_len(ret: i64) -> Option<usize> {
     if ret >= -1 {
         return None;
@@ -760,9 +1173,25 @@ fn economy_call(
         currency.as_ptr() as i32,
         currency_len,
     );
-    if value <= ECONOMY_ERROR {
-        None
-    } else {
-        Some(value)
-    }
+    economy_result(value)
+}
+
+fn economy_async_call(
+    player: &str,
+    currency: &str,
+    call: impl FnOnce(i32, i32, i32, i32) -> i64,
+) -> Option<EconomyAsync> {
+    let player_len = i32_len(player.as_bytes())?;
+    let currency_len = i32_len(currency.as_bytes())?;
+    let id = call(
+        player.as_ptr() as i32,
+        player_len,
+        currency.as_ptr() as i32,
+        currency_len,
+    );
+    (id > 0).then_some(EconomyAsync { id })
+}
+
+fn economy_result(value: i64) -> Option<i64> {
+    (value > ECONOMY_ERROR).then_some(value)
 }

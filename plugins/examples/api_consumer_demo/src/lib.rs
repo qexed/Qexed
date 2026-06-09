@@ -30,8 +30,7 @@ pub extern "C" fn qexed_plugin_commands(_ptr: i32, _len: i32) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
-    let Some(query) =
-        (unsafe { qexed_plugin_sdk::decode_payload::<PluginCommandQuery>(ptr, len) })
+    let Some(query) = (unsafe { qexed_plugin_sdk::decode_payload::<PluginCommandQuery>(ptr, len) })
     else {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     };
@@ -39,8 +38,8 @@ pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     }
 
-    let storage = qexed_plugin_sdk::economy_storage("qexed:coin")
-        .unwrap_or_else(|| "unknown".to_string());
+    let storage =
+        qexed_plugin_sdk::economy_storage("qexed:coin").unwrap_or_else(|| "unknown".to_string());
     let exists = qexed_plugin_sdk::plugin_service_exists("qexed.demo.echo");
     let response = qexed_plugin_sdk::plugin_call("qexed.demo.echo", "echo", b"ok")
         .and_then(|bytes| String::from_utf8(bytes).ok())

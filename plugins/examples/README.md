@@ -11,6 +11,7 @@ Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/chunk_trace.wa
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/command_npc_demo.wasm" "plugins/"
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/slime_jump.wasm" "plugins/"
 Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/double_jump.wasm" "plugins/"
+Copy-Item "plugins/examples/target/wasm32-unknown-unknown/release/creature_game.wasm" "plugins/"
 ```
 
 Runtime ABI:
@@ -27,3 +28,5 @@ Event functions are optional. Except for `qexed_plugin_init()`, event payloads a
 `slime_jump` listens for `qexed_plugin_player_block_step` and applies forward/upward velocity when a player steps on `minecraft:slime_block`.
 
 `double_jump` listens for `qexed_plugin_player_move` and applies one extra forward/upward velocity boost while the player is airborne.
+
+`creature_game` implements the 浅屿闲游 creature minigame with per-player private arenas and a menu-driven new-game/lobby flow.

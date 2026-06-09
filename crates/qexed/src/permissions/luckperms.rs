@@ -152,6 +152,58 @@ impl PermissionStore for LuckPermsMysqlStore {
 
         Ok(PermissionSnapshot { nodes })
     }
+
+    async fn grant_user_permission(
+        &self,
+        uuid: uuid::Uuid,
+        username: &str,
+        permission: &str,
+        value: bool,
+    ) -> Result<()> {
+        use mysql_async::{params, prelude::Queryable};
+
+        let mut conn = self.pool.get_conn().await?;
+        conn.exec_drop(
+            format!(
+                "INSERT INTO `{}` (`uuid`, `username`, `primary_group`)
+                 VALUES (:uuid, :username, :primary_group)
+                 ON DUPLICATE KEY UPDATE `username` = VALUES(`username`)",
+                self.tables.players
+            ),
+            params! {
+                "uuid" => uuid.to_string(),
+                "username" => username,
+                "primary_group" => &self.default_group,
+            },
+        )
+        .await?;
+        conn.exec_drop(
+            format!(
+                "DELETE FROM `{}` WHERE `uuid` = :uuid AND `permission` = :permission",
+                self.tables.user_permissions
+            ),
+            params! {
+                "uuid" => uuid.to_string(),
+                "permission" => permission,
+            },
+        )
+        .await?;
+        conn.exec_drop(
+            format!(
+                "INSERT INTO `{}` \
+                 (`uuid`, `permission`, `value`, `server`, `world`, `expiry`, `contexts`)
+                 VALUES (:uuid, :permission, :value, 'global', 'global', 0, '{{}}')",
+                self.tables.user_permissions
+            ),
+            params! {
+                "uuid" => uuid.to_string(),
+                "permission" => permission,
+                "value" => value,
+            },
+        )
+        .await?;
+        Ok(())
+    }
 }
 
 type LuckPermsNodeRow = (String, bool, String);

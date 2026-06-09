@@ -13,4 +13,6 @@ members = [
     "double_jump",
     "api_provider_demo",
     "api_consumer_demo",
+    "enchanting_lab",
+    "creature_game",
 ]

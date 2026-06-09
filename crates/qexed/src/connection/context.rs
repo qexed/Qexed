@@ -43,6 +43,7 @@ impl ServerContext {
         let config = config.into();
         let plugins = Arc::new(crate::plugins::PluginManager::load_default());
         plugins.configure_economy(&config.server.economy);
+        plugins.configure_structured_storage(&config.server.plugin_storage);
 
         let local_world_generator = crate::world::generator::from_config(&config.world);
         let world_generator = crate::world::ClusteredWorldGenerator::from_config(
@@ -115,6 +116,7 @@ impl ServerContext {
             entities: entities.clone(),
             players: players.clone(),
             rendering: config.server.entity_rendering.clone(),
+            entity_config: gateway_entities.clone(),
         }));
         let mut resource_pack =
             crate::resource_pack::ResourcePackManager::from_config(&config.server.resource_pack)
@@ -333,13 +335,46 @@ struct ServerEntityControlService {
     entities: Arc<crate::entities::EntityManager>,
     players: Arc<crate::players::PlayerManager>,
     rendering: qexed_config::app::qexed::server::EntityRendering,
+    entity_config: qexed_config::app::qexed::server::Entities,
 }
 
 impl crate::plugins::host::EntityControlService for ServerEntityControlService {
     fn upsert(&self, plugin_name: &str, query: &str) -> i32 {
-        let Some(request) = ParsedEntityUpsert::parse(plugin_name, query) else {
+        let Some(mut request) = ParsedEntityUpsert::parse(plugin_name, query) else {
             return -1;
         };
+        if crate::entities::EntityManager::entity_type_disabled(
+            &self.entity_config,
+            &request.entity_type,
+        ) {
+            if let Some(existing) = self.entities.entity_by_key(&request.key) {
+                if let Err(err) = self.entities.send_remove_to_rendered_viewers(
+                    &self.players,
+                    &self.rendering,
+                    &existing,
+                ) {
+                    log::warn!(
+                        "disabled plugin entity remove packet failed: key={}, error={err:#}",
+                        request.key
+                    );
+                }
+                if let Err(err) = self.entities.remove_local(&request.key) {
+                    log::warn!(
+                        "disabled plugin entity remove failed: key={}, error={err:#}",
+                        request.key
+                    );
+                    return -1;
+                }
+            }
+            return 1;
+        }
+        crate::entities::EntityManager::apply_entity_ai_overrides(
+            &self.entity_config,
+            &request.entity_type,
+            &mut request.ai,
+            &mut request.ai_params,
+            &mut request.auto_jump,
+        );
         if let Some(existing) = self.entities.entity_by_key(&request.key) {
             if let Err(err) = self.entities.send_remove_to_rendered_viewers(
                 &self.players,
@@ -372,9 +407,9 @@ impl crate::plugins::host::EntityControlService for ServerEntityControlService {
             skin_textures: String::new(),
             skin_signature: String::new(),
             data: 0,
-            ai: String::new(),
-            ai_params: Default::default(),
-            auto_jump: false,
+            ai: request.ai,
+            ai_params: request.ai_params,
+            auto_jump: request.auto_jump,
             spawn_rule: String::new(),
             custom_type: String::new(),
             look_at_players: false,
@@ -471,11 +506,14 @@ struct ParsedEntityUpsert {
     entity_type: String,
     position: qexed_protocol::to_client::play::add_entity::EntityPosition,
     display_name: String,
+    ai: String,
+    ai_params: std::collections::BTreeMap<String, serde_json::Value>,
+    auto_jump: bool,
 }
 
 impl ParsedEntityUpsert {
     fn parse(plugin_name: &str, query: &str) -> Option<Self> {
-        let mut parts = query.splitn(9, '\t');
+        let mut parts = query.splitn(12, '\t');
         let raw_key = parts.next()?.trim();
         let key = plugin_entity_key(plugin_name, raw_key)?;
         let dimension = parts.next()?.trim().to_string();
@@ -486,6 +524,9 @@ impl ParsedEntityUpsert {
         let yaw = parts.next()?.trim().parse().ok()?;
         let pitch = parts.next()?.trim().parse().ok()?;
         let display_name = parts.next().unwrap_or_default().trim().to_string();
+        let ai = parts.next().unwrap_or_default().trim().to_string();
+        let ai_params = parse_plugin_ai_params(parts.next().unwrap_or_default())?;
+        let auto_jump = parts.next().map(parse_bool_flag).unwrap_or(Some(false))?;
         if dimension.is_empty() || entity_type.is_empty() {
             return None;
         }
@@ -503,8 +544,21 @@ impl ParsedEntityUpsert {
                 on_ground: false,
             },
             display_name,
+            ai,
+            ai_params,
+            auto_jump,
         })
     }
+}
+
+fn parse_plugin_ai_params(
+    value: &str,
+) -> Option<std::collections::BTreeMap<String, serde_json::Value>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Some(Default::default());
+    }
+    serde_json::from_str(value).ok()
 }
 
 #[derive(Debug)]

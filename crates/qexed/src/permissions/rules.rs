@@ -8,7 +8,7 @@ pub(super) struct PermissionSnapshot {
     pub(super) nodes: Vec<PermissionNode>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(super) struct PermissionNode {
     permission: String,
     value: bool,
@@ -46,6 +46,10 @@ impl PermissionNode {
             .then(|| self.permission.strip_prefix(GROUP_PREFIX))
             .flatten()
             .filter(|group| !group.is_empty())
+    }
+
+    pub(super) fn matches_exact_permission(&self, permission: &str) -> bool {
+        self.permission == normalize_node(permission)
     }
 }
 

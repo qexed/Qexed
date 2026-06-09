@@ -2,6 +2,7 @@ use qexed_config::{
     app::{
         qexed::{Qexed, server::World},
         qexed_content_filter::QexedContentFilter,
+        qexed_enchanting::QexedEnchanting,
         qexed_entity::QexedEntity,
         qexed_entity_rendering::QexedEntityRendering,
         qexed_lan_discovery::QexedLanDiscovery,
@@ -27,6 +28,7 @@ use qexed_config::{
 pub struct RuntimeConfig {
     pub qexed: Qexed,
     pub world: World,
+    pub enchanting: qexed_config::app::qexed_enchanting::EnchantingConfig,
     pub npcs: qexed_config::app::qexed::server::Npcs,
     pub warden: QexedWarden,
 }
@@ -104,6 +106,9 @@ impl RuntimeConfig {
                 .scoreboard;
         qexed.server.menus =
             QexedMenus::load_or_create_default(language.clone(), None, config_path.clone())?.menus;
+        let enchanting =
+            QexedEnchanting::load_or_create_default(language.clone(), None, config_path.clone())?
+                .enchanting;
         qexed.server.placeholders =
             QexedPlaceholders::load_or_create_default(language.clone(), None, config_path.clone())?
                 .placeholders;
@@ -115,6 +120,7 @@ impl RuntimeConfig {
         Ok(Self {
             qexed,
             world,
+            enchanting,
             npcs,
             warden,
         })
@@ -156,6 +162,7 @@ impl From<Qexed> for RuntimeConfig {
         Self {
             qexed,
             world,
+            enchanting: qexed_config::app::qexed_enchanting::EnchantingConfig::default(),
             npcs,
             warden,
         }

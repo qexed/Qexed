@@ -12,7 +12,7 @@ use super::{
     rules::{PermissionNode, local_permission_path, normalize_group, normalize_user_key},
 };
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 struct LocalPermissionsFile {
     #[serde(default)]
     groups: BTreeMap<String, LocalPermissionHolder>,
@@ -37,7 +37,7 @@ impl LocalPermissionsFile {
     }
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 struct LocalPermissionHolder {
     #[serde(default)]
     permissions: Vec<PermissionNode>,
@@ -80,6 +80,18 @@ impl LocalPermissionStore {
             Err(err) => Err(err)
                 .with_context(|| format!("read local permission file {}", self.path.display())),
         }
+    }
+
+    async fn save_config(&self, config: &LocalPermissionsFile) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create local permission dir {}", parent.display()))?;
+        }
+        let content = toml::to_string_pretty(config).context("serialize local permission file")?;
+        tokio::fs::write(&self.path, content)
+            .await
+            .with_context(|| format!("write local permission file {}", self.path.display()))
     }
 }
 
@@ -136,5 +148,21 @@ impl PermissionStore for LocalPermissionStore {
         }
 
         Ok(PermissionSnapshot { nodes })
+    }
+
+    async fn grant_user_permission(
+        &self,
+        uuid: uuid::Uuid,
+        _username: &str,
+        permission: &str,
+        value: bool,
+    ) -> Result<()> {
+        let mut config = self.load_config().await?;
+        let user = config.users.entry(uuid.to_string()).or_default();
+        user.permissions
+            .retain(|node| !node.matches_exact_permission(permission));
+        user.permissions
+            .push(PermissionNode::new(permission, value));
+        self.save_config(&config).await
     }
 }

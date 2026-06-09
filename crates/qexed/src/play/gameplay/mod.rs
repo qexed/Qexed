@@ -3,6 +3,7 @@ pub(super) mod combat;
 pub(super) mod crafting;
 pub(super) mod durability;
 pub(super) mod effects;
+pub(super) mod enchanting;
 pub(super) mod furnace;
 pub(super) mod items;
 pub(super) mod oxygen;
@@ -15,6 +16,7 @@ use qexed_config::app::qexed::server::Gameplay;
 #[derive(Debug)]
 pub(super) struct GameplayRuntime {
     pub(super) crafting: crafting::CraftingRuntime,
+    pub(super) enchanting: enchanting::EnchantingRuntime,
     pub(super) furnace: furnace::FurnaceRuntime,
     pub(super) effects: effects::EffectRuntime,
     pub(super) oxygen: oxygen::OxygenRuntime,
@@ -30,6 +32,7 @@ impl GameplayRuntime {
         let oxygen_interval = Duration::from_millis(config.oxygen_tick_ms.max(1));
         Self {
             crafting: crafting::CraftingRuntime::new(),
+            enchanting: enchanting::EnchantingRuntime::new(),
             furnace: furnace::FurnaceRuntime::new(),
             effects: effects::EffectRuntime::new(),
             oxygen: oxygen::OxygenRuntime::new(),

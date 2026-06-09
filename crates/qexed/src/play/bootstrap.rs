@@ -88,24 +88,16 @@ where
     })
     .await?;
 
-    let visible_commands = crate::commands::visible_commands(permissions, &player.profile).await?;
     let lobby = super::lobby::LobbyRuntime::new(&config.server.lobby);
     let lobby_server_ids = lobby.server_targets();
-    let mut plugin_commands = Vec::new();
-    for command in plugins.plugin_commands() {
-        if permissions
-            .can_run_command(&player.profile, &command.name)
-            .await?
-        {
-            plugin_commands.push(command.name);
-        }
-    }
-    let command_tree = crate::commands::command_tree_for_lobby_with_extra(
-        &visible_commands,
+    let command_tree = super::command_tree_packet_for_lobby_servers(
+        permissions,
+        plugins,
+        &player.profile,
         &lobby_server_ids,
-        &plugin_commands,
-    );
-    sink.send(command_tree).await?;
+    )
+    .await?;
+    sink.send_raw(command_tree).await?;
 
     sink.send(InitializeBorder::default()).await?;
     sink.send(SetTime {

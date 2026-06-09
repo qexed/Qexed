@@ -58,6 +58,9 @@ pub struct Server {
     #[serde(default)]
     pub economy: Economy,
 
+    #[serde(default)]
+    pub plugin_storage: PluginStructuredStorage,
+
     pub motd: Vec<String>,
 
     #[serde(default)]
@@ -127,6 +130,7 @@ impl Default for Server {
             click_detection: ClickDetection::default(),
             gameplay: Gameplay::default(),
             economy: Economy::default(),
+            plugin_storage: PluginStructuredStorage::default(),
             motd: vec![
                 "Qexed服务器awa".to_string()
             ],
@@ -148,6 +152,49 @@ impl Default for Server {
             max_port_connections: u16::MAX,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct PluginStructuredStorage {
+    #[serde(default)]
+    pub engine: PluginStructuredStorageEngine,
+
+    #[serde(default)]
+    pub mysql: MysqlConfig,
+
+    #[serde(default)]
+    pub mongodb: MongoConfig,
+}
+
+impl Default for PluginStructuredStorage {
+    fn default() -> Self {
+        Self {
+            engine: PluginStructuredStorageEngine::default(),
+            mysql: MysqlConfig {
+                username: "qexed".to_string(),
+                password: nanoid::nanoid!(),
+                database: "qexed".to_string(),
+                ..MysqlConfig::default()
+            },
+            mongodb: MongoConfig {
+                username: Some("qexed".to_string()),
+                password: Some(nanoid::nanoid!()),
+                database: "qexed".to_string(),
+                app_name: Some("qexed".to_string()),
+                auth_source: Some("admin".to_string()),
+                ..MongoConfig::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginStructuredStorageEngine {
+    #[default]
+    Sqlite,
+    Mysql,
+    Mongodb,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -877,6 +924,12 @@ pub struct Entities {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub list: Vec<Entity>,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_entity_types: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ai_overrides: Vec<EntityAiOverride>,
+
     #[serde(default)]
     pub spawning: EntitySpawning,
 }
@@ -887,9 +940,26 @@ impl Default for Entities {
             enable: false,
             dimension: default_entities_dimension(),
             list: Vec::new(),
+            disabled_entity_types: Vec::new(),
+            ai_overrides: Vec::new(),
             spawning: EntitySpawning::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+pub struct EntityAiOverride {
+    #[serde(default = "default_entity_type")]
+    pub entity_type: String,
+
+    #[serde(default)]
+    pub ai: String,
+
+    #[serde(default)]
+    pub ai_params: BTreeMap<String, serde_json::Value>,
+
+    #[serde(default)]
+    pub auto_jump: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -3659,6 +3729,15 @@ z = 0.0
             r#"
 enable = true
 dimension = "qexed:mine_a"
+disabled_entity_types = ["minecraft:bat"]
+
+[[ai_overrides]]
+entity_type = "minecraft:zombie"
+ai = "vanilla"
+auto_jump = false
+
+[ai_overrides.ai_params]
+movement_speed = 0.23
 
 [spawning]
 enable = true
@@ -3702,6 +3781,15 @@ profile = "aggressive"
         )
         .unwrap();
 
+        assert_eq!(entities.disabled_entity_types, vec!["minecraft:bat"]);
+        assert_eq!(entities.ai_overrides.len(), 1);
+        assert_eq!(entities.ai_overrides[0].entity_type, "minecraft:zombie");
+        assert_eq!(entities.ai_overrides[0].ai, "vanilla");
+        assert_eq!(entities.ai_overrides[0].auto_jump, Some(false));
+        assert_eq!(
+            entities.ai_overrides[0].ai_params["movement_speed"].as_f64(),
+            Some(0.23)
+        );
         assert!(entities.spawning.enable);
         assert_eq!(entities.spawning.tick_interval_ms, 500);
         assert_eq!(entities.spawning.ai_tick_interval_ms, 100);

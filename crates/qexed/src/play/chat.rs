@@ -89,6 +89,28 @@ where
             .await?;
             Ok(CommandOutcome::default())
         }
+        "version" => {
+            sink.send(SystemChat {
+                content: text_component(version_message()),
+                overlay: false,
+            })
+            .await?;
+            Ok(CommandOutcome::default())
+        }
+        "plugins" => {
+            let summaries = plugins.plugin_summaries();
+            let message = if summaries.is_empty() {
+                "Plugins (0): none".to_string()
+            } else {
+                format!("Plugins ({}): {}", summaries.len(), summaries.join(", "))
+            };
+            sink.send(SystemChat {
+                content: text_component(message),
+                overlay: false,
+            })
+            .await?;
+            Ok(CommandOutcome::default())
+        }
         "lobby" | "server" if !lobby.enabled() => {
             sink.send(SystemChat {
                 content: translatable_component("commands.help.failed", Vec::new()),
@@ -371,6 +393,18 @@ where
             Ok(CommandOutcome::default())
         }
     }
+}
+
+fn version_message() -> String {
+    format!(
+        "{} {}{} (Minecraft {}, branch {}, commit {})",
+        env!("CARGO_PKG_NAME"),
+        if cfg!(debug_assertions) { "dev-" } else { "" },
+        env!("CARGO_PKG_VERSION"),
+        qexed_config::MC_VERSION,
+        shadow_rs::branch(),
+        crate::build::SHORT_COMMIT,
+    )
 }
 
 async fn handle_teleport_command<W>(

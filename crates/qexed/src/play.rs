@@ -44,14 +44,15 @@ use qexed_protocol::to_server::play::{
     accept_teleportation::AcceptTeleportation, attack::Attack, chat_ack::ChatAck,
     chat_command::ChatCommand, chat_message::ChatMessage, chat_session_update::ChatSessionUpdate,
     chunk_batch_received::ChunkBatchReceived, client_command::ClientCommand,
-    command_suggestion::CommandSuggestion, container_click::ContainerClick,
-    container_close::ContainerClose, custom_payload::CustomPayload as ServerboundCustomPayload,
-    interact::Interact, keep_alive::KeepAlive as ServerboundKeepAlive,
-    move_player_pos::MovePlayerPos, move_player_pos_rot::MovePlayerPosRot,
-    move_player_rot::MovePlayerRot, move_player_status_only::MovePlayerStatusOnly,
-    pick_item_from_block::PickItemFromBlock, player_action::PlayerAction,
-    player_input::PlayerInput, player_loaded::PlayerLoaded, set_carried_item::SetCarriedItem,
-    set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
+    command_suggestion::CommandSuggestion, container_button_click::ContainerButtonClick,
+    container_click::ContainerClick, container_close::ContainerClose,
+    custom_payload::CustomPayload as ServerboundCustomPayload, interact::Interact,
+    keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
+    move_player_pos_rot::MovePlayerPosRot, move_player_rot::MovePlayerRot,
+    move_player_status_only::MovePlayerStatusOnly, pick_item_from_block::PickItemFromBlock,
+    player_action::PlayerAction, player_input::PlayerInput, player_loaded::PlayerLoaded,
+    set_carried_item::SetCarriedItem, set_creative_mode_slot::SetCreativeModeSlot,
+    use_item::UseItem, use_item_on::UseItemOn,
 };
 
 use crate::player_data::{PlayerData, PlayerDataManager};
@@ -1144,10 +1145,6 @@ where
                     let carried = crate::connection::decode_payload::<SetCarriedItem>(&mut payload)?;
                     if let Some(main_hand) = inventory.set_selected(carried.slot) {
                         pending_dig = None;
-                        sink.send(SetHeldSlot {
-                            slot: VarInt(carried.slot as i32),
-                        })
-                        .await?;
                         players.update_equipment(
                             profile.uuid,
                             vec![qexed_protocol::to_client::play::set_equipment::Equipment::mainhand(
@@ -1318,6 +1315,24 @@ where
                             }
                             if config.server.gameplay.furnace && block_name == "minecraft:furnace" {
                                 gameplay_runtime.furnace.open(sink).await?;
+                                send_block_change_ack(sink, sequence).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
+                            if config.enchanting.enable && block_name == "minecraft:enchanting_table" {
+                                gameplay_runtime
+                                    .enchanting
+                                    .open(
+                                        sink,
+                                        config,
+                                        &session.player,
+                                        plugins,
+                                        world,
+                                        &play_dimension,
+                                        &inventory,
+                                        use_item_on.block_hit.position.clone(),
+                                    )
+                                    .await?;
                                 send_block_change_ack(sink, sequence).await?;
                                 sink.flush().await?;
                                 continue;
@@ -1890,6 +1905,45 @@ where
                     continue;
                 }
 
+                if packet_id == ContainerButtonClick::ID {
+                    let button = crate::connection::decode_payload::<ContainerButtonClick>(&mut payload)?;
+                    let mut gameplay_outcome = gameplay::GameplayActionOutcome::default();
+                    if let Some(outcome) = gameplay_runtime
+                        .enchanting
+                        .handle_button_click(
+                            sink,
+                            &button,
+                            &mut inventory,
+                            &session.player,
+                            plugins,
+                            config,
+                            world,
+                            &play_dimension,
+                        )
+                        .await?
+                    {
+                        gameplay_outcome.merge(outcome);
+                    }
+                    if gameplay_outcome.handled {
+                        handle_gameplay_outcome(
+                            sink,
+                            players,
+                            profile.uuid,
+                            session.player.entity_id,
+                            &mut inventory,
+                            &mut gameplay_runtime,
+                            plugins,
+                            &session.player,
+                            &config.server.gameplay,
+                            &mut gameplay_outcome,
+                        )
+                        .await?;
+                        pending_dig = None;
+                        sink.flush().await?;
+                        continue;
+                    }
+                }
+
                 if packet_id == Attack::ID {
                     let attack = crate::connection::decode_payload::<Attack>(&mut payload)?;
                     if click_tracker.record_attack(plugins, &session.player, attack.entity_id.0)
@@ -2101,6 +2155,22 @@ where
                     {
                         gameplay_outcome.merge(outcome);
                     }
+                    if let Some(outcome) = gameplay_runtime
+                        .enchanting
+                        .handle_click(
+                            sink,
+                            &click,
+                            &mut inventory,
+                            &session.player,
+                        plugins,
+                        config,
+                        world,
+                        &play_dimension,
+                    )
+                        .await?
+                    {
+                        gameplay_outcome.merge(outcome);
+                    }
                     if gameplay_outcome.handled {
                         handle_gameplay_outcome(
                             sink,
@@ -2251,6 +2321,14 @@ where
                         gameplay_outcome.merge(
                             gameplay_runtime
                                 .furnace
+                                .close(sink, &mut inventory)
+                                .await?,
+                        );
+                    }
+                    if close.window_id.0 == gameplay::enchanting::ENCHANTING_WINDOW_ID {
+                        gameplay_outcome.merge(
+                            gameplay_runtime
+                                .enchanting
                                 .close(sink, &mut inventory)
                                 .await?,
                         );
@@ -3282,21 +3360,44 @@ async fn refresh_command_tree<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let visible_commands = crate::commands::visible_commands(permissions, profile).await?;
     let lobby_server_ids = lobby.server_targets_from_status(lobby_status);
+    let packet =
+        command_tree_packet_for_lobby_servers(permissions, plugins, profile, &lobby_server_ids)
+            .await?;
+    sink.send_raw(packet).await?;
+    Ok(())
+}
+
+pub(crate) async fn command_tree_packet_for_player(
+    config: &crate::config::RuntimeConfig,
+    permissions: &crate::permissions::PermissionManager,
+    plugins: &crate::plugins::PluginManager,
+    profile: &qexed_packet::net_types::GameProfile,
+) -> Result<bytes::Bytes> {
+    let lobby = lobby::LobbyRuntime::new(&config.server.lobby);
+    let lobby_server_ids = lobby.server_targets();
+    command_tree_packet_for_lobby_servers(permissions, plugins, profile, &lobby_server_ids).await
+}
+
+pub(super) async fn command_tree_packet_for_lobby_servers(
+    permissions: &crate::permissions::PermissionManager,
+    plugins: &crate::plugins::PluginManager,
+    profile: &qexed_packet::net_types::GameProfile,
+    lobby_server_ids: &[String],
+) -> Result<bytes::Bytes> {
+    let visible_commands = crate::commands::visible_commands(permissions, profile).await?;
     let mut plugin_commands = Vec::new();
     for command in plugins.plugin_commands() {
         if permissions.can_run_command(profile, &command.name).await? {
             plugin_commands.push(command.name);
         }
     }
-    sink.send(crate::commands::command_tree_for_lobby_with_extra(
+    let command_tree = crate::commands::command_tree_for_lobby_with_extra(
         &visible_commands,
-        &lobby_server_ids,
+        lobby_server_ids,
         &plugin_commands,
-    ))
-    .await?;
-    Ok(())
+    );
+    Ok(qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(command_tree)?)
 }
 
 fn default_dimension_suggestions() -> Vec<String> {

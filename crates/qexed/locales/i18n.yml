@@ -19,6 +19,14 @@ qexed:
       message:
         en: "There are %{online} of a max of %{max} players online: %{players}"
         zh-CN: "当前在线玩家 %{online}/%{max}: %{players}"
+    version:
+      description:
+        en: "Shows server version information."
+        zh-CN: "显示服务器版本信息。"
+    plugin:
+      description:
+        en: "Lists loaded plugins."
+        zh-CN: "列出已加载插件。"
     lobby:
       description:
         en: "Opens the lobby menu, shows status, or refreshes backend status."
@@ -116,6 +124,18 @@ qexed:
       description:
         en: "Lists online players."
         zh-CN: "显示在线玩家。"
+    version:
+      description:
+        en: "Shows server version information."
+        zh-CN: "显示服务器版本信息。"
+    plugin:
+      description:
+        en: "Lists loaded plugins."
+        zh-CN: "列出已加载插件。"
+    op:
+      description:
+        en: "Grants '*' permission to an online player."
+        zh-CN: "授予在线玩家 '*' 权限。"
     players:
       empty:
         en: "No players are currently online."

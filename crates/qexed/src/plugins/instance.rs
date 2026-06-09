@@ -7,13 +7,21 @@ use super::{
     PluginEvent, PluginState,
     host::{
         PluginHostServices, host_config_exists, host_config_read, host_config_write,
-        host_economy_balance, host_economy_currency_info, host_economy_deposit,
-        host_economy_register_currency, host_economy_set_balance, host_economy_storage,
-        host_economy_withdraw, host_entity_move, host_entity_remove, host_entity_upsert, host_log,
-        host_lottery_roll, host_pathfinding_find, host_plugin_call, host_plugin_service_exists,
-        host_random_pool_roll, host_storage_delete, host_storage_exists, host_storage_get,
-        host_storage_set, host_time_millis, host_world_break_block,
-        host_world_register_edit_region, host_world_set_block, host_world_set_blocks,
+        host_economy_async_forget, host_economy_async_poll, host_economy_balance,
+        host_economy_balance_async, host_economy_currency_info, host_economy_deposit,
+        host_economy_deposit_async, host_economy_register_currency, host_economy_set_balance,
+        host_economy_set_balance_async, host_economy_storage, host_economy_withdraw,
+        host_economy_withdraw_async, host_entity_move, host_entity_remove, host_entity_upsert,
+        host_log, host_lottery_roll, host_pathfinding_find, host_plugin_call,
+        host_plugin_service_exists, host_random_pool_roll, host_storage_delete,
+        host_storage_exists, host_storage_get, host_storage_set,
+        host_structured_storage_async_forget, host_structured_storage_async_poll,
+        host_structured_storage_delete, host_structured_storage_delete_async,
+        host_structured_storage_exists, host_structured_storage_exists_async,
+        host_structured_storage_get, host_structured_storage_get_async,
+        host_structured_storage_set, host_structured_storage_set_async, host_time_millis,
+        host_world_break_block, host_world_register_edit_region, host_world_set_block,
+        host_world_set_blocks,
     },
 };
 use qexed_plugin_api::PluginManifest;
@@ -58,6 +66,76 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap(
             "qexed",
+            "structured_storage_exists",
+            host_structured_storage_exists,
+        )
+        .context("register plugin structured_storage_exists API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_get",
+            host_structured_storage_get,
+        )
+        .context("register plugin structured_storage_get API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_set",
+            host_structured_storage_set,
+        )
+        .context("register plugin structured_storage_set API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_delete",
+            host_structured_storage_delete,
+        )
+        .context("register plugin structured_storage_delete API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_exists_async",
+            host_structured_storage_exists_async,
+        )
+        .context("register plugin structured_storage_exists_async API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_get_async",
+            host_structured_storage_get_async,
+        )
+        .context("register plugin structured_storage_get_async API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_set_async",
+            host_structured_storage_set_async,
+        )
+        .context("register plugin structured_storage_set_async API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_delete_async",
+            host_structured_storage_delete_async,
+        )
+        .context("register plugin structured_storage_delete_async API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_async_poll",
+            host_structured_storage_async_poll,
+        )
+        .context("register plugin structured_storage_async_poll API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "structured_storage_async_forget",
+            host_structured_storage_async_forget,
+        )
+        .context("register plugin structured_storage_async_forget API")?;
+    linker
+        .func_wrap(
+            "qexed",
             "economy_register_currency",
             host_economy_register_currency,
         )
@@ -80,6 +158,32 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap("qexed", "economy_withdraw", host_economy_withdraw)
         .context("register plugin economy_withdraw API")?;
+    linker
+        .func_wrap("qexed", "economy_balance_async", host_economy_balance_async)
+        .context("register plugin economy_balance_async API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "economy_set_balance_async",
+            host_economy_set_balance_async,
+        )
+        .context("register plugin economy_set_balance_async API")?;
+    linker
+        .func_wrap("qexed", "economy_deposit_async", host_economy_deposit_async)
+        .context("register plugin economy_deposit_async API")?;
+    linker
+        .func_wrap(
+            "qexed",
+            "economy_withdraw_async",
+            host_economy_withdraw_async,
+        )
+        .context("register plugin economy_withdraw_async API")?;
+    linker
+        .func_wrap("qexed", "economy_async_poll", host_economy_async_poll)
+        .context("register plugin economy_async_poll API")?;
+    linker
+        .func_wrap("qexed", "economy_async_forget", host_economy_async_forget)
+        .context("register plugin economy_async_forget API")?;
     linker
         .func_wrap("qexed", "lottery_roll", host_lottery_roll)
         .context("register plugin lottery_roll API")?;

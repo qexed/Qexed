@@ -12,7 +12,10 @@ enum ConsoleCommand {
     Help,
     Status,
     List,
+    Version,
+    Plugins,
     Say(String),
+    Op(String),
     Stop,
     Unknown(String),
 }
@@ -32,7 +35,10 @@ impl ConsoleCommand {
             "help" | "?" => Self::Help,
             "status" | "stats" => Self::Status,
             "list" | "players" => Self::List,
+            "version" | "ver" => Self::Version,
+            "plugins" => Self::Plugins,
             "say" | "broadcast" => Self::Say(argument),
+            "op" => Self::Op(argument),
             "stop" | "exit" | "quit" => Self::Stop,
             _ => Self::Unknown(command.to_string()),
         }
@@ -44,7 +50,10 @@ impl ConsoleCommand {
             Self::Help => Some("help"),
             Self::Status => Some("status"),
             Self::List => Some("list"),
+            Self::Version => Some("version"),
+            Self::Plugins => Some("plugins"),
             Self::Say(_) => Some("say"),
+            Self::Op(_) => Some("op"),
             Self::Stop => Some("stop"),
             Self::Unknown(command) => Some(command),
         }
@@ -92,7 +101,7 @@ async fn run(
                     break;
                 };
                 let line = line?;
-                if execute(ConsoleCommand::parse(&line), &context, &shutdown)? {
+                if execute(ConsoleCommand::parse(&line), &context, &shutdown).await? {
                     break;
                 }
             }
@@ -120,7 +129,7 @@ fn spawn_stdin_reader() -> anyhow::Result<mpsc::UnboundedReceiver<anyhow::Result
     Ok(receiver)
 }
 
-fn execute(
+async fn execute(
     command: ConsoleCommand,
     context: &ServerContext,
     shutdown: &watch::Sender<bool>,
@@ -137,7 +146,10 @@ fn execute(
         ConsoleCommand::Help => print_help(context),
         ConsoleCommand::Status => print_status(context),
         ConsoleCommand::List => print_players(context),
+        ConsoleCommand::Version => print_version(),
+        ConsoleCommand::Plugins => print_plugins(context),
         ConsoleCommand::Say(message) => broadcast_message(context, &message)?,
+        ConsoleCommand::Op(target) => op_player(context, &target).await?,
         ConsoleCommand::Stop => {
             print_console(rust_i18n::t!("qexed.console.shutdown", locale = locale));
             let _ = shutdown.send(true);
@@ -212,6 +224,62 @@ fn print_players(context: &ServerContext) {
     }
 }
 
+fn print_version() {
+    print_console(format!(
+        "{} {}{} (Minecraft {}, branch {}, commit {})",
+        env!("CARGO_PKG_NAME"),
+        if cfg!(debug_assertions) { "dev-" } else { "" },
+        env!("CARGO_PKG_VERSION"),
+        qexed_config::MC_VERSION,
+        shadow_rs::branch(),
+        crate::build::SHORT_COMMIT,
+    ));
+}
+
+fn print_plugins(context: &ServerContext) {
+    let summaries = context.plugins.plugin_summaries();
+    if summaries.is_empty() {
+        print_console("Plugins (0): none");
+    } else {
+        print_console(format!(
+            "Plugins ({}): {}",
+            summaries.len(),
+            summaries.join(", ")
+        ));
+    }
+}
+
+async fn op_player(context: &ServerContext, target: &str) -> anyhow::Result<()> {
+    let target = target.trim();
+    if target.is_empty() {
+        print_console("Usage: op <player>");
+        return Ok(());
+    }
+    let Some(player) = context.players.player_by_name(target) else {
+        print_console(format!("Player not found or offline: {target}"));
+        return Ok(());
+    };
+    context
+        .permissions
+        .grant_global_wildcard(player.profile.uuid, &player.profile.username)
+        .await?;
+    let command_tree = crate::play::command_tree_packet_for_player(
+        &context.config,
+        &context.permissions,
+        &context.plugins,
+        &player.profile,
+    )
+    .await?;
+    context
+        .players
+        .send_packets_to(player.profile.uuid, vec![command_tree]);
+    print_console(format!(
+        "Granted '*' permission to {} ({})",
+        player.profile.username, player.profile.uuid
+    ));
+    Ok(())
+}
+
 fn broadcast_message(context: &ServerContext, message: &str) -> anyhow::Result<()> {
     let locale = crate::commands::i18n_locale(&context.config.language);
     let message = message.trim();
@@ -274,6 +342,12 @@ mod tests {
         assert_eq!(ConsoleCommand::parse("?"), ConsoleCommand::Help);
         assert_eq!(ConsoleCommand::parse("/help"), ConsoleCommand::Help);
         assert_eq!(ConsoleCommand::parse("players"), ConsoleCommand::List);
+        assert_eq!(ConsoleCommand::parse("ver"), ConsoleCommand::Version);
+        assert_eq!(ConsoleCommand::parse("plugins"), ConsoleCommand::Plugins);
+        assert_eq!(
+            ConsoleCommand::parse("op Steve"),
+            ConsoleCommand::Op("Steve".to_string())
+        );
         assert_eq!(ConsoleCommand::parse("exit"), ConsoleCommand::Stop);
     }
 

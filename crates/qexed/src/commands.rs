@@ -774,8 +774,24 @@ pub fn localized_console_help(locale: &str) -> String {
             Some(rust_i18n::t!("qexed.console.list.description", locale = locale_key).to_string()),
         ),
         CommandHelpEntry::new(
+            "version, ver",
+            Some(
+                rust_i18n::t!("qexed.console.version.description", locale = locale_key).to_string(),
+            ),
+        ),
+        CommandHelpEntry::new(
+            "plugin, plugins",
+            Some(
+                rust_i18n::t!("qexed.console.plugin.description", locale = locale_key).to_string(),
+            ),
+        ),
+        CommandHelpEntry::new(
             "say <message>",
             Some(rust_i18n::t!("qexed.console.say.description", locale = locale_key).to_string()),
+        ),
+        CommandHelpEntry::new(
+            "op <player>",
+            Some(rust_i18n::t!("qexed.console.op.description", locale = locale_key).to_string()),
         ),
         CommandHelpEntry::new(
             "stop, exit, quit",
@@ -861,6 +877,8 @@ fn localized_builtin_help_entry(command: &str, locale: &str) -> Option<CommandHe
     let (usage, description_key) = match command {
         "help" => ("/help", "qexed.command.help.description"),
         "list" => ("/list", "qexed.command.list.description"),
+        "version" => ("/version", "qexed.command.version.description"),
+        "plugins" => ("/plugins", "qexed.command.plugin.description"),
         "lobby" => ("/lobby [status|refresh]", "qexed.command.lobby.description"),
         "server" => ("/server [id]", "qexed.command.server.description"),
         "spawn" => ("/spawn", "qexed.command.spawn.description"),
@@ -902,6 +920,8 @@ fn builtin_command_literals() -> &'static [&'static str] {
     &[
         "help",
         "list",
+        "version",
+        "plugins",
         "lobby",
         "server",
         "spawn",
@@ -1015,7 +1035,7 @@ mod tests {
     fn command_tree_contains_help_and_list() {
         let tree = super::command_tree();
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes[0].children.len(), 13);
+        assert_eq!(tree.nodes[0].children.len(), 15);
 
         let root_command_names = tree.nodes[0]
             .children
@@ -1029,6 +1049,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(root_command_names.contains(&"help"));
         assert!(root_command_names.contains(&"list"));
+        assert!(root_command_names.contains(&"version"));
+        assert!(root_command_names.contains(&"plugin"));
         assert!(root_command_names.contains(&"lobby"));
         assert!(root_command_names.contains(&"server"));
         assert!(root_command_names.contains(&"spawn"));

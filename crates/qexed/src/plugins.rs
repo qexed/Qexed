@@ -13,16 +13,18 @@ mod event;
 mod files;
 pub(crate) mod host;
 mod instance;
+mod structured_storage;
 
 pub use qexed_plugin_api::{
     AdvancementGrantQuery, AdvancementGrantResponse, BlockDropPosition, BlockDropQuery,
     BlockDropResponse, BlockStepPayload, BlockStepPosition, ClickDetectedPayload, CraftItemQuery,
     CraftItemResponse, CraftingRecipeQuery, CraftingRecipeResponse, CustomEntityDefinition,
-    CustomEntityRegistryResponse, EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload,
-    EntityAiTickQuery, EntityAiTickResponse, FurnaceRecipeQuery, FurnaceRecipeResponse,
-    FurnaceTickPayload, ItemDurabilityQuery, ItemDurabilityResponse, ItemEnchantment,
-    ItemStackPayload, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
-    NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
+    CustomEntityRegistryResponse, EnchantingOption, EnchantingQuery, EnchantingResponse,
+    EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload, EntityAiTickQuery,
+    EntityAiTickResponse, FurnaceRecipeQuery, FurnaceRecipeResponse, FurnaceTickPayload,
+    ItemDurabilityQuery, ItemDurabilityResponse, ItemEnchantment, ItemStackPayload,
+    MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp,
+    NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
     PlayerAttackResponse, PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse,
     PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse, PlayerPayloadOwned,
@@ -97,6 +99,16 @@ impl PluginManager {
 
     pub fn plugin_count(&self) -> usize {
         self.plugins.get().map(Vec::len).unwrap_or(0)
+    }
+
+    pub fn plugin_summaries(&self) -> Vec<String> {
+        self.ensure_loaded()
+            .iter()
+            .map(|plugin| {
+                let plugin = plugin.lock().expect("plugin manager poisoned");
+                format!("{}({})", plugin.manifest.id, plugin.priority)
+            })
+            .collect()
     }
 
     fn ensure_loaded(&self) -> &Vec<Arc<Mutex<PluginInstance>>> {
@@ -408,6 +420,21 @@ impl PluginManager {
                 result.result = response.result;
             }
             result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn apply_enchanting_options(&self, query: EnchantingQuery) -> Option<EnchantingResponse> {
+        let mut result = None;
+        for response in
+            self.query_encoded::<_, EnchantingResponse>(PluginEvent::EnchantingOptions, &query)
+        {
+            let current = result.get_or_insert_with(EnchantingResponse::default);
+            if response.replace {
+                current.replace = true;
+                current.options.clear();
+            }
+            current.options.extend(response.options);
         }
         result
     }
@@ -790,6 +817,13 @@ impl PluginManager {
 
     pub fn configure_economy(&self, config: &qexed_config::app::qexed::server::Economy) {
         self.services.configure_economy(config);
+    }
+
+    pub fn configure_structured_storage(
+        &self,
+        config: &qexed_config::app::qexed::server::PluginStructuredStorage,
+    ) {
+        self.services.configure_structured_storage(config);
     }
 
     pub fn handle_npc_interact(

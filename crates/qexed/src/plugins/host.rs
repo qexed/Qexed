@@ -12,6 +12,7 @@ use wasmtime::Caller;
 
 use super::PluginState;
 use super::economy::{EconomyState, normalize_currency};
+use super::structured_storage::StructuredStorageState;
 
 const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
 const MAX_HOST_PATH_BYTES: usize = 1024;
@@ -28,11 +29,14 @@ const MAX_HOST_STORAGE_VALUE_BYTES: usize = 1024 * 1024;
 const MAX_RANDOM_POOL_PRECOMPUTE_COUNT: usize = 4096;
 const RANDOM_POOL_REFILL_BATCH: usize = 16;
 pub(super) const ECONOMY_ASYNC_PENDING: i64 = i64::MIN + 2;
+pub(super) const STRUCTURED_STORAGE_ASYNC_PENDING: i64 = i64::MIN + 2;
 
 #[derive(Debug, Default)]
 pub(super) struct PluginHostServices {
     economy: Mutex<EconomyState>,
     economy_async: Mutex<EconomyAsyncState>,
+    structured_storage: Mutex<StructuredStorageState>,
+    structured_storage_async: Mutex<StructuredStorageAsyncState>,
     plugin_services: Mutex<PluginServiceState>,
     plugin_api: Mutex<Option<std::sync::Arc<dyn PluginApiService>>>,
     pathfinding: Mutex<Option<std::sync::Arc<dyn PathfindingService>>>,
@@ -45,6 +49,27 @@ pub(super) struct PluginHostServices {
 struct EconomyAsyncState {
     next_id: i64,
     requests: HashMap<i64, Receiver<i64>>,
+}
+
+#[derive(Debug, Default)]
+struct StructuredStorageAsyncState {
+    next_id: i64,
+    requests: HashMap<i64, Receiver<Option<Vec<u8>>>>,
+}
+
+#[derive(Debug)]
+enum StructuredStorageOperation {
+    Exists,
+    Get,
+    Set(Vec<u8>),
+    Delete,
+}
+
+#[derive(Debug)]
+enum PollStructuredStorageResult {
+    Pending,
+    Ready(Vec<u8>),
+    Failed,
 }
 
 pub(crate) trait PluginApiService: Send + Sync + std::fmt::Debug {
@@ -80,6 +105,120 @@ impl PluginHostServices {
             .lock()
             .expect("plugin economy state poisoned")
             .configure(config);
+    }
+
+    pub(super) fn configure_structured_storage(
+        &self,
+        config: &qexed_config::app::qexed::server::PluginStructuredStorage,
+    ) {
+        self.structured_storage
+            .lock()
+            .expect("plugin structured storage state poisoned")
+            .configure(config);
+    }
+
+    fn structured_storage_exists(&self, plugin: &str, key: &str) -> bool {
+        self.structured_storage
+            .lock()
+            .expect("plugin structured storage state poisoned")
+            .exists(plugin, key)
+    }
+
+    fn structured_storage_get(&self, plugin: &str, key: &str) -> Option<Vec<u8>> {
+        self.structured_storage
+            .lock()
+            .expect("plugin structured storage state poisoned")
+            .get(plugin, key)
+    }
+
+    fn structured_storage_set(&self, plugin: &str, key: &str, value: &[u8]) -> bool {
+        self.structured_storage
+            .lock()
+            .expect("plugin structured storage state poisoned")
+            .set(plugin, key, value)
+    }
+
+    fn structured_storage_delete(&self, plugin: &str, key: &str) -> bool {
+        self.structured_storage
+            .lock()
+            .expect("plugin structured storage state poisoned")
+            .delete(plugin, key)
+    }
+
+    fn submit_structured_storage_async(
+        self: &Arc<Self>,
+        plugin: String,
+        key: String,
+        operation: StructuredStorageOperation,
+    ) -> i64 {
+        let (sender, receiver) = mpsc::channel();
+        let id = {
+            let mut state = self
+                .structured_storage_async
+                .lock()
+                .expect("plugin structured storage async state poisoned");
+            state.next_id = state.next_id.saturating_add(1).max(1);
+            let id = state.next_id;
+            state.requests.insert(id, receiver);
+            id
+        };
+        let services = Arc::clone(self);
+        std::thread::spawn(move || {
+            let result = match operation {
+                StructuredStorageOperation::Exists => Some(vec![u8::from(
+                    services.structured_storage_exists(&plugin, &key),
+                )]),
+                StructuredStorageOperation::Get => services.structured_storage_get(&plugin, &key),
+                StructuredStorageOperation::Set(value) => Some(vec![u8::from(
+                    services.structured_storage_set(&plugin, &key, &value),
+                )]),
+                StructuredStorageOperation::Delete => Some(vec![u8::from(
+                    services.structured_storage_delete(&plugin, &key),
+                )]),
+            };
+            let _ = sender.send(result);
+        });
+        id
+    }
+
+    fn poll_structured_storage_async(&self, id: i64) -> PollStructuredStorageResult {
+        if id <= 0 {
+            return PollStructuredStorageResult::Failed;
+        }
+        let mut state = self
+            .structured_storage_async
+            .lock()
+            .expect("plugin structured storage async state poisoned");
+        let Some(receiver) = state.requests.get(&id) else {
+            return PollStructuredStorageResult::Failed;
+        };
+        match receiver.try_recv() {
+            Ok(value) => {
+                state.requests.remove(&id);
+                match value {
+                    Some(value) => PollStructuredStorageResult::Ready(value),
+                    None => PollStructuredStorageResult::Failed,
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => PollStructuredStorageResult::Pending,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                state.requests.remove(&id);
+                PollStructuredStorageResult::Failed
+            }
+        }
+    }
+
+    fn forget_structured_storage_async(&self, id: i64) -> i32 {
+        if id <= 0 {
+            return -1;
+        }
+        self.structured_storage_async
+            .lock()
+            .expect("plugin structured storage async state poisoned")
+            .requests
+            .remove(&id)
+            .map(|_| 0)
+            .unwrap_or(-1)
     }
 
     pub(super) fn set_plugin_services(
@@ -647,6 +786,195 @@ pub(super) fn host_storage_delete(
     }
 }
 
+pub(super) fn host_structured_storage_exists(
+    mut caller: Caller<'_, PluginState>,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, ptr, len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    i32::from(
+        caller
+            .data()
+            .services
+            .structured_storage_exists(&plugin_name, &key),
+    )
+}
+
+pub(super) fn host_structured_storage_get(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    let Some(bytes) = caller
+        .data()
+        .services
+        .structured_storage_get(&plugin_name, &key)
+    else {
+        return -1;
+    };
+    if bytes.len() > MAX_HOST_STORAGE_VALUE_BYTES {
+        return -1;
+    }
+    write_host_response(&mut caller, out_ptr, out_len, &bytes)
+}
+
+pub(super) fn host_structured_storage_set(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+    data_ptr: i32,
+    data_len: i32,
+) -> i32 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    let Some(bytes) = host_memory_bytes(
+        &mut caller,
+        data_ptr,
+        data_len,
+        MAX_HOST_STORAGE_VALUE_BYTES,
+    ) else {
+        return -1;
+    };
+    let bytes = bytes.to_vec();
+    if caller
+        .data()
+        .services
+        .structured_storage_set(&plugin_name, &key, &bytes)
+    {
+        0
+    } else {
+        -1
+    }
+}
+
+pub(super) fn host_structured_storage_delete(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+) -> i32 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    if caller
+        .data()
+        .services
+        .structured_storage_delete(&plugin_name, &key)
+    {
+        0
+    } else {
+        -1
+    }
+}
+
+pub(super) fn host_structured_storage_exists_async(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+) -> i64 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    caller.data().services.submit_structured_storage_async(
+        plugin_name,
+        key,
+        StructuredStorageOperation::Exists,
+    )
+}
+
+pub(super) fn host_structured_storage_get_async(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+) -> i64 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    caller.data().services.submit_structured_storage_async(
+        plugin_name,
+        key,
+        StructuredStorageOperation::Get,
+    )
+}
+
+pub(super) fn host_structured_storage_set_async(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+    data_ptr: i32,
+    data_len: i32,
+) -> i64 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    let Some(bytes) = host_memory_bytes(
+        &mut caller,
+        data_ptr,
+        data_len,
+        MAX_HOST_STORAGE_VALUE_BYTES,
+    ) else {
+        return -1;
+    };
+    let bytes = bytes.to_vec();
+    caller.data().services.submit_structured_storage_async(
+        plugin_name,
+        key,
+        StructuredStorageOperation::Set(bytes),
+    )
+}
+
+pub(super) fn host_structured_storage_delete_async(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+) -> i64 {
+    let plugin_name = caller.data().name.clone();
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, MAX_HOST_STORAGE_KEY_BYTES) else {
+        return -1;
+    };
+    caller.data().services.submit_structured_storage_async(
+        plugin_name,
+        key,
+        StructuredStorageOperation::Delete,
+    )
+}
+
+pub(super) fn host_structured_storage_async_poll(
+    mut caller: Caller<'_, PluginState>,
+    id: i64,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    match caller.data().services.poll_structured_storage_async(id) {
+        PollStructuredStorageResult::Pending => STRUCTURED_STORAGE_ASYNC_PENDING,
+        PollStructuredStorageResult::Ready(bytes) => {
+            write_host_response(&mut caller, out_ptr, out_len, &bytes)
+        }
+        PollStructuredStorageResult::Failed => -1,
+    }
+}
+
+pub(super) fn host_structured_storage_async_forget(
+    caller: Caller<'_, PluginState>,
+    id: i64,
+) -> i32 {
+    caller.data().services.forget_structured_storage_async(id)
+}
+
 pub(super) fn host_economy_register_currency(
     mut caller: Caller<'_, PluginState>,
     id_ptr: i32,
@@ -818,6 +1146,89 @@ pub(super) fn host_economy_withdraw(
         amount,
         EconomyUpdate::Withdraw,
     )
+}
+
+pub(super) fn host_economy_balance_async(
+    mut caller: Caller<'_, PluginState>,
+    player_ptr: i32,
+    player_len: i32,
+    currency_ptr: i32,
+    currency_len: i32,
+) -> i64 {
+    economy_async_submit(
+        &mut caller,
+        player_ptr,
+        player_len,
+        currency_ptr,
+        currency_len,
+        0,
+        EconomyUpdate::Balance,
+    )
+}
+
+pub(super) fn host_economy_set_balance_async(
+    mut caller: Caller<'_, PluginState>,
+    player_ptr: i32,
+    player_len: i32,
+    currency_ptr: i32,
+    currency_len: i32,
+    amount: i64,
+) -> i64 {
+    economy_async_submit(
+        &mut caller,
+        player_ptr,
+        player_len,
+        currency_ptr,
+        currency_len,
+        amount,
+        EconomyUpdate::Set,
+    )
+}
+
+pub(super) fn host_economy_deposit_async(
+    mut caller: Caller<'_, PluginState>,
+    player_ptr: i32,
+    player_len: i32,
+    currency_ptr: i32,
+    currency_len: i32,
+    amount: i64,
+) -> i64 {
+    economy_async_submit(
+        &mut caller,
+        player_ptr,
+        player_len,
+        currency_ptr,
+        currency_len,
+        amount,
+        EconomyUpdate::Deposit,
+    )
+}
+
+pub(super) fn host_economy_withdraw_async(
+    mut caller: Caller<'_, PluginState>,
+    player_ptr: i32,
+    player_len: i32,
+    currency_ptr: i32,
+    currency_len: i32,
+    amount: i64,
+) -> i64 {
+    economy_async_submit(
+        &mut caller,
+        player_ptr,
+        player_len,
+        currency_ptr,
+        currency_len,
+        amount,
+        EconomyUpdate::Withdraw,
+    )
+}
+
+pub(super) fn host_economy_async_poll(caller: Caller<'_, PluginState>, id: i64) -> i64 {
+    caller.data().services.poll_economy_async(id)
+}
+
+pub(super) fn host_economy_async_forget(caller: Caller<'_, PluginState>, id: i64) -> i32 {
+    caller.data().services.forget_economy_async(id)
 }
 
 pub(super) fn host_lottery_roll(
@@ -1181,7 +1592,9 @@ fn clean_storage_key(key: &str) -> Option<PathBuf> {
     Some(clean)
 }
 
+#[derive(Debug, Clone, Copy)]
 enum EconomyUpdate {
+    Balance,
     Set,
     Deposit,
     Withdraw,
@@ -1206,9 +1619,42 @@ fn economy_update(
     if player.is_empty() || amount < 0 {
         return i64::MIN;
     }
-    let economy = caller
+    economy_update_inner(&caller.data().services, &player, &currency, amount, update)
+}
+
+fn economy_async_submit(
+    caller: &mut Caller<'_, PluginState>,
+    player_ptr: i32,
+    player_len: i32,
+    currency_ptr: i32,
+    currency_len: i32,
+    amount: i64,
+    update: EconomyUpdate,
+) -> i64 {
+    let Some(player) = host_string(caller, player_ptr, player_len, 128) else {
+        return i64::MIN;
+    };
+    let Some(currency) = host_string(caller, currency_ptr, currency_len, 128) else {
+        return i64::MIN;
+    };
+    let player = player.trim().to_string();
+    if player.is_empty() || amount < 0 {
+        return i64::MIN;
+    }
+    caller
         .data()
         .services
+        .submit_economy_async(player, currency, amount, update)
+}
+
+fn economy_update_inner(
+    services: &Arc<PluginHostServices>,
+    player: &str,
+    currency: &str,
+    amount: i64,
+    update: EconomyUpdate,
+) -> i64 {
+    let economy = services
         .economy
         .lock()
         .expect("plugin economy state poisoned");
@@ -1216,6 +1662,7 @@ fn economy_update(
         return i64::MIN;
     };
     let result = match update {
+        EconomyUpdate::Balance => economy.balance(player, &currency),
         EconomyUpdate::Set => economy.set_balance(&player, &currency, amount),
         EconomyUpdate::Deposit => economy.deposit(&player, &currency, amount),
         EconomyUpdate::Withdraw => match economy.withdraw(&player, &currency, amount) {

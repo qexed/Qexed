@@ -3,9 +3,8 @@ use qexed_plugin_sdk::{
     EntityAiTickResponse, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
     PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
     PlayerItemPickupQuery, PlayerItemPickupResponse, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, ProxyConnectResultPayload, config_load_or_create,
-    config_read_to_string, economy_currency_info, economy_register_currency, storage_get_typed,
-    storage_set_typed,
+    PluginCommandResponse, ProxyConnectResultPayload, config_load_or_create, config_read_to_string,
+    economy_currency_info, economy_register_currency, storage_get_typed, storage_set_typed,
 };
 use serde::{Deserialize, Serialize};
 

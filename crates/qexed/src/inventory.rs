@@ -192,6 +192,37 @@ impl PlayerInventory {
         Some((slot, dropped))
     }
 
+    pub fn take_hotbar_slot(&mut self, slot: usize) -> Option<(Slot, InventorySlotChange)> {
+        if slot >= self.hotbar.len() || self.hotbar[slot].item_count.0 <= 0 {
+            return None;
+        }
+        let item = std::mem::replace(&mut self.hotbar[slot], empty_slot());
+        if slot == self.selected {
+            self.set_equipment_slot(Equipment::MAINHAND, empty_slot());
+        }
+        Some((
+            item,
+            InventorySlotChange::Hotbar {
+                slot,
+                item: self.hotbar[slot].clone(),
+            },
+        ))
+    }
+
+    pub fn take_main_slot(&mut self, slot: usize) -> Option<(Slot, InventorySlotChange)> {
+        if slot >= self.main.len() || self.main[slot].item_count.0 <= 0 {
+            return None;
+        }
+        let item = std::mem::replace(&mut self.main[slot], empty_slot());
+        Some((
+            item,
+            InventorySlotChange::Main {
+                slot,
+                item: self.main[slot].clone(),
+            },
+        ))
+    }
+
     pub fn decrement_hotbar_slot(
         &mut self,
         slot: usize,
@@ -378,6 +409,14 @@ impl PlayerInventory {
 
     pub fn main_item(&self, slot: usize) -> Option<&Slot> {
         self.main.get(slot)
+    }
+
+    pub fn main_items(&self) -> &[Slot] {
+        &self.main
+    }
+
+    pub fn hotbar_items(&self) -> &[Slot] {
+        &self.hotbar
     }
 
     pub fn set_hotbar_slot(&mut self, slot: usize, item: Slot) -> Option<InventorySlotChange> {
