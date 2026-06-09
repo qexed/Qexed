@@ -11,6 +11,7 @@ use qexed_protocol::{
     },
     types::EntityMetadataEnum,
 };
+use std::collections::BTreeMap;
 
 fn stone_block_state() -> i32 {
     crate::inventory::placed_block_state_for_item(&qexed_protocol::types::Slot {
@@ -33,6 +34,101 @@ fn block_state_for_item_name(name: &str) -> i32 {
 
 fn empty_world() -> crate::world::WorldManager {
     crate::world::WorldManager::new(tempfile::tempdir().expect("temp world dir").keep())
+}
+
+fn test_position(x: f64, y: f64, z: f64) -> EntityPosition {
+    EntityPosition {
+        x,
+        y,
+        z,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: true,
+    }
+}
+
+fn test_manager_and_players() -> (EntityManager, crate::players::PlayerManager) {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    (manager, crate::players::PlayerManager::new(entity_ids))
+}
+
+fn join_test_player(
+    players: &crate::players::PlayerManager,
+    username: &str,
+    position: EntityPosition,
+) -> crate::players::PlayerSession {
+    players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: username.to_string(),
+            properties: Vec::new(),
+        },
+        position,
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    )
+}
+
+fn spawn_vanilla_entity(
+    manager: &EntityManager,
+    key: &str,
+    entity_type: &str,
+    position: EntityPosition,
+    ai_params: BTreeMap<String, serde_json::Value>,
+) {
+    let name = entity_type
+        .trim_start_matches("minecraft:")
+        .replace('_', " ");
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: key.to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: entity_type.to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position,
+            name: name.clone(),
+            display_name: name,
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params,
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+}
+
+fn tick_entities(
+    manager: &EntityManager,
+    players: &crate::players::PlayerManager,
+    world: &crate::world::WorldManager,
+) {
+    manager
+        .tick_ai(
+            players,
+            world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+}
+
+fn drain_player_events(session: &mut crate::players::PlayerSession) {
+    while session.receiver.try_recv().is_ok() {}
 }
 
 #[test]
@@ -979,6 +1075,979 @@ fn vanilla_hostile_ai_moves_entity_toward_player() {
     let entity = manager.entity_by_key("vanilla-zombie").unwrap();
     assert!(entity.position.x > 0.0);
     assert_eq!(entity.position.z, 0.0);
+}
+
+#[test]
+fn vanilla_zombie_melee_ai_damages_nearby_player() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let mut session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 1.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "attacking-zombie".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Zombie".to_string(),
+            display_name: "Zombie".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+
+    match session.receiver.try_recv().expect("player damage event") {
+        crate::players::PlayerEvent::Damage {
+            profile_id,
+            amount,
+            kind,
+            source_entity_id,
+            ..
+        } => {
+            assert_eq!(profile_id, session.player.profile.uuid);
+            assert_eq!(amount, 3.0);
+            assert_eq!(kind, crate::players::PlayerDamageKind::MobAttack);
+            assert_eq!(
+                source_entity_id,
+                manager.entity_by_key("attacking-zombie").unwrap().entity_id
+            );
+        }
+        event => panic!("expected damage event, got {event:?}"),
+    }
+}
+
+#[test]
+fn vanilla_creeper_swell_explodes_and_damages_player() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let mut session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 2.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "exploding-creeper".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:creeper".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Creeper".to_string(),
+            display_name: "Creeper".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            1_500,
+        )
+        .unwrap();
+
+    match session
+        .receiver
+        .try_recv()
+        .expect("player explosion damage event")
+    {
+        crate::players::PlayerEvent::Damage { amount, kind, .. } => {
+            assert!(amount > 0.0);
+            assert_eq!(kind, crate::players::PlayerDamageKind::Explosion);
+        }
+        event => panic!("expected damage event, got {event:?}"),
+    }
+    assert!(manager.entity_by_key("exploding-creeper").is_none());
+}
+
+#[test]
+fn vanilla_creeper_explosion_breaks_blocks() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 2.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    let block = qexed_packet::net_types::Position { x: 1, y: 64, z: 0 };
+    world.place_block("minecraft:overworld", block.clone(), stone_block_state());
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "block-breaking-creeper".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:creeper".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Creeper".to_string(),
+            display_name: "Creeper".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            1_500,
+        )
+        .unwrap();
+
+    assert!(crate::inventory::is_air_block_state(
+        world.block_state_at("minecraft:overworld", &block).unwrap()
+    ));
+}
+
+#[test]
+fn vanilla_creeper_explosion_can_disable_block_breaking() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 2.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    let block = qexed_packet::net_types::Position { x: 1, y: 64, z: 0 };
+    let stone = stone_block_state();
+    world.place_block("minecraft:overworld", block.clone(), stone);
+    let mut ai_params = std::collections::BTreeMap::new();
+    ai_params.insert(
+        "creeper_break_blocks".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "non-breaking-creeper".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:creeper".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Creeper".to_string(),
+            display_name: "Creeper".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params,
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            1_500,
+        )
+        .unwrap();
+
+    assert_eq!(
+        world.block_state_at("minecraft:overworld", &block),
+        Some(stone)
+    );
+}
+
+#[test]
+fn vanilla_skeleton_ranged_ai_spawns_arrow_projectile() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 10.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "ranged-skeleton".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:skeleton".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Skeleton".to_string(),
+            display_name: "Skeleton".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:arrow"
+                && entity.ai == "vanilla_projectile:arrow")
+    );
+}
+
+#[test]
+fn vanilla_arrow_projectile_hits_player_and_is_removed() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let mut session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        EntityPosition {
+            x: 10.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "shooting-skeleton".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:skeleton".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Skeleton".to_string(),
+            display_name: "Skeleton".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            50,
+        )
+        .unwrap();
+    while session.receiver.try_recv().is_ok() {}
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut damage_event = None;
+    for _ in 0..8 {
+        manager
+            .tick_ai(
+                &players,
+                &world,
+                &crate::plugins::PluginManager::empty_for_tests(),
+                &qexed_config::app::qexed::server::EntityRendering::default(),
+                50,
+            )
+            .unwrap();
+        while let Ok(event) = session.receiver.try_recv() {
+            if matches!(event, crate::players::PlayerEvent::Damage { .. }) {
+                damage_event = Some(event);
+                break;
+            }
+        }
+        if damage_event.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    match damage_event.expect("arrow damage event") {
+        crate::players::PlayerEvent::Damage { amount, kind, .. } => {
+            assert_eq!(amount, 4.0);
+            assert_eq!(kind, crate::players::PlayerDamageKind::Projectile);
+        }
+        event => panic!("expected damage event, got {event:?}"),
+    }
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:arrow")
+    );
+}
+
+#[test]
+fn vanilla_blaze_ranged_ai_spawns_small_fireball_projectile() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "ranged-blaze",
+        "minecraft:blaze",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:small_fireball"
+                && entity.ai == "vanilla_projectile:small_fireball")
+    );
+}
+
+#[test]
+fn vanilla_small_fireball_projectile_hits_player() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "shooting-blaze",
+        "minecraft:blaze",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+    drain_player_events(&mut session);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut damage_event = None;
+    for _ in 0..10 {
+        tick_entities(&manager, &players, &world);
+        while let Ok(event) = session.receiver.try_recv() {
+            if matches!(event, crate::players::PlayerEvent::Damage { .. }) {
+                damage_event = Some(event);
+                break;
+            }
+        }
+        if damage_event.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    match damage_event.expect("small fireball damage event") {
+        crate::players::PlayerEvent::Damage { amount, kind, .. } => {
+            assert_eq!(amount, 5.0);
+            assert_eq!(kind, crate::players::PlayerDamageKind::Projectile);
+        }
+        event => panic!("expected damage event, got {event:?}"),
+    }
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:small_fireball")
+    );
+}
+
+#[test]
+fn vanilla_witch_potion_projectile_applies_instant_damage_effect() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(4.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "throwing-witch",
+        "minecraft:witch",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:splash_potion"
+                && entity.ai == "vanilla_projectile:potion")
+    );
+    drain_player_events(&mut session);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut potion_event = None;
+    for _ in 0..12 {
+        tick_entities(&manager, &players, &world);
+        while let Ok(event) = session.receiver.try_recv() {
+            if matches!(event, crate::players::PlayerEvent::PotionEffect { .. }) {
+                potion_event = Some(event);
+                break;
+            }
+        }
+        if potion_event.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    match potion_event.expect("witch potion effect event") {
+        crate::players::PlayerEvent::PotionEffect {
+            effect,
+            amplifier,
+            duration_ticks,
+            ..
+        } => {
+            assert_eq!(effect, "minecraft:instant_damage");
+            assert_eq!(amplifier, 0);
+            assert_eq!(duration_ticks, 1);
+        }
+        event => panic!("expected potion effect event, got {event:?}"),
+    }
+}
+
+#[test]
+fn vanilla_ghast_fireball_explodes_and_breaks_blocks() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    let target_block = qexed_packet::net_types::Position { x: 8, y: 64, z: 0 };
+    world.place_block(
+        "minecraft:overworld",
+        target_block.clone(),
+        stone_block_state(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "shooting-ghast",
+        "minecraft:ghast",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:fireball"
+                && entity.ai == "vanilla_projectile:fireball")
+    );
+    drain_player_events(&mut session);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut damage_event = None;
+    for _ in 0..12 {
+        tick_entities(&manager, &players, &world);
+        while let Ok(event) = session.receiver.try_recv() {
+            if matches!(event, crate::players::PlayerEvent::Damage { .. }) {
+                damage_event = Some(event);
+                break;
+            }
+        }
+        if damage_event.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    match damage_event.expect("ghast fireball explosion damage event") {
+        crate::players::PlayerEvent::Damage { kind, .. } => {
+            assert_eq!(kind, crate::players::PlayerDamageKind::Explosion);
+        }
+        event => panic!("expected damage event, got {event:?}"),
+    }
+    let current = world
+        .block_state_at("minecraft:overworld", &target_block)
+        .expect("target block state");
+    assert!(crate::inventory::is_air_block_state(current));
+}
+
+#[test]
+fn vanilla_ghast_fireball_can_disable_block_breaking() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    let target_block = qexed_packet::net_types::Position { x: 8, y: 64, z: 0 };
+    let stone = stone_block_state();
+    world.place_block("minecraft:overworld", target_block.clone(), stone);
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert(
+        "projectile_break_blocks".to_string(),
+        serde_json::json!(false),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "nonbreaking-ghast",
+        "minecraft:ghast",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+    drain_player_events(&mut session);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut damage_event = None;
+    for _ in 0..12 {
+        tick_entities(&manager, &players, &world);
+        while let Ok(event) = session.receiver.try_recv() {
+            if matches!(event, crate::players::PlayerEvent::Damage { .. }) {
+                damage_event = Some(event);
+                break;
+            }
+        }
+        if damage_event.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    assert!(damage_event.is_some());
+    let current = world
+        .block_state_at("minecraft:overworld", &target_block)
+        .expect("target block state");
+    assert_eq!(current, stone);
+}
+
+#[test]
+fn vanilla_cave_spider_melee_applies_poison() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "poison-spider",
+        "minecraft:cave_spider",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut damaged = false;
+    let mut poison = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        match event {
+            crate::players::PlayerEvent::Damage { kind, .. } => {
+                damaged = kind == crate::players::PlayerDamageKind::MobAttack;
+            }
+            crate::players::PlayerEvent::PotionEffect {
+                effect,
+                duration_ticks,
+                ..
+            } => {
+                poison = Some((effect, duration_ticks));
+            }
+            _ => {}
+        }
+    }
+
+    assert!(damaged);
+    assert_eq!(poison, Some(("minecraft:poison".to_string(), 20 * 7)));
+}
+
+#[test]
+fn vanilla_wither_skeleton_melee_applies_wither() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "wither-skeleton",
+        "minecraft:wither_skeleton",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut effect = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        if let crate::players::PlayerEvent::PotionEffect {
+            effect: effect_name,
+            duration_ticks,
+            ..
+        } = event
+        {
+            effect = Some((effect_name, duration_ticks));
+        }
+    }
+
+    assert_eq!(effect, Some(("minecraft:wither".to_string(), 20 * 10)));
+}
+
+#[test]
+fn vanilla_husk_melee_applies_hunger() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "hungry-husk",
+        "minecraft:husk",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut effect = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        if let crate::players::PlayerEvent::PotionEffect {
+            effect: effect_name,
+            duration_ticks,
+            ..
+        } = event
+        {
+            effect = Some((effect_name, duration_ticks));
+        }
+    }
+
+    assert_eq!(effect, Some(("minecraft:hunger".to_string(), 20 * 7)));
+}
+
+#[test]
+fn vanilla_guardian_charges_magic_beam_damage() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("attack_duration_ticks".to_string(), serde_json::json!(2));
+    ai_params.insert("guardian_magic_damage".to_string(), serde_json::json!(3.0));
+    spawn_vanilla_entity(
+        &manager,
+        "beam-guardian",
+        "minecraft:guardian",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+    drain_player_events(&mut session);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    tick_entities(&manager, &players, &world);
+
+    let mut damage = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        if let crate::players::PlayerEvent::Damage { amount, kind, .. } = event {
+            damage = Some((amount, kind));
+        }
+    }
+
+    assert_eq!(damage, Some((3.0, crate::players::PlayerDamageKind::Magic)));
+}
+
+#[test]
+fn vanilla_zombie_burns_in_daylight() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let profile = qexed_packet::net_types::GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Viewer".to_string(),
+        properties: Vec::new(),
+    };
+    let _session = players.join(
+        profile,
+        EntityPosition {
+            x: 0.0,
+            y: 64.0,
+            z: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        },
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    let world_rules = crate::world::WorldRulesManager::from_world_config_for_tests(
+        &qexed_config::app::qexed::server::World::default(),
+        tempfile::tempdir().expect("world rules dir").keep(),
+    )
+    .unwrap();
+    world_rules
+        .set_time_value("minecraft:overworld", 1_000)
+        .unwrap();
+    manager
+        .spawn_local(EntitySpawnRequest {
+            key: "daylight-zombie".to_string(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:zombie".to_string(),
+            entity_type_id_override: None,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Zombie".to_string(),
+            display_name: "Zombie".to_string(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: "vanilla".to_string(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })
+        .unwrap();
+
+    manager
+        .tick_ai_with_world_rules(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            Some(&world_rules),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            1_000,
+        )
+        .unwrap();
+
+    assert!(
+        manager
+            .entity_fire_ticks_for_tests("daylight-zombie")
+            .is_some_and(|ticks| ticks > 0)
+    );
+    assert!(
+        manager
+            .entity_health_for_tests("daylight-zombie")
+            .is_some_and(|health| health < 20.0)
+    );
 }
 
 #[test]

@@ -20,6 +20,23 @@ pub(super) fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool
             dimension: _,
             position: _,
         } => *target_id == profile_id,
+        PlayerEvent::Damage {
+            profile_id: target_id,
+            amount: _,
+            kind: _,
+            source_entity_id: _,
+            source_position: _,
+            knockback: _,
+        } => *target_id == profile_id,
+        PlayerEvent::PotionEffect {
+            profile_id: target_id,
+            effect: _,
+            amplifier: _,
+            duration_ticks: _,
+            source_entity_id: _,
+            source_position: _,
+            knockback: _,
+        } => *target_id == profile_id,
         PlayerEvent::DimensionChanged {
             profile_id: target_id,
             entity_id: _,

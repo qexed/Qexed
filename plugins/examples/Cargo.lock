@@ -321,6 +321,8 @@ name = "slime_jump"
 version = "0.1.0"
 dependencies = [
  "qexed_plugin_sdk",
+ "serde",
+ "toml",
 ]
 
 [[package]]

@@ -54,6 +54,23 @@ impl PlayerEvent {
                 dimension: _,
                 position: _,
             } => Ok(Vec::new()),
+            Self::Damage {
+                profile_id: _,
+                amount: _,
+                kind: _,
+                source_entity_id: _,
+                source_position: _,
+                knockback: _,
+            } => Ok(Vec::new()),
+            Self::PotionEffect {
+                profile_id: _,
+                effect: _,
+                amplifier: _,
+                duration_ticks: _,
+                source_entity_id: _,
+                source_position: _,
+                knockback: _,
+            } => Ok(Vec::new()),
             Self::DimensionChanged {
                 profile_id: _,
                 entity_id,

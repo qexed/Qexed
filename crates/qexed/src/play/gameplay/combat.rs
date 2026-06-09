@@ -122,11 +122,8 @@ where
             .await?;
         }
         if fire_ticks > 0 {
-            sink.send(EntityEvent {
-                entity_id: target_entity_id,
-                event_id: 37,
-            })
-            .await?;
+            let _ =
+                entities.ignite_managed_entity(players, rendering, target_entity_id, fire_ticks)?;
         }
         if result.killed {
             send_death_animation(sink, players, player, target_entity_id).await?;

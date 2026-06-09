@@ -81,10 +81,11 @@ fn run_global_service_tick(context: &ServerContext) -> Result<()> {
             &context.config.world.default_play_dimension(),
             Some(&context.config.server.entities),
         )?;
-        context.entities.tick_ai(
+        context.entities.tick_ai_with_world_rules(
             &context.players,
             &context.world,
             &context.plugins,
+            Some(&context.world_rules),
             &context.config.server.entity_rendering,
             spawning.ai_tick_interval_ms,
         )?;

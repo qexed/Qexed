@@ -29,12 +29,15 @@ use qexed_protocol::to_client::play::{
     add_entity::EntityPosition,
     command_suggestions::{CommandSuggestions, Matches},
     container_set_slot,
+    damage_event::{DamageEvent, DamageSourcePosition},
+    hurt_animation::HurtAnimation,
     keep_alive::KeepAlive as ClientboundKeepAlive,
     login::Login,
     player_chat::{PackedMessageSignature, PlayerChat},
     player_info_update::{PlayerInfoActions, PlayerInfoEntry, PlayerInfoUpdate},
     position::Position,
     respawn::{KEEP_NO_DATA, Respawn},
+    set_entity_motion::SetEntityMotion,
     set_held_slot::SetHeldSlot,
     set_time::SetTime,
     system_chat::SystemChat,
@@ -56,7 +59,7 @@ use qexed_protocol::to_server::play::{
 };
 
 use crate::player_data::{PlayerData, PlayerDataManager};
-use crate::players::{PlayerManager, PlayerSession};
+use crate::players::{PlayerDamageKind, PlayerManager, PlayerSession};
 use crate::world::WorldManager;
 
 use bootstrap::{
@@ -868,6 +871,79 @@ where
                 let Some(event) = event else {
                     continue;
                 };
+                if let crate::players::PlayerEvent::Damage {
+                    profile_id: target_id,
+                    amount,
+                    kind,
+                    source_entity_id,
+                    source_position,
+                    knockback,
+                } = event
+                {
+                    if target_id == profile.uuid {
+                        if apply_external_player_damage(
+                            sink,
+                            players,
+                            entities,
+                            world_config.game_mode,
+                            profile.uuid,
+                            &play_dimension,
+                            session.player.entity_id,
+                            position,
+                            &mut inventory,
+                            &mut survival,
+                            amount,
+                            kind,
+                            source_entity_id,
+                            source_position,
+                            knockback,
+                            &config.server.entity_rendering,
+                        )
+                        .await?
+                        {
+                            pending_dig = None;
+                        }
+                    }
+                    continue;
+                }
+                if let crate::players::PlayerEvent::PotionEffect {
+                    profile_id: target_id,
+                    effect,
+                    amplifier,
+                    duration_ticks,
+                    source_entity_id,
+                    source_position,
+                    knockback,
+                } = event
+                {
+                    if target_id == profile.uuid
+                        && apply_external_player_potion_effect(
+                            sink,
+                            players,
+                            entities,
+                            world_config.game_mode,
+                            profile.uuid,
+                            &play_dimension,
+                            session.player.entity_id,
+                            position,
+                            &mut inventory,
+                            &mut survival,
+                            &mut gameplay_runtime.effects,
+                            &config.server.gameplay,
+                            &effect,
+                            amplifier,
+                            duration_ticks,
+                            source_entity_id,
+                            source_position,
+                            knockback,
+                            &config.server.entity_rendering,
+                        )
+                        .await?
+                    {
+                        pending_dig = None;
+                    }
+                    continue;
+                }
                 if let crate::players::PlayerEvent::Teleport {
                     profile_id: target_id,
                     dimension: target_dimension,
@@ -3421,6 +3497,283 @@ fn login_dimension_names(
     dimensions
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn apply_external_player_damage<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    game_mode: GameMode,
+    actor: uuid::Uuid,
+    dimension: &str,
+    collector_entity_id: i32,
+    position: EntityPosition,
+    inventory: &mut crate::inventory::PlayerInventory,
+    survival: &mut SurvivalState,
+    amount: f32,
+    kind: PlayerDamageKind,
+    source_entity_id: i32,
+    source_position: EntityPosition,
+    knockback: f32,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if game_mode != GameMode::Survival || survival.is_dead() || amount <= 0.0 || !amount.is_finite()
+    {
+        return Ok(false);
+    }
+
+    let message = external_damage_death_message(kind);
+    let outcome = survival.apply_damage(amount, message);
+    if !outcome.changed() {
+        return Ok(false);
+    }
+
+    send_external_damage_feedback(
+        sink,
+        players,
+        actor,
+        collector_entity_id,
+        position,
+        source_entity_id,
+        source_position,
+        knockback,
+    )
+    .await?;
+    sink.send(survival.health_packet()).await?;
+    if outcome.death_message().is_some() {
+        handle_external_player_death(
+            sink,
+            players,
+            entities,
+            game_mode,
+            actor,
+            dimension,
+            collector_entity_id,
+            position,
+            inventory,
+            kind,
+            source_entity_id,
+            rendering,
+        )
+        .await?;
+    }
+    sink.flush().await?;
+    Ok(survival.is_dead())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_external_player_potion_effect<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    game_mode: GameMode,
+    actor: uuid::Uuid,
+    dimension: &str,
+    collector_entity_id: i32,
+    position: EntityPosition,
+    inventory: &mut crate::inventory::PlayerInventory,
+    survival: &mut SurvivalState,
+    effects: &mut gameplay::effects::EffectRuntime,
+    config: &qexed_config::app::qexed::server::Gameplay,
+    effect: &str,
+    amplifier: i32,
+    duration_ticks: i32,
+    source_entity_id: i32,
+    source_position: EntityPosition,
+    knockback: f32,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !config.potion_effects
+        || game_mode != GameMode::Survival
+        || survival.is_dead()
+        || effect.trim().is_empty()
+        || duration_ticks <= 0
+    {
+        return Ok(false);
+    }
+
+    if is_instant_potion_effect(effect) {
+        let outcome = effects
+            .apply_instant_effect(sink, collector_entity_id, effect, amplifier, survival)
+            .await?;
+        if outcome.changed() {
+            send_external_damage_feedback(
+                sink,
+                players,
+                actor,
+                collector_entity_id,
+                position,
+                source_entity_id,
+                source_position,
+                knockback,
+            )
+            .await?;
+        }
+        if outcome.death_message().is_some() {
+            handle_external_player_death(
+                sink,
+                players,
+                entities,
+                game_mode,
+                actor,
+                dimension,
+                collector_entity_id,
+                position,
+                inventory,
+                PlayerDamageKind::Magic,
+                source_entity_id,
+                rendering,
+            )
+            .await?;
+        }
+    } else {
+        effects
+            .add_effect(sink, collector_entity_id, effect, amplifier, duration_ticks)
+            .await?;
+    }
+
+    sink.flush().await?;
+    Ok(survival.is_dead())
+}
+
+fn is_instant_potion_effect(effect: &str) -> bool {
+    matches!(
+        normalize_resource_key(effect).as_str(),
+        "minecraft:instant_damage" | "minecraft:instant_health"
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_external_player_death<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    game_mode: GameMode,
+    actor: uuid::Uuid,
+    dimension: &str,
+    collector_entity_id: i32,
+    position: EntityPosition,
+    inventory: &mut crate::inventory::PlayerInventory,
+    kind: PlayerDamageKind,
+    source_entity_id: i32,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    broadcast_external_death_message(
+        sink,
+        players,
+        entities,
+        kind,
+        source_entity_id,
+        actor,
+        collector_entity_id,
+    )
+    .await?;
+    drop_player_inventory_on_death(
+        sink,
+        players,
+        entities,
+        game_mode,
+        actor,
+        dimension,
+        position,
+        inventory,
+        rendering,
+        collector_entity_id,
+    )
+    .await
+}
+
+async fn send_external_damage_feedback<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    collector_entity_id: i32,
+    position: EntityPosition,
+    source_entity_id: i32,
+    source_position: EntityPosition,
+    knockback: f32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let damage_event = DamageEvent {
+        entity_id: VarInt(collector_entity_id),
+        source_type_id: VarInt(0),
+        source_cause_id: VarInt(source_entity_id),
+        source_direct_id: VarInt(source_entity_id),
+        has_source_position: true,
+        source_position: Some(DamageSourcePosition {
+            x: source_position.x,
+            y: source_position.y,
+            z: source_position.z,
+        }),
+    };
+    let hurt = HurtAnimation {
+        entity_id: VarInt(collector_entity_id),
+        yaw: damage_yaw_from_source(position, source_position),
+    };
+    let mut broadcast = vec![
+        crate::players::packet_bytes(damage_event.clone())?,
+        crate::players::packet_bytes(hurt.clone())?,
+    ];
+    sink.send(damage_event).await?;
+    sink.send(hurt).await?;
+
+    if knockback > 0.0 {
+        let motion =
+            external_damage_knockback(collector_entity_id, position, source_position, knockback);
+        broadcast.push(crate::players::packet_bytes(motion.clone())?);
+        sink.send(motion).await?;
+    }
+
+    players.broadcast_packets_except(actor, broadcast);
+    Ok(())
+}
+
+fn external_damage_death_message(kind: PlayerDamageKind) -> DeathMessage {
+    match kind {
+        PlayerDamageKind::Explosion => DeathMessage::Explosion,
+        PlayerDamageKind::Magic => DeathMessage::Magic,
+        PlayerDamageKind::Generic | PlayerDamageKind::MobAttack | PlayerDamageKind::Projectile => {
+            DeathMessage::Generic
+        }
+    }
+}
+
+fn damage_yaw_from_source(position: EntityPosition, source: EntityPosition) -> f32 {
+    let dx = source.x - position.x;
+    let dz = source.z - position.z;
+    if dx.abs() <= f64::EPSILON && dz.abs() <= f64::EPSILON {
+        return position.yaw;
+    }
+    (dz.atan2(dx).to_degrees() as f32) - 90.0
+}
+
+fn external_damage_knockback(
+    entity_id: i32,
+    position: EntityPosition,
+    source: EntityPosition,
+    strength: f32,
+) -> SetEntityMotion {
+    let dx = position.x - source.x;
+    let dz = position.z - source.z;
+    let length = (dx * dx + dz * dz).sqrt().max(0.0001);
+    SetEntityMotion::from_velocity(
+        entity_id,
+        dx / length * f64::from(strength),
+        0.35,
+        dz / length * f64::from(strength),
+    )
+}
+
 async fn apply_survival_movement<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
@@ -3534,7 +3887,37 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     broadcast_death_message(sink, players, message, actor, collector_entity_id).await?;
+    drop_player_inventory_on_death(
+        sink,
+        players,
+        entities,
+        game_mode,
+        actor,
+        dimension,
+        position,
+        inventory,
+        rendering,
+        collector_entity_id,
+    )
+    .await
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn drop_player_inventory_on_death<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    game_mode: GameMode,
+    actor: uuid::Uuid,
+    dimension: &str,
+    position: EntityPosition,
+    inventory: &mut crate::inventory::PlayerInventory,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+    collector_entity_id: i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
     if game_mode != GameMode::Survival {
         return Ok(());
     }
@@ -4087,6 +4470,66 @@ where
         message.translation_key()
     );
     Ok(())
+}
+
+async fn broadcast_external_death_message<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    entities: &crate::entities::EntityManager,
+    kind: PlayerDamageKind,
+    source_entity_id: i32,
+    actor: uuid::Uuid,
+    collector_entity_id: i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let actor_name = text_component(players.display_name(actor));
+    let source_name = external_damage_source_name(entities, source_entity_id);
+    let (key, with) = match (kind, source_name) {
+        (PlayerDamageKind::MobAttack, Some(source)) => {
+            ("death.attack.mob", vec![actor_name, text_component(source)])
+        }
+        (PlayerDamageKind::Projectile, Some(source)) => (
+            "death.attack.arrow",
+            vec![actor_name, text_component(source)],
+        ),
+        (PlayerDamageKind::Explosion, Some(source)) => (
+            "death.attack.explosion.player",
+            vec![actor_name, text_component(source)],
+        ),
+        (PlayerDamageKind::Explosion, None) => ("death.attack.explosion", vec![actor_name]),
+        (PlayerDamageKind::Magic, _) => ("death.attack.magic", vec![actor_name]),
+        _ => ("death.attack.generic", vec![actor_name]),
+    };
+    let packet = SystemChat {
+        content: translatable_component(key, with),
+        overlay: false,
+    };
+    let bytes = crate::players::packet_bytes(packet.clone())?;
+    sink.send(packet).await?;
+    players.broadcast_packets_except(actor, vec![bytes]);
+    log::debug!("player died: entity_id={collector_entity_id}, message={key}");
+    Ok(())
+}
+
+fn external_damage_source_name(
+    entities: &crate::entities::EntityManager,
+    source_entity_id: i32,
+) -> Option<String> {
+    let entity = entities.entity_by_runtime_id(source_entity_id)?;
+    if !entity.display_name.trim().is_empty() {
+        return Some(entity.display_name);
+    }
+    if !entity.name.trim().is_empty() {
+        return Some(entity.name);
+    }
+    Some(
+        entity
+            .entity_type
+            .trim_start_matches("minecraft:")
+            .to_string(),
+    )
 }
 
 async fn respawn_player<W>(

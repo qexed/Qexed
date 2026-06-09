@@ -2,6 +2,15 @@ use bytes::Bytes;
 use qexed_protocol::to_client::play::{add_entity::EntityPosition, set_equipment::Equipment};
 use tokio::sync::mpsc;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerDamageKind {
+    Generic,
+    MobAttack,
+    Projectile,
+    Explosion,
+    Magic,
+}
+
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
     Joined(OnlinePlayer),
@@ -27,6 +36,23 @@ pub enum PlayerEvent {
         profile_id: uuid::Uuid,
         dimension: String,
         position: EntityPosition,
+    },
+    Damage {
+        profile_id: uuid::Uuid,
+        amount: f32,
+        kind: PlayerDamageKind,
+        source_entity_id: i32,
+        source_position: EntityPosition,
+        knockback: f32,
+    },
+    PotionEffect {
+        profile_id: uuid::Uuid,
+        effect: String,
+        amplifier: i32,
+        duration_ticks: i32,
+        source_entity_id: i32,
+        source_position: EntityPosition,
+        knockback: f32,
     },
     EquipmentChanged {
         profile_id: uuid::Uuid,

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use qexed_protocol::to_client::play::{add_entity::EntityPosition, set_equipment::Equipment};
 use tokio::sync::mpsc;
 
-use crate::{OnlinePlayer, PlayerEvent, PlayerSession, model::PlayerHandle};
+use crate::{OnlinePlayer, PlayerDamageKind, PlayerEvent, PlayerSession, model::PlayerHandle};
 
 pub const DEFAULT_DISPLAYED_SKIN_PARTS: u8 = 0x7f;
 
@@ -203,6 +203,67 @@ impl PlayerManager {
         };
         broadcast_locked(&players, profile_id, event);
         true
+    }
+
+    pub fn damage_player(
+        &self,
+        profile_id: uuid::Uuid,
+        amount: f32,
+        kind: PlayerDamageKind,
+        source_entity_id: i32,
+        source_position: EntityPosition,
+        knockback: f32,
+    ) -> bool {
+        if amount <= 0.0 || !amount.is_finite() {
+            return false;
+        }
+        let players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get(&profile_id) else {
+            return false;
+        };
+        handle
+            .sender
+            .send(PlayerEvent::Damage {
+                profile_id,
+                amount,
+                kind,
+                source_entity_id,
+                source_position,
+                knockback: knockback.max(0.0),
+            })
+            .is_ok()
+    }
+
+    pub fn apply_potion_effect(
+        &self,
+        profile_id: uuid::Uuid,
+        effect: impl Into<String>,
+        amplifier: i32,
+        duration_ticks: i32,
+        source_entity_id: i32,
+        source_position: EntityPosition,
+        knockback: f32,
+    ) -> bool {
+        let effect = effect.into();
+        if effect.trim().is_empty() || duration_ticks <= 0 {
+            return false;
+        }
+        let players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get(&profile_id) else {
+            return false;
+        };
+        handle
+            .sender
+            .send(PlayerEvent::PotionEffect {
+                profile_id,
+                effect,
+                amplifier: amplifier.max(0),
+                duration_ticks,
+                source_entity_id,
+                source_position,
+                knockback: knockback.max(0.0),
+            })
+            .is_ok()
     }
 
     pub fn player_by_name(&self, username: &str) -> Option<OnlinePlayer> {
