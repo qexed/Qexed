@@ -24,6 +24,72 @@ pub(super) struct MenuRuntime {
     config: Menus,
 }
 
+pub(super) struct MenuRenderContext<'a> {
+    placeholders_enabled: bool,
+    plugins: &'a crate::plugins::PluginManager,
+    player: Option<crate::players::OnlinePlayer>,
+    placeholder_context: crate::placeholders::PlaceholderContext,
+}
+
+impl<'a> MenuRenderContext<'a> {
+    pub(super) fn from_player(
+        server_config: Option<&qexed_config::app::qexed::server::Server>,
+        plugins: &'a crate::plugins::PluginManager,
+        players: &crate::players::PlayerManager,
+        actor: uuid::Uuid,
+    ) -> Self {
+        Self {
+            placeholders_enabled: server_config.is_some_and(|config| config.placeholders.enable),
+            plugins,
+            player: players.player_by_uuid(actor),
+            placeholder_context: crate::placeholders::PlaceholderContext {
+                online_players: players.online_count(),
+                max_players: server_config.map(|config| config.max_player).unwrap_or(-1),
+                lobby_online_servers: 0,
+                lobby_total_servers: 0,
+                lobby_servers: "none".to_string(),
+            },
+        }
+    }
+
+    pub(super) fn from_lobby(
+        server_config: Option<&qexed_config::app::qexed::server::Server>,
+        plugins: &'a crate::plugins::PluginManager,
+        players: &crate::players::PlayerManager,
+        actor: uuid::Uuid,
+        lobby: &super::lobby::LobbyRuntime,
+        lobby_status: &super::lobby::LobbyStatusSnapshot,
+    ) -> Self {
+        let labels = lobby.server_labels(lobby_status);
+        Self {
+            placeholders_enabled: server_config.is_some_and(|config| config.placeholders.enable),
+            plugins,
+            player: players.player_by_uuid(actor),
+            placeholder_context: crate::placeholders::PlaceholderContext {
+                online_players: players.online_count(),
+                max_players: server_config.map(|config| config.max_player).unwrap_or(-1),
+                lobby_online_servers: lobby.online_server_count(lobby_status),
+                lobby_total_servers: lobby.total_server_count(lobby_status),
+                lobby_servers: if labels.is_empty() {
+                    "none".to_string()
+                } else {
+                    labels.join(", ")
+                },
+            },
+        }
+    }
+
+    fn render(&self, text: &str) -> String {
+        crate::placeholders::format_placeholders(
+            self.placeholders_enabled,
+            self.plugins,
+            self.player.as_ref(),
+            text,
+            &self.placeholder_context,
+        )
+    }
+}
+
 impl MenuRuntime {
     pub(super) fn new(config: &Menus) -> Self {
         Self {
@@ -125,6 +191,7 @@ impl MenuRuntime {
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         menu_id: &str,
+        render_context: Option<&MenuRenderContext<'_>>,
     ) -> Result<Option<String>>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -136,13 +203,13 @@ impl MenuRuntime {
         sink.send(OpenScreen {
             window_id: VarInt(MENU_WINDOW_ID_RAW),
             menu_type: VarInt(menu_type_for_rows(rows)),
-            title: text_component(menu.title.clone()),
+            title: text_component(render_menu_text(&menu.title, render_context)),
         })
         .await?;
         sink.send(ContainerSetContent {
             window_id: VarInt(MENU_WINDOW_ID_RAW),
             state_id: VarInt(0),
-            slot_data: menu_slots(rows, &menu.items),
+            slot_data: menu_slots(rows, &menu.items, render_context),
             carried_item: crate::inventory::empty_slot(),
         })
         .await?;
@@ -154,6 +221,7 @@ impl MenuRuntime {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         active_menu_id: Option<&str>,
         click: ContainerClick,
+        render_context: Option<&MenuRenderContext<'_>>,
     ) -> Result<Option<MenuAction>>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -173,7 +241,7 @@ impl MenuRuntime {
         let Some(menu) = active_menu_id.and_then(|id| self.resolve_menu(id)) else {
             return Ok(Some(MenuAction::default()));
         };
-        self.resync_menu_content(sink, menu).await?;
+        self.resync_menu_content(sink, menu, render_context).await?;
         Ok(menu
             .items
             .iter()
@@ -200,6 +268,7 @@ impl MenuRuntime {
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         menu: &qexed_config::app::qexed::server::ChestMenu,
+        render_context: Option<&MenuRenderContext<'_>>,
     ) -> Result<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -208,7 +277,7 @@ impl MenuRuntime {
         sink.send(ContainerSetContent {
             window_id: VarInt(MENU_WINDOW_ID),
             state_id: VarInt(0),
-            slot_data: menu_slots(rows, &menu.items),
+            slot_data: menu_slots(rows, &menu.items, render_context),
             carried_item: crate::inventory::empty_slot(),
         })
         .await?;
@@ -235,16 +304,37 @@ fn menu_slot_item_matches(actual: &Slot, expected: &Slot) -> bool {
     actual.item_count.0 > 0 && actual == expected
 }
 
-fn menu_slots(rows: u8, items: &[MenuItem]) -> Vec<Slot> {
+fn menu_slots(
+    rows: u8,
+    items: &[MenuItem],
+    render_context: Option<&MenuRenderContext<'_>>,
+) -> Vec<Slot> {
     let mut slots = vec![crate::inventory::empty_slot(); usize::from(rows) * 9];
     for item in items {
         let slot = usize::from(item.slot);
         if slot >= slots.len() {
             continue;
         }
-        slots[slot] = named_item_with_lore(&item.item, &item.name, &item.lore, 1);
+        let name = render_menu_text(&item.name, render_context);
+        let lore = render_menu_lore(&item.lore, render_context);
+        slots[slot] = named_item_with_lore(&item.item, &name, &lore, 1);
     }
     slots
+}
+
+fn render_menu_text(text: &str, render_context: Option<&MenuRenderContext<'_>>) -> String {
+    render_context
+        .map(|context| context.render(text))
+        .unwrap_or_else(|| text.to_string())
+}
+
+fn render_menu_lore(
+    lore: &[String],
+    render_context: Option<&MenuRenderContext<'_>>,
+) -> Vec<String> {
+    lore.iter()
+        .map(|line| render_menu_text(line, render_context))
+        .collect()
 }
 
 fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32) -> Slot {
@@ -401,7 +491,7 @@ message = "Connecting"
         };
 
         let action = runtime
-            .handle_container_click(&mut sink, Some("main"), click)
+            .handle_container_click(&mut sink, Some("main"), click, None)
             .await
             .unwrap()
             .unwrap();
@@ -410,5 +500,89 @@ message = "Connecting"
         assert_eq!(action.kind, MenuActionKind::Message);
         assert!(output.contains(&0x14));
         assert!(output.contains(&0x12));
+    }
+
+    #[test]
+    fn menu_item_name_and_lore_render_placeholders() {
+        let plugins = crate::plugins::PluginManager::empty_for_tests();
+        let render_context = super::MenuRenderContext {
+            placeholders_enabled: true,
+            plugins: &plugins,
+            player: Some(test_player("Tester")),
+            placeholder_context: crate::placeholders::PlaceholderContext {
+                online_players: 3,
+                max_players: 20,
+                lobby_online_servers: 1,
+                lobby_total_servers: 2,
+                lobby_servers: "Lobby".to_string(),
+            },
+        };
+        let slots = super::menu_slots(
+            1,
+            &[qexed_config::app::qexed::server::MenuItem {
+                slot: 0,
+                item: "minecraft:paper".to_string(),
+                name: "Hello %player_name%".to_string(),
+                lore: vec![
+                    "Online %online_players%/%max_players%".to_string(),
+                    "Player %player_name%".to_string(),
+                ],
+                ..Default::default()
+            }],
+            Some(&render_context),
+        );
+
+        let components = slots[0].components_to_add.as_ref().expect("components");
+        let name = components
+            .iter()
+            .find_map(|component| match component {
+                qexed_protocol::types::ComponentsToAdd::MinecraftItemName(item_name) => {
+                    Some(text_component_value(&item_name.name))
+                }
+                _ => None,
+            })
+            .expect("item name");
+        let lore = components
+            .iter()
+            .find_map(|component| match component {
+                qexed_protocol::types::ComponentsToAdd::MinecraftLore(lore) => Some(
+                    lore.lines
+                        .iter()
+                        .map(text_component_value)
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .expect("lore");
+
+        assert_eq!(name, "Hello Tester");
+        assert_eq!(lore, vec!["Online 3/20", "Player Tester"]);
+    }
+
+    fn text_component_value(component: &qexed_protocol::types::TextComponent) -> String {
+        let qexed_nbt::Tag::Compound(values) = component else {
+            panic!("expected text component compound");
+        };
+        let Some(qexed_nbt::Tag::String(text)) = values.get("text") else {
+            panic!("expected text field");
+        };
+        text.to_string()
+    }
+
+    fn test_player(username: &str) -> crate::players::OnlinePlayer {
+        crate::players::OnlinePlayer {
+            profile: qexed_packet::net_types::GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: username.to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 1,
+            game_mode: 0,
+            position: qexed_protocol::to_client::play::add_entity::EntityPosition::default(),
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: "zh_cn".to_string(),
+            displayed_skin_parts: crate::players::DEFAULT_DISPLAYED_SKIN_PARTS,
+        }
     }
 }

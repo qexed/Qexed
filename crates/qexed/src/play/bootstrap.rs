@@ -47,7 +47,7 @@ where
     .await?;
 
     sink.send(PlayerAbilities {
-        flags: player_ability_flags(world_config.game_mode),
+        flags: player_ability_flags(world_config.game_mode, world_config.allow_flight),
         flying_speed: 0.05,
         walking_speed: 0.1,
     })

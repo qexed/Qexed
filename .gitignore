@@ -28,6 +28,8 @@
 /assets/seed-123456
 /crates/qexed/cache
 *.log
+*.7z
+*.zip
 .idea
 # 未使用的代码
 /crates/service/qexed/unuse

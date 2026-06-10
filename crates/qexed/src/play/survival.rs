@@ -283,6 +283,17 @@ impl SurvivalState {
         current: EntityPosition,
         fall_context: FallContext,
     ) -> SurvivalDamage {
+        self.apply_movement_with_flight(game_mode, false, previous, current, fall_context)
+    }
+
+    pub(super) fn apply_movement_with_flight(
+        &mut self,
+        game_mode: GameMode,
+        allow_flight: bool,
+        previous: EntityPosition,
+        current: EntityPosition,
+        fall_context: FallContext,
+    ) -> SurvivalDamage {
         if game_mode != GameMode::Survival || self.dead {
             self.fall_start_y = None;
             return SurvivalDamage::None;
@@ -290,6 +301,11 @@ impl SurvivalState {
 
         if current.y < crate::world::WORLD_MIN_Y as f64 - VOID_DAMAGE_OFFSET {
             return self.apply_damage(MAX_HEALTH, DeathMessage::OutOfWorld);
+        }
+
+        if allow_flight {
+            self.fall_start_y = None;
+            return SurvivalDamage::None;
         }
 
         let Some(fall_distance) = self.track_fall_distance(previous, current, fall_context) else {
@@ -661,6 +677,45 @@ mod tests {
         assert_eq!(
             state.death_message().translation_key(),
             "death.fell.accident.generic"
+        );
+    }
+
+    #[test]
+    fn allow_flight_suppresses_fall_damage_but_not_void_damage() {
+        let mut state = survival();
+
+        state.apply_movement_with_flight(
+            GameMode::Survival,
+            true,
+            position(90.0, true),
+            position(90.0, false),
+            normal_fall(),
+        );
+        assert_eq!(
+            state.apply_movement_with_flight(
+                GameMode::Survival,
+                true,
+                position(90.0, false),
+                position(40.0, true),
+                normal_fall()
+            ),
+            SurvivalDamage::None
+        );
+        assert_eq!(state.health, MAX_HEALTH);
+
+        let mut void = survival();
+        assert_eq!(
+            void.apply_movement_with_flight(
+                GameMode::Survival,
+                true,
+                position(0.0, false),
+                position(
+                    crate::world::WORLD_MIN_Y as f64 - VOID_DAMAGE_OFFSET - 1.0,
+                    false
+                ),
+                normal_fall(),
+            ),
+            SurvivalDamage::Died(DeathMessage::OutOfWorld)
         );
     }
 

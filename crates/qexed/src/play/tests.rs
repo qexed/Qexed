@@ -1,7 +1,7 @@
 use super::{
-    ChunkSendState, WorldEditKind, can_modify_world, chunk_coord, chunk_load_parallelism_limit,
-    dimension_type_holder_id, keep_alive_id, login_dimension_names, player_ability_flags,
-    world_write_mode,
+    ChunkSendState, WorldEditKind, acknowledged_player_ability_flags, can_modify_world,
+    chunk_coord, chunk_load_parallelism_limit, dimension_type_holder_id, keep_alive_id,
+    login_dimension_names, player_ability_flags, world_write_mode,
 };
 use qexed_config::app::qexed::server::GameMode;
 use qexed_packet::net_types::{Position, VarInt};
@@ -64,14 +64,34 @@ fn chunk_load_parallelism_is_bounded() {
 
 #[test]
 fn player_abilities_follow_game_mode() {
-    assert_eq!(player_ability_flags(GameMode::Survival), 0);
+    assert_eq!(player_ability_flags(GameMode::Survival, false), 0);
     assert_eq!(
-        player_ability_flags(GameMode::Creative),
+        player_ability_flags(GameMode::Survival, true),
+        PlayerAbilities::CAN_FLY
+    );
+    assert_eq!(
+        player_ability_flags(GameMode::Creative, false),
         PlayerAbilities::CAN_FLY | PlayerAbilities::INSTABUILD
     );
     assert_eq!(
-        player_ability_flags(GameMode::Spectator),
+        player_ability_flags(GameMode::Spectator, false),
         PlayerAbilities::INVULNERABLE | PlayerAbilities::FLYING | PlayerAbilities::CAN_FLY
+    );
+}
+
+#[test]
+fn acknowledged_player_abilities_confirm_flight_only_when_allowed() {
+    assert_eq!(
+        acknowledged_player_ability_flags(GameMode::Survival, false, PlayerAbilities::FLYING),
+        0
+    );
+    assert_eq!(
+        acknowledged_player_ability_flags(GameMode::Survival, true, PlayerAbilities::FLYING),
+        PlayerAbilities::CAN_FLY | PlayerAbilities::FLYING
+    );
+    assert_eq!(
+        acknowledged_player_ability_flags(GameMode::Survival, true, 0),
+        PlayerAbilities::CAN_FLY
     );
 }
 

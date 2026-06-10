@@ -1,14 +1,15 @@
 use qexed_plugin_sdk::{
     BlockDropItem, BlockDropPosition, BlockDropQuery, BlockDropResponse, ConfigReloadPayload,
-    NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert, PlaceholderQuery,
-    PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerItemPickupQuery,
-    PlayerItemPickupResponse, PlayerPayload, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, WorldEditRegion, config_load_or_create, config_read_to_string,
-    economy_balance, economy_deposit, economy_register_currency, economy_withdraw, lottery_roll,
-    random_block_pool_roll, storage_get_typed, storage_set_typed, world_register_edit_region,
-    world_set_block,
+    MiningSpeedQuery, MiningSpeedResponse, NpcInteractPayload, NpcMutationOp, NpcMutationResponse,
+    NpcUpsert, PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction,
+    PlayerItemPickupQuery, PlayerItemPickupResponse, PlayerPayload, PlayerTickPayload,
+    PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse, WorldEditRegion,
+    config_load_or_create, config_read_to_string, economy_balance, economy_deposit,
+    economy_register_currency, economy_withdraw, lottery_roll, random_block_pool_roll,
+    storage_get_typed, storage_set_typed, world_register_edit_region, world_set_block,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 qexed_plugin_sdk::qexed_plugin_memory!();
 
@@ -19,8 +20,7 @@ const COMMAND_NAME: &str = "prison";
 const POINTS_CURRENCY_ID: &str = "qexed:points";
 const POINTS_CURRENCY_NAME: &str = "点券";
 const POINTS_CURRENCY_SYMBOL: &str = "点";
-const XP_PER_LEVEL: i64 = 1_000;
-const UNLOCK_LEVEL_STEP: i32 = 30;
+const DEFAULT_AUTO_REFILL_THRESHOLD_PERCENT: i32 = 30;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_priority() -> i32 {
@@ -62,6 +62,16 @@ pub extern "C" fn qexed_plugin_player_join(ptr: i32, len: i32) {
     if config.refill_on_join {
         initialize_mines(&config, true);
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_player_tick(ptr: i32, len: i32) -> i64 {
+    let Some(_payload) = (unsafe { qexed_plugin_sdk::decode_payload::<PlayerTickPayload>(ptr, len) })
+    else {
+        return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
+    };
+    process_pending_refills(&load_config());
+    qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default())
 }
 
 #[unsafe(no_mangle)]
@@ -157,11 +167,29 @@ pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
         .as_ref()
         .and_then(|player| economy_balance(&player.uuid, POINTS_CURRENCY_ID))
         .unwrap_or(0);
-    let level = payload
+    let (level, level_name, next_level_price) = payload
         .player
         .as_ref()
-        .map(|player| player_progress(&player.uuid).level)
-        .unwrap_or(0);
+        .map(|player| {
+            let progress = player_progress(&player.uuid);
+            let level = config.effective_level(progress.level);
+            let name = config.level_name(level);
+            let next_price = config
+                .next_level(level)
+                .map(|next| {
+                    format_money(
+                        next.upgrade_price,
+                        config.currency_fractional_digits,
+                        &config.currency_symbol,
+                    )
+                })
+                .unwrap_or_else(|| "MAX".to_string());
+            (level, name, next_price)
+        })
+        .unwrap_or_else(|| {
+            let level = config.first_level();
+            (level, config.level_name(level), "MAX".to_string())
+        });
     let money = format_money(
         balance,
         config.currency_fractional_digits,
@@ -193,6 +221,14 @@ pub extern "C" fn qexed_plugin_placeholders(ptr: i32, len: i32) -> i64 {
             PlaceholderReplacement {
                 key: "prison_level".to_string(),
                 value: level.to_string(),
+            },
+            PlaceholderReplacement {
+                key: "prison_level_name".to_string(),
+                value: level_name,
+            },
+            PlaceholderReplacement {
+                key: "prison_next_level_price".to_string(),
+                value: next_level_price,
             },
             PlaceholderReplacement {
                 key: "prison_points".to_string(),
@@ -230,7 +266,7 @@ pub extern "C" fn qexed_plugin_player_item_pickup(ptr: i32, len: i32) -> i64 {
     let balance = economy_deposit(&payload.player.uuid, &config.currency_id, amount)
         .or_else(|| economy_balance(&payload.player.uuid, &config.currency_id))
         .unwrap_or(0);
-    let progress = add_prison_xp(&payload.player.uuid, amount);
+    record_mined_value(&payload.player.uuid, amount);
     let mut actions = Vec::new();
     if config.sell_message_enable {
         actions.push(PlayerAction::SystemMessage {
@@ -258,9 +294,6 @@ pub extern "C" fn qexed_plugin_player_item_pickup(ptr: i32, len: i32) -> i64 {
             with: Vec::new(),
             overlay: config.sell_message_overlay,
         });
-        if progress.level > 0 && progress.level % UNLOCK_LEVEL_STEP == 0 {
-            actions.push(message(format!("矿工等级已达到 {}", progress.level)));
-        }
     }
 
     qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse {
@@ -304,6 +337,8 @@ pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
             let mine_id = parts.next().unwrap_or_default();
             select_mine_command(&config, &payload.player, mine_id)
         }
+        "upgrade" | "levelup" => upgrade_level(&config, &payload.player),
+        "lobby" | "spawn" | "leave" => lobby_command(&config),
         "claim_starter" => claim_starter_pickaxe(&payload.player),
         "buy" => {
             let tool = parts.next().unwrap_or_default();
@@ -333,6 +368,9 @@ pub extern "C" fn qexed_plugin_block_drops(ptr: i32, len: i32) -> i64 {
     else {
         return qexed_plugin_sdk::response_ptr_len(&BlockDropResponse::default());
     };
+
+    let config = load_config();
+    track_mine_break(&config, &payload);
 
     let blast_level = plugin_enchantment_level(&payload.plugin_enchantments, "prison:blast");
     let hell_furnace =
@@ -368,6 +406,24 @@ pub extern "C" fn qexed_plugin_block_drops(ptr: i32, len: i32) -> i64 {
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_mining_speed(ptr: i32, len: i32) -> i64 {
+    let Some(payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<MiningSpeedQuery>(ptr, len) })
+    else {
+        return qexed_plugin_sdk::response_ptr_len(&MiningSpeedResponse::default());
+    };
+    let haste = plugin_enchantment_level(&payload.plugin_enchantments, "prison:haste").clamp(0, 5);
+    if haste <= 0 {
+        return qexed_plugin_sdk::response_ptr_len(&MiningSpeedResponse::default());
+    }
+    qexed_plugin_sdk::response_ptr_len(&MiningSpeedResponse {
+        speed: None,
+        multiplier: Some(1.0 + haste as f32 * 0.25),
+        add: None,
+    })
+}
+
 fn select_mine_command(
     config: &Config,
     player: &qexed_plugin_sdk::PlayerPayloadOwned,
@@ -379,13 +435,16 @@ fn select_mine_command(
             actions: vec![message("矿区不存在".to_string())],
         };
     };
-    let progress = player_progress(&player.uuid);
-    if progress.level < mine.required_level {
+    let level = config.effective_level(player_progress(&player.uuid).level);
+    if level < mine.required_level {
         return PluginCommandResponse {
             handled: true,
             actions: vec![message(format!(
-                "{} 需要等级 {}，你当前等级 {}",
-                mine.label, mine.required_level, progress.level
+                "{} 需要等级 {}，你当前等级 {} ({})",
+                mine.label,
+                mine.required_level,
+                level,
+                config.level_name(level)
             ))],
         };
     }
@@ -408,6 +467,62 @@ fn select_mine_command(
                 pitch: Some(mine.spawn_pitch),
             },
         ],
+    }
+}
+
+fn upgrade_level(
+    config: &Config,
+    player: &qexed_plugin_sdk::PlayerPayloadOwned,
+) -> PluginCommandResponse {
+    let mut progress = player_progress(&player.uuid);
+    let current_level = config.effective_level(progress.level);
+    let Some(next_level) = config.next_level(current_level) else {
+        return PluginCommandResponse {
+            handled: true,
+            actions: vec![message(format!(
+                "当前已是最高等级 {} ({})",
+                current_level,
+                config.level_name(current_level)
+            ))],
+        };
+    };
+
+    let paid = next_level.upgrade_price <= 0
+        || economy_withdraw(&player.uuid, &config.currency_id, next_level.upgrade_price).is_some();
+    if !paid {
+        return PluginCommandResponse {
+            handled: true,
+            actions: vec![message(format!(
+                "金币不足，升级到 {} ({}) 需要 {}",
+                next_level.level,
+                next_level.name,
+                format_money(
+                    next_level.upgrade_price,
+                    config.currency_fractional_digits,
+                    &config.currency_symbol,
+                )
+            ))],
+        };
+    }
+
+    progress.level = next_level.level;
+    save_player_progress(&player.uuid, &progress);
+    PluginCommandResponse {
+        handled: true,
+        actions: vec![message(format!(
+            "升级成功：{} ({})",
+            next_level.level, next_level.name
+        ))],
+    }
+}
+
+fn lobby_command(config: &Config) -> PluginCommandResponse {
+    PluginCommandResponse {
+        handled: true,
+        actions: vec![PlayerAction::ProxyConnect {
+            server: config.lobby_server.clone(),
+            message: String::new(),
+        }],
     }
 }
 
@@ -485,7 +600,11 @@ fn lottery_command(player: &qexed_plugin_sdk::PlayerPayloadOwned) -> PluginComma
                         ("minecraft:mending", 1),
                         ("minecraft:efficiency", 5),
                     ],
-                    &[("prison:blast", 3), ("prison:hell_furnace", 1)],
+                    &[
+                        ("prison:blast", 3),
+                        ("prison:hell_furnace", 1),
+                        ("prison:haste", 3),
+                    ],
                 ),
             ],
         },
@@ -505,7 +624,7 @@ fn give_pickaxe(
         name: name.to_string(),
         lore: plugin_enchantments
             .iter()
-            .map(|(id, level)| format!("{id} {level}"))
+            .map(|(id, level)| format!("{} {}", plugin_enchantment_label(id), level))
             .collect(),
         enchantments: enchantments
             .iter()
@@ -534,19 +653,20 @@ fn message(text: String) -> PlayerAction {
 }
 
 fn player_progress(player_uuid: &str) -> PlayerProgress {
-    storage_get_typed::<PlayerProgress>(&progress_key(player_uuid)).unwrap_or_default()
+    let mut progress =
+        storage_get_typed::<PlayerProgress>(&progress_key(player_uuid)).unwrap_or_default();
+    progress.level = progress.level.max(default_player_level());
+    progress
 }
 
 fn save_player_progress(player_uuid: &str, progress: &PlayerProgress) {
     let _ = storage_set_typed(&progress_key(player_uuid), progress);
 }
 
-fn add_prison_xp(player_uuid: &str, amount: i64) -> PlayerProgress {
+fn record_mined_value(player_uuid: &str, amount: i64) {
     let mut progress = player_progress(player_uuid);
     progress.total_mined_value = progress.total_mined_value.saturating_add(amount.max(0));
-    progress.level = (progress.total_mined_value / XP_PER_LEVEL).min(i64::from(i32::MAX)) as i32;
     save_player_progress(player_uuid, &progress);
-    progress
 }
 
 fn plugin_enchantment_level(enchantments: &[qexed_plugin_sdk::PluginEnchantment], id: &str) -> i32 {
@@ -562,6 +682,7 @@ fn smelted_drop(block_name: &str) -> Option<&'static str> {
         "minecraft:iron_ore" | "minecraft:deepslate_iron_ore" => Some("minecraft:iron_ingot"),
         "minecraft:gold_ore" | "minecraft:deepslate_gold_ore" => Some("minecraft:gold_ingot"),
         "minecraft:copper_ore" | "minecraft:deepslate_copper_ore" => Some("minecraft:copper_ingot"),
+        "minecraft:ancient_debris" => Some("minecraft:netherite_scrap"),
         "minecraft:stone" => Some("minecraft:stone"),
         _ => None,
     }
@@ -605,8 +726,14 @@ struct Config {
     refill_on_config_reload: bool,
     #[serde(default)]
     refill_on_join: bool,
+    #[serde(default = "default_enable")]
+    auto_refill_enable: bool,
+    #[serde(default = "default_auto_refill_threshold_percent")]
+    auto_refill_threshold_percent: i32,
     #[serde(default = "default_unselected_label")]
     unselected_label: String,
+    #[serde(default = "default_lobby_server")]
+    lobby_server: String,
     #[serde(default = "default_enable")]
     auto_sell: bool,
     #[serde(default = "default_currency_id")]
@@ -623,6 +750,8 @@ struct Config {
     sell_message: String,
     #[serde(default = "default_enable")]
     sell_message_overlay: bool,
+    #[serde(default = "default_levels")]
+    levels: Vec<LevelConfig>,
     #[serde(default)]
     sell_items: Vec<SellItemConfig>,
     #[serde(default)]
@@ -653,6 +782,58 @@ impl Config {
             .find(|entry| entry.item.eq_ignore_ascii_case(item_name))
             .map(|entry| entry.price)
     }
+
+    fn configured_levels(&self) -> Vec<LevelConfig> {
+        if self.levels.is_empty() {
+            default_levels()
+        } else {
+            let mut levels = self.levels.clone();
+            levels.sort_by_key(|entry| entry.level);
+            levels
+        }
+    }
+
+    fn first_level(&self) -> i32 {
+        self.configured_levels()
+            .first()
+            .map(|entry| entry.level)
+            .unwrap_or(1)
+    }
+
+    fn max_level(&self) -> i32 {
+        self.configured_levels()
+            .last()
+            .map(|entry| entry.level)
+            .unwrap_or(1)
+    }
+
+    fn effective_level(&self, level: i32) -> i32 {
+        level.max(self.first_level()).min(self.max_level())
+    }
+
+    fn level_name(&self, level: i32) -> String {
+        let levels = self.configured_levels();
+        let effective = self.effective_level(level);
+        levels
+            .iter()
+            .find(|entry| entry.level == effective)
+            .map(|entry| entry.name.clone())
+            .unwrap_or_else(|| effective.to_string())
+    }
+
+    fn next_level(&self, current_level: i32) -> Option<LevelConfig> {
+        let current_level = self.effective_level(current_level);
+        self.configured_levels()
+            .into_iter()
+            .find(|entry| entry.level > current_level)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LevelConfig {
+    level: i32,
+    name: String,
+    upgrade_price: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -769,9 +950,17 @@ impl MineConfig {
         }
     }
 
+    fn contains_ore_position(&self, position: BlockDropPosition) -> bool {
+        self.ore_bounds().contains(position)
+    }
+
+    fn ore_volume(&self) -> usize {
+        self.ore_bounds().volume()
+    }
+
     fn ore_blocks(&self) -> Vec<OreBlockConfig> {
         if self.ore_blocks.is_empty() {
-            default_ore_blocks()
+            default_ore_blocks_for_level(self.required_level)
         } else {
             self.ore_blocks.clone()
         }
@@ -794,6 +983,24 @@ struct MineBounds {
     max_z: i32,
 }
 
+impl MineBounds {
+    fn contains(&self, position: BlockDropPosition) -> bool {
+        position.x >= self.min_x
+            && position.x <= self.max_x
+            && position.y >= self.min_y
+            && position.y <= self.max_y
+            && position.z >= self.min_z
+            && position.z <= self.max_z
+    }
+
+    fn volume(&self) -> usize {
+        let x = (self.max_x - self.min_x + 1).max(0) as usize;
+        let y = (self.max_y - self.min_y + 1).max(0) as usize;
+        let z = (self.max_z - self.min_z + 1).max(0) as usize;
+        x.saturating_mul(y).saturating_mul(z)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MineSelection {
     mine_id: String,
@@ -801,11 +1008,32 @@ struct MineSelection {
     dimension: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PlayerProgress {
+    #[serde(default = "default_player_level")]
     level: i32,
+    #[serde(default)]
     total_mined_value: i64,
+    #[serde(default)]
     claimed_starter_pickaxe: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct MineRefillState {
+    #[serde(default)]
+    mined_positions: BTreeSet<String>,
+    #[serde(default)]
+    pending_refill: bool,
+}
+
+impl Default for PlayerProgress {
+    fn default() -> Self {
+        Self {
+            level: default_player_level(),
+            total_mined_value: 0,
+            claimed_starter_pickaxe: false,
+        }
+    }
 }
 
 impl From<&MineConfig> for MineSelection {
@@ -827,6 +1055,7 @@ fn initialize_mines(config: &Config, refill: bool) {
             register_ore_region(mine);
             if refill {
                 refill_ore_pit(mine);
+                reset_mine_refill_state(mine);
             }
         }
     }
@@ -880,6 +1109,70 @@ fn refill_ore_pit(mine: &MineConfig) {
     ));
 }
 
+fn track_mine_break(config: &Config, payload: &BlockDropQuery) {
+    if !config.enable || !config.auto_refill_enable {
+        return;
+    }
+    let Some(player) = payload.player.as_ref() else {
+        return;
+    };
+    let Some(mine) = config.mine_by_dimension(&player.dimension) else {
+        return;
+    };
+    if !mine.ore_enable || !mine.contains_ore_position(payload.position) {
+        return;
+    }
+
+    let key = mine_refill_state_key(&mine.id);
+    let mut state = storage_get_typed::<MineRefillState>(&key).unwrap_or_default();
+    if state.pending_refill {
+        return;
+    }
+    state
+        .mined_positions
+        .insert(block_position_key(payload.position));
+    if should_refill_mine(config, mine, state.mined_positions.len()) {
+        state.pending_refill = true;
+        qexed_plugin_sdk::log(&format!(
+            "prison mine queued refill: mine={}, mined={}, total={}, threshold={}%",
+            mine.id,
+            state.mined_positions.len(),
+            mine.ore_volume(),
+            config.auto_refill_threshold_percent.clamp(1, 99)
+        ));
+    }
+    let _ = storage_set_typed(&key, &state);
+}
+
+fn process_pending_refills(config: &Config) {
+    if !config.enable || !config.auto_refill_enable {
+        return;
+    }
+    for mine in config.mines.iter().filter(|mine| mine.ore_enable) {
+        let key = mine_refill_state_key(&mine.id);
+        let state = storage_get_typed::<MineRefillState>(&key).unwrap_or_default();
+        if !state.pending_refill {
+            continue;
+        }
+        refill_ore_pit(mine);
+        reset_mine_refill_state(mine);
+    }
+}
+
+fn should_refill_mine(config: &Config, mine: &MineConfig, mined_count: usize) -> bool {
+    let total = mine.ore_volume();
+    if total == 0 {
+        return false;
+    }
+    let threshold = config.auto_refill_threshold_percent.clamp(1, 99) as usize;
+    let remaining = total.saturating_sub(mined_count.min(total));
+    remaining.saturating_mul(100) <= total.saturating_mul(threshold)
+}
+
+fn reset_mine_refill_state(mine: &MineConfig) {
+    let _ = storage_set_typed(&mine_refill_state_key(&mine.id), &MineRefillState::default());
+}
+
 fn load_config() -> Config {
     config_read_to_string(CONFIG_PATH)
         .and_then(|content| toml::from_str::<Config>(&content).ok())
@@ -908,12 +1201,53 @@ fn progress_key(player_uuid: &str) -> String {
     format!("progress/{player_uuid}")
 }
 
+fn mine_refill_state_key(mine_id: &str) -> String {
+    format!("mine_refill/{mine_id}")
+}
+
+fn block_position_key(position: BlockDropPosition) -> String {
+    format!("{},{},{}", position.x, position.y, position.z)
+}
+
 fn default_enable() -> bool {
     true
 }
 
+fn default_player_level() -> i32 {
+    1
+}
+
+fn default_auto_refill_threshold_percent() -> i32 {
+    DEFAULT_AUTO_REFILL_THRESHOLD_PERCENT
+}
+
+fn default_levels() -> Vec<LevelConfig> {
+    [
+        (1, "一级矿工", 0),
+        (2, "二级矿工", 1_000_000),
+        (3, "三级矿工", 3_000_000),
+        (4, "四级矿工", 5_000_000),
+        (5, "五级矿工", 7_000_000),
+        (6, "六级矿工", 9_000_000),
+        (7, "七级矿工", 11_000_000),
+        (8, "八级矿工", 13_000_000),
+        (9, "九级矿王", 15_000_000),
+    ]
+    .into_iter()
+    .map(|(level, name, upgrade_price)| LevelConfig {
+        level,
+        name: name.to_string(),
+        upgrade_price,
+    })
+    .collect()
+}
+
 fn default_unselected_label() -> String {
     "未选择".to_string()
+}
+
+fn default_lobby_server() -> String {
+    "lobby_1".to_string()
 }
 
 fn default_currency_id() -> String {
@@ -937,15 +1271,15 @@ fn default_npc_entity_type() -> String {
 }
 
 fn default_ore_min_x() -> i32 {
-    36
+    38
 }
 
 fn default_ore_max_x() -> i32 {
-    54
+    51
 }
 
 fn default_ore_min_y() -> i32 {
-    -50
+    -49
 }
 
 fn default_ore_max_y() -> i32 {
@@ -953,15 +1287,24 @@ fn default_ore_max_y() -> i32 {
 }
 
 fn default_ore_min_z() -> i32 {
-    6
+    8
 }
 
 fn default_ore_max_z() -> i32 {
-    24
+    21
 }
 
 fn default_ore_precompute_count() -> usize {
     512
+}
+
+fn plugin_enchantment_label(id: &str) -> &str {
+    match id {
+        "prison:blast" => "爆破",
+        "prison:hell_furnace" => "地狱熔炉",
+        "prison:haste" => "急速",
+        _ => id,
+    }
 }
 
 fn register_currency(config: &Config) {
@@ -1016,6 +1359,10 @@ fn default_sell_items() -> Vec<SellItemConfig> {
         ("minecraft:lapis_ore", 10),
         ("minecraft:diamond", 50),
         ("minecraft:diamond_ore", 50),
+        ("minecraft:emerald", 80),
+        ("minecraft:emerald_ore", 80),
+        ("minecraft:ancient_debris", 150),
+        ("minecraft:netherite_scrap", 150),
     ]
     .into_iter()
     .map(|(item, price)| SellItemConfig {
@@ -1025,48 +1372,32 @@ fn default_sell_items() -> Vec<SellItemConfig> {
     .collect()
 }
 
-fn default_ore_blocks() -> Vec<OreBlockConfig> {
-    vec![
-        OreBlockConfig {
-            block: "minecraft:stone".to_string(),
-            weight: 52,
-        },
-        OreBlockConfig {
-            block: "minecraft:coal_ore".to_string(),
-            weight: 22,
-        },
-        OreBlockConfig {
-            block: "minecraft:copper_ore".to_string(),
-            weight: 12,
-        },
-        OreBlockConfig {
-            block: "minecraft:iron_ore".to_string(),
-            weight: 8,
-        },
-        OreBlockConfig {
-            block: "minecraft:gold_ore".to_string(),
-            weight: 4,
-        },
-        OreBlockConfig {
-            block: "minecraft:redstone_ore".to_string(),
-            weight: 3,
-        },
-        OreBlockConfig {
-            block: "minecraft:lapis_ore".to_string(),
-            weight: 2,
-        },
-        OreBlockConfig {
-            block: "minecraft:diamond_ore".to_string(),
-            weight: 1,
-        },
-    ]
+fn default_ore_blocks_for_level(level: i32) -> Vec<OreBlockConfig> {
+    let block = match level {
+        1 => "minecraft:stone",
+        2 => "minecraft:coal_ore",
+        3 => "minecraft:copper_ore",
+        4 => "minecraft:iron_ore",
+        5 => "minecraft:gold_ore",
+        6 => "minecraft:redstone_ore",
+        7 => "minecraft:lapis_ore",
+        8 => "minecraft:diamond_ore",
+        _ => "minecraft:ancient_debris",
+    };
+    vec![OreBlockConfig {
+        block: block.to_string(),
+        weight: 1,
+    }]
 }
 
 const DEFAULT_CONFIG: &str = r#"enable = true
 refill_on_init = true
 refill_on_config_reload = true
 refill_on_join = false
+auto_refill_enable = true
+auto_refill_threshold_percent = 30
 unselected_label = "未选择"
+lobby_server = "lobby_1"
 auto_sell = true
 currency_id = "qexed:coin"
 currency_name = "Coin"
@@ -1075,6 +1406,51 @@ currency_fractional_digits = 0
 sell_message_enable = true
 sell_message = "卖出 {count}x {item}，获得 {amount}，余额 {balance}"
 sell_message_overlay = true
+
+[[levels]]
+level = 1
+name = "一级矿工"
+upgrade_price = 0
+
+[[levels]]
+level = 2
+name = "二级矿工"
+upgrade_price = 1000000
+
+[[levels]]
+level = 3
+name = "三级矿工"
+upgrade_price = 3000000
+
+[[levels]]
+level = 4
+name = "四级矿工"
+upgrade_price = 5000000
+
+[[levels]]
+level = 5
+name = "五级矿工"
+upgrade_price = 7000000
+
+[[levels]]
+level = 6
+name = "六级矿工"
+upgrade_price = 9000000
+
+[[levels]]
+level = 7
+name = "七级矿工"
+upgrade_price = 11000000
+
+[[levels]]
+level = 8
+name = "八级矿工"
+upgrade_price = 13000000
+
+[[levels]]
+level = 9
+name = "九级矿王"
+upgrade_price = 15000000
 
 [[sell_items]]
 item = "minecraft:cobblestone"
@@ -1133,12 +1509,24 @@ price = 50
 [[sell_items]]
 item = "minecraft:diamond_ore"
 price = 50
+[[sell_items]]
+item = "minecraft:emerald"
+price = 80
+[[sell_items]]
+item = "minecraft:emerald_ore"
+price = 80
+[[sell_items]]
+item = "minecraft:ancient_debris"
+price = 150
+[[sell_items]]
+item = "minecraft:netherite_scrap"
+price = 150
 
 [[mines]]
-id = "mine_a"
-label = "1号矿区"
-required_level = 0
-dimension = "qexed:mine_a"
+id = "mine_1"
+label = "1级矿区"
+required_level = 1
+dimension = "qexed:mine_1"
 spawn_x = 67.0
 spawn_y = -28.0
 spawn_z = 15.0
@@ -1150,48 +1538,26 @@ npc_z = 15.5
 npc_yaw = 180.0
 npc_pitch = 0.0
 npc_entity_type = "minecraft:zombie"
-npc_name = "Mine A"
-npc_display_name = "{\"text\":\"1号矿区\",\"color\":\"gold\"}"
+npc_name = "Mine 1"
+npc_display_name = "{\"text\":\"1级矿区\",\"color\":\"gray\"}"
 look_at_players = true
 ore_enable = true
-ore_min_x = 36
-ore_max_x = 54
-ore_min_y = -50
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
 ore_max_y = -30
-ore_min_z = 6
-ore_max_z = 24
+ore_min_z = 8
+ore_max_z = 21
 ore_precompute_count = 512
-
 [[mines.ore_blocks]]
 block = "minecraft:stone"
-weight = 52
-[[mines.ore_blocks]]
-block = "minecraft:coal_ore"
-weight = 22
-[[mines.ore_blocks]]
-block = "minecraft:copper_ore"
-weight = 12
-[[mines.ore_blocks]]
-block = "minecraft:iron_ore"
-weight = 8
-[[mines.ore_blocks]]
-block = "minecraft:gold_ore"
-weight = 4
-[[mines.ore_blocks]]
-block = "minecraft:redstone_ore"
-weight = 3
-[[mines.ore_blocks]]
-block = "minecraft:lapis_ore"
-weight = 2
-[[mines.ore_blocks]]
-block = "minecraft:diamond_ore"
 weight = 1
 
 [[mines]]
-id = "mine_b"
-label = "2号矿区"
-required_level = 30
-dimension = "qexed:mine_b"
+id = "mine_2"
+label = "2级矿区"
+required_level = 2
+dimension = "qexed:mine_2"
 spawn_x = 67.0
 spawn_y = -28.0
 spawn_z = 15.0
@@ -1203,43 +1569,235 @@ npc_z = 15.5
 npc_yaw = 180.0
 npc_pitch = 0.0
 npc_entity_type = "minecraft:zombie"
-npc_name = "Mine B"
-npc_display_name = "{\"text\":\"2号矿区\",\"color\":\"aqua\"}"
+npc_name = "Mine 2"
+npc_display_name = "{\"text\":\"2级矿区\",\"color\":\"dark_gray\"}"
 look_at_players = true
 ore_enable = true
-ore_min_x = 36
-ore_max_x = 54
-ore_min_y = -50
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
 ore_max_y = -30
-ore_min_z = 6
-ore_max_z = 24
+ore_min_z = 8
+ore_max_z = 21
 ore_precompute_count = 512
-
-[[mines.ore_blocks]]
-block = "minecraft:stone"
-weight = 52
 [[mines.ore_blocks]]
 block = "minecraft:coal_ore"
-weight = 22
+weight = 1
+
+[[mines]]
+id = "mine_3"
+label = "3级矿区"
+required_level = 3
+dimension = "qexed:mine_3"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 66.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 3"
+npc_display_name = "{\"text\":\"3级矿区\",\"color\":\"gold\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
 block = "minecraft:copper_ore"
-weight = 12
+weight = 1
+
+[[mines]]
+id = "mine_4"
+label = "4级矿区"
+required_level = 4
+dimension = "qexed:mine_4"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 67.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 4"
+npc_display_name = "{\"text\":\"4级矿区\",\"color\":\"white\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
 block = "minecraft:iron_ore"
-weight = 8
+weight = 1
+
+[[mines]]
+id = "mine_5"
+label = "5级矿区"
+required_level = 5
+dimension = "qexed:mine_5"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 68.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 5"
+npc_display_name = "{\"text\":\"5级矿区\",\"color\":\"yellow\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
 block = "minecraft:gold_ore"
-weight = 4
+weight = 1
+
+[[mines]]
+id = "mine_6"
+label = "6级矿区"
+required_level = 6
+dimension = "qexed:mine_6"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 69.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 6"
+npc_display_name = "{\"text\":\"6级矿区\",\"color\":\"red\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
 block = "minecraft:redstone_ore"
-weight = 3
+weight = 1
+
+[[mines]]
+id = "mine_7"
+label = "7级矿区"
+required_level = 7
+dimension = "qexed:mine_7"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 70.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 7"
+npc_display_name = "{\"text\":\"7级矿区\",\"color\":\"blue\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
 block = "minecraft:lapis_ore"
-weight = 2
+weight = 1
+
+[[mines]]
+id = "mine_8"
+label = "8级矿区"
+required_level = 8
+dimension = "qexed:mine_8"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 71.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 8"
+npc_display_name = "{\"text\":\"8级矿区\",\"color\":\"aqua\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
 block = "minecraft:diamond_ore"
 weight = 1
+
+[[mines]]
+id = "mine_9"
+label = "9级矿区"
+required_level = 9
+dimension = "qexed:mine_9"
+spawn_x = 67.0
+spawn_y = -28.0
+spawn_z = 15.0
+spawn_yaw = 180.0
+spawn_pitch = 0.0
+npc_x = 72.5
+npc_y = -28.0
+npc_z = 15.5
+npc_yaw = 180.0
+npc_pitch = 0.0
+npc_entity_type = "minecraft:zombie"
+npc_name = "Mine 9"
+npc_display_name = "{\"text\":\"9级矿区\",\"color\":\"dark_purple\"}"
+look_at_players = true
+ore_enable = true
+ore_min_x = 38
+ore_max_x = 51
+ore_min_y = -49
+ore_max_y = -30
+ore_min_z = 8
+ore_max_z = 21
+ore_precompute_count = 512
 [[mines.ore_blocks]]
-block = "minecraft:netherite_block"
+block = "minecraft:ancient_debris"
 weight = 1
 "#;

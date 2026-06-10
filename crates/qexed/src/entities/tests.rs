@@ -127,6 +127,25 @@ fn tick_entities(
         .unwrap();
 }
 
+fn place_stone_floor(
+    world: &crate::world::WorldManager,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    y: i32,
+) {
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            world.set_runtime_block(
+                "minecraft:overworld",
+                qexed_packet::net_types::Position { x, y, z },
+                stone_block_state(),
+            );
+        }
+    }
+}
+
 fn drain_player_events(session: &mut crate::players::PlayerSession) {
     while session.receiver.try_recv().is_ok() {}
 }
@@ -1413,6 +1432,43 @@ fn vanilla_creeper_explosion_can_disable_block_breaking() {
 }
 
 #[test]
+fn vanilla_creeper_explosion_damages_nearby_entity() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(2.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "creeper-victim-zombie",
+        "minecraft:zombie",
+        test_position(1.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "entity-damaging-creeper",
+        "minecraft:creeper",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            1_500,
+        )
+        .unwrap();
+
+    assert!(
+        manager
+            .entity_health_for_tests("creeper-victim-zombie")
+            .is_some_and(|health| health < 20.0)
+    );
+}
+
+#[test]
 fn vanilla_skeleton_ranged_ai_spawns_arrow_projectile() {
     let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
     let manager = EntityManager::from_config(
@@ -1831,6 +1887,173 @@ fn vanilla_ghast_fireball_can_disable_block_breaking() {
 }
 
 #[test]
+fn vanilla_shulker_ranged_ai_spawns_shulker_bullet_projectile() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "ranged-shulker",
+        "minecraft:shulker",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:shulker_bullet"
+                && entity.ai == "vanilla_projectile:shulker_bullet")
+    );
+}
+
+#[test]
+fn vanilla_shulker_bullet_tracks_moved_target() {
+    let (manager, players) = test_manager_and_players();
+    let session = join_test_player(&players, "Target", test_position(10.0, 64.0, 0.0));
+    let world = empty_world();
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("projectile_speed".to_string(), serde_json::json!(0.4));
+    spawn_vanilla_entity(
+        &manager,
+        "tracking-shulker",
+        "minecraft:shulker",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+    let spawned_bullet = manager
+        .list_for_dimension("minecraft:overworld")
+        .into_iter()
+        .find(|entity| entity.entity_type == "minecraft:shulker_bullet")
+        .expect("shulker bullet spawned");
+
+    players.update_position(session.player.profile.uuid, test_position(10.0, 64.0, 6.0));
+
+    let mut tracked_bullet = spawned_bullet.clone();
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        tick_entities(&manager, &players, &world);
+        tracked_bullet = manager
+            .list_for_dimension("minecraft:overworld")
+            .into_iter()
+            .find(|entity| entity.key == spawned_bullet.key)
+            .expect("shulker bullet remains active");
+    }
+
+    assert!(
+        tracked_bullet.position.z > spawned_bullet.position.z + 0.15,
+        "expected shulker bullet to bend toward moved target: start_z={}, tracked_z={}",
+        spawned_bullet.position.z,
+        tracked_bullet.position.z
+    );
+    assert!(tracked_bullet.position.x > spawned_bullet.position.x);
+}
+
+#[test]
+fn vanilla_shulker_bullet_hits_player_with_damage_and_levitation() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(4.0, 64.0, 0.0));
+    let world = empty_world();
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("projectile_speed".to_string(), serde_json::json!(0.8));
+    spawn_vanilla_entity(
+        &manager,
+        "shooting-shulker",
+        "minecraft:shulker",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+    drain_player_events(&mut session);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut damage = None;
+    let mut effect = None;
+    for _ in 0..10 {
+        tick_entities(&manager, &players, &world);
+        while let Ok(event) = session.receiver.try_recv() {
+            match event {
+                crate::players::PlayerEvent::Damage { amount, kind, .. } => {
+                    damage = Some((amount, kind));
+                }
+                crate::players::PlayerEvent::PotionEffect {
+                    effect: effect_name,
+                    duration_ticks,
+                    ..
+                } => {
+                    effect = Some((effect_name, duration_ticks));
+                }
+                _ => {}
+            }
+        }
+        if damage.is_some() && effect.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+
+    assert_eq!(
+        damage,
+        Some((4.0, crate::players::PlayerDamageKind::Projectile))
+    );
+    assert_eq!(effect, Some(("minecraft:levitation".to_string(), 20 * 10)));
+}
+
+#[test]
+fn vanilla_breeze_ranged_ai_spawns_wind_charge_projectile() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "ranged-breeze",
+        "minecraft:breeze",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:wind_charge"
+                && entity.ai == "vanilla_projectile:wind_charge")
+    );
+}
+
+#[test]
+fn vanilla_wither_ranged_ai_spawns_wither_skull_projectile() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(12.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "ranged-wither",
+        "minecraft:wither",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:wither_skull"
+                && entity.ai == "vanilla_projectile:wither_skull")
+    );
+}
+
+#[test]
 fn vanilla_cave_spider_melee_applies_poison() {
     let (manager, players) = test_manager_and_players();
     let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
@@ -2047,6 +2270,871 @@ fn vanilla_zombie_burns_in_daylight() {
         manager
             .entity_health_for_tests("daylight-zombie")
             .is_some_and(|health| health < 20.0)
+    );
+}
+
+#[test]
+fn vanilla_fish_takes_damage_out_of_water() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "dry-cod",
+        "minecraft:cod",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .entity_health_for_tests("dry-cod")
+            .is_some_and(|health| health < 6.0),
+        "fish should take environment damage when out of water"
+    );
+}
+
+#[test]
+fn vanilla_fish_does_not_take_out_of_water_damage_in_water() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
+    let world = empty_world();
+    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
+    world.set_runtime_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
+        water,
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "wet-cod",
+        "minecraft:cod",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert_eq!(manager.entity_health_for_tests("wet-cod"), Some(6.0));
+}
+
+#[test]
+fn vanilla_enderman_teleports_towards_far_target() {
+    let (manager, players) = test_manager_and_players();
+    let mut target_position = test_position(24.0, 64.0, 0.0);
+    target_position.yaw = 90.0;
+    let _session = join_test_player(&players, "Target", target_position);
+    let world = empty_world();
+    place_stone_floor(&world, -1, 1, -1, 1, 63);
+    place_stone_floor(&world, 18, 22, -1, 1, 63);
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert(
+        "enderman_teleport_chance".to_string(),
+        serde_json::json!(1.0),
+    );
+    ai_params.insert(
+        "enderman_teleport_min_distance".to_string(),
+        serde_json::json!(8.0),
+    );
+    ai_params.insert(
+        "enderman_teleport_arrival_distance".to_string(),
+        serde_json::json!(4.0),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "teleporting-enderman",
+        "minecraft:enderman",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("teleporting-enderman").unwrap();
+    assert!(
+        (18.0..=22.0).contains(&entity.position.x),
+        "enderman should teleport near the player-side landing spot, got {:?}",
+        entity.position
+    );
+    assert!((entity.position.y - 64.0).abs() < 0.001);
+    assert!(entity.position.on_ground);
+}
+
+#[test]
+fn vanilla_enderman_ignores_player_until_stared_at() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
+    let world = empty_world();
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("stroll_chance".to_string(), serde_json::json!(0.0));
+    spawn_vanilla_entity(
+        &manager,
+        "calm-enderman",
+        "minecraft:enderman",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut damaged = false;
+    while let Ok(event) = session.receiver.try_recv() {
+        if matches!(event, crate::players::PlayerEvent::Damage { .. }) {
+            damaged = true;
+        }
+    }
+    assert!(
+        !damaged,
+        "enderman should not attack a player who is not looking at it"
+    );
+}
+
+#[test]
+fn vanilla_enderman_attacks_player_staring_at_it() {
+    let (manager, players) = test_manager_and_players();
+    let mut target_position = test_position(1.0, 64.0, 0.0);
+    target_position.yaw = 90.0;
+    let mut session = join_test_player(&players, "Target", target_position);
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "stared-enderman",
+        "minecraft:enderman",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut damage = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        if let crate::players::PlayerEvent::Damage { amount, kind, .. } = event {
+            damage = Some((amount, kind));
+        }
+    }
+    assert_eq!(
+        damage,
+        Some((7.0, crate::players::PlayerDamageKind::MobAttack))
+    );
+}
+
+#[test]
+fn vanilla_enderman_takes_water_damage_and_teleports_to_dry_ground() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(8.0, 64.0, 0.0));
+    let world = empty_world();
+    place_stone_floor(&world, -2, 2, -2, 2, 63);
+    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
+    world.set_runtime_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
+        water,
+    );
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert(
+        "enderman_teleport_chance".to_string(),
+        serde_json::json!(0.0),
+    );
+    ai_params.insert(
+        "enderman_water_teleport_radius".to_string(),
+        serde_json::json!(2),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "wet-enderman",
+        "minecraft:enderman",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("wet-enderman").unwrap();
+    let feet = qexed_packet::net_types::Position {
+        x: entity.position.x.floor() as i32,
+        y: entity.position.y.floor() as i32,
+        z: entity.position.z.floor() as i32,
+    };
+    assert_ne!(
+        world.block_state_at("minecraft:overworld", &feet),
+        Some(water)
+    );
+    assert!(
+        manager
+            .entity_health_for_tests("wet-enderman")
+            .is_some_and(|health| health < 40.0)
+    );
+}
+
+#[test]
+fn vanilla_slime_jumps_while_chasing_player() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(5.0, 64.0, 0.0));
+    let world = empty_world();
+    place_stone_floor(&world, -1, 6, -1, 1, 63);
+    spawn_vanilla_entity(
+        &manager,
+        "jumping-slime",
+        "minecraft:slime",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("jumping-slime").unwrap();
+    assert!(
+        entity.position.y > 64.0,
+        "slime should hop while moving toward a target, got {:?}",
+        entity.position
+    );
+    assert!(!entity.position.on_ground);
+}
+
+#[test]
+fn vanilla_slime_splits_on_death() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("slime_size".to_string(), serde_json::json!(4));
+    ai_params.insert("slime_split_count".to_string(), serde_json::json!(3));
+    spawn_vanilla_entity(
+        &manager,
+        "splitting-slime",
+        "minecraft:slime",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+    let entity_id = manager.entity_by_key("splitting-slime").unwrap().entity_id;
+
+    let result = manager
+        .damage_managed_entity(
+            &players,
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            entity_id,
+            100.0,
+        )
+        .unwrap()
+        .expect("damage result");
+
+    assert!(result.killed);
+    assert!(manager.entity_by_key("splitting-slime").is_some());
+    let children = manager
+        .list_for_dimension("minecraft:overworld")
+        .into_iter()
+        .filter(|entity| entity.key.starts_with("splitting-slime:split:"))
+        .collect::<Vec<_>>();
+    assert_eq!(children.len(), 3);
+    for child in children {
+        assert_eq!(child.entity_type, "minecraft:slime");
+        assert_eq!(child.data, 2);
+        assert_eq!(manager.entity_health_for_tests(&child.key), Some(4.0));
+    }
+}
+
+#[test]
+fn vanilla_magma_cube_jump_scales_with_size() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(5.0, 64.0, 0.0));
+    let world = empty_world();
+    place_stone_floor(&world, -1, 6, -1, 1, 63);
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("slime_size".to_string(), serde_json::json!(4));
+    spawn_vanilla_entity(
+        &manager,
+        "jumping-magma-cube",
+        "minecraft:magma_cube",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("jumping-magma-cube").unwrap();
+    assert!(
+        entity.position.y > 64.7,
+        "magma cube size boost should produce a higher jump, got {:?}",
+        entity.position
+    );
+    assert!(!entity.position.on_ground);
+}
+
+#[test]
+fn vanilla_spider_climbs_when_colliding_with_wall() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(4.0, 64.0, 0.0));
+    let world = empty_world();
+    place_stone_floor(&world, -1, 4, 0, 0, 63);
+    for y in 64..=66 {
+        for z in -1..=1 {
+            world.set_runtime_block(
+                "minecraft:overworld",
+                qexed_packet::net_types::Position { x: 1, y, z },
+                stone_block_state(),
+            );
+        }
+    }
+    spawn_vanilla_entity(
+        &manager,
+        "climbing-spider",
+        "minecraft:spider",
+        test_position(0.65, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("climbing-spider").unwrap();
+    assert!(
+        entity.position.y > 64.0,
+        "spider should climb while pressing into a wall, got {:?}",
+        entity.position
+    );
+    assert!(!entity.position.on_ground);
+}
+
+#[test]
+fn vanilla_phantom_flies_without_falling_in_open_air() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(6.0, 70.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "flying-phantom",
+        "minecraft:phantom",
+        test_position(0.0, 70.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("flying-phantom").unwrap();
+    assert!(
+        entity.position.y >= 69.99,
+        "phantom should use flying physics instead of gravity, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
+fn vanilla_guardian_swims_without_sinking_in_water() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
+    world.set_runtime_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
+        water,
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "swimming-guardian",
+        "minecraft:guardian",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("swimming-guardian").unwrap();
+    assert!(
+        entity.position.y >= 63.99,
+        "guardian should use swimming physics in water, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
+fn vanilla_drowned_with_trident_throws_trident_projectile() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Target", test_position(10.0, 64.0, 0.0));
+    let world = empty_world();
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("drowned_has_trident".to_string(), serde_json::json!(true));
+    spawn_vanilla_entity(
+        &manager,
+        "trident-drowned",
+        "minecraft:drowned",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:trident"
+                && entity.ai == "vanilla_projectile:trident")
+    );
+}
+
+#[test]
+fn vanilla_evoker_spell_spawns_fangs_and_damages_player() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "spell-evoker",
+        "minecraft:evoker",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut damage = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        if let crate::players::PlayerEvent::Damage { amount, kind, .. } = event {
+            damage = Some((amount, kind));
+        }
+    }
+    assert_eq!(damage, Some((6.0, crate::players::PlayerDamageKind::Magic)));
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:evoker_fangs")
+    );
+}
+
+#[test]
+fn vanilla_neutral_wolf_attacks_only_when_angry() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "calm-wolf",
+        "minecraft:wolf",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut calm_damage = false;
+    while let Ok(event) = session.receiver.try_recv() {
+        if matches!(event, crate::players::PlayerEvent::Damage { .. }) {
+            calm_damage = true;
+        }
+    }
+    assert!(!calm_damage);
+
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Target", test_position(1.0, 64.0, 0.0));
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("angry".to_string(), serde_json::json!(true));
+    spawn_vanilla_entity(
+        &manager,
+        "angry-wolf",
+        "minecraft:wolf",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let mut angry_damage = false;
+    while let Ok(event) = session.receiver.try_recv() {
+        if matches!(
+            event,
+            crate::players::PlayerEvent::Damage { amount: 4.0, .. }
+        ) {
+            angry_damage = true;
+        }
+    }
+    assert!(angry_damage);
+}
+
+#[test]
+fn vanilla_zombie_damages_villager_entity() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "zombie-villager-target",
+        "minecraft:villager",
+        test_position(1.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "villager-hunting-zombie",
+        "minecraft:zombie",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .entity_health_for_tests("zombie-villager-target")
+            .is_some_and(|health| health < 20.0)
+    );
+}
+
+#[test]
+fn vanilla_villager_flees_nearby_zombie() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(10.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "fleeing-villager",
+        "minecraft:villager",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "villager-threat-zombie",
+        "minecraft:zombie",
+        test_position(3.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("fleeing-villager").unwrap();
+    assert!(
+        entity.position.x < -0.01,
+        "villager should move away from zombie on the x axis, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
+fn vanilla_creeper_flees_nearby_cat() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(10.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "cat-fearing-creeper",
+        "minecraft:creeper",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "nearby-cat",
+        "minecraft:cat",
+        test_position(3.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("cat-fearing-creeper").unwrap();
+    assert!(
+        entity.position.x < -0.01,
+        "creeper should move away from nearby cats, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
+fn vanilla_skeleton_flees_nearby_wolf() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(10.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "wolf-fearing-skeleton",
+        "minecraft:skeleton",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "nearby-wolf",
+        "minecraft:wolf",
+        test_position(3.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("wolf-fearing-skeleton").unwrap();
+    assert!(
+        entity.position.x < -0.01,
+        "skeleton should move away from nearby wolves, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
+fn vanilla_rabbit_flees_nearby_fox() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(10.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "fox-fearing-rabbit",
+        "minecraft:rabbit",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "nearby-fox",
+        "minecraft:fox",
+        test_position(3.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    let entity = manager.entity_by_key("fox-fearing-rabbit").unwrap();
+    assert!(
+        entity.position.x < -0.01,
+        "rabbit should move away from nearby foxes, got {:?}",
+        entity.position
+    );
+}
+
+#[test]
+fn vanilla_fox_attacks_rabbit_prey() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "hunting-fox",
+        "minecraft:fox",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "fox-prey-rabbit",
+        "minecraft:rabbit",
+        test_position(1.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .entity_health_for_tests("fox-prey-rabbit")
+            .is_some_and(|health| health < 6.0),
+        "fox should damage nearby rabbit prey"
+    );
+}
+
+#[test]
+fn vanilla_wolf_attacks_skeleton_prey() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "skeleton-hunting-wolf",
+        "minecraft:wolf",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "wolf-prey-skeleton",
+        "minecraft:skeleton",
+        test_position(1.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .entity_health_for_tests("wolf-prey-skeleton")
+            .is_some_and(|health| health < 20.0),
+        "wolf should damage nearby skeleton prey"
+    );
+}
+
+#[test]
+fn vanilla_iron_golem_attacks_hostile_entity_without_angry_flag() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(6.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "defending-golem",
+        "minecraft:iron_golem",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "golem-target-zombie",
+        "minecraft:zombie",
+        test_position(1.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .entity_health_for_tests("golem-target-zombie")
+            .is_some_and(|health| health < 20.0)
+    );
+}
+
+#[test]
+fn vanilla_snow_golem_throws_snowball_at_hostile_entity() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(12.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "defending-snow-golem",
+        "minecraft:snow_golem",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "snow-golem-target-zombie",
+        "minecraft:zombie",
+        test_position(6.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:snowball"
+                && entity.ai == "vanilla_projectile:snowball")
+    );
+}
+
+#[test]
+fn vanilla_arrow_projectile_hits_managed_entity_and_is_removed() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(12.0, 64.0, 0.0));
+    let world = empty_world();
+    let mut villager_params = BTreeMap::new();
+    villager_params.insert(
+        "disable_avoid_hostiles".to_string(),
+        serde_json::json!(true),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "arrow-projectile-target-villager",
+        "minecraft:villager",
+        test_position(6.0, 64.0, 0.0),
+        villager_params,
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "arrow-projectile-pillager",
+        "minecraft:pillager",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:arrow"),
+        "pillager should spawn an arrow projectile"
+    );
+    assert_eq!(
+        manager
+            .entity_health_for_tests("arrow-projectile-target-villager")
+            .unwrap(),
+        16.0
+    );
+
+    for _ in 0..8 {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        tick_entities(&manager, &players, &world);
+        if manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:arrow")
+        {
+            break;
+        }
+    }
+
+    assert!(
+        manager
+            .entity_health_for_tests("arrow-projectile-target-villager")
+            .is_some_and(|health| health <= 12.0),
+        "managed entity should take projectile impact damage"
+    );
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:arrow"),
+        "arrow should be removed after hitting a managed entity"
+    );
+}
+
+#[test]
+fn vanilla_snowball_projectile_hits_managed_entity_and_is_removed() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(12.0, 64.0, 0.0));
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "snowball-projectile-golem",
+        "minecraft:snow_golem",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "snowball-projectile-target-zombie",
+        "minecraft:zombie",
+        test_position(6.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    tick_entities(&manager, &players, &world);
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .any(|entity| entity.entity_type == "minecraft:snowball"),
+        "snow golem should spawn a snowball projectile"
+    );
+
+    for _ in 0..8 {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        tick_entities(&manager, &players, &world);
+        if manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:snowball")
+        {
+            break;
+        }
+    }
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:snowball"),
+        "0-damage snowballs should still despawn on managed entity impact"
     );
 }
 

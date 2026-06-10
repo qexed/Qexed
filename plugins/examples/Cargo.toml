@@ -15,4 +15,10 @@ members = [
     "api_consumer_demo",
     "enchanting_lab",
     "creature_game",
+    "minesweeper",
+    "tictactoe",
+    "gobang",
+    "weiqi",
+    "xiangqi",
+    "chess",
 ]

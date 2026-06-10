@@ -13,6 +13,7 @@ use wasmtime::Caller;
 use super::PluginState;
 use super::economy::{EconomyState, normalize_currency};
 use super::structured_storage::StructuredStorageState;
+use qexed_plugin_api::{HttpHeader, HttpRequest, HttpResponse};
 
 const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
 const MAX_HOST_PATH_BYTES: usize = 1024;
@@ -24,10 +25,14 @@ const MAX_HOST_WORLD_EDIT_BATCH_BYTES: usize = 1024 * 1024;
 const MAX_HOST_ENTITY_CONTROL_BYTES: usize = 16 * 1024;
 const MAX_HOST_RANDOM_POOL_BYTES: usize = 256 * 1024;
 const MAX_HOST_PLUGIN_API_BYTES: usize = 1024 * 1024;
+const MAX_HOST_HTTP_REQUEST_BYTES: usize = 1024 * 1024;
+const MAX_HOST_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_HOST_STORAGE_KEY_BYTES: usize = 512;
 const MAX_HOST_STORAGE_VALUE_BYTES: usize = 1024 * 1024;
 const MAX_RANDOM_POOL_PRECOMPUTE_COUNT: usize = 4096;
 const RANDOM_POOL_REFILL_BATCH: usize = 16;
+const DEFAULT_HTTP_TIMEOUT_MS: u64 = 2000;
+const MAX_HTTP_TIMEOUT_MS: u64 = 5000;
 pub(super) const ECONOMY_ASYNC_PENDING: i64 = i64::MIN + 2;
 pub(super) const STRUCTURED_STORAGE_ASYNC_PENDING: i64 = i64::MIN + 2;
 
@@ -574,6 +579,103 @@ fn weighted_pick(entries: &[RandomPoolEntry]) -> Option<String> {
     None
 }
 
+fn execute_http_request_on_worker(bytes: Vec<u8>) -> HttpResponse {
+    match std::thread::Builder::new()
+        .name("qexed-plugin-http".to_string())
+        .spawn(move || execute_http_request(&bytes))
+    {
+        Ok(worker) => worker
+            .join()
+            .unwrap_or_else(|_| http_error("request worker panicked".to_string())),
+        Err(err) => http_error(format!("spawn request worker failed: {err}")),
+    }
+}
+
+fn execute_http_request(bytes: &[u8]) -> HttpResponse {
+    let request = match postcard::from_bytes::<HttpRequest>(bytes) {
+        Ok(request) => request,
+        Err(err) => return http_error(format!("decode request failed: {err}")),
+    };
+    let method = request.method.trim().to_ascii_uppercase();
+    let method = match method.as_str() {
+        "" | "GET" => reqwest::Method::GET,
+        "POST" => reqwest::Method::POST,
+        "PUT" => reqwest::Method::PUT,
+        "PATCH" => reqwest::Method::PATCH,
+        "DELETE" => reqwest::Method::DELETE,
+        _ => return http_error(format!("unsupported method: {method}")),
+    };
+    let url = request.url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return http_error("unsupported URL scheme".to_string());
+    }
+    if request.body.len() > MAX_HOST_HTTP_REQUEST_BYTES {
+        return http_error("request body too large".to_string());
+    }
+    let timeout_ms = if request.timeout_ms == 0 {
+        DEFAULT_HTTP_TIMEOUT_MS
+    } else {
+        request.timeout_ms.min(MAX_HTTP_TIMEOUT_MS)
+    };
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .no_proxy()
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => return http_error(format!("build client failed: {err}")),
+    };
+
+    let mut builder = client.request(method, url);
+    for header in request.headers {
+        let name = header.name.trim();
+        if name.is_empty() || header.value.len() > 8192 {
+            continue;
+        }
+        builder = builder.header(name, header.value);
+    }
+    if !request.body.is_empty() {
+        builder = builder.body(request.body);
+    }
+
+    let response = match builder.send() {
+        Ok(response) => response,
+        Err(err) => return http_error(format!("request failed: {err}")),
+    };
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            let value = value.to_str().ok()?;
+            Some(HttpHeader {
+                name: name.as_str().to_string(),
+                value: value.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = match response.bytes() {
+        Ok(bytes) if bytes.len() <= MAX_HOST_HTTP_RESPONSE_BYTES => bytes.to_vec(),
+        Ok(_) => return http_error("response body too large".to_string()),
+        Err(err) => return http_error(format!("read response failed: {err}")),
+    };
+    HttpResponse {
+        status,
+        headers,
+        body,
+        error: String::new(),
+    }
+}
+
+fn http_error(error: String) -> HttpResponse {
+    HttpResponse {
+        status: 0,
+        headers: Vec::new(),
+        body: Vec::new(),
+        error,
+    }
+}
+
 pub(super) fn host_log(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) {
     let plugin_name = caller.data().name.clone();
     let Some(bytes) = host_memory_bytes(&mut caller, ptr, len, MAX_HOST_LOG_BYTES) else {
@@ -639,6 +741,28 @@ pub(super) fn host_plugin_call(
         return -1;
     };
     write_host_response(&mut caller, out_ptr, out_len, &response)
+}
+
+pub(super) fn host_http_request(
+    mut caller: Caller<'_, PluginState>,
+    request_ptr: i32,
+    request_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(bytes) = host_memory_bytes(
+        &mut caller,
+        request_ptr,
+        request_len,
+        MAX_HOST_HTTP_REQUEST_BYTES,
+    ) else {
+        return -1;
+    };
+    let response = execute_http_request_on_worker(bytes.to_vec());
+    let Ok(bytes) = postcard::to_allocvec(&response) else {
+        return -1;
+    };
+    write_host_response(&mut caller, out_ptr, out_len, &bytes)
 }
 
 pub(super) fn host_config_exists(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) -> i32 {

@@ -1,0 +1,13 @@
+[package]
+name = "chess_game"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chess = "3.2.0"
+qexed_plugin_sdk = { path = "../qexed_plugin_sdk" }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9.5"

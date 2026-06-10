@@ -63,19 +63,47 @@ const ENTITY_PROJECTILE_ARROW_AI: &str = "vanilla_projectile:arrow";
 const ENTITY_PROJECTILE_SMALL_FIREBALL_AI: &str = "vanilla_projectile:small_fireball";
 const ENTITY_PROJECTILE_FIREBALL_AI: &str = "vanilla_projectile:fireball";
 const ENTITY_PROJECTILE_POTION_AI: &str = "vanilla_projectile:potion";
+const ENTITY_PROJECTILE_SHULKER_BULLET_AI: &str = "vanilla_projectile:shulker_bullet";
+const ENTITY_PROJECTILE_WIND_CHARGE_AI: &str = "vanilla_projectile:wind_charge";
+const ENTITY_PROJECTILE_WITHER_SKULL_AI: &str = "vanilla_projectile:wither_skull";
+const ENTITY_PROJECTILE_TRIDENT_AI: &str = "vanilla_projectile:trident";
+const ENTITY_PROJECTILE_SNOWBALL_AI: &str = "vanilla_projectile:snowball";
 const ENTITY_PROJECTILE_LIFETIME_TICKS: i32 = 1_200;
 const ENTITY_PROJECTILE_GRAVITY_PER_TICK: f64 = 0.05;
 const ENTITY_PROJECTILE_HIT_RADIUS: f64 = 0.7;
 const ENTITY_ARROW_DEFAULT_DAMAGE: f32 = 4.0;
 const ENTITY_ARROW_DEFAULT_SPEED: f64 = 1.6;
+const ENTITY_TRIDENT_DEFAULT_DAMAGE: f32 = 8.0;
+const ENTITY_TRIDENT_DEFAULT_SPEED: f64 = 1.9;
 const ENTITY_SMALL_FIREBALL_DEFAULT_DAMAGE: f32 = 5.0;
 const ENTITY_FIREBALL_DEFAULT_EXPLOSION_RADIUS: f64 = 2.0;
 const ENTITY_FIREBALL_DEFAULT_EXPLOSION_DAMAGE: f32 = 17.0;
+const ENTITY_SHULKER_BULLET_DAMAGE: f32 = 4.0;
+const ENTITY_SHULKER_BULLET_LEVITATION_TICKS: i32 = 20 * 10;
+const ENTITY_SHULKER_BULLET_HOMING_BLEND: f64 = 0.2;
+const ENTITY_WIND_CHARGE_EXPLOSION_RADIUS: f64 = 2.0;
+const ENTITY_WIND_CHARGE_EXPLOSION_DAMAGE: f32 = 2.0;
+const ENTITY_WITHER_SKULL_EXPLOSION_RADIUS: f64 = 1.0;
+const ENTITY_WITHER_SKULL_EXPLOSION_DAMAGE: f32 = 8.0;
 const ENTITY_WITCH_INSTANT_DAMAGE_AMPLIFIER: i32 = 0;
 const ENTITY_WITCH_SLOWNESS_DURATION_TICKS: i32 = 20 * 30;
 const ENTITY_GUARDIAN_ATTACK_DURATION_TICKS: i32 = 80;
 const ENTITY_GUARDIAN_MAGIC_DAMAGE: f32 = 6.0;
 const ENTITY_ELDER_GUARDIAN_MAGIC_DAMAGE: f32 = 8.0;
+const ENTITY_SLIME_JUMP_VELOCITY: f64 = 0.42;
+const ENTITY_SLIME_JUMP_DELAY_TICKS: i32 = 10;
+const ENTITY_SPIDER_CLIMB_VELOCITY: f64 = 0.20;
+const ENTITY_ENDERMAN_TELEPORT_MIN_DISTANCE: f64 = 16.0;
+const ENTITY_ENDERMAN_TELEPORT_ARRIVAL_DISTANCE: f64 = 4.0;
+const ENTITY_ENDERMAN_TELEPORT_CHANCE: f64 = 0.05;
+const ENTITY_ENDERMAN_WATER_DAMAGE: f32 = 1.0;
+const ENTITY_ENDERMAN_WATER_TELEPORT_RADIUS: i32 = 16;
+const ENTITY_OUT_OF_WATER_DAMAGE: f32 = 1.0;
+const ENTITY_FLYING_VERTICAL_SPEED: f64 = 0.18;
+const ENTITY_SWIMMING_VERTICAL_SPEED: f64 = 0.12;
+const ENTITY_EVOKER_FANGS_DAMAGE: f32 = 6.0;
+const ENTITY_WARDEN_SONIC_BOOM_DAMAGE: f32 = 10.0;
+const ENTITY_DEFAULT_SUMMON_LIFETIME_TICKS: i32 = 40;
 
 #[derive(Debug)]
 pub struct EntityManager {
@@ -98,6 +126,7 @@ pub struct EntityManager {
     entity_attacks: Mutex<HashMap<String, EntityAttackState>>,
     entity_creepers: Mutex<HashMap<String, EntityCreeperState>>,
     entity_projectiles: Mutex<HashMap<String, EntityProjectileState>>,
+    entity_summons: Mutex<HashMap<String, EntitySummonState>>,
     collision_cache: Mutex<CollisionCache>,
     ai_cursor: Mutex<usize>,
 }
@@ -117,6 +146,7 @@ struct EntityMotion {
     velocity_x: f64,
     velocity_y: f64,
     velocity_z: f64,
+    jump_cooldown_ticks: i32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,6 +189,11 @@ struct EntityCreeperState {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct EntitySummonState {
+    remaining_ticks: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct EntityProjectileState {
     source_entity_id: i32,
     kind: EntityProjectileKind,
@@ -173,6 +208,7 @@ struct EntityProjectileState {
     explosion_break_blocks: bool,
     splash_radius: f64,
     potion_effect: Option<EntityPotionEffect>,
+    target_profile_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -204,6 +240,12 @@ struct EntityPlayerPotionEffectRequest {
 }
 
 #[derive(Debug, Clone)]
+struct EntityEntityDamageRequest {
+    target_entity_id: i32,
+    amount: f32,
+}
+
+#[derive(Debug, Clone)]
 struct EntityProjectileSpawnRequest {
     key: String,
     entity_type: String,
@@ -223,6 +265,19 @@ struct EntityProjectileSpawnRequest {
     explosion_break_blocks: bool,
     splash_radius: f64,
     potion_effect: Option<EntityPotionEffect>,
+    target_profile_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Clone)]
+struct EntitySummonSpawnRequest {
+    key: String,
+    entity_type: String,
+    dimension: String,
+    position: EntityPosition,
+    ai: String,
+    ai_params: BTreeMap<String, serde_json::Value>,
+    display_name: String,
+    lifetime_ticks: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +286,11 @@ enum EntityProjectileKind {
     SmallFireball,
     Fireball,
     Potion,
+    ShulkerBullet,
+    WindCharge,
+    WitherSkull,
+    Trident,
+    Snowball,
 }
 
 impl EntityProjectileKind {
@@ -240,6 +300,11 @@ impl EntityProjectileKind {
             Self::SmallFireball => ENTITY_PROJECTILE_SMALL_FIREBALL_AI,
             Self::Fireball => ENTITY_PROJECTILE_FIREBALL_AI,
             Self::Potion => ENTITY_PROJECTILE_POTION_AI,
+            Self::ShulkerBullet => ENTITY_PROJECTILE_SHULKER_BULLET_AI,
+            Self::WindCharge => ENTITY_PROJECTILE_WIND_CHARGE_AI,
+            Self::WitherSkull => ENTITY_PROJECTILE_WITHER_SKULL_AI,
+            Self::Trident => ENTITY_PROJECTILE_TRIDENT_AI,
+            Self::Snowball => ENTITY_PROJECTILE_SNOWBALL_AI,
         }
     }
 
@@ -249,14 +314,25 @@ impl EntityProjectileKind {
             Self::SmallFireball => "minecraft:small_fireball",
             Self::Fireball => "minecraft:fireball",
             Self::Potion => "minecraft:splash_potion",
+            Self::ShulkerBullet => "minecraft:shulker_bullet",
+            Self::WindCharge => "minecraft:wind_charge",
+            Self::WitherSkull => "minecraft:wither_skull",
+            Self::Trident => "minecraft:trident",
+            Self::Snowball => "minecraft:snowball",
         }
     }
 
     fn damage_kind(self) -> crate::players::PlayerDamageKind {
         match self {
-            Self::Fireball => crate::players::PlayerDamageKind::Explosion,
+            Self::Fireball | Self::WindCharge | Self::WitherSkull => {
+                crate::players::PlayerDamageKind::Explosion
+            }
             Self::Potion => crate::players::PlayerDamageKind::Magic,
-            Self::Arrow | Self::SmallFireball => crate::players::PlayerDamageKind::Projectile,
+            Self::Arrow
+            | Self::SmallFireball
+            | Self::ShulkerBullet
+            | Self::Trident
+            | Self::Snowball => crate::players::PlayerDamageKind::Projectile,
         }
     }
 }
@@ -272,6 +348,7 @@ struct EntityPotionEffect {
 enum EntityPotionEffectKind {
     InstantDamage,
     Hunger,
+    Levitation,
     Poison,
     Slowness,
     Weakness,
@@ -283,6 +360,7 @@ impl EntityPotionEffectKind {
         match self {
             Self::InstantDamage => "minecraft:instant_damage",
             Self::Hunger => "minecraft:hunger",
+            Self::Levitation => "minecraft:levitation",
             Self::Poison => "minecraft:poison",
             Self::Slowness => "minecraft:slowness",
             Self::Weakness => "minecraft:weakness",
@@ -294,6 +372,7 @@ impl EntityPotionEffectKind {
         match self {
             Self::InstantDamage => 1,
             Self::Hunger => 20 * 7,
+            Self::Levitation => ENTITY_SHULKER_BULLET_LEVITATION_TICKS,
             Self::Poison => 20 * 45,
             Self::Slowness => ENTITY_WITCH_SLOWNESS_DURATION_TICKS,
             Self::Weakness => 20 * 30,
@@ -484,6 +563,7 @@ impl EntityManager {
             entity_attacks: Mutex::new(HashMap::new()),
             entity_creepers: Mutex::new(HashMap::new()),
             entity_projectiles: Mutex::new(HashMap::new()),
+            entity_summons: Mutex::new(HashMap::new()),
             collision_cache: Mutex::new(CollisionCache::default()),
             ai_cursor: Mutex::new(0),
         };
@@ -1036,6 +1116,7 @@ impl EntityManager {
             ManagedEntityKind::Npc => normalized_npc_client_entity_type(key, &request.entity_type),
             ManagedEntityKind::Hologram => "minecraft:text_display".to_string(),
         };
+        let data = normalized_entity_data(&entity_type, request.data, &request.ai_params);
         let entity = ManagedEntity {
             entity_id: self.entity_ids.next(),
             uuid: stable_entity_uuid(key),
@@ -1052,7 +1133,7 @@ impl EntityManager {
             display_name: request.display_name,
             skin_textures: request.skin_textures,
             skin_signature: request.skin_signature,
-            data: request.data,
+            data,
             ai: request.ai,
             ai_params: request.ai_params,
             auto_jump: request.auto_jump,
@@ -1078,7 +1159,7 @@ impl EntityManager {
             .lock()
             .expect("entity health state poisoned")
             .entry(entity.key.clone())
-            .or_insert_with(|| default_entity_health(&entity.entity_type));
+            .or_insert_with(|| default_entity_health_for_entity(&entity));
         Ok(entity)
     }
 
@@ -1133,6 +1214,7 @@ impl EntityManager {
                     explosion_break_blocks: request.explosion_break_blocks,
                     splash_radius: request.splash_radius,
                     potion_effect: request.potion_effect,
+                    target_profile_id: request.target_profile_id,
                 },
             );
         self.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
@@ -1147,6 +1229,56 @@ impl EntityManager {
                 players.send_packets_to(player.profile.uuid, packets.clone());
             }
         }
+        Ok(())
+    }
+
+    fn spawn_summoned_entity(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        request: EntitySummonSpawnRequest,
+    ) -> Result<()> {
+        let mut ai_params = request.ai_params;
+        if let Some(lifetime_ticks) = request.lifetime_ticks {
+            ai_params.insert(
+                "summon_lifetime_ticks".to_string(),
+                serde_json::json!(lifetime_ticks),
+            );
+        }
+        let entity = self.spawn_local(EntitySpawnRequest {
+            key: request.key,
+            kind: ManagedEntityKind::Entity,
+            entity_type: request.entity_type,
+            entity_type_id_override: None,
+            dimension: request.dimension,
+            position: request.position,
+            name: request.display_name.clone(),
+            display_name: request.display_name,
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: request.ai,
+            ai_params,
+            auto_jump: true,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        })?;
+        if let Some(lifetime_ticks) = request.lifetime_ticks {
+            self.entity_summons
+                .lock()
+                .expect("entity summon state poisoned")
+                .insert(
+                    entity.key.clone(),
+                    EntitySummonState {
+                        remaining_ticks: lifetime_ticks.max(1),
+                    },
+                );
+        }
+        self.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
         Ok(())
     }
 
@@ -1232,13 +1364,17 @@ impl EntityManager {
             .lock()
             .expect("entity projectile state poisoned")
             .remove(&entity.key);
+        self.entity_summons
+            .lock()
+            .expect("entity summon state poisoned")
+            .remove(&entity.key);
         Ok(entity)
     }
 
     pub fn damage_managed_entity(
         &self,
-        _players: &crate::players::PlayerManager,
-        _rendering: &qexed_config::app::qexed::server::EntityRendering,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
         entity_id: i32,
         damage: f32,
     ) -> Result<Option<EntityDamageResult>> {
@@ -1266,7 +1402,7 @@ impl EntityManager {
             .expect("entity health state poisoned");
         let current = health
             .entry(entity.key.clone())
-            .or_insert_with(|| default_entity_health(&entity.entity_type));
+            .or_insert_with(|| default_entity_health_for_entity(&entity));
         *current = (*current - damage).max(0.0);
         let killed = *current <= 0.0;
         if killed {
@@ -1282,9 +1418,69 @@ impl EntityManager {
                     entity.key.clone(),
                     Instant::now() + ENTITY_DEATH_REMOVE_DELAY,
                 );
+            self.spawn_slime_split_children(players, rendering, &entity)?;
         }
 
         Ok(Some(EntityDamageResult { entity, killed }))
+    }
+
+    fn spawn_slime_split_children(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        entity: &ManagedEntity,
+    ) -> Result<()> {
+        if !entity_type_uses_slime_size(&entity.entity_type)
+            || ai_param_bool(&entity.ai_params, "disable_slime_split", false)
+        {
+            return Ok(());
+        }
+        let size = slime_size_for_entity(entity);
+        if size <= 1 {
+            return Ok(());
+        }
+        let child_size = (size / 2).max(1);
+        let random_count = rand::Rng::gen_range(&mut rand::thread_rng(), 2..=4);
+        let split_count =
+            ai_param_i32(&entity.ai_params, "slime_split_count", random_count).clamp(0, 8);
+        let offset = (f64::from(size) * 0.255).max(0.25);
+        for index in 0..split_count {
+            let x_offset = f64::from(index % 2) * offset - offset * 0.5;
+            let z_offset = f64::from(index / 2) * offset - offset * 0.5;
+            let mut ai_params = entity.ai_params.clone();
+            ai_params.insert("slime_size".to_string(), serde_json::json!(child_size));
+            let mut position = entity.position;
+            position.x += x_offset;
+            position.y += 0.5;
+            position.z += z_offset;
+            position.yaw = rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0);
+            position.pitch = 0.0;
+            position.on_ground = false;
+            let child = self.spawn_local(EntitySpawnRequest {
+                key: format!("{}:split:{}", entity.key, self.next_spawn_sequence()),
+                kind: ManagedEntityKind::Entity,
+                entity_type: entity.entity_type.clone(),
+                entity_type_id_override: Some(entity.entity_type_id),
+                dimension: entity.dimension.clone(),
+                position,
+                name: entity.name.clone(),
+                display_name: entity.display_name.clone(),
+                skin_textures: entity.skin_textures.clone(),
+                skin_signature: entity.skin_signature.clone(),
+                data: child_size,
+                ai: entity.ai.clone(),
+                ai_params,
+                auto_jump: entity.auto_jump,
+                spawn_rule: entity.spawn_rule.clone(),
+                custom_type: entity.custom_type.clone(),
+                look_at_players: entity.look_at_players,
+                main_hand_event: entity.main_hand_event.clone(),
+                off_hand_event: entity.off_hand_event.clone(),
+                attack_event: entity.attack_event.clone(),
+            })?;
+            self.send_spawn_to_rendered_viewers(players, rendering, &child)?;
+        }
+        Ok(())
     }
 
     pub fn ignite_managed_entity(
@@ -1696,9 +1892,12 @@ impl EntityManager {
         let mut motion_updates = Vec::new();
         let mut fire_events = Vec::new();
         let mut fire_damage = Vec::new();
+        let mut environment_damage = Vec::new();
         let mut player_damage_requests = Vec::new();
         let mut player_potion_effect_requests = Vec::new();
+        let mut entity_damage_requests = Vec::new();
         let mut projectile_spawns = Vec::new();
+        let mut summon_spawns = Vec::new();
         let mut explosion_block_requests = Vec::new();
         let dying_keys = self
             .entity_deaths
@@ -1708,6 +1907,7 @@ impl EntityManager {
             .cloned()
             .collect::<HashSet<_>>();
         let snapshot = self.active_ai_snapshot(&viewers, rendering, &dying_keys);
+        let target_snapshot = snapshot.clone();
         {
             let mut motion = self
                 .entity_motion
@@ -1749,6 +1949,11 @@ impl EntityManager {
                 .lock()
                 .expect("entity projectile state poisoned")
                 .clone();
+            let mut summon_state = self
+                .entity_summons
+                .lock()
+                .expect("entity summon state poisoned")
+                .clone();
             let mut collision_cache = std::mem::take(
                 &mut *self
                     .collision_cache
@@ -1762,7 +1967,7 @@ impl EntityManager {
             for mut entity in snapshot {
                 let previous = entity.position;
                 let mut movement = EntityMovement::default();
-                let mut remove = false;
+                let mut remove = apply_summon_lifetime_tick(&entity, tick_ms, &mut summon_state);
                 let ai = ai_kind(&entity.ai);
                 match ai {
                     EntityAiKind::None => {
@@ -1801,6 +2006,7 @@ impl EntityManager {
                         movement = apply_vanilla_ai(
                             &mut entity,
                             &viewers,
+                            &target_snapshot,
                             tick_ms,
                             &mut target_memory,
                             &mut path_memory,
@@ -1841,12 +2047,15 @@ impl EntityManager {
                     remove |= apply_vanilla_ai_effects(
                         &entity,
                         &viewers,
+                        &target_snapshot,
                         tick_ms,
                         &mut attack_state,
                         &mut creeper_state,
                         &mut player_damage_requests,
                         &mut player_potion_effect_requests,
+                        &mut entity_damage_requests,
                         &mut projectile_spawns,
+                        &mut summon_spawns,
                         &mut explosion_block_requests,
                     );
                 } else {
@@ -1861,6 +2070,7 @@ impl EntityManager {
                     attack_state.remove(&entity.key);
                     creeper_state.remove(&entity.key);
                     projectile_state.remove(&entity.key);
+                    summon_state.remove(&entity.key);
                     removes.push(entity.key.clone());
                     continue;
                 }
@@ -1874,9 +2084,11 @@ impl EntityManager {
                         motion,
                         &mut projectile_state,
                         &viewers,
+                        &target_snapshot,
                         tick_ms,
                         &mut player_damage_requests,
                         &mut player_potion_effect_requests,
+                        &mut entity_damage_requests,
                         &mut explosion_block_requests,
                     );
                     let next_motion = *motion;
@@ -1914,6 +2126,7 @@ impl EntityManager {
                     attack_state.remove(&entity.key);
                     creeper_state.remove(&entity.key);
                     projectile_state.remove(&entity.key);
+                    summon_state.remove(&entity.key);
                     removes.push(entity.key.clone());
                     continue;
                 }
@@ -1927,6 +2140,17 @@ impl EntityManager {
                     &mut fire_events,
                     &mut fire_damage,
                 );
+                if apply_enderman_water_reaction(
+                    &mut entity,
+                    world,
+                    &mut collision_cache,
+                    tick_ms,
+                    &mut environment_damage,
+                ) {
+                    target_memory.remove(&entity.key);
+                    path_memory.remove(&entity.key);
+                }
+                apply_out_of_water_damage(&entity, world, tick_ms, &mut environment_damage);
 
                 if position_changed(previous, entity.position) {
                     tick_updates.push(EntityAiTickUpdate {
@@ -1966,6 +2190,10 @@ impl EntityManager {
                 .entity_projectiles
                 .lock()
                 .expect("entity projectile state poisoned") = projectile_state;
+            *self
+                .entity_summons
+                .lock()
+                .expect("entity summon state poisoned") = summon_state;
         }
 
         for entity in fire_events {
@@ -1979,6 +2207,17 @@ impl EntityManager {
         for entity_id in fire_damage {
             let _ =
                 self.damage_managed_entity(players, rendering, entity_id, ENTITY_FIRE_DAMAGE)?;
+        }
+        for (entity_id, amount) in environment_damage {
+            let _ = self.damage_managed_entity(players, rendering, entity_id, amount)?;
+        }
+        for request in entity_damage_requests {
+            let _ = self.damage_managed_entity(
+                players,
+                rendering,
+                request.target_entity_id,
+                request.amount,
+            )?;
         }
         for request in player_damage_requests {
             players.damage_player(
@@ -2003,6 +2242,9 @@ impl EntityManager {
         }
         for request in projectile_spawns {
             self.spawn_projectile(players, rendering, request)?;
+        }
+        for request in summon_spawns {
+            self.spawn_summoned_entity(players, rendering, request)?;
         }
         apply_explosion_block_requests(players, world, world_rules, explosion_block_requests)?;
 
@@ -2639,16 +2881,37 @@ fn default_entity_health(entity_type: &str) -> f32 {
         "minecraft:iron_golem" => 100.0,
         "minecraft:ravager" => 100.0,
         "minecraft:ghast" => 10.0,
+        "minecraft:evoker" => 24.0,
+        "minecraft:vex" => 14.0,
+        "minecraft:guardian" => 30.0,
+        "minecraft:elder_guardian" => 80.0,
+        "minecraft:polar_bear" => 30.0,
+        "minecraft:turtle" => 30.0,
+        "minecraft:dolphin" => 10.0,
+        "minecraft:axolotl" => 14.0,
+        "minecraft:bee" => 10.0,
+        "minecraft:snow_golem" => 4.0,
         "minecraft:slime" | "minecraft:magma_cube" => 16.0,
         "minecraft:chicken"
         | "minecraft:rabbit"
         | "minecraft:bat"
+        | "minecraft:allay"
+        | "minecraft:parrot"
         | "minecraft:cod"
         | "minecraft:salmon"
         | "minecraft:tropical_fish"
-        | "minecraft:pufferfish" => 6.0,
-        "minecraft:sheep" | "minecraft:pig" | "minecraft:cow" | "minecraft:goat"
-        | "minecraft:wolf" | "minecraft:cat" | "minecraft:ocelot" | "minecraft:fox" => 10.0,
+        | "minecraft:pufferfish"
+        | "minecraft:tadpole" => 6.0,
+        "minecraft:sheep"
+        | "minecraft:pig"
+        | "minecraft:cow"
+        | "minecraft:goat"
+        | "minecraft:wolf"
+        | "minecraft:cat"
+        | "minecraft:ocelot"
+        | "minecraft:fox"
+        | "minecraft:frog"
+        | "minecraft:armadillo" => 10.0,
         "minecraft:zombie"
         | "minecraft:husk"
         | "minecraft:drowned"
@@ -2665,6 +2928,49 @@ fn default_entity_health(entity_type: &str) -> f32 {
         "minecraft:enderman" => 40.0,
         _ => 20.0,
     }
+}
+
+fn default_entity_health_for_entity(entity: &ManagedEntity) -> f32 {
+    if entity_type_uses_slime_size(&entity.entity_type) {
+        let size = slime_size_for_entity(entity);
+        return (size * size) as f32;
+    }
+    default_entity_health(&entity.entity_type)
+}
+
+fn normalized_entity_data(
+    entity_type: &str,
+    data: i32,
+    ai_params: &BTreeMap<String, serde_json::Value>,
+) -> i32 {
+    if entity_type_uses_slime_size(entity_type) {
+        return slime_size_from_params(data, ai_params);
+    }
+    data
+}
+
+fn slime_size_for_entity(entity: &ManagedEntity) -> i32 {
+    slime_size_from_params(entity.data, &entity.ai_params)
+}
+
+fn slime_size_from_params(data: i32, ai_params: &BTreeMap<String, serde_json::Value>) -> i32 {
+    let configured = ai_param_i32(
+        ai_params,
+        "slime_size",
+        ai_param_i32(ai_params, "size", data.max(0)),
+    );
+    if configured > 0 {
+        configured.clamp(1, 127)
+    } else {
+        4
+    }
+}
+
+fn entity_type_uses_slime_size(entity_type: &str) -> bool {
+    matches!(
+        normalized_entity_type(entity_type).as_str(),
+        "minecraft:slime" | "minecraft:magma_cube"
+    )
 }
 
 fn within_render_distance(entity: EntityPosition, viewer: EntityPosition, distance: f64) -> bool {
@@ -2879,8 +3185,11 @@ fn vanilla_behavior_override(value: &str) -> Option<VanillaEntityBehavior> {
     match value.trim() {
         "none" | "static" => Some(VanillaEntityBehavior::Static),
         "passive" | "ambient" | "animal" => Some(VanillaEntityBehavior::Passive),
+        "neutral" | "neutral_melee" => Some(VanillaEntityBehavior::NeutralMelee),
+        "neutral_ranged" => Some(VanillaEntityBehavior::NeutralRanged),
         "hostile" | "hostile_melee" | "melee" => Some(VanillaEntityBehavior::HostileMelee),
         "hostile_ranged" | "ranged" => Some(VanillaEntityBehavior::HostileRanged),
+        "spellcaster" | "caster" => Some(VanillaEntityBehavior::Spellcaster),
         "guardian" | "guardian_beam" => Some(VanillaEntityBehavior::GuardianBeam),
         "creeper" => Some(VanillaEntityBehavior::Creeper),
         _ => None,
@@ -2891,7 +3200,9 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
     let entity_type = normalized_entity_type(entity_type);
     let mut profile = VanillaEntityAiProfile {
         behavior: VanillaEntityBehavior::Passive,
+        movement_mode: VanillaMovementMode::Ground,
         movement_speed: 0.20,
+        vertical_speed: 0.0,
         follow_range: 16.0,
         stop_distance: 2.0,
         stroll_chance: 0.25,
@@ -2915,8 +3226,19 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
         projectile_explosion_damage: 0.0,
         projectile_break_blocks: true,
         projectile_splash_radius: 0.0,
+        spell_damage: 0.0,
+        summon_kind: None,
+        summon_count: 0,
+        summon_chance: 0.0,
+        summon_lifetime_ticks: ENTITY_DEFAULT_SUMMON_LIFETIME_TICKS,
         guardian_attack_duration_ticks: ENTITY_GUARDIAN_ATTACK_DURATION_TICKS,
         guardian_magic_damage: ENTITY_GUARDIAN_MAGIC_DAMAGE,
+        slime_jump_velocity: ENTITY_SLIME_JUMP_VELOCITY,
+        slime_jump_delay_ticks: ENTITY_SLIME_JUMP_DELAY_TICKS,
+        spider_climb_velocity: ENTITY_SPIDER_CLIMB_VELOCITY,
+        enderman_teleport_min_distance: ENTITY_ENDERMAN_TELEPORT_MIN_DISTANCE,
+        enderman_teleport_arrival_distance: ENTITY_ENDERMAN_TELEPORT_ARRIVAL_DISTANCE,
+        enderman_teleport_chance: ENTITY_ENDERMAN_TELEPORT_CHANCE,
         creeper_swell_ticks: CREEPER_SWELL_TICKS,
         creeper_explosion_radius: CREEPER_EXPLOSION_RADIUS,
         creeper_explosion_damage: CREEPER_EXPLOSION_DAMAGE,
@@ -2968,18 +3290,57 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
         | "minecraft:wither_skull" => {
             profile.behavior = VanillaEntityBehavior::Static;
         }
-        "minecraft:pig" => {
+        "minecraft:pig" | "minecraft:armadillo" => {
             profile.movement_speed = 0.25;
         }
         "minecraft:sheep" => {
             profile.movement_speed = 0.23;
         }
-        "minecraft:chicken" => {
+        "minecraft:chicken" | "minecraft:frog" => {
             profile.movement_speed = 0.25;
             profile.stroll_max_speed = 0.16;
         }
         "minecraft:cow" | "minecraft:mooshroom" => {
             profile.movement_speed = 0.20;
+        }
+        "minecraft:cod"
+        | "minecraft:salmon"
+        | "minecraft:tropical_fish"
+        | "minecraft:pufferfish"
+        | "minecraft:squid"
+        | "minecraft:glow_squid"
+        | "minecraft:tadpole" => {
+            profile.movement_mode = VanillaMovementMode::Swimming;
+            profile.movement_speed = 0.18;
+            profile.vertical_speed = ENTITY_SWIMMING_VERTICAL_SPEED;
+            profile.stroll_max_speed = 0.14;
+        }
+        "minecraft:dolphin" | "minecraft:axolotl" | "minecraft:turtle" => {
+            profile.movement_mode = VanillaMovementMode::Swimming;
+            profile.movement_speed = 0.24;
+            profile.vertical_speed = ENTITY_SWIMMING_VERTICAL_SPEED;
+            profile.stroll_max_speed = 0.18;
+        }
+        "minecraft:allay" | "minecraft:bat" | "minecraft:parrot" => {
+            profile.movement_mode = VanillaMovementMode::Flying;
+            profile.movement_speed = 0.22;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
+            profile.stroll_max_speed = 0.18;
+        }
+        "minecraft:bee" => {
+            profile.behavior = VanillaEntityBehavior::NeutralMelee;
+            profile.movement_mode = VanillaMovementMode::Flying;
+            profile.movement_speed = 0.24;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
+            profile.follow_range = 22.0;
+            profile.stop_distance = 1.4;
+            profile.attack_damage = 2.0;
+            profile.attack_range = 1.6;
+            profile.melee_effect = Some(EntityPotionEffect {
+                effect: EntityPotionEffectKind::Poison,
+                amplifier: 0,
+                duration_ticks: 20 * 10,
+            });
         }
         "minecraft:rabbit" => {
             profile.movement_speed = 0.30;
@@ -2994,9 +3355,53 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
             profile.movement_speed = 0.22;
             profile.stroll_max_speed = 0.17;
         }
-        "minecraft:fox" | "minecraft:ocelot" | "minecraft:cat" | "minecraft:wolf" => {
+        "minecraft:fox" => {
+            profile.behavior = VanillaEntityBehavior::NeutralMelee;
             profile.movement_speed = 0.30;
             profile.stroll_max_speed = 0.20;
+            profile.follow_range = 16.0;
+            profile.stop_distance = 1.4;
+            profile.attack_damage = 2.0;
+            profile.attack_range = 1.6;
+        }
+        "minecraft:ocelot" | "minecraft:cat" => {
+            profile.movement_speed = 0.30;
+            profile.stroll_max_speed = 0.20;
+        }
+        "minecraft:wolf" => {
+            profile.behavior = VanillaEntityBehavior::NeutralMelee;
+            profile.movement_speed = 0.30;
+            profile.follow_range = 24.0;
+            profile.stop_distance = 1.6;
+            profile.attack_damage = 4.0;
+            profile.attack_range = 1.8;
+        }
+        "minecraft:polar_bear" => {
+            profile.behavior = VanillaEntityBehavior::NeutralMelee;
+            profile.movement_speed = 0.25;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 2.0;
+            profile.attack_damage = 6.0;
+            profile.attack_range = 2.2;
+        }
+        "minecraft:iron_golem" => {
+            profile.behavior = VanillaEntityBehavior::NeutralMelee;
+            profile.movement_speed = 0.25;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 2.0;
+            profile.attack_damage = 15.0;
+            profile.attack_range = 2.4;
+            profile.attack_knockback = 0.9;
+        }
+        "minecraft:snow_golem" => {
+            profile.behavior = VanillaEntityBehavior::NeutralRanged;
+            profile.movement_speed = 0.20;
+            profile.follow_range = 16.0;
+            profile.stop_distance = 8.0;
+            profile.ranged_attack_range = 10.0;
+            profile.ranged_attack_damage = 0.0;
+            profile.projectile_speed = 1.5;
+            profile.projectile_hit_radius = 0.5;
         }
         "minecraft:villager" | "minecraft:wandering_trader" => {
             profile.movement_speed = 0.20;
@@ -3008,9 +3413,19 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
             profile.follow_range = 16.0;
             profile.stop_distance = 1.6;
         }
-        "minecraft:zombie" | "minecraft:zombie_villager" | "minecraft:drowned" => {
+        "minecraft:zombie" | "minecraft:zombie_villager" => {
             profile.behavior = VanillaEntityBehavior::HostileMelee;
             profile.movement_speed = 0.23;
+            profile.follow_range = 35.0;
+            profile.stop_distance = 1.7;
+            profile.attack_damage = 3.0;
+            profile.attack_range = 1.8;
+        }
+        "minecraft:drowned" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_mode = VanillaMovementMode::Swimming;
+            profile.movement_speed = 0.23;
+            profile.vertical_speed = ENTITY_SWIMMING_VERTICAL_SPEED;
             profile.follow_range = 35.0;
             profile.stop_distance = 1.7;
             profile.attack_damage = 3.0;
@@ -3066,6 +3481,20 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
             profile.attack_damage = 30.0;
             profile.attack_range = 2.6;
             profile.attack_knockback = 0.8;
+            profile.spell_damage = ENTITY_WARDEN_SONIC_BOOM_DAMAGE;
+            profile.ranged_attack_range = 20.0;
+            profile.ranged_attack_interval_ticks = 40;
+        }
+        "minecraft:ender_dragon" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_mode = VanillaMovementMode::Flying;
+            profile.movement_speed = 0.32;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
+            profile.follow_range = 96.0;
+            profile.stop_distance = 4.0;
+            profile.attack_damage = 10.0;
+            profile.attack_range = 5.0;
+            profile.attack_knockback = 1.2;
         }
         "minecraft:ravager" | "minecraft:zoglin" => {
             profile.behavior = VanillaEntityBehavior::HostileMelee;
@@ -3079,7 +3508,6 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
         "minecraft:hoglin"
         | "minecraft:piglin_brute"
         | "minecraft:vindicator"
-        | "minecraft:evoker"
         | "minecraft:silverfish"
         | "minecraft:endermite"
         | "minecraft:slime"
@@ -3095,6 +3523,38 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
                 _ => 2.0,
             };
             profile.attack_range = 2.0;
+        }
+        "minecraft:piglin" | "minecraft:zombified_piglin" => {
+            profile.behavior = VanillaEntityBehavior::NeutralMelee;
+            profile.movement_speed = 0.26;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 1.8;
+            profile.attack_damage = 5.0;
+            profile.attack_range = 2.0;
+        }
+        "minecraft:evoker" => {
+            profile.behavior = VanillaEntityBehavior::Spellcaster;
+            profile.movement_speed = 0.25;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 8.0;
+            profile.look_range = 32.0;
+            profile.ranged_attack_range = 12.0;
+            profile.ranged_attack_interval_ticks = 40;
+            profile.spell_damage = ENTITY_EVOKER_FANGS_DAMAGE;
+            profile.summon_kind = Some(EntitySummonKind::Vex);
+            profile.summon_count = 2;
+            profile.summon_chance = 0.15;
+            profile.summon_lifetime_ticks = 20 * 60;
+        }
+        "minecraft:vex" => {
+            profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_mode = VanillaMovementMode::Flying;
+            profile.movement_speed = 0.28;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 1.4;
+            profile.attack_damage = 9.0;
+            profile.attack_range = 1.8;
         }
         "minecraft:wither_skeleton" => {
             profile.behavior = VanillaEntityBehavior::HostileMelee;
@@ -3138,7 +3598,9 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
         }
         "minecraft:blaze" => {
             profile.behavior = VanillaEntityBehavior::HostileRanged;
+            profile.movement_mode = VanillaMovementMode::Flying;
             profile.movement_speed = 0.25;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
             profile.follow_range = 48.0;
             profile.stop_distance = 8.0;
             profile.look_range = 32.0;
@@ -3151,7 +3613,9 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
         }
         "minecraft:ghast" => {
             profile.behavior = VanillaEntityBehavior::HostileRanged;
+            profile.movement_mode = VanillaMovementMode::Flying;
             profile.movement_speed = 0.18;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
             profile.follow_range = 64.0;
             profile.stop_distance = 24.0;
             profile.look_range = 64.0;
@@ -3164,20 +3628,59 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
             profile.projectile_explosion_radius = ENTITY_FIREBALL_DEFAULT_EXPLOSION_RADIUS;
             profile.projectile_explosion_damage = ENTITY_FIREBALL_DEFAULT_EXPLOSION_DAMAGE;
         }
-        "minecraft:breeze" | "minecraft:shulker" | "minecraft:wither" => {
+        "minecraft:shulker" => {
             profile.behavior = VanillaEntityBehavior::HostileRanged;
-            profile.movement_speed = 0.25;
+            profile.movement_mode = VanillaMovementMode::Flying;
+            profile.movement_speed = 0.0;
+            profile.vertical_speed = 0.0;
             profile.follow_range = 32.0;
-            profile.stop_distance = 12.0;
+            profile.stop_distance = 16.0;
             profile.look_range = 32.0;
-            profile.ranged_attack_range = 15.0;
+            profile.ranged_attack_range = 16.0;
+            profile.ranged_attack_interval_ticks = 60;
+            profile.ranged_attack_damage = ENTITY_SHULKER_BULLET_DAMAGE;
+            profile.projectile_speed = 0.5;
+            profile.projectile_gravity_per_tick = 0.0;
+            profile.projectile_hit_radius = 0.8;
+        }
+        "minecraft:breeze" => {
+            profile.behavior = VanillaEntityBehavior::HostileRanged;
+            profile.movement_speed = 0.30;
+            profile.follow_range = 32.0;
+            profile.stop_distance = 8.0;
+            profile.look_range = 32.0;
+            profile.ranged_attack_range = 16.0;
             profile.ranged_attack_interval_ticks = 40;
-            profile.ranged_attack_damage = ENTITY_ARROW_DEFAULT_DAMAGE;
-            profile.projectile_speed = ENTITY_ARROW_DEFAULT_SPEED;
+            profile.ranged_attack_damage = 0.0;
+            profile.projectile_speed = 1.2;
+            profile.projectile_gravity_per_tick = 0.0;
+            profile.projectile_hit_radius = 0.9;
+            profile.projectile_explosion_radius = ENTITY_WIND_CHARGE_EXPLOSION_RADIUS;
+            profile.projectile_explosion_damage = ENTITY_WIND_CHARGE_EXPLOSION_DAMAGE;
+            profile.projectile_break_blocks = false;
+        }
+        "minecraft:wither" => {
+            profile.behavior = VanillaEntityBehavior::HostileRanged;
+            profile.movement_mode = VanillaMovementMode::Flying;
+            profile.movement_speed = 0.30;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
+            profile.follow_range = 64.0;
+            profile.stop_distance = 16.0;
+            profile.look_range = 64.0;
+            profile.ranged_attack_range = 64.0;
+            profile.ranged_attack_interval_ticks = 40;
+            profile.ranged_attack_damage = 0.0;
+            profile.projectile_speed = 1.0;
+            profile.projectile_gravity_per_tick = 0.0;
+            profile.projectile_hit_radius = 1.0;
+            profile.projectile_explosion_radius = ENTITY_WITHER_SKULL_EXPLOSION_RADIUS;
+            profile.projectile_explosion_damage = ENTITY_WITHER_SKULL_EXPLOSION_DAMAGE;
         }
         "minecraft:guardian" | "minecraft:elder_guardian" => {
             profile.behavior = VanillaEntityBehavior::GuardianBeam;
+            profile.movement_mode = VanillaMovementMode::Swimming;
             profile.movement_speed = 0.20;
+            profile.vertical_speed = ENTITY_SWIMMING_VERTICAL_SPEED;
             profile.follow_range = 16.0;
             profile.stop_distance = 4.0;
             profile.look_range = 16.0;
@@ -3192,9 +3695,13 @@ fn vanilla_entity_ai_profile(entity_type: &str) -> VanillaEntityAiProfile {
         }
         "minecraft:phantom" => {
             profile.behavior = VanillaEntityBehavior::HostileMelee;
+            profile.movement_mode = VanillaMovementMode::Flying;
             profile.movement_speed = 0.28;
+            profile.vertical_speed = ENTITY_FLYING_VERTICAL_SPEED;
             profile.follow_range = 32.0;
             profile.stop_distance = 1.8;
+            profile.attack_damage = 6.0;
+            profile.attack_range = 2.0;
         }
         _ => {}
     }
@@ -3252,16 +3759,34 @@ fn apply_look_at_nearest_player(
 enum VanillaEntityBehavior {
     Static,
     Passive,
+    NeutralMelee,
+    NeutralRanged,
     HostileMelee,
     HostileRanged,
+    Spellcaster,
     GuardianBeam,
     Creeper,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VanillaMovementMode {
+    Ground,
+    Swimming,
+    Flying,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntitySummonKind {
+    EvokerFangs,
+    Vex,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct VanillaEntityAiProfile {
     behavior: VanillaEntityBehavior,
+    movement_mode: VanillaMovementMode,
     movement_speed: f64,
+    vertical_speed: f64,
     follow_range: f64,
     stop_distance: f64,
     stroll_chance: f64,
@@ -3285,8 +3810,19 @@ struct VanillaEntityAiProfile {
     projectile_explosion_damage: f32,
     projectile_break_blocks: bool,
     projectile_splash_radius: f64,
+    spell_damage: f32,
+    summon_kind: Option<EntitySummonKind>,
+    summon_count: i32,
+    summon_chance: f64,
+    summon_lifetime_ticks: i32,
     guardian_attack_duration_ticks: i32,
     guardian_magic_damage: f32,
+    slime_jump_velocity: f64,
+    slime_jump_delay_ticks: i32,
+    spider_climb_velocity: f64,
+    enderman_teleport_min_distance: f64,
+    enderman_teleport_arrival_distance: f64,
+    enderman_teleport_chance: f64,
     creeper_swell_ticks: i32,
     creeper_explosion_radius: f64,
     creeper_explosion_damage: f32,
@@ -3297,6 +3833,7 @@ struct VanillaEntityAiProfile {
 fn apply_vanilla_ai(
     entity: &mut ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
     tick_ms: u64,
     target_memory: &mut HashMap<String, EntityTargetMemory>,
     path_memory: &mut HashMap<String, EntityPathMemory>,
@@ -3318,22 +3855,84 @@ fn apply_vanilla_ai(
         VanillaEntityBehavior::Passive => {
             target_memory.remove(&entity.key);
             path_memory.remove(&entity.key);
-            let movement = apply_random_stroll_with(
-                entity,
-                tick_ms,
-                profile.stroll_chance,
-                profile.stroll_min_speed,
-                profile.stroll_max_speed,
-            );
-            if movement.x.abs() + movement.z.abs() <= 0.0001 {
-                apply_look_at_nearest_player(entity, viewers, profile.look_range);
+            apply_vanilla_passive_ai(entity, viewers, target_entities, tick_ms, world, profile)
+        }
+        VanillaEntityBehavior::NeutralMelee => {
+            if !neutral_entity_is_angry(entity) {
+                if has_vanilla_entity_target(entity, target_entities, profile.follow_range) {
+                    return apply_vanilla_follow_movement(
+                        entity,
+                        viewers,
+                        target_entities,
+                        tick_ms,
+                        target_memory,
+                        path_memory,
+                        target_reselects,
+                        path_recalcs,
+                        world,
+                        collision_cache,
+                        now,
+                        profile,
+                        profile.stop_distance,
+                    );
+                }
+                target_memory.remove(&entity.key);
+                path_memory.remove(&entity.key);
+                return apply_vanilla_passive_ai(
+                    entity,
+                    viewers,
+                    target_entities,
+                    tick_ms,
+                    world,
+                    profile,
+                );
             }
-            movement
+            apply_vanilla_follow_movement(
+                entity,
+                viewers,
+                target_entities,
+                tick_ms,
+                target_memory,
+                path_memory,
+                target_reselects,
+                path_recalcs,
+                world,
+                collision_cache,
+                now,
+                profile,
+                profile.stop_distance,
+            )
         }
         VanillaEntityBehavior::HostileMelee | VanillaEntityBehavior::Creeper => {
-            apply_follow_nearest_player_with(
+            if enderman_is_passive_to_players(entity, viewers, profile) {
+                target_memory.remove(&entity.key);
+                path_memory.remove(&entity.key);
+                return apply_vanilla_passive_ai(
+                    entity,
+                    viewers,
+                    target_entities,
+                    tick_ms,
+                    world,
+                    profile,
+                );
+            }
+            if try_apply_enderman_target_teleport(entity, viewers, world, collision_cache, profile)
+            {
+                target_memory.remove(&entity.key);
+                path_memory.remove(&entity.key);
+                return EntityMovement::default();
+            }
+            if let Some(movement) =
+                vanilla_avoidance_movement(entity, target_entities, tick_ms, profile)
+            {
+                target_memory.remove(&entity.key);
+                path_memory.remove(&entity.key);
+                return movement;
+            }
+            apply_vanilla_follow_movement(
                 entity,
                 viewers,
+                target_entities,
                 tick_ms,
                 target_memory,
                 path_memory,
@@ -3342,15 +3941,29 @@ fn apply_vanilla_ai(
                 world,
                 collision_cache,
                 now,
-                profile.follow_range,
+                profile,
                 profile.stop_distance,
-                profile.movement_speed,
             )
         }
-        VanillaEntityBehavior::HostileRanged | VanillaEntityBehavior::GuardianBeam => {
-            apply_follow_nearest_player_with(
+        VanillaEntityBehavior::NeutralRanged => {
+            if !neutral_entity_is_angry(entity)
+                && !has_vanilla_entity_target(entity, target_entities, profile.follow_range)
+            {
+                target_memory.remove(&entity.key);
+                path_memory.remove(&entity.key);
+                return apply_vanilla_passive_ai(
+                    entity,
+                    viewers,
+                    target_entities,
+                    tick_ms,
+                    world,
+                    profile,
+                );
+            }
+            apply_vanilla_follow_movement(
                 entity,
                 viewers,
+                target_entities,
                 tick_ms,
                 target_memory,
                 path_memory,
@@ -3359,10 +3972,394 @@ fn apply_vanilla_ai(
                 world,
                 collision_cache,
                 now,
-                profile.follow_range,
+                profile,
                 profile.stop_distance.max(8.0),
-                profile.movement_speed,
             )
+        }
+        VanillaEntityBehavior::HostileRanged
+        | VanillaEntityBehavior::Spellcaster
+        | VanillaEntityBehavior::GuardianBeam => {
+            if let Some(movement) =
+                vanilla_avoidance_movement(entity, target_entities, tick_ms, profile)
+            {
+                target_memory.remove(&entity.key);
+                path_memory.remove(&entity.key);
+                return movement;
+            }
+            apply_vanilla_follow_movement(
+                entity,
+                viewers,
+                target_entities,
+                tick_ms,
+                target_memory,
+                path_memory,
+                target_reselects,
+                path_recalcs,
+                world,
+                collision_cache,
+                now,
+                profile,
+                profile.stop_distance.max(8.0),
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_vanilla_follow_movement(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
+    tick_ms: u64,
+    target_memory: &mut HashMap<String, EntityTargetMemory>,
+    path_memory: &mut HashMap<String, EntityPathMemory>,
+    target_reselects: &mut usize,
+    path_recalcs: &mut usize,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    now: Instant,
+    profile: VanillaEntityAiProfile,
+    stop_distance: f64,
+) -> EntityMovement {
+    if let Some(target) =
+        nearest_vanilla_entity_target(entity, target_entities, profile.follow_range)
+    {
+        target_memory.remove(&entity.key);
+        path_memory.remove(&entity.key);
+        return apply_follow_position_movement(
+            entity,
+            target.position,
+            tick_ms,
+            world,
+            profile,
+            stop_distance,
+        );
+    }
+    let mut movement = apply_follow_nearest_player_with(
+        entity,
+        viewers,
+        tick_ms,
+        target_memory,
+        path_memory,
+        target_reselects,
+        path_recalcs,
+        world,
+        collision_cache,
+        now,
+        profile.follow_range,
+        stop_distance,
+        profile.movement_speed,
+    );
+    movement.y += vanilla_vertical_target_movement(entity, viewers, world, profile);
+    movement
+}
+
+fn apply_follow_position_movement(
+    entity: &mut ManagedEntity,
+    target_position: EntityPosition,
+    tick_ms: u64,
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+    stop_distance: f64,
+) -> EntityMovement {
+    let target_dx = target_position.x - entity.position.x;
+    let target_dz = target_position.z - entity.position.z;
+    let target_horizontal = (target_dx * target_dx + target_dz * target_dz).sqrt();
+    let (target_yaw, target_pitch) = look_rotation(entity.position, target_position);
+    let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, tick_ms);
+    entity.position.yaw = yaw;
+    entity.position.pitch = pitch;
+    if target_horizontal <= stop_distance.max(0.0) {
+        return EntityMovement::default();
+    }
+    let speed = profile.movement_speed.max(0.0).min(target_horizontal);
+    let mut movement = EntityMovement {
+        x: target_dx / target_horizontal * speed,
+        y: 0.0,
+        z: target_dz / target_horizontal * speed,
+    };
+    movement.y += vanilla_vertical_position_movement(entity, target_position, world, profile);
+    movement
+}
+
+fn apply_vanilla_passive_ai(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
+    tick_ms: u64,
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+) -> EntityMovement {
+    if let Some(movement) = vanilla_avoidance_movement(entity, target_entities, tick_ms, profile) {
+        return movement;
+    }
+    let mut movement = apply_random_stroll_with(
+        entity,
+        tick_ms,
+        profile.stroll_chance,
+        profile.stroll_min_speed,
+        profile.stroll_max_speed,
+    );
+    movement.y += vanilla_random_vertical_movement(entity, world, profile);
+    if movement.x.abs() + movement.y.abs() + movement.z.abs() <= 0.0001 {
+        apply_look_at_nearest_player(entity, viewers, profile.look_range);
+    }
+    movement
+}
+
+fn vanilla_avoidance_movement(
+    entity: &mut ManagedEntity,
+    target_entities: &[ManagedEntity],
+    tick_ms: u64,
+    profile: VanillaEntityAiProfile,
+) -> Option<EntityMovement> {
+    if ai_param_bool(&entity.ai_params, "disable_avoid_entities", false)
+        || ai_param_bool(&entity.ai_params, "disable_avoid_hostiles", false)
+    {
+        return None;
+    }
+    let threat = nearest_vanilla_avoidance_threat(entity, target_entities)?;
+    let dx = entity.position.x - threat.position.x;
+    let dz = entity.position.z - threat.position.z;
+    let horizontal = (dx * dx + dz * dz).sqrt();
+    if horizontal <= f64::EPSILON {
+        return None;
+    }
+    let flee_target = EntityPosition {
+        x: entity.position.x + dx / horizontal,
+        y: entity.position.y,
+        z: entity.position.z + dz / horizontal,
+        yaw: 0.0,
+        pitch: 0.0,
+        on_ground: entity.position.on_ground,
+    };
+    let (target_yaw, target_pitch) = look_rotation(entity.position, flee_target);
+    let (yaw, pitch) = smooth_rotation(entity.position, target_yaw, target_pitch, tick_ms);
+    entity.position.yaw = yaw;
+    entity.position.pitch = pitch;
+    let speed = ai_param_f64(
+        &entity.ai_params,
+        "avoid_entities_speed",
+        ai_param_f64(
+            &entity.ai_params,
+            "avoid_hostiles_speed",
+            profile.movement_speed.max(profile.stroll_max_speed) * 1.25,
+        ),
+    )
+    .clamp(0.0, ENTITY_MAX_HORIZONTAL_SPEED);
+    Some(EntityMovement {
+        x: dx / horizontal * speed,
+        y: 0.0,
+        z: dz / horizontal * speed,
+    })
+}
+
+fn nearest_vanilla_avoidance_threat<'a>(
+    entity: &ManagedEntity,
+    candidates: &'a [ManagedEntity],
+) -> Option<&'a ManagedEntity> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.kind == ManagedEntityKind::Entity
+                && candidate.key != entity.key
+                && candidate.dimension == entity.dimension
+                && vanilla_avoidance_range(entity, candidate).is_some_and(|range| {
+                    let configured = ai_param_f64(
+                        &entity.ai_params,
+                        "avoid_entities_range",
+                        ai_param_f64(&entity.ai_params, "avoid_hostiles_range", range),
+                    )
+                    .max(0.0);
+                    distance_sq(entity.position, candidate.position) <= configured * configured
+                })
+        })
+        .min_by(|left, right| {
+            distance_sq(entity.position, left.position)
+                .total_cmp(&distance_sq(entity.position, right.position))
+        })
+}
+
+fn vanilla_avoidance_range(entity: &ManagedEntity, threat: &ManagedEntity) -> Option<f64> {
+    let entity_type = normalized_entity_type(&entity.entity_type);
+    let threat_type = normalized_entity_type(&threat.entity_type);
+    if entity_type_is_villager_like(&entity_type) && vanilla_entity_can_attack(threat, entity) {
+        return Some(8.0);
+    }
+    match entity_type.as_str() {
+        "minecraft:creeper"
+            if matches!(threat_type.as_str(), "minecraft:cat" | "minecraft:ocelot") =>
+        {
+            Some(6.0)
+        }
+        "minecraft:phantom" if threat_type == "minecraft:cat" => Some(16.0),
+        "minecraft:skeleton"
+        | "minecraft:stray"
+        | "minecraft:bogged"
+        | "minecraft:wither_skeleton"
+            if threat_type == "minecraft:wolf" =>
+        {
+            Some(6.0)
+        }
+        "minecraft:rabbit"
+            if matches!(
+                threat_type.as_str(),
+                "minecraft:wolf" | "minecraft:fox" | "minecraft:cat" | "minecraft:ocelot"
+            ) =>
+        {
+            Some(10.0)
+        }
+        _ => None,
+    }
+}
+
+fn neutral_entity_is_angry(entity: &ManagedEntity) -> bool {
+    ai_param_bool(
+        &entity.ai_params,
+        "angry",
+        ai_param_bool(&entity.ai_params, "neutral_angry", false),
+    )
+}
+
+fn enderman_is_passive_to_players(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    profile: VanillaEntityAiProfile,
+) -> bool {
+    normalized_entity_type(&entity.entity_type) == "minecraft:enderman"
+        && !enderman_should_target_player(entity, viewers, profile)
+}
+
+fn enderman_should_target_player(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    profile: VanillaEntityAiProfile,
+) -> bool {
+    if neutral_entity_is_angry(entity) {
+        return true;
+    }
+    if ai_param_bool(&entity.ai_params, "disable_enderman_stare_aggro", false) {
+        return false;
+    }
+    nearest_enderman_staring_player(entity, viewers, profile.follow_range).is_some()
+}
+
+fn nearest_enderman_staring_player<'a>(
+    entity: &ManagedEntity,
+    viewers: &'a [crate::players::OnlinePlayer],
+    range: f64,
+) -> Option<&'a crate::players::OnlinePlayer> {
+    let range = ai_param_f64(&entity.ai_params, "enderman_stare_range", range).max(0.0);
+    let range_sq = range * range;
+    viewers
+        .iter()
+        .filter(|player| {
+            player.dimension == entity.dimension
+                && player_can_be_attacked(player)
+                && distance_sq(entity.position, player.position) <= range_sq
+                && player_is_staring_at_enderman(player, entity)
+        })
+        .min_by(|left, right| {
+            distance_sq(entity.position, left.position)
+                .total_cmp(&distance_sq(entity.position, right.position))
+        })
+}
+
+fn player_is_staring_at_enderman(
+    player: &crate::players::OnlinePlayer,
+    entity: &ManagedEntity,
+) -> bool {
+    let dx = entity.position.x - player.position.x;
+    let dy = entity.position.y + 1.8 - (player.position.y + 1.62);
+    let dz = entity.position.z - player.position.z;
+    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+    if distance <= f64::EPSILON {
+        return true;
+    }
+    let (look_x, look_y, look_z) = look_vector(player.position.yaw, player.position.pitch);
+    let dot = look_x * dx / distance + look_y * dy / distance + look_z * dz / distance;
+    let threshold = ai_param_f64(&entity.ai_params, "enderman_stare_dot", 0.98).clamp(-1.0, 1.0);
+    dot >= threshold
+}
+
+fn look_vector(yaw: f32, pitch: f32) -> (f64, f64, f64) {
+    let yaw = f64::from(yaw + 90.0).to_radians();
+    let pitch = f64::from(pitch).to_radians();
+    let horizontal = pitch.cos();
+    (yaw.cos() * horizontal, -pitch.sin(), yaw.sin() * horizontal)
+}
+
+fn vanilla_vertical_target_movement(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+) -> f64 {
+    if !vanilla_movement_mode_can_adjust_y(entity, world, profile) {
+        return 0.0;
+    }
+    let Some(target) = nearest_player(
+        entity.position,
+        &entity.dimension,
+        viewers,
+        profile.follow_range,
+    ) else {
+        return 0.0;
+    };
+    let dy = target.position.y - entity.position.y;
+    if dy.abs() <= 0.75 {
+        return 0.0;
+    }
+    dy.signum() * profile.vertical_speed.min(dy.abs())
+}
+
+fn vanilla_vertical_position_movement(
+    entity: &ManagedEntity,
+    target_position: EntityPosition,
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+) -> f64 {
+    if !vanilla_movement_mode_can_adjust_y(entity, world, profile) {
+        return 0.0;
+    }
+    let dy = target_position.y - entity.position.y;
+    if dy.abs() <= 0.75 {
+        return 0.0;
+    }
+    dy.signum() * profile.vertical_speed.min(dy.abs())
+}
+
+fn vanilla_random_vertical_movement(
+    entity: &ManagedEntity,
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+) -> f64 {
+    if !vanilla_movement_mode_can_adjust_y(entity, world, profile) || profile.vertical_speed <= 0.0
+    {
+        return 0.0;
+    }
+    if rand::Rng::gen_range(&mut rand::thread_rng(), 0.0..1.0)
+        > (profile.stroll_chance * 0.5).clamp(0.0, 1.0)
+    {
+        return 0.0;
+    }
+    rand::Rng::gen_range(
+        &mut rand::thread_rng(),
+        -profile.vertical_speed..=profile.vertical_speed,
+    )
+}
+
+fn vanilla_movement_mode_can_adjust_y(
+    entity: &ManagedEntity,
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+) -> bool {
+    match profile.movement_mode {
+        VanillaMovementMode::Ground => false,
+        VanillaMovementMode::Flying => profile.vertical_speed > 0.0,
+        VanillaMovementMode::Swimming => {
+            profile.vertical_speed > 0.0
+                && entity_position_touches_water(world, &entity.dimension, entity.position)
         }
     }
 }
@@ -3372,11 +4369,19 @@ fn resolved_vanilla_ai_profile(
     default_look_range: f64,
 ) -> VanillaEntityAiProfile {
     let mut profile = vanilla_entity_ai_profile(&entity.entity_type);
+    apply_slime_size_to_profile(entity, &mut profile);
     profile.behavior = ai_param_string(&entity.ai_params, "behavior")
         .and_then(|value| vanilla_behavior_override(&value))
         .unwrap_or(profile.behavior);
+    profile.movement_mode = ai_param_string(&entity.ai_params, "movement_mode")
+        .or_else(|| ai_param_string(&entity.ai_params, "locomotion"))
+        .and_then(|value| vanilla_movement_mode_override(&value))
+        .unwrap_or(profile.movement_mode);
     profile.movement_speed =
         ai_param_f64(&entity.ai_params, "movement_speed", profile.movement_speed)
+            .clamp(0.0, ENTITY_MAX_HORIZONTAL_SPEED);
+    profile.vertical_speed =
+        ai_param_f64(&entity.ai_params, "vertical_speed", profile.vertical_speed)
             .clamp(0.0, ENTITY_MAX_HORIZONTAL_SPEED);
     profile.follow_range =
         ai_param_f64(&entity.ai_params, "follow_range", profile.follow_range).max(0.0);
@@ -3502,6 +4507,26 @@ fn resolved_vanilla_ai_profile(
         profile.projectile_splash_radius,
     )
     .max(0.0);
+    profile.spell_damage = ai_param_f64(
+        &entity.ai_params,
+        "spell_damage",
+        f64::from(profile.spell_damage),
+    )
+    .max(0.0) as f32;
+    profile.summon_kind = ai_param_string(&entity.ai_params, "summon_kind")
+        .or_else(|| ai_param_string(&entity.ai_params, "summon_entity_type"))
+        .and_then(|value| entity_summon_kind(&value))
+        .or(profile.summon_kind);
+    profile.summon_count =
+        ai_param_i32(&entity.ai_params, "summon_count", profile.summon_count).clamp(0, 8);
+    profile.summon_chance =
+        ai_param_f64(&entity.ai_params, "summon_chance", profile.summon_chance).clamp(0.0, 1.0);
+    profile.summon_lifetime_ticks = ai_param_i32(
+        &entity.ai_params,
+        "summon_lifetime_ticks",
+        profile.summon_lifetime_ticks,
+    )
+    .clamp(1, 20 * 60 * 10);
     profile.guardian_attack_duration_ticks = ai_param_i32(
         &entity.ai_params,
         "guardian_attack_duration_ticks",
@@ -3518,6 +4543,42 @@ fn resolved_vanilla_ai_profile(
         f64::from(profile.guardian_magic_damage),
     )
     .max(0.0) as f32;
+    profile.slime_jump_velocity = ai_param_f64(
+        &entity.ai_params,
+        "slime_jump_velocity",
+        profile.slime_jump_velocity,
+    )
+    .max(0.0);
+    profile.slime_jump_delay_ticks = ai_param_i32(
+        &entity.ai_params,
+        "slime_jump_delay_ticks",
+        profile.slime_jump_delay_ticks,
+    )
+    .clamp(1, 200);
+    profile.spider_climb_velocity = ai_param_f64(
+        &entity.ai_params,
+        "spider_climb_velocity",
+        profile.spider_climb_velocity,
+    )
+    .max(0.0);
+    profile.enderman_teleport_min_distance = ai_param_f64(
+        &entity.ai_params,
+        "enderman_teleport_min_distance",
+        profile.enderman_teleport_min_distance,
+    )
+    .max(0.0);
+    profile.enderman_teleport_arrival_distance = ai_param_f64(
+        &entity.ai_params,
+        "enderman_teleport_arrival_distance",
+        profile.enderman_teleport_arrival_distance,
+    )
+    .max(0.0);
+    profile.enderman_teleport_chance = ai_param_f64(
+        &entity.ai_params,
+        "enderman_teleport_chance",
+        profile.enderman_teleport_chance,
+    )
+    .clamp(0.0, 1.0);
     profile.creeper_swell_ticks = ai_param_i32(
         &entity.ai_params,
         "creeper_swell_ticks",
@@ -3545,7 +4606,74 @@ fn resolved_vanilla_ai_profile(
             profile.creeper_break_blocks,
         ),
     );
+    apply_entity_specific_profile_params(entity, &mut profile);
     profile
+}
+
+fn vanilla_movement_mode_override(value: &str) -> Option<VanillaMovementMode> {
+    match value.trim() {
+        "ground" | "walk" | "walking" => Some(VanillaMovementMode::Ground),
+        "swim" | "swimming" | "water" | "aquatic" => Some(VanillaMovementMode::Swimming),
+        "fly" | "flying" | "air" => Some(VanillaMovementMode::Flying),
+        _ => None,
+    }
+}
+
+fn entity_summon_kind(value: &str) -> Option<EntitySummonKind> {
+    match normalized_entity_type(value).as_str() {
+        "minecraft:evoker_fangs" | "evoker_fangs" | "fangs" => Some(EntitySummonKind::EvokerFangs),
+        "minecraft:vex" | "vex" => Some(EntitySummonKind::Vex),
+        _ => None,
+    }
+}
+
+fn apply_entity_specific_profile_params(
+    entity: &ManagedEntity,
+    profile: &mut VanillaEntityAiProfile,
+) {
+    if normalized_entity_type(&entity.entity_type) == "minecraft:drowned"
+        && ai_param_bool(
+            &entity.ai_params,
+            "drowned_has_trident",
+            ai_param_bool(&entity.ai_params, "has_trident", false),
+        )
+    {
+        profile.behavior = VanillaEntityBehavior::HostileRanged;
+        profile.stop_distance = profile.stop_distance.max(8.0);
+        profile.ranged_attack_range = ai_param_f64(&entity.ai_params, "ranged_attack_range", 20.0);
+        profile.ranged_attack_damage = ai_param_f64(
+            &entity.ai_params,
+            "ranged_attack_damage",
+            f64::from(ENTITY_TRIDENT_DEFAULT_DAMAGE),
+        )
+        .max(0.0) as f32;
+        profile.ranged_attack_interval_ticks =
+            ai_param_i32(&entity.ai_params, "ranged_attack_interval_ticks", 60).clamp(1, 400);
+        profile.projectile_speed = ai_param_f64(
+            &entity.ai_params,
+            "projectile_speed",
+            ENTITY_TRIDENT_DEFAULT_SPEED,
+        )
+        .max(0.1);
+    }
+}
+
+fn apply_slime_size_to_profile(entity: &ManagedEntity, profile: &mut VanillaEntityAiProfile) {
+    if !entity_type_uses_slime_size(&entity.entity_type) {
+        return;
+    }
+    let size = slime_size_for_entity(entity);
+    profile.movement_speed = 0.2 + 0.1 * f64::from(size);
+    let is_magma_cube = normalized_entity_type(&entity.entity_type) == "minecraft:magma_cube";
+    profile.attack_damage = if is_magma_cube {
+        (size + 2) as f32
+    } else {
+        size as f32
+    };
+    if is_magma_cube {
+        profile.slime_jump_velocity = ENTITY_SLIME_JUMP_VELOCITY + f64::from(size) * 0.1;
+        profile.slime_jump_delay_ticks = ENTITY_SLIME_JUMP_DELAY_TICKS * 4;
+    }
 }
 
 fn resolved_melee_effect(
@@ -3572,29 +4700,268 @@ fn resolved_melee_effect(
     })
 }
 
+fn try_apply_enderman_target_teleport(
+    entity: &mut ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    profile: VanillaEntityAiProfile,
+) -> bool {
+    if normalized_entity_type(&entity.entity_type) != "minecraft:enderman"
+        || profile.enderman_teleport_chance <= 0.0
+        || !enderman_should_target_player(entity, viewers, profile)
+        || rand::Rng::gen_range(&mut rand::thread_rng(), 0.0..1.0)
+            > profile.enderman_teleport_chance
+    {
+        return false;
+    }
+    let Some(target) = nearest_attackable_player(
+        entity.position,
+        &entity.dimension,
+        viewers,
+        profile.follow_range,
+    ) else {
+        return false;
+    };
+    let dx = target.position.x - entity.position.x;
+    let dz = target.position.z - entity.position.z;
+    let horizontal = (dx * dx + dz * dz).sqrt();
+    if horizontal < profile.enderman_teleport_min_distance.max(0.0) || horizontal <= f64::EPSILON {
+        return false;
+    }
+
+    let arrival_distance = profile
+        .enderman_teleport_arrival_distance
+        .min(horizontal)
+        .max(0.0);
+    let candidate_x = target.position.x - dx / horizontal * arrival_distance;
+    let candidate_z = target.position.z - dz / horizontal * arrival_distance;
+    let Some(mut landing) = find_entity_landing_position(
+        world,
+        collision_cache,
+        &entity.dimension,
+        candidate_x,
+        target.position.y + 8.0,
+        candidate_z,
+        24,
+    ) else {
+        return false;
+    };
+    let (yaw, pitch) = look_rotation(landing, target.position);
+    landing.yaw = yaw;
+    landing.pitch = pitch;
+    entity.position = landing;
+    true
+}
+
+fn find_entity_landing_position(
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    dimension: &str,
+    x: f64,
+    start_y: f64,
+    z: f64,
+    scan_down_blocks: i32,
+) -> Option<EntityPosition> {
+    let top_y = start_y.floor() as i32;
+    let min_y = top_y.saturating_sub(scan_down_blocks.max(1));
+    let block_x = x.floor() as i32;
+    let block_z = z.floor() as i32;
+    for support_y in (min_y..=top_y).rev() {
+        let shape =
+            collision_cache.block_collision_shape(world, dimension, block_x, support_y, block_z);
+        let Some(shape) = shape else {
+            continue;
+        };
+        let feet_y = f64::from(support_y) + shape.max_y;
+        if entity_aabb_intersects_solid_at(world, collision_cache, dimension, x, feet_y, z) {
+            continue;
+        }
+        let landing = EntityPosition {
+            x,
+            y: feet_y,
+            z,
+            yaw: 0.0,
+            pitch: 0.0,
+            on_ground: true,
+        };
+        if entity_position_touches_water(world, dimension, landing) {
+            continue;
+        }
+        return Some(landing);
+    }
+    None
+}
+
+fn apply_enderman_water_reaction(
+    entity: &mut ManagedEntity,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    tick_ms: u64,
+    environment_damage: &mut Vec<(i32, f32)>,
+) -> bool {
+    if normalized_entity_type(&entity.entity_type) != "minecraft:enderman"
+        || !entity_is_in_water(entity, world)
+    {
+        return false;
+    }
+    let water_damage = ai_param_f64(
+        &entity.ai_params,
+        "enderman_water_damage",
+        f64::from(ENTITY_ENDERMAN_WATER_DAMAGE),
+    )
+    .max(0.0) as f32;
+    if water_damage > 0.0 {
+        environment_damage.push((
+            entity.entity_id,
+            water_damage * entity_tick_units(tick_ms) as f32,
+        ));
+    }
+    if ai_param_bool(&entity.ai_params, "disable_enderman_water_teleport", false) {
+        return false;
+    }
+    try_apply_enderman_water_escape_teleport(entity, world, collision_cache)
+}
+
+fn apply_out_of_water_damage(
+    entity: &ManagedEntity,
+    world: &crate::world::WorldManager,
+    tick_ms: u64,
+    environment_damage: &mut Vec<(i32, f32)>,
+) {
+    if !entity_type_takes_out_of_water_damage(&entity.entity_type)
+        || ai_param_bool(&entity.ai_params, "disable_out_of_water_damage", false)
+        || entity_is_in_water(entity, world)
+    {
+        return;
+    }
+    let damage = ai_param_f64(
+        &entity.ai_params,
+        "out_of_water_damage",
+        f64::from(ENTITY_OUT_OF_WATER_DAMAGE),
+    )
+    .max(0.0) as f32;
+    if damage <= 0.0 {
+        return;
+    }
+    environment_damage.push((entity.entity_id, damage * entity_tick_units(tick_ms) as f32));
+}
+
+fn entity_type_takes_out_of_water_damage(entity_type: &str) -> bool {
+    matches!(
+        normalized_entity_type(entity_type).as_str(),
+        "minecraft:cod"
+            | "minecraft:salmon"
+            | "minecraft:tropical_fish"
+            | "minecraft:pufferfish"
+            | "minecraft:tadpole"
+            | "minecraft:squid"
+            | "minecraft:glow_squid"
+            | "minecraft:axolotl"
+            | "minecraft:dolphin"
+    )
+}
+
+fn try_apply_enderman_water_escape_teleport(
+    entity: &mut ManagedEntity,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+) -> bool {
+    let radius = ai_param_i32(
+        &entity.ai_params,
+        "enderman_water_teleport_radius",
+        ENTITY_ENDERMAN_WATER_TELEPORT_RADIUS,
+    )
+    .clamp(1, 64);
+    for distance in 1..=radius {
+        for dx in -distance..=distance {
+            for dz in -distance..=distance {
+                if dx.abs() != distance && dz.abs() != distance {
+                    continue;
+                }
+                let x = entity.position.x + f64::from(dx);
+                let z = entity.position.z + f64::from(dz);
+                let Some(mut landing) = find_entity_landing_position(
+                    world,
+                    collision_cache,
+                    &entity.dimension,
+                    x,
+                    entity.position.y + 8.0,
+                    z,
+                    16,
+                ) else {
+                    continue;
+                };
+                landing.yaw = entity.position.yaw;
+                landing.pitch = entity.position.pitch;
+                entity.position = landing;
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn apply_vanilla_ai_effects(
     entity: &ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
     tick_ms: u64,
     attack_state: &mut HashMap<String, EntityAttackState>,
     creeper_state: &mut HashMap<String, EntityCreeperState>,
     player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
     player_potion_effect_requests: &mut Vec<EntityPlayerPotionEffectRequest>,
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
     projectile_spawns: &mut Vec<EntityProjectileSpawnRequest>,
+    summon_spawns: &mut Vec<EntitySummonSpawnRequest>,
     explosion_block_requests: &mut Vec<EntityExplosionBlockRequest>,
 ) -> bool {
     let profile = resolved_vanilla_ai_profile(entity, 8.0);
     match profile.behavior {
-        VanillaEntityBehavior::HostileMelee => {
+        VanillaEntityBehavior::NeutralMelee if !neutral_entity_is_angry(entity) => {
+            if has_vanilla_entity_target(entity, target_entities, profile.attack_range) {
+                creeper_state.remove(&entity.key);
+                apply_vanilla_melee_attack(
+                    entity,
+                    viewers,
+                    target_entities,
+                    tick_ms,
+                    profile,
+                    attack_state,
+                    player_damage_requests,
+                    player_potion_effect_requests,
+                    entity_damage_requests,
+                );
+                return false;
+            }
+            attack_state.remove(&entity.key);
+            creeper_state.remove(&entity.key);
+            false
+        }
+        VanillaEntityBehavior::NeutralMelee | VanillaEntityBehavior::HostileMelee => {
+            if enderman_is_passive_to_players(entity, viewers, profile) {
+                attack_state.remove(&entity.key);
+                creeper_state.remove(&entity.key);
+                return false;
+            }
             creeper_state.remove(&entity.key);
             apply_vanilla_melee_attack(
                 entity,
                 viewers,
+                target_entities,
                 tick_ms,
                 profile,
                 attack_state,
                 player_damage_requests,
                 player_potion_effect_requests,
+                entity_damage_requests,
+            );
+            apply_vanilla_sonic_boom(
+                entity,
+                viewers,
+                profile,
+                attack_state,
+                player_damage_requests,
             );
             false
         }
@@ -3607,6 +4974,8 @@ fn apply_vanilla_ai_effects(
                 profile,
                 creeper_state,
                 player_damage_requests,
+                target_entities,
+                entity_damage_requests,
                 explosion_block_requests,
             )
         }
@@ -3615,10 +4984,58 @@ fn apply_vanilla_ai_effects(
             apply_vanilla_ranged_attack(
                 entity,
                 viewers,
+                target_entities,
                 tick_ms,
                 profile,
                 attack_state,
+                entity_damage_requests,
                 projectile_spawns,
+            );
+            false
+        }
+        VanillaEntityBehavior::NeutralRanged if !neutral_entity_is_angry(entity) => {
+            if has_vanilla_entity_target(entity, target_entities, profile.ranged_attack_range) {
+                creeper_state.remove(&entity.key);
+                apply_vanilla_ranged_attack(
+                    entity,
+                    viewers,
+                    target_entities,
+                    tick_ms,
+                    profile,
+                    attack_state,
+                    entity_damage_requests,
+                    projectile_spawns,
+                );
+                return false;
+            }
+            attack_state.remove(&entity.key);
+            creeper_state.remove(&entity.key);
+            false
+        }
+        VanillaEntityBehavior::NeutralRanged => {
+            creeper_state.remove(&entity.key);
+            apply_vanilla_ranged_attack(
+                entity,
+                viewers,
+                target_entities,
+                tick_ms,
+                profile,
+                attack_state,
+                entity_damage_requests,
+                projectile_spawns,
+            );
+            false
+        }
+        VanillaEntityBehavior::Spellcaster => {
+            creeper_state.remove(&entity.key);
+            apply_vanilla_spellcaster(
+                entity,
+                viewers,
+                tick_ms,
+                profile,
+                attack_state,
+                player_damage_requests,
+                summon_spawns,
             );
             false
         }
@@ -3645,17 +5062,29 @@ fn apply_vanilla_ai_effects(
 fn apply_vanilla_melee_attack(
     entity: &ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
     tick_ms: u64,
     profile: VanillaEntityAiProfile,
     attack_state: &mut HashMap<String, EntityAttackState>,
     player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
     player_potion_effect_requests: &mut Vec<EntityPlayerPotionEffectRequest>,
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
 ) {
     let state = attack_state.entry(entity.key.clone()).or_default();
     state.cooldown_ticks = state
         .cooldown_ticks
         .saturating_sub(entity_tick_units(tick_ms));
     if state.cooldown_ticks > 0 || profile.attack_damage <= 0.0 {
+        return;
+    }
+    if let Some(target) =
+        nearest_vanilla_entity_melee_target(entity, target_entities, profile.attack_range)
+    {
+        entity_damage_requests.push(EntityEntityDamageRequest {
+            target_entity_id: target.entity_id,
+            amount: profile.attack_damage,
+        });
+        state.cooldown_ticks = profile.attack_interval_ticks;
         return;
     }
     let Some(target) = nearest_attackable_player(
@@ -3686,6 +5115,45 @@ fn apply_vanilla_melee_attack(
         });
     }
     state.cooldown_ticks = profile.attack_interval_ticks;
+}
+
+fn apply_vanilla_sonic_boom(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    profile: VanillaEntityAiProfile,
+    attack_state: &mut HashMap<String, EntityAttackState>,
+    player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
+) {
+    if profile.spell_damage <= 0.0
+        || normalized_entity_type(&entity.entity_type) != "minecraft:warden"
+    {
+        return;
+    }
+    let state = attack_state.entry(entity.key.clone()).or_default();
+    if state.cooldown_ticks > 0 {
+        return;
+    }
+    let Some(target) = nearest_attackable_player_3d(
+        entity.position,
+        &entity.dimension,
+        viewers,
+        profile.ranged_attack_range,
+    ) else {
+        return;
+    };
+    if distance_sq(entity.position, target.position) <= profile.attack_range * profile.attack_range
+    {
+        return;
+    }
+    player_damage_requests.push(EntityPlayerDamageRequest {
+        target_profile_id: target.profile.uuid,
+        amount: profile.spell_damage,
+        kind: crate::players::PlayerDamageKind::Magic,
+        source_entity_id: entity.entity_id,
+        source_position: entity.position,
+        knockback: 1.0,
+    });
+    state.cooldown_ticks = profile.ranged_attack_interval_ticks;
 }
 
 fn melee_effect_roll(profile: VanillaEntityAiProfile) -> bool {
@@ -3730,7 +5198,7 @@ fn apply_vanilla_guardian_beam(
             )
         })
         .or_else(|| {
-            nearest_attackable_player(
+            nearest_attackable_player_3d(
                 entity.position,
                 &entity.dimension,
                 viewers,
@@ -3762,6 +5230,138 @@ fn apply_vanilla_guardian_beam(
     state.cooldown_ticks = profile.ranged_attack_interval_ticks;
 }
 
+fn apply_vanilla_spellcaster(
+    entity: &ManagedEntity,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_ms: u64,
+    profile: VanillaEntityAiProfile,
+    attack_state: &mut HashMap<String, EntityAttackState>,
+    player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
+    summon_spawns: &mut Vec<EntitySummonSpawnRequest>,
+) {
+    let state = attack_state.entry(entity.key.clone()).or_default();
+    state.cooldown_ticks = state
+        .cooldown_ticks
+        .saturating_sub(entity_tick_units(tick_ms));
+    if state.cooldown_ticks > 0 {
+        return;
+    }
+    let Some(target) = nearest_attackable_player_3d(
+        entity.position,
+        &entity.dimension,
+        viewers,
+        profile.ranged_attack_range,
+    ) else {
+        return;
+    };
+
+    if profile.spell_damage > 0.0 {
+        add_evoker_fangs_spell(
+            entity,
+            target,
+            profile,
+            player_damage_requests,
+            summon_spawns,
+        );
+    }
+    add_spell_summons(entity, profile, summon_spawns);
+    state.cooldown_ticks = profile.ranged_attack_interval_ticks;
+}
+
+fn add_evoker_fangs_spell(
+    entity: &ManagedEntity,
+    target: &crate::players::OnlinePlayer,
+    profile: VanillaEntityAiProfile,
+    player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
+    summon_spawns: &mut Vec<EntitySummonSpawnRequest>,
+) {
+    player_damage_requests.push(EntityPlayerDamageRequest {
+        target_profile_id: target.profile.uuid,
+        amount: profile.spell_damage,
+        kind: crate::players::PlayerDamageKind::Magic,
+        source_entity_id: entity.entity_id,
+        source_position: entity.position,
+        knockback: 0.25,
+    });
+    let mut position = target.position;
+    position.yaw = entity.position.yaw;
+    position.pitch = 0.0;
+    summon_spawns.push(EntitySummonSpawnRequest {
+        key: format!(
+            "summon:{}:fangs:{}",
+            entity.key,
+            rand::RngCore::next_u64(&mut rand::thread_rng())
+        ),
+        entity_type: "minecraft:evoker_fangs".to_string(),
+        dimension: entity.dimension.clone(),
+        position,
+        ai: "none".to_string(),
+        ai_params: BTreeMap::new(),
+        display_name: String::new(),
+        lifetime_ticks: Some(ENTITY_DEFAULT_SUMMON_LIFETIME_TICKS),
+    });
+}
+
+fn add_spell_summons(
+    entity: &ManagedEntity,
+    profile: VanillaEntityAiProfile,
+    summon_spawns: &mut Vec<EntitySummonSpawnRequest>,
+) {
+    let Some(kind) = profile.summon_kind else {
+        return;
+    };
+    if profile.summon_count <= 0 || profile.summon_chance <= 0.0 {
+        return;
+    }
+    if rand::Rng::gen_range(&mut rand::thread_rng(), 0.0..1.0) > profile.summon_chance {
+        return;
+    }
+    for index in 0..profile.summon_count {
+        summon_spawns.push(spell_summon_request(entity, kind, profile, index));
+    }
+}
+
+fn spell_summon_request(
+    entity: &ManagedEntity,
+    kind: EntitySummonKind,
+    profile: VanillaEntityAiProfile,
+    index: i32,
+) -> EntitySummonSpawnRequest {
+    let angle = rand::Rng::gen_range(&mut rand::thread_rng(), 0.0..std::f64::consts::TAU);
+    let radius = rand::Rng::gen_range(&mut rand::thread_rng(), 1.0..3.0);
+    let mut position = entity.position;
+    position.x += angle.cos() * radius;
+    position.z += angle.sin() * radius;
+    position.y += if matches!(kind, EntitySummonKind::Vex) {
+        1.0
+    } else {
+        0.0
+    };
+    position.yaw = rand::Rng::gen_range(&mut rand::thread_rng(), -180.0..180.0);
+    position.pitch = 0.0;
+    position.on_ground = !matches!(kind, EntitySummonKind::Vex);
+    let (entity_type, ai, display_name) = match kind {
+        EntitySummonKind::EvokerFangs => ("minecraft:evoker_fangs", "none", ""),
+        EntitySummonKind::Vex => ("minecraft:vex", "vanilla", "Vex"),
+    };
+    EntitySummonSpawnRequest {
+        key: format!(
+            "summon:{}:{}:{}:{}",
+            entity.key,
+            entity_type.trim_start_matches("minecraft:"),
+            index,
+            rand::RngCore::next_u64(&mut rand::thread_rng())
+        ),
+        entity_type: entity_type.to_string(),
+        dimension: entity.dimension.clone(),
+        position,
+        ai: ai.to_string(),
+        ai_params: BTreeMap::new(),
+        display_name: display_name.to_string(),
+        lifetime_ticks: Some(profile.summon_lifetime_ticks),
+    }
+}
+
 fn attackable_player_by_id<'a>(
     profile_id: uuid::Uuid,
     source: EntityPosition,
@@ -3781,12 +5381,14 @@ fn attackable_player_by_id<'a>(
 fn apply_vanilla_ranged_attack(
     entity: &ManagedEntity,
     viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
     tick_ms: u64,
     profile: VanillaEntityAiProfile,
     attack_state: &mut HashMap<String, EntityAttackState>,
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
     projectile_spawns: &mut Vec<EntityProjectileSpawnRequest>,
 ) {
-    let Some(projectile_kind) = vanilla_ranged_projectile_kind(&entity.entity_type) else {
+    let Some(projectile_kind) = vanilla_ranged_projectile_kind(entity, profile) else {
         attack_state.remove(&entity.key);
         return;
     };
@@ -3797,7 +5399,28 @@ fn apply_vanilla_ranged_attack(
     if state.cooldown_ticks > 0 || !vanilla_ranged_attack_enabled(projectile_kind, profile) {
         return;
     }
-    let Some(target) = nearest_attackable_player(
+    if let Some(target) =
+        nearest_vanilla_entity_target(entity, target_entities, profile.ranged_attack_range)
+    {
+        let spawn = ranged_projectile_spawn_request_at(
+            entity,
+            target.position,
+            None,
+            None,
+            projectile_kind,
+            profile,
+        );
+        projectile_spawns.push(spawn);
+        if profile.ranged_attack_damage > 0.0 {
+            entity_damage_requests.push(EntityEntityDamageRequest {
+                target_entity_id: target.entity_id,
+                amount: profile.ranged_attack_damage,
+            });
+        }
+        state.cooldown_ticks = profile.ranged_attack_interval_ticks;
+        return;
+    }
+    let Some(target) = nearest_attackable_player_3d(
         entity.position,
         &entity.dimension,
         viewers,
@@ -3816,19 +5439,38 @@ fn vanilla_ranged_attack_enabled(
 ) -> bool {
     profile.ranged_attack_damage > 0.0
         || matches!(projectile_kind, EntityProjectileKind::Potion)
+        || matches!(projectile_kind, EntityProjectileKind::Snowball)
         || (profile.projectile_explosion_radius > 0.0 && profile.projectile_explosion_damage > 0.0)
 }
 
-fn vanilla_ranged_projectile_kind(entity_type: &str) -> Option<EntityProjectileKind> {
-    match normalized_entity_type(entity_type).as_str() {
+fn vanilla_ranged_projectile_kind(
+    entity: &ManagedEntity,
+    profile: VanillaEntityAiProfile,
+) -> Option<EntityProjectileKind> {
+    match normalized_entity_type(&entity.entity_type).as_str() {
         "minecraft:skeleton"
         | "minecraft:stray"
         | "minecraft:bogged"
         | "minecraft:pillager"
         | "minecraft:illusioner" => Some(EntityProjectileKind::Arrow),
+        "minecraft:drowned"
+            if ai_param_bool(
+                &entity.ai_params,
+                "drowned_has_trident",
+                ai_param_bool(&entity.ai_params, "has_trident", false),
+            ) =>
+        {
+            Some(EntityProjectileKind::Trident)
+        }
         "minecraft:witch" => Some(EntityProjectileKind::Potion),
         "minecraft:blaze" => Some(EntityProjectileKind::SmallFireball),
         "minecraft:ghast" => Some(EntityProjectileKind::Fireball),
+        "minecraft:shulker" => Some(EntityProjectileKind::ShulkerBullet),
+        "minecraft:breeze" => Some(EntityProjectileKind::WindCharge),
+        "minecraft:wither" => Some(EntityProjectileKind::WitherSkull),
+        "minecraft:snow_golem" if profile.ranged_attack_damage >= 0.0 => {
+            Some(EntityProjectileKind::Snowball)
+        }
         _ => None,
     }
 }
@@ -3836,6 +5478,24 @@ fn vanilla_ranged_projectile_kind(entity_type: &str) -> Option<EntityProjectileK
 fn ranged_projectile_spawn_request(
     entity: &ManagedEntity,
     target: &crate::players::OnlinePlayer,
+    projectile_kind: EntityProjectileKind,
+    profile: VanillaEntityAiProfile,
+) -> EntityProjectileSpawnRequest {
+    ranged_projectile_spawn_request_at(
+        entity,
+        target.position,
+        projectile_potion_effect(entity, target, projectile_kind),
+        projectile_homing_target(projectile_kind, target),
+        projectile_kind,
+        profile,
+    )
+}
+
+fn ranged_projectile_spawn_request_at(
+    entity: &ManagedEntity,
+    target: EntityPosition,
+    potion_effect: Option<EntityPotionEffect>,
+    homing_target: Option<uuid::Uuid>,
     projectile_kind: EntityProjectileKind,
     profile: VanillaEntityAiProfile,
 ) -> EntityProjectileSpawnRequest {
@@ -3849,12 +5509,12 @@ fn ranged_projectile_spawn_request(
         on_ground: false,
     };
     let target_position = EntityPosition {
-        x: target.position.x,
-        y: target.position.y + target_y_offset,
-        z: target.position.z,
-        yaw: target.position.yaw,
-        pitch: target.position.pitch,
-        on_ground: target.position.on_ground,
+        x: target.x,
+        y: target.y + target_y_offset,
+        z: target.z,
+        yaw: target.yaw,
+        pitch: target.pitch,
+        on_ground: target.on_ground,
     };
     let dx = target_position.x - source.x;
     let dz = target_position.z - source.z;
@@ -3883,6 +5543,7 @@ fn ranged_projectile_spawn_request(
             velocity_x,
             velocity_y,
             velocity_z,
+            ..Default::default()
         },
         source_entity_id: entity.entity_id,
         kind: projectile_kind,
@@ -3896,9 +5557,16 @@ fn ranged_projectile_spawn_request(
         explosion_damage: profile.projectile_explosion_damage,
         explosion_break_blocks: profile.projectile_break_blocks,
         splash_radius: profile.projectile_splash_radius,
-        potion_effect: (projectile_kind == EntityProjectileKind::Potion)
-            .then(|| witch_potion_effect(entity, target)),
+        potion_effect,
+        target_profile_id: homing_target,
     }
+}
+
+fn projectile_homing_target(
+    projectile_kind: EntityProjectileKind,
+    target: &crate::players::OnlinePlayer,
+) -> Option<uuid::Uuid> {
+    matches!(projectile_kind, EntityProjectileKind::ShulkerBullet).then_some(target.profile.uuid)
 }
 
 fn projectile_aim_offsets(projectile_kind: EntityProjectileKind) -> (f64, f64, f64) {
@@ -3907,6 +5575,36 @@ fn projectile_aim_offsets(projectile_kind: EntityProjectileKind) -> (f64, f64, f
         EntityProjectileKind::Potion => (1.4, 0.8, 0.20),
         EntityProjectileKind::SmallFireball => (1.2, 1.0, 0.0),
         EntityProjectileKind::Fireball => (1.5, 1.0, 0.0),
+        EntityProjectileKind::ShulkerBullet => (0.5, 1.0, 0.0),
+        EntityProjectileKind::WindCharge => (1.0, 1.0, 0.0),
+        EntityProjectileKind::WitherSkull => (2.4, 1.2, 0.0),
+        EntityProjectileKind::Trident => (1.45, 1.35, 0.02),
+        EntityProjectileKind::Snowball => (1.4, 1.0, 0.04),
+    }
+}
+
+fn projectile_potion_effect(
+    entity: &ManagedEntity,
+    target: &crate::players::OnlinePlayer,
+    projectile_kind: EntityProjectileKind,
+) -> Option<EntityPotionEffect> {
+    match projectile_kind {
+        EntityProjectileKind::Potion => Some(witch_potion_effect(entity, target)),
+        EntityProjectileKind::ShulkerBullet => Some(shulker_bullet_effect(entity)),
+        _ => None,
+    }
+}
+
+fn shulker_bullet_effect(entity: &ManagedEntity) -> EntityPotionEffect {
+    EntityPotionEffect {
+        effect: EntityPotionEffectKind::Levitation,
+        amplifier: ai_param_i32(&entity.ai_params, "shulker_levitation_amplifier", 0).clamp(0, 16),
+        duration_ticks: ai_param_i32(
+            &entity.ai_params,
+            "shulker_levitation_duration_ticks",
+            EntityPotionEffectKind::Levitation.default_duration_ticks(),
+        )
+        .clamp(1, 20 * 60 * 10),
     }
 }
 
@@ -3951,6 +5649,7 @@ fn potion_effect_kind(value: &str) -> Option<EntityPotionEffectKind> {
             Some(EntityPotionEffectKind::InstantDamage)
         }
         "minecraft:hunger" => Some(EntityPotionEffectKind::Hunger),
+        "minecraft:levitation" | "minecraft:levitate" => Some(EntityPotionEffectKind::Levitation),
         "minecraft:poison" => Some(EntityPotionEffectKind::Poison),
         "minecraft:slowness" | "minecraft:slow" => Some(EntityPotionEffectKind::Slowness),
         "minecraft:weakness" | "minecraft:weak" => Some(EntityPotionEffectKind::Weakness),
@@ -3966,6 +5665,8 @@ fn apply_vanilla_creeper_swell(
     profile: VanillaEntityAiProfile,
     creeper_state: &mut HashMap<String, EntityCreeperState>,
     player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
+    target_entities: &[ManagedEntity],
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
     explosion_block_requests: &mut Vec<EntityExplosionBlockRequest>,
 ) -> bool {
     let elapsed_ticks = entity_tick_units(tick_ms);
@@ -3999,6 +5700,14 @@ fn apply_vanilla_creeper_swell(
     }
 
     add_creeper_explosion_damage_requests(entity, viewers, profile, player_damage_requests);
+    add_explosion_entity_damage_requests(
+        entity.entity_id,
+        entity.position,
+        profile.creeper_explosion_radius,
+        profile.creeper_explosion_damage,
+        target_entities,
+        entity_damage_requests,
+    );
     if profile.creeper_break_blocks {
         explosion_block_requests.push(EntityExplosionBlockRequest {
             dimension: entity.dimension.clone(),
@@ -4039,6 +5748,39 @@ fn add_creeper_explosion_damage_requests(
             source_entity_id: entity.entity_id,
             source_position: entity.position,
             knockback: (exposure * 1.2) as f32,
+        });
+    }
+}
+
+fn add_explosion_entity_damage_requests(
+    source_entity_id: i32,
+    center: EntityPosition,
+    radius: f64,
+    max_damage: f32,
+    target_entities: &[ManagedEntity],
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
+) {
+    if radius <= 0.0 || max_damage <= 0.0 {
+        return;
+    }
+    let radius = radius.max(0.1);
+    for target in target_entities {
+        if target.entity_id == source_entity_id || target.kind != ManagedEntityKind::Entity {
+            continue;
+        }
+        let distance = distance_sq(center, target.position).sqrt();
+        if distance > radius {
+            continue;
+        }
+        let exposure = (1.0 - distance / radius).clamp(0.0, 1.0);
+        let amount = ((exposure * exposure + exposure) * 0.5 * 7.0 * radius * 2.0 + 1.0) as f32;
+        let amount = amount.min(max_damage).max(0.0);
+        if amount <= 0.0 {
+            continue;
+        }
+        entity_damage_requests.push(EntityEntityDamageRequest {
+            target_entity_id: target.entity_id,
+            amount,
         });
     }
 }
@@ -4500,6 +6242,213 @@ fn nearest_attackable_player<'a>(
         })
 }
 
+fn nearest_attackable_player_3d<'a>(
+    position: EntityPosition,
+    dimension: &str,
+    viewers: &'a [crate::players::OnlinePlayer],
+    range: f64,
+) -> Option<&'a crate::players::OnlinePlayer> {
+    let range_sq = range.max(0.0) * range.max(0.0);
+    viewers
+        .iter()
+        .filter(|player| player.dimension == dimension && player_can_be_attacked(player))
+        .filter(|player| distance_sq(position, player.position) <= range_sq)
+        .min_by(|left, right| {
+            distance_sq(position, left.position).total_cmp(&distance_sq(position, right.position))
+        })
+}
+
+fn has_vanilla_entity_target(
+    attacker: &ManagedEntity,
+    candidates: &[ManagedEntity],
+    range: f64,
+) -> bool {
+    nearest_vanilla_entity_target(attacker, candidates, range).is_some()
+}
+
+fn nearest_vanilla_entity_target<'a>(
+    attacker: &ManagedEntity,
+    candidates: &'a [ManagedEntity],
+    range: f64,
+) -> Option<&'a ManagedEntity> {
+    if ai_param_bool(&attacker.ai_params, "disable_entity_targets", false) {
+        return None;
+    }
+    let range_sq = range.max(0.0) * range.max(0.0);
+    candidates
+        .iter()
+        .filter(|target| {
+            target.kind == ManagedEntityKind::Entity
+                && target.key != attacker.key
+                && target.dimension == attacker.dimension
+                && vanilla_entity_can_attack(attacker, target)
+                && distance_sq(attacker.position, target.position) <= range_sq
+        })
+        .min_by(|left, right| {
+            distance_sq(attacker.position, left.position)
+                .total_cmp(&distance_sq(attacker.position, right.position))
+        })
+}
+
+fn nearest_vanilla_entity_melee_target<'a>(
+    attacker: &ManagedEntity,
+    candidates: &'a [ManagedEntity],
+    range: f64,
+) -> Option<&'a ManagedEntity> {
+    if ai_param_bool(&attacker.ai_params, "disable_entity_targets", false) {
+        return None;
+    }
+    let range_sq = range.max(0.0) * range.max(0.0);
+    candidates
+        .iter()
+        .filter(|target| {
+            target.kind == ManagedEntityKind::Entity
+                && target.key != attacker.key
+                && target.dimension == attacker.dimension
+                && vanilla_entity_can_attack(attacker, target)
+                && (target.position.y - attacker.position.y).abs() <= 2.5
+                && horizontal_distance_sq(attacker.position, target.position) <= range_sq
+        })
+        .min_by(|left, right| {
+            distance_sq(attacker.position, left.position)
+                .total_cmp(&distance_sq(attacker.position, right.position))
+        })
+}
+
+fn vanilla_entity_can_attack(attacker: &ManagedEntity, target: &ManagedEntity) -> bool {
+    let attacker_type = normalized_entity_type(&attacker.entity_type);
+    let target_type = normalized_entity_type(&target.entity_type);
+    if target_type == "minecraft:armor_stand"
+        || target_type == "minecraft:item"
+        || target_type.ends_with("_display")
+    {
+        return false;
+    }
+    if entity_type_is_villager_like(&target_type) {
+        return entity_type_attacks_villagers(&attacker_type);
+    }
+    if entity_type_is_golem(&target_type) {
+        return entity_type_attacks_golems(&attacker_type);
+    }
+    if entity_type_is_golem(&attacker_type) || attacker_type == "minecraft:snow_golem" {
+        return entity_type_is_golem_target(&target_type);
+    }
+    if entity_type_attacks_prey(&attacker_type, &target_type) {
+        return true;
+    }
+    if neutral_entity_is_angry(attacker) && entity_type_is_neutral_predator(&attacker_type) {
+        return entity_type_is_golem_target(&target_type);
+    }
+    false
+}
+
+fn entity_type_is_villager_like(entity_type: &str) -> bool {
+    matches!(
+        entity_type,
+        "minecraft:villager" | "minecraft:wandering_trader"
+    )
+}
+
+fn entity_type_is_golem(entity_type: &str) -> bool {
+    matches!(entity_type, "minecraft:iron_golem" | "minecraft:snow_golem")
+}
+
+fn entity_type_attacks_villagers(entity_type: &str) -> bool {
+    matches!(
+        entity_type,
+        "minecraft:zombie"
+            | "minecraft:zombie_villager"
+            | "minecraft:husk"
+            | "minecraft:drowned"
+            | "minecraft:vindicator"
+            | "minecraft:evoker"
+            | "minecraft:pillager"
+            | "minecraft:ravager"
+            | "minecraft:vex"
+            | "minecraft:zoglin"
+    )
+}
+
+fn entity_type_attacks_golems(entity_type: &str) -> bool {
+    matches!(
+        entity_type,
+        "minecraft:zombie"
+            | "minecraft:zombie_villager"
+            | "minecraft:husk"
+            | "minecraft:drowned"
+            | "minecraft:vindicator"
+            | "minecraft:evoker"
+            | "minecraft:pillager"
+            | "minecraft:ravager"
+            | "minecraft:vex"
+            | "minecraft:warden"
+            | "minecraft:wither"
+            | "minecraft:zoglin"
+    )
+}
+
+fn entity_type_is_golem_target(entity_type: &str) -> bool {
+    matches!(
+        entity_type,
+        "minecraft:zombie"
+            | "minecraft:zombie_villager"
+            | "minecraft:husk"
+            | "minecraft:drowned"
+            | "minecraft:skeleton"
+            | "minecraft:stray"
+            | "minecraft:bogged"
+            | "minecraft:spider"
+            | "minecraft:cave_spider"
+            | "minecraft:witch"
+            | "minecraft:slime"
+            | "minecraft:magma_cube"
+            | "minecraft:blaze"
+            | "minecraft:guardian"
+            | "minecraft:elder_guardian"
+            | "minecraft:pillager"
+            | "minecraft:vindicator"
+            | "minecraft:evoker"
+            | "minecraft:ravager"
+            | "minecraft:vex"
+            | "minecraft:phantom"
+            | "minecraft:zoglin"
+            | "minecraft:piglin_brute"
+            | "minecraft:warden"
+    )
+}
+
+fn entity_type_is_neutral_predator(entity_type: &str) -> bool {
+    matches!(
+        entity_type,
+        "minecraft:wolf" | "minecraft:bee" | "minecraft:polar_bear"
+    )
+}
+
+fn entity_type_attacks_prey(attacker_type: &str, target_type: &str) -> bool {
+    match attacker_type {
+        "minecraft:fox" => matches!(
+            target_type,
+            "minecraft:chicken"
+                | "minecraft:rabbit"
+                | "minecraft:cod"
+                | "minecraft:salmon"
+                | "minecraft:tropical_fish"
+                | "minecraft:pufferfish"
+        ),
+        "minecraft:wolf" => matches!(
+            target_type,
+            "minecraft:sheep"
+                | "minecraft:rabbit"
+                | "minecraft:fox"
+                | "minecraft:skeleton"
+                | "minecraft:stray"
+                | "minecraft:bogged"
+                | "minecraft:wither_skeleton"
+        ),
+        _ => false,
+    }
+}
+
 fn player_can_be_attacked(player: &crate::players::OnlinePlayer) -> bool {
     !matches!(player.game_mode, 1 | 3)
 }
@@ -4514,11 +6463,19 @@ fn apply_entity_physics(
 ) {
     let tick_scale = (tick_ms as f64 / 50.0).clamp(0.25, 4.0);
     let mut dy = movement.y.clamp(-4.0, 4.0);
+    let elapsed_ticks = entity_tick_units(tick_ms);
+    let profile = resolved_vanilla_ai_profile(entity, 8.0);
+    let ignores_gravity = entity_ignores_gravity_for_profile(entity, world, profile);
+    motion.jump_cooldown_ticks = motion.jump_cooldown_ticks.saturating_sub(elapsed_ticks);
     apply_horizontal_motion(motion, movement, tick_scale);
     let dx = (motion.velocity_x * tick_scale).clamp(-4.0, 4.0);
     let dz = (motion.velocity_z * tick_scale).clamp(-4.0, 4.0);
 
-    if entity_has_ground(world, collision_cache, &entity.dimension, entity.position)
+    if ignores_gravity {
+        entity.position.on_ground = false;
+        apply_vertical_motion(motion, movement, tick_scale);
+        dy = (motion.velocity_y * tick_scale).clamp(-4.0, 4.0);
+    } else if entity_has_ground(world, collision_cache, &entity.dimension, entity.position)
         && motion.velocity_y <= 0.0
     {
         entity.position.on_ground = true;
@@ -4527,6 +6484,9 @@ fn apply_entity_physics(
         entity.position.on_ground = false;
         motion.velocity_y = (motion.velocity_y - ENTITY_GRAVITY_PER_TICK * tick_scale)
             .max(ENTITY_TERMINAL_VELOCITY);
+        dy += motion.velocity_y * tick_scale;
+    }
+    if !ignores_gravity && try_apply_slime_jump(entity, motion, movement) {
         dy += motion.velocity_y * tick_scale;
     }
 
@@ -4550,6 +6510,39 @@ fn apply_entity_physics(
     }
 }
 
+fn try_apply_slime_jump(
+    entity: &mut ManagedEntity,
+    motion: &mut EntityMotion,
+    movement: EntityMovement,
+) -> bool {
+    if !entity_type_uses_slime_jump(&entity.entity_type)
+        || !entity.position.on_ground
+        || motion.jump_cooldown_ticks > 0
+        || movement.x.abs() + movement.z.abs() <= 0.0001
+    {
+        return false;
+    }
+    let profile = resolved_vanilla_ai_profile(entity, 8.0);
+    if profile.slime_jump_velocity <= 0.0 {
+        return false;
+    }
+    motion.velocity_y = profile.slime_jump_velocity;
+    motion.jump_cooldown_ticks = if movement.x.abs() + movement.z.abs() > 0.0001 {
+        (profile.slime_jump_delay_ticks / 3).max(1)
+    } else {
+        profile.slime_jump_delay_ticks
+    };
+    entity.position.on_ground = false;
+    true
+}
+
+fn entity_type_uses_slime_jump(entity_type: &str) -> bool {
+    matches!(
+        normalized_entity_type(entity_type).as_str(),
+        "minecraft:slime" | "minecraft:magma_cube"
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_projectile_tick(
     entity: &mut ManagedEntity,
@@ -4558,9 +6551,11 @@ fn apply_projectile_tick(
     motion: &mut EntityMotion,
     projectile_state: &mut HashMap<String, EntityProjectileState>,
     viewers: &[crate::players::OnlinePlayer],
+    target_entities: &[ManagedEntity],
     tick_ms: u64,
     player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
     player_potion_effect_requests: &mut Vec<EntityPlayerPotionEffectRequest>,
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
     explosion_block_requests: &mut Vec<EntityExplosionBlockRequest>,
 ) -> bool {
     let Some(state) = projectile_state.get_mut(&entity.key) else {
@@ -4574,6 +6569,7 @@ fn apply_projectile_tick(
 
     let previous = entity.position;
     let tick_scale = (tick_ms as f64 / 50.0).clamp(0.25, 4.0);
+    apply_shulker_bullet_homing(entity, motion, state, viewers, tick_scale);
     motion.velocity_y -= state.gravity_per_tick * tick_scale;
     entity.position.x += motion.velocity_x * tick_scale;
     entity.position.y += motion.velocity_y * tick_scale;
@@ -4590,8 +6586,35 @@ fn apply_projectile_tick(
             state,
             viewers,
             None,
+            None,
             player_damage_requests,
             player_potion_effect_requests,
+            entity_damage_requests,
+            target_entities,
+            explosion_block_requests,
+        );
+        return true;
+    }
+
+    if let Some(target) = projectile_hit_entity(
+        previous,
+        entity.position,
+        &entity.key,
+        state.source_entity_id,
+        &entity.dimension,
+        target_entities,
+        state.hit_radius,
+    ) {
+        apply_projectile_impact(
+            entity,
+            state,
+            viewers,
+            None,
+            Some(target.entity_id),
+            player_damage_requests,
+            player_potion_effect_requests,
+            entity_damage_requests,
+            target_entities,
             explosion_block_requests,
         );
         return true;
@@ -4611,11 +6634,65 @@ fn apply_projectile_tick(
         state,
         viewers,
         Some(target.profile.uuid),
+        None,
         player_damage_requests,
         player_potion_effect_requests,
+        entity_damage_requests,
+        target_entities,
         explosion_block_requests,
     );
     true
+}
+
+fn apply_shulker_bullet_homing(
+    entity: &ManagedEntity,
+    motion: &mut EntityMotion,
+    state: &EntityProjectileState,
+    viewers: &[crate::players::OnlinePlayer],
+    tick_scale: f64,
+) {
+    if !matches!(state.kind, EntityProjectileKind::ShulkerBullet) {
+        return;
+    }
+    let Some(target_profile_id) = state.target_profile_id else {
+        return;
+    };
+    let Some(target) = viewers.iter().find(|player| {
+        player.profile.uuid == target_profile_id
+            && player.dimension == entity.dimension
+            && player_can_be_attacked(player)
+    }) else {
+        return;
+    };
+
+    let dx = target.position.x - entity.position.x;
+    let dy = target.position.y + 1.0 - entity.position.y;
+    let dz = target.position.z - entity.position.z;
+    let target_distance = (dx * dx + dy * dy + dz * dz).sqrt();
+    let speed = (motion.velocity_x * motion.velocity_x
+        + motion.velocity_y * motion.velocity_y
+        + motion.velocity_z * motion.velocity_z)
+        .sqrt();
+    if target_distance <= f64::EPSILON || speed <= f64::EPSILON {
+        return;
+    }
+
+    let desired_x = dx / target_distance * speed;
+    let desired_y = dy / target_distance * speed;
+    let desired_z = dz / target_distance * speed;
+    let blend = 1.0 - (1.0 - ENTITY_SHULKER_BULLET_HOMING_BLEND).powf(tick_scale);
+    let next_x = motion.velocity_x + (desired_x - motion.velocity_x) * blend;
+    let next_y = motion.velocity_y + (desired_y - motion.velocity_y) * blend;
+    let next_z = motion.velocity_z + (desired_z - motion.velocity_z) * blend;
+    let next_speed = (next_x * next_x + next_y * next_y + next_z * next_z).sqrt();
+    if next_speed <= f64::EPSILON {
+        return;
+    }
+
+    let scale = speed / next_speed;
+    motion.velocity_x = next_x * scale;
+    motion.velocity_y = next_y * scale;
+    motion.velocity_z = next_z * scale;
 }
 
 fn apply_projectile_impact(
@@ -4623,12 +6700,23 @@ fn apply_projectile_impact(
     state: &EntityProjectileState,
     viewers: &[crate::players::OnlinePlayer],
     hit_target_id: Option<uuid::Uuid>,
+    hit_entity_id: Option<i32>,
     player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
     player_potion_effect_requests: &mut Vec<EntityPlayerPotionEffectRequest>,
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
+    target_entities: &[ManagedEntity],
     explosion_block_requests: &mut Vec<EntityExplosionBlockRequest>,
 ) {
     if state.explosion_radius > 0.0 {
         add_projectile_explosion_damage_requests(entity, state, viewers, player_damage_requests);
+        add_explosion_entity_damage_requests(
+            state.source_entity_id,
+            entity.position,
+            state.explosion_radius,
+            state.explosion_damage,
+            target_entities,
+            entity_damage_requests,
+        );
         if state.explosion_break_blocks {
             explosion_block_requests.push(EntityExplosionBlockRequest {
                 dimension: entity.dimension.clone(),
@@ -4648,15 +6736,32 @@ fn apply_projectile_impact(
             effect,
             player_potion_effect_requests,
         );
-        return;
+        add_projectile_entity_potion_damage_requests(
+            entity,
+            state,
+            hit_entity_id,
+            effect,
+            target_entities,
+            entity_damage_requests,
+        );
+        if matches!(state.kind, EntityProjectileKind::Potion) {
+            return;
+        }
     }
 
-    let Some(target_profile_id) = hit_target_id else {
-        return;
-    };
     if state.damage <= 0.0 {
         return;
     }
+    if let Some(target_entity_id) = hit_entity_id {
+        entity_damage_requests.push(EntityEntityDamageRequest {
+            target_entity_id,
+            amount: state.damage,
+        });
+        return;
+    }
+    let Some(target_profile_id) = hit_target_id else {
+        return;
+    };
     let knockback = match state.kind {
         EntityProjectileKind::SmallFireball => state.knockback.max(0.25),
         _ => state.knockback,
@@ -4758,6 +6863,55 @@ fn add_projectile_potion_effect_requests(
     }
 }
 
+fn add_projectile_entity_potion_damage_requests(
+    entity: &ManagedEntity,
+    state: &EntityProjectileState,
+    hit_entity_id: Option<i32>,
+    effect: EntityPotionEffect,
+    target_entities: &[ManagedEntity],
+    entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
+) {
+    if !matches!(effect.effect, EntityPotionEffectKind::InstantDamage) {
+        return;
+    }
+    let amount = instant_damage_amount(effect);
+    if amount <= 0.0 {
+        return;
+    }
+    if state.splash_radius <= 0.0 {
+        if let Some(target_entity_id) = hit_entity_id {
+            entity_damage_requests.push(EntityEntityDamageRequest {
+                target_entity_id,
+                amount,
+            });
+        }
+        return;
+    }
+
+    let radius = state.splash_radius.max(0.1);
+    for target in target_entities {
+        if !projectile_can_hit_managed_entity(target, &entity.key, state.source_entity_id) {
+            continue;
+        }
+        if target.dimension != entity.dimension {
+            continue;
+        }
+        let distance = distance_sq(entity.position, target.position).sqrt();
+        if distance > radius {
+            continue;
+        }
+        let intensity = (1.0 - distance / radius).clamp(0.25, 1.0);
+        entity_damage_requests.push(EntityEntityDamageRequest {
+            target_entity_id: target.entity_id,
+            amount: amount * intensity as f32,
+        });
+    }
+}
+
+fn instant_damage_amount(effect: EntityPotionEffect) -> f32 {
+    6.0 * (effect.amplifier.max(0) + 1) as f32
+}
+
 fn projectile_hits_solid_block(
     entity: &ManagedEntity,
     world: &crate::world::WorldManager,
@@ -4773,6 +6927,87 @@ fn projectile_hits_solid_block(
         0.25,
         0.25,
     )
+}
+
+fn projectile_hit_entity<'a>(
+    previous: EntityPosition,
+    current: EntityPosition,
+    projectile_key: &str,
+    source_entity_id: i32,
+    dimension: &str,
+    target_entities: &'a [ManagedEntity],
+    hit_radius: f64,
+) -> Option<&'a ManagedEntity> {
+    let hit_radius = hit_radius.clamp(0.1, 8.0);
+    target_entities
+        .iter()
+        .filter(|target| {
+            projectile_can_hit_managed_entity(target, projectile_key, source_entity_id)
+        })
+        .filter(|target| target.dimension == dimension)
+        .filter(|target| {
+            let target_point = projectile_entity_hit_point(target);
+            let radius = hit_radius + projectile_entity_collision_radius(target);
+            point_segment_distance_sq(target_point, previous, current) <= radius * radius
+        })
+        .min_by(|left, right| {
+            distance_sq(current, left.position).total_cmp(&distance_sq(current, right.position))
+        })
+}
+
+fn projectile_can_hit_managed_entity(
+    target: &ManagedEntity,
+    projectile_key: &str,
+    source_entity_id: i32,
+) -> bool {
+    if target.kind != ManagedEntityKind::Entity
+        || target.key == projectile_key
+        || target.entity_id == source_entity_id
+        || ai_kind(&target.ai) == EntityAiKind::Projectile
+    {
+        return false;
+    }
+    let entity_type = normalized_entity_type(&target.entity_type);
+    !matches!(entity_type.as_str(), "minecraft:item" | "minecraft:marker")
+        && !entity_type.ends_with("_display")
+}
+
+fn projectile_entity_hit_point(target: &ManagedEntity) -> EntityPosition {
+    EntityPosition {
+        y: target.position.y + projectile_entity_hit_y_offset(target),
+        ..target.position
+    }
+}
+
+fn projectile_entity_hit_y_offset(target: &ManagedEntity) -> f64 {
+    match normalized_entity_type(&target.entity_type).as_str() {
+        "minecraft:slime" | "minecraft:magma_cube" => {
+            0.25 * f64::from(slime_size_for_entity(target))
+        }
+        "minecraft:chicken"
+        | "minecraft:rabbit"
+        | "minecraft:silverfish"
+        | "minecraft:endermite" => 0.35,
+        "minecraft:spider" | "minecraft:cave_spider" => 0.55,
+        "minecraft:ghast" => 2.0,
+        "minecraft:ravager" | "minecraft:iron_golem" | "minecraft:warden" => 1.6,
+        _ => 1.0,
+    }
+}
+
+fn projectile_entity_collision_radius(target: &ManagedEntity) -> f64 {
+    match normalized_entity_type(&target.entity_type).as_str() {
+        "minecraft:ghast" => 2.0,
+        "minecraft:ravager" | "minecraft:iron_golem" | "minecraft:warden" => 0.9,
+        "minecraft:slime" | "minecraft:magma_cube" => {
+            (0.25 * f64::from(slime_size_for_entity(target))).clamp(0.35, 2.0)
+        }
+        "minecraft:chicken"
+        | "minecraft:rabbit"
+        | "minecraft:silverfish"
+        | "minecraft:endermite" => 0.35,
+        _ => 0.6,
+    }
 }
 
 fn projectile_hit_player<'a>(
@@ -4854,6 +7089,36 @@ fn apply_horizontal_motion(motion: &mut EntityMotion, movement: EntityMovement, 
     motion.velocity_z = approach(motion.velocity_z, target_z, acceleration);
 }
 
+fn apply_vertical_motion(motion: &mut EntityMotion, movement: EntityMovement, tick_scale: f64) {
+    let target_y = movement
+        .y
+        .clamp(-ENTITY_MAX_HORIZONTAL_SPEED, ENTITY_MAX_HORIZONTAL_SPEED);
+    if target_y == 0.0 {
+        let friction = ENTITY_HORIZONTAL_FRICTION.powf(tick_scale);
+        motion.velocity_y *= friction;
+        if motion.velocity_y.abs() < 0.001 {
+            motion.velocity_y = 0.0;
+        }
+        return;
+    }
+    let acceleration = ENTITY_HORIZONTAL_ACCELERATION * tick_scale;
+    motion.velocity_y = approach(motion.velocity_y, target_y, acceleration);
+}
+
+fn entity_ignores_gravity_for_profile(
+    entity: &ManagedEntity,
+    world: &crate::world::WorldManager,
+    profile: VanillaEntityAiProfile,
+) -> bool {
+    match profile.movement_mode {
+        VanillaMovementMode::Ground => false,
+        VanillaMovementMode::Flying => true,
+        VanillaMovementMode::Swimming => {
+            entity_position_touches_water(world, &entity.dimension, entity.position)
+        }
+    }
+}
+
 fn approach(current: f64, target: f64, max_delta: f64) -> f64 {
     current + (target - current).clamp(-max_delta, max_delta)
 }
@@ -4887,6 +7152,12 @@ fn move_entity_axis(
         {
             return;
         }
+        if dy == 0.0
+            && (dx != 0.0 || dz != 0.0)
+            && try_entity_wall_climb(entity, world, collision_cache, motion)
+        {
+            return;
+        }
         if entity_can_auto_jump(entity)
             && dy == 0.0
             && (dx != 0.0 || dz != 0.0)
@@ -4917,6 +7188,44 @@ fn move_entity_axis(
     entity.position.x = next_x;
     entity.position.y = next_y;
     entity.position.z = next_z;
+}
+
+fn try_entity_wall_climb(
+    entity: &mut ManagedEntity,
+    world: &crate::world::WorldManager,
+    collision_cache: &mut CollisionCache,
+    motion: &mut EntityMotion,
+) -> bool {
+    if !entity_type_climbs_walls(&entity.entity_type) {
+        return false;
+    }
+    let profile = resolved_vanilla_ai_profile(entity, 8.0);
+    let climb_velocity = profile.spider_climb_velocity.clamp(0.0, 1.0);
+    if climb_velocity <= 0.0 {
+        return false;
+    }
+    let climb_y = entity.position.y + climb_velocity;
+    if entity_aabb_intersects_solid_at(
+        world,
+        collision_cache,
+        &entity.dimension,
+        entity.position.x,
+        climb_y,
+        entity.position.z,
+    ) {
+        return false;
+    }
+    entity.position.y = climb_y;
+    entity.position.on_ground = false;
+    motion.velocity_y = climb_velocity;
+    true
+}
+
+fn entity_type_climbs_walls(entity_type: &str) -> bool {
+    matches!(
+        normalized_entity_type(entity_type).as_str(),
+        "minecraft:spider" | "minecraft:cave_spider"
+    )
 }
 
 fn try_entity_step_up(
@@ -5243,6 +7552,20 @@ fn entity_tick_units(tick_ms: u64) -> i32 {
         .clamp(1, 100)
 }
 
+fn apply_summon_lifetime_tick(
+    entity: &ManagedEntity,
+    tick_ms: u64,
+    summon_state: &mut HashMap<String, EntitySummonState>,
+) -> bool {
+    let Some(state) = summon_state.get_mut(&entity.key) else {
+        return false;
+    };
+    state.remaining_ticks = state
+        .remaining_ticks
+        .saturating_sub(entity_tick_units(tick_ms));
+    state.remaining_ticks <= 0
+}
+
 fn entity_should_ignite_from_daylight(
     entity: &ManagedEntity,
     world: &crate::world::WorldManager,
@@ -5285,12 +7608,20 @@ fn world_time_is_day(time_value: i64) -> bool {
 }
 
 fn entity_is_in_water(entity: &ManagedEntity, world: &crate::world::WorldManager) -> bool {
-    let x = entity.position.x.floor() as i32;
-    let z = entity.position.z.floor() as i32;
-    let feet_y = entity.position.y.floor() as i32;
-    let eye_y = (entity.position.y + 1.62).floor() as i32;
+    entity_position_touches_water(world, &entity.dimension, entity.position)
+}
+
+fn entity_position_touches_water(
+    world: &crate::world::WorldManager,
+    dimension: &str,
+    position: EntityPosition,
+) -> bool {
+    let x = position.x.floor() as i32;
+    let z = position.z.floor() as i32;
+    let feet_y = position.y.floor() as i32;
+    let eye_y = (position.y + 1.62).floor() as i32;
     [feet_y, eye_y].into_iter().any(|y| {
-        block_name_at(world, &entity.dimension, x, y, z).is_some_and(|name| {
+        block_name_at(world, dimension, x, y, z).is_some_and(|name| {
             matches!(name.as_str(), "minecraft:water" | "minecraft:bubble_column")
         })
     })

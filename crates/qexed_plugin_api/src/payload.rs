@@ -397,6 +397,18 @@ pub struct BlockStepPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerBlockInteractPayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub block_state: i32,
+    pub block_name: String,
+    pub position: BlockDropPosition,
+    pub player_position: PlayerPositionPayload,
+    #[serde(default)]
+    pub hand: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerMovePayload {
     pub player: PlayerPayloadOwned,
     pub dimension: String,
@@ -551,6 +563,36 @@ pub struct PluginApiCallResponse {
     pub payload: Vec<u8>,
     #[serde(default)]
     pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HttpRequest {
+    #[serde(default = "default_http_method")]
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<HttpHeader>,
+    #[serde(default)]
+    pub body: Vec<u8>,
+    #[serde(default)]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HttpResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: Vec<HttpHeader>,
+    #[serde(default)]
+    pub body: Vec<u8>,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -872,6 +914,10 @@ pub fn player_input_state(flags: u8) -> PlayerInputState {
 
 fn default_dimension() -> String {
     "minecraft:overworld".to_string()
+}
+
+fn default_http_method() -> String {
+    "GET".to_string()
 }
 
 fn one() -> i32 {

@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fs,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     sync::{Arc, Mutex, OnceLock, Weak},
 };
@@ -26,11 +27,11 @@ pub use qexed_plugin_api::{
     MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp,
     NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
-    PlayerAttackResponse, PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse,
-    PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse, PlayerPayloadOwned,
-    PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
-    PluginEnchantment, PotionEffectTickQuery, PotionEffectTickResponse, ProxyConnectResultPayload,
-    SoundPayload, SoundResponse,
+    PlayerAttackResponse, PlayerBlockInteractPayload, PlayerInputPayload, PlayerItemPickupQuery,
+    PlayerItemPickupResponse, PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse,
+    PlayerPayloadOwned, PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery,
+    PluginCommandResponse, PluginEnchantment, PotionEffectTickQuery, PotionEffectTickResponse,
+    ProxyConnectResultPayload, SoundPayload, SoundResponse,
 };
 
 use event::PluginEvent;
@@ -676,6 +677,36 @@ impl PluginManager {
         result
     }
 
+    pub fn handle_player_block_interact(
+        &self,
+        player: &OnlinePlayer,
+        block_state: i32,
+        block_name: String,
+        position: BlockDropPosition,
+        hand: String,
+    ) -> PluginCommandResponse {
+        let query = PlayerBlockInteractPayload {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            block_state,
+            block_name,
+            position,
+            player_position: player_position_payload(player.position),
+            hand,
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::PlayerBlockInteract, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
     pub fn handle_player_move(
         &self,
         player: &OnlinePlayer,
@@ -862,17 +893,27 @@ impl PluginManager {
             actions: Vec::new(),
         };
         for plugin in self.ensure_loaded() {
-            let mut plugin = plugin.lock().expect("plugin manager poisoned");
+            let Ok(mut plugin) = plugin.lock() else {
+                log::warn!("WASM plugin NPC interact skipped: plugin instance poisoned");
+                continue;
+            };
             if !plugin.supports_event(PluginEvent::NpcInteract) {
                 continue;
             }
-            let response = match plugin.call_event_or_query(PluginEvent::NpcInteract, &payload) {
-                Ok(Some(response)) => response,
-                Ok(None) => continue,
-                Err(err) => {
+            let plugin_name = plugin.name.clone();
+            let response = match catch_unwind(AssertUnwindSafe(|| {
+                plugin.call_event_or_query(PluginEvent::NpcInteract, &payload)
+            })) {
+                Err(_) => {
+                    log::warn!("WASM plugin NPC interact panicked: plugin={plugin_name}");
+                    continue;
+                }
+                Ok(Ok(Some(response))) => response,
+                Ok(Ok(None)) => continue,
+                Ok(Err(err)) => {
                     log::warn!(
                         "WASM plugin NPC interact failed: plugin={}, error={err:#}",
-                        plugin.name
+                        plugin_name
                     );
                     continue;
                 }
@@ -884,7 +925,7 @@ impl PluginManager {
                 }
                 Err(err) => log::warn!(
                     "WASM plugin NPC interact response decode failed: plugin={}, error={err}",
-                    plugin.name
+                    plugin_name
                 ),
             }
         }
@@ -934,15 +975,24 @@ impl PluginManager {
             return;
         }
         for plugin in self.ensure_loaded() {
-            let mut plugin = plugin.lock().expect("plugin manager poisoned");
+            let Ok(mut plugin) = plugin.lock() else {
+                log::warn!("WASM plugin event skipped: event={event:?}, plugin instance poisoned");
+                continue;
+            };
             if !plugin.supports_event(event) {
                 continue;
             }
-            if let Err(err) = plugin.call_event(event, payload) {
-                log::warn!(
-                    "WASM plugin event failed: plugin={}, event={event:?}, error={err:#}",
-                    plugin.name
-                );
+            let plugin_name = plugin.name.clone();
+            match catch_unwind(AssertUnwindSafe(|| plugin.call_event(event, payload))) {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    log::warn!(
+                        "WASM plugin event failed: plugin={plugin_name}, event={event:?}, error={err:#}"
+                    );
+                }
+                Err(_) => {
+                    log::warn!("WASM plugin event panicked: plugin={plugin_name}, event={event:?}");
+                }
             }
         }
     }
@@ -964,17 +1014,26 @@ impl PluginManager {
         };
         let mut responses = Vec::new();
         for plugin in self.ensure_loaded() {
-            let mut plugin = plugin.lock().expect("plugin manager poisoned");
+            let Ok(mut plugin) = plugin.lock() else {
+                log::warn!("WASM plugin query skipped: event={event:?}, plugin instance poisoned");
+                continue;
+            };
             if !plugin.supports_event(event) {
                 continue;
             }
-            let response = match plugin.call_query(event, &payload) {
-                Ok(Some(response)) => response,
-                Ok(None) => continue,
-                Err(err) => {
+            let plugin_name = plugin.name.clone();
+            let response = match catch_unwind(AssertUnwindSafe(|| {
+                plugin.call_query(event, &payload)
+            })) {
+                Err(_) => {
+                    log::warn!("WASM plugin query panicked: plugin={plugin_name}, event={event:?}");
+                    continue;
+                }
+                Ok(Ok(Some(response))) => response,
+                Ok(Ok(None)) => continue,
+                Ok(Err(err)) => {
                     log::warn!(
-                        "WASM plugin query failed: plugin={}, event={event:?}, error={err:#}",
-                        plugin.name
+                        "WASM plugin query failed: plugin={plugin_name}, event={event:?}, error={err:#}"
                     );
                     continue;
                 }
@@ -983,7 +1042,7 @@ impl PluginManager {
                 Ok(response) => responses.push(response),
                 Err(err) => log::warn!(
                     "WASM plugin query response decode failed: plugin={}, event={event:?}, error={err}",
-                    plugin.name
+                    plugin_name
                 ),
             }
         }

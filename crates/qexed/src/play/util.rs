@@ -60,14 +60,30 @@ pub(super) fn dimension_type_holder_id(dimension_type: &str) -> i32 {
     }
 }
 
-pub(super) fn player_ability_flags(game_mode: GameMode) -> u8 {
-    match game_mode {
+pub(super) fn player_ability_flags(game_mode: GameMode, allow_flight: bool) -> u8 {
+    let mut flags = match game_mode {
         GameMode::Survival | GameMode::Adventure => 0,
         GameMode::Creative => PlayerAbilities::CAN_FLY | PlayerAbilities::INSTABUILD,
         GameMode::Spectator => {
             PlayerAbilities::INVULNERABLE | PlayerAbilities::FLYING | PlayerAbilities::CAN_FLY
         }
+    };
+    if allow_flight {
+        flags |= PlayerAbilities::CAN_FLY;
     }
+    flags
+}
+
+pub(super) fn acknowledged_player_ability_flags(
+    game_mode: GameMode,
+    allow_flight: bool,
+    requested_flags: u8,
+) -> u8 {
+    let mut flags = player_ability_flags(game_mode, allow_flight);
+    if flags & PlayerAbilities::CAN_FLY != 0 && requested_flags & PlayerAbilities::FLYING != 0 {
+        flags |= PlayerAbilities::FLYING;
+    }
+    flags
 }
 
 pub(super) fn can_modify_world(

@@ -413,9 +413,9 @@ impl crate::plugins::host::EntityControlService for ServerEntityControlService {
             spawn_rule: String::new(),
             custom_type: String::new(),
             look_at_players: false,
-            main_hand_event: String::new(),
-            off_hand_event: String::new(),
-            attack_event: String::new(),
+            main_hand_event: request.main_hand_event,
+            off_hand_event: request.off_hand_event,
+            attack_event: request.attack_event,
         };
         let spawned = match self.entities.spawn_local(spawn) {
             Ok(entity) => entity,
@@ -509,11 +509,14 @@ struct ParsedEntityUpsert {
     ai: String,
     ai_params: std::collections::BTreeMap<String, serde_json::Value>,
     auto_jump: bool,
+    main_hand_event: String,
+    off_hand_event: String,
+    attack_event: String,
 }
 
 impl ParsedEntityUpsert {
     fn parse(plugin_name: &str, query: &str) -> Option<Self> {
-        let mut parts = query.splitn(12, '\t');
+        let mut parts = query.splitn(15, '\t');
         let raw_key = parts.next()?.trim();
         let key = plugin_entity_key(plugin_name, raw_key)?;
         let dimension = parts.next()?.trim().to_string();
@@ -527,6 +530,9 @@ impl ParsedEntityUpsert {
         let ai = parts.next().unwrap_or_default().trim().to_string();
         let ai_params = parse_plugin_ai_params(parts.next().unwrap_or_default())?;
         let auto_jump = parts.next().map(parse_bool_flag).unwrap_or(Some(false))?;
+        let main_hand_event = parts.next().unwrap_or_default().trim().to_string();
+        let off_hand_event = parts.next().unwrap_or_default().trim().to_string();
+        let attack_event = parts.next().unwrap_or_default().trim().to_string();
         if dimension.is_empty() || entity_type.is_empty() {
             return None;
         }
@@ -547,6 +553,9 @@ impl ParsedEntityUpsert {
             ai,
             ai_params,
             auto_jump,
+            main_hand_event,
+            off_hand_event,
+            attack_event,
         })
     }
 }

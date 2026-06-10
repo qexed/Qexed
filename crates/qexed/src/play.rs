@@ -33,6 +33,7 @@ use qexed_protocol::to_client::play::{
     hurt_animation::HurtAnimation,
     keep_alive::KeepAlive as ClientboundKeepAlive,
     login::Login,
+    player_abilities::PlayerAbilities as ClientboundPlayerAbilities,
     player_chat::{PackedMessageSignature, PlayerChat},
     player_info_update::{PlayerInfoActions, PlayerInfoEntry, PlayerInfoUpdate},
     position::Position,
@@ -53,9 +54,9 @@ use qexed_protocol::to_server::play::{
     keep_alive::KeepAlive as ServerboundKeepAlive, move_player_pos::MovePlayerPos,
     move_player_pos_rot::MovePlayerPosRot, move_player_rot::MovePlayerRot,
     move_player_status_only::MovePlayerStatusOnly, pick_item_from_block::PickItemFromBlock,
-    player_action::PlayerAction, player_input::PlayerInput, player_loaded::PlayerLoaded,
-    set_carried_item::SetCarriedItem, set_creative_mode_slot::SetCreativeModeSlot,
-    use_item::UseItem, use_item_on::UseItemOn,
+    player_abilities::PlayerAbilities as ServerboundPlayerAbilities, player_action::PlayerAction,
+    player_input::PlayerInput, player_loaded::PlayerLoaded, set_carried_item::SetCarriedItem,
+    set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
 use crate::player_data::{PlayerData, PlayerDataManager};
@@ -81,8 +82,8 @@ use survival::{
 #[cfg(test)]
 use util::player_ability_flags;
 use util::{
-    can_attempt_world_edit, can_modify_world, chunk_coord, dimension_type_holder_id, keep_alive_id,
-    text_component, translatable_component,
+    acknowledged_player_ability_flags, can_attempt_world_edit, can_modify_world, chunk_coord,
+    dimension_type_holder_id, keep_alive_id, text_component, translatable_component,
 };
 
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
@@ -680,6 +681,7 @@ where
                     position,
                     &mut survival,
                     &mut inventory,
+                    config.server.gameplay.drop_inventory_on_death,
                     &config.server.entity_rendering,
                 ).await? {
                     pending_dig = None;
@@ -707,6 +709,7 @@ where
                         position,
                         &mut inventory,
                         message,
+                        config.server.gameplay.drop_inventory_on_death,
                         &config.server.entity_rendering,
                     )
                     .await?;
@@ -800,6 +803,7 @@ where
                             position,
                             &mut inventory,
                             message,
+                            config.server.gameplay.drop_inventory_on_death,
                             &config.server.entity_rendering,
                         )
                         .await?;
@@ -897,6 +901,7 @@ where
                             source_entity_id,
                             source_position,
                             knockback,
+                            config.server.gameplay.drop_inventory_on_death,
                             &config.server.entity_rendering,
                         )
                         .await?
@@ -1373,6 +1378,36 @@ where
                     pending_dig = None;
                     if lobby.protect_world() {
                         send_block_rollback(sink, world, &play_dimension, use_item_on.block_hit.position.clone()).await?;
+                        send_block_change_ack(sink, sequence).await?;
+                        sink.flush().await?;
+                        continue;
+                    }
+                    if handle_plugin_player_block_interact(
+                        sink,
+                        world,
+                        world_rules,
+                        &config.server,
+                        world_config,
+                        players,
+                        plugins,
+                        &session.player,
+                        &use_item_on,
+                        &chunk_sender,
+                        &mut chunk_state,
+                        &mut position,
+                        &mut next_teleport_id,
+                        &mut play_dimension,
+                        &menus,
+                        &mut active_config_menu,
+                        &mut players_hidden,
+                        &mut visible_player_entities,
+                        config.server.entity_rendering.player_distance,
+                        &inventory,
+                    )
+                    .await?
+                    {
+                        session.player.position = position;
+                        session.player.dimension = play_dimension.clone();
                         send_block_change_ack(sink, sequence).await?;
                         sink.flush().await?;
                         continue;
@@ -2269,8 +2304,21 @@ where
                         container_click_affects_fixed_menu_slot(&click, &menus, &inventory);
                     let affects_navigator_slot =
                         container_click_affects_navigator_slot(&click, &lobby, &inventory);
+                    let menu_render_context = menus::MenuRenderContext::from_lobby(
+                        Some(&config.server),
+                        plugins,
+                        players,
+                        profile.uuid,
+                        &lobby,
+                        &lobby_status,
+                    );
                     if let Some(action) = menus
-                        .handle_container_click(sink, active_config_menu.as_deref(), click.clone())
+                        .handle_container_click(
+                            sink,
+                            active_config_menu.as_deref(),
+                            click.clone(),
+                            Some(&menu_render_context),
+                        )
                         .await?
                     {
                         let outcome = run_menu_action(
@@ -2448,16 +2496,38 @@ where
                             players,
                             plugins,
                             world_config,
-                            &play_dimension,
+                            &mut play_dimension,
                             profile.uuid,
+                            session.player.entity_id,
                             &chunk_sender,
                             &mut chunk_state,
                             &mut position,
                             &mut survival,
+                            &inventory,
                             &mut next_teleport_id,
                         )
                         .await?;
+                        session.player.position = position;
+                        session.player.dimension = play_dimension.clone();
                     }
+                    continue;
+                }
+
+                if packet_id == ServerboundPlayerAbilities::ID {
+                    let abilities =
+                        crate::connection::decode_payload::<ServerboundPlayerAbilities>(
+                            &mut payload,
+                        )?;
+                    sink.send(ClientboundPlayerAbilities {
+                        flags: acknowledged_player_ability_flags(
+                            world_config.game_mode,
+                            world_config.allow_flight,
+                            abilities.flags,
+                        ),
+                        flying_speed: 0.05,
+                        walking_speed: 0.1,
+                    })
+                    .await?;
                     continue;
                 }
 
@@ -2483,12 +2553,14 @@ where
                         entities,
                         &mut survival,
                         world_config.game_mode,
+                        world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
                         session.player.entity_id,
                         previous,
                         position,
                         &mut inventory,
+                        config.server.gameplay.drop_inventory_on_death,
                         &config.server.entity_rendering,
                     )
                     .await?;
@@ -2632,12 +2704,14 @@ where
                         entities,
                         &mut survival,
                         world_config.game_mode,
+                        world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
                         session.player.entity_id,
                         previous,
                         position,
                         &mut inventory,
+                        config.server.gameplay.drop_inventory_on_death,
                         &config.server.entity_rendering,
                     )
                     .await?;
@@ -2778,12 +2852,14 @@ where
                         entities,
                         &mut survival,
                         world_config.game_mode,
+                        world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
                         session.player.entity_id,
                         previous,
                         position,
                         &mut inventory,
+                        config.server.gameplay.drop_inventory_on_death,
                         &config.server.entity_rendering,
                     )
                     .await?;
@@ -2906,12 +2982,14 @@ where
                         entities,
                         &mut survival,
                         world_config.game_mode,
+                        world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
                         session.player.entity_id,
                         previous,
                         position,
                         &mut inventory,
+                        config.server.gameplay.drop_inventory_on_death,
                         &config.server.entity_rendering,
                     )
                     .await?;
@@ -3514,6 +3592,7 @@ async fn apply_external_player_damage<W>(
     source_entity_id: i32,
     source_position: EntityPosition,
     knockback: f32,
+    drop_inventory_on_death: bool,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<bool>
 where
@@ -3555,6 +3634,7 @@ where
             inventory,
             kind,
             source_entity_id,
+            drop_inventory_on_death,
             rendering,
         )
         .await?;
@@ -3627,6 +3707,7 @@ where
                 inventory,
                 PlayerDamageKind::Magic,
                 source_entity_id,
+                config.drop_inventory_on_death,
                 rendering,
             )
             .await?;
@@ -3661,6 +3742,7 @@ async fn handle_external_player_death<W>(
     inventory: &mut crate::inventory::PlayerInventory,
     kind: PlayerDamageKind,
     source_entity_id: i32,
+    drop_inventory_on_death: bool,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
@@ -3685,6 +3767,7 @@ where
         dimension,
         position,
         inventory,
+        drop_inventory_on_death,
         rendering,
         collector_entity_id,
     )
@@ -3781,19 +3864,25 @@ async fn apply_survival_movement<W>(
     entities: &crate::entities::EntityManager,
     survival: &mut SurvivalState,
     game_mode: GameMode,
+    allow_flight: bool,
     dimension: &str,
     actor: uuid::Uuid,
     collector_entity_id: i32,
     previous: EntityPosition,
     current: EntityPosition,
     inventory: &mut crate::inventory::PlayerInventory,
+    drop_inventory_on_death: bool,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let fall_context = fall_context_at(world, dimension, current);
-    let outcome = survival.apply_movement(game_mode, previous, current, fall_context);
+    let outcome = if allow_flight {
+        survival.apply_movement_with_flight(game_mode, true, previous, current, fall_context)
+    } else {
+        survival.apply_movement(game_mode, previous, current, fall_context)
+    };
     if outcome.changed() {
         sink.send(survival.health_packet()).await?;
         if let Some(message) = outcome.death_message() {
@@ -3808,6 +3897,7 @@ where
                 current,
                 inventory,
                 message,
+                drop_inventory_on_death,
                 rendering,
             )
             .await?;
@@ -3839,6 +3929,7 @@ async fn apply_survival_tick<W>(
     position: EntityPosition,
     survival: &mut SurvivalState,
     inventory: &mut crate::inventory::PlayerInventory,
+    drop_inventory_on_death: bool,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<bool>
 where
@@ -3862,6 +3953,7 @@ where
             position,
             inventory,
             message,
+            drop_inventory_on_death,
             rendering,
         )
         .await?;
@@ -3881,6 +3973,7 @@ async fn handle_player_death<W>(
     position: EntityPosition,
     inventory: &mut crate::inventory::PlayerInventory,
     message: DeathMessage,
+    drop_inventory_on_death: bool,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
 ) -> Result<()>
 where
@@ -3896,6 +3989,7 @@ where
         dimension,
         position,
         inventory,
+        drop_inventory_on_death,
         rendering,
         collector_entity_id,
     )
@@ -3912,13 +4006,14 @@ async fn drop_player_inventory_on_death<W>(
     dimension: &str,
     position: EntityPosition,
     inventory: &mut crate::inventory::PlayerInventory,
+    drop_inventory_on_death: bool,
     rendering: &qexed_config::app::qexed::server::EntityRendering,
     collector_entity_id: i32,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    if game_mode != GameMode::Survival {
+    if game_mode != GameMode::Survival || !drop_inventory_on_death {
         return Ok(());
     }
 
@@ -4539,12 +4634,14 @@ async fn respawn_player<W>(
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
-    dimension: &str,
+    play_dimension: &mut String,
     actor: uuid::Uuid,
+    entity_id: i32,
     chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
     chunk_state: &mut ChunkSendState,
     position: &mut EntityPosition,
     survival: &mut SurvivalState,
+    inventory: &crate::inventory::PlayerInventory,
     next_teleport_id: &mut i32,
 ) -> Result<()>
 where
@@ -4556,10 +4653,12 @@ where
 
     survival.respawn();
     *position = spawn_position(&world_config.spawn);
-    let dimension_rule = world_rules.snapshot(dimension);
+    let respawn_dimension = world_config.default_play_dimension();
+    world_rules.ensure_loaded(&respawn_dimension)?;
+    let dimension_rule = world_rules.snapshot(&respawn_dimension);
     sink.send(Respawn {
         dimension_type: VarInt(dimension_type_holder_id(&dimension_rule.dimension_type)),
-        dimension_name: dimension.to_string(),
+        dimension_name: respawn_dimension.clone(),
         hashed_seed: 0,
         game_mode: world_config.game_mode.protocol_id(),
         previous_game_mode: -1,
@@ -4588,12 +4687,22 @@ where
         flags: 0,
     })
     .await?;
-    send_respawn_player_state(sink, world_config, world_rules, dimension, *position).await?;
+    *play_dimension = respawn_dimension.clone();
+    send_respawn_player_state(sink, world_config, world_rules, play_dimension, *position).await?;
     sink.send(survival.health_packet()).await?;
     chunk_state
-        .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
+        .reset_dimension_after_respawn(
+            sink,
+            chunk_sender,
+            world,
+            plugins,
+            play_dimension.clone(),
+            position.x,
+            position.z,
+        )
         .await?;
-    players.update_position(actor, *position);
+    resync_inventory_state(sink, players, actor, entity_id, inventory).await?;
+    players.update_position_and_dimension(actor, play_dimension.clone(), *position);
     sink.flush().await?;
     Ok(())
 }
@@ -4843,7 +4952,17 @@ where
     match action.kind {
         qexed_config::app::qexed::server::MenuActionKind::None => Ok(MenuActionOutcome::default()),
         qexed_config::app::qexed::server::MenuActionKind::OpenMenu => {
-            let opened = menus.open_menu(sink, &action.target).await?;
+            let render_context = menus::MenuRenderContext::from_lobby(
+                server_config,
+                plugins,
+                players,
+                actor,
+                lobby,
+                lobby_status,
+            );
+            let opened = menus
+                .open_menu(sink, &action.target, Some(&render_context))
+                .await?;
             Ok(MenuActionOutcome {
                 opened_menu: opened.is_some(),
                 opened_menu_id: opened,
@@ -4917,7 +5036,15 @@ where
                         sink.send(SystemChat { content, overlay }).await?;
                     }
                     crate::plugins::PlayerAction::OpenMenu { menu } => {
-                        let opened = menus.open_menu(sink, &menu).await?;
+                        let render_context = menus::MenuRenderContext::from_lobby(
+                            server_config,
+                            plugins,
+                            players,
+                            actor,
+                            lobby,
+                            lobby_status,
+                        );
+                        let opened = menus.open_menu(sink, &menu, Some(&render_context)).await?;
                         outcome.opened_menu = opened.is_some();
                         outcome.opened_menu_id = opened;
                     }
@@ -5515,24 +5642,17 @@ async fn handle_plugin_player_block_step<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let Some(block_position) = stepped_block_position(*position) else {
+    let Some((block_position, block_state, block_name)) =
+        stepped_plugin_block(world, play_dimension, *position)
+    else {
         *last_stepped_block = None;
         return Ok(false);
     };
-    let block_state = world
-        .block_state_at(play_dimension, &block_position)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    if crate::inventory::is_air_block_state(block_state) {
-        *last_stepped_block = None;
-        return Ok(false);
-    }
     if last_stepped_block.as_ref() == Some(&block_position) {
         return Ok(false);
     }
     *last_stepped_block = Some(block_position.clone());
 
-    let block_name = crate::inventory::block_name_for_state(block_state)
-        .unwrap_or_else(|| format!("minecraft:unknown_block_state_{block_state}"));
     let mut player = player.clone();
     player.position = *position;
     player.dimension = play_dimension.clone();
@@ -5585,6 +5705,82 @@ where
         }
     }
     Ok(handled)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_plugin_player_block_interact<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    server_config: &qexed_config::app::qexed::server::Server,
+    world_config: &qexed_config::app::qexed::server::World,
+    players: &PlayerManager,
+    plugins: &crate::plugins::PluginManager,
+    player: &crate::players::OnlinePlayer,
+    use_item_on: &UseItemOn,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
+    chunk_state: &mut ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+    play_dimension: &mut String,
+    menus: &menus::MenuRuntime,
+    active_config_menu: &mut Option<String>,
+    players_hidden: &mut bool,
+    visible_player_entities: &mut HashSet<uuid::Uuid>,
+    render_distance: f64,
+    inventory: &crate::inventory::PlayerInventory,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Some(block_state) = world.block_state_at(play_dimension, &use_item_on.block_hit.position)
+    else {
+        return Ok(false);
+    };
+    let block_name = block_name(block_state);
+    let mut player = player.clone();
+    player.position = *position;
+    player.dimension = play_dimension.clone();
+    let hand = match use_item_on.hand.0 {
+        0 => "main_hand",
+        1 => "off_hand",
+        _ => "unknown",
+    };
+    let response = plugins.handle_player_block_interact(
+        &player,
+        block_state,
+        block_name,
+        crate::plugins::BlockDropPosition {
+            x: use_item_on.block_hit.position.x,
+            y: use_item_on.block_hit.position.y,
+            z: use_item_on.block_hit.position.z,
+        },
+        hand.to_string(),
+    );
+
+    handle_plugin_response_actions(
+        sink,
+        world,
+        world_rules,
+        server_config,
+        world_config,
+        players,
+        plugins,
+        &player,
+        response,
+        chunk_sender,
+        chunk_state,
+        position,
+        next_teleport_id,
+        play_dimension,
+        menus,
+        active_config_menu,
+        players_hidden,
+        visible_player_entities,
+        render_distance,
+        inventory,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5831,7 +6027,7 @@ where
         );
         return Ok(PluginNpcInteractOutcome::default());
     };
-    if entity.kind != crate::entities::ManagedEntityKind::Npc {
+    if entity.kind == crate::entities::ManagedEntityKind::Hologram {
         return Ok(PluginNpcInteractOutcome::default());
     }
 
@@ -5843,7 +6039,7 @@ where
     };
 
     log::debug!(
-        "dispatching plugin npc interact: player={}, entity_key={}, entity_id={}, action={}",
+        "dispatching plugin entity interact: player={}, entity_key={}, entity_id={}, action={}",
         player.profile.username,
         entity.key,
         entity.entity_id,
@@ -7243,6 +7439,47 @@ fn stepped_block_position(position: EntityPosition) -> Option<BlockPosition> {
         y: (position.y - 0.0001).floor() as i32,
         z: position.z.floor() as i32,
     })
+}
+
+fn stepped_plugin_block(
+    world: &WorldManager,
+    dimension: &str,
+    position: EntityPosition,
+) -> Option<(BlockPosition, i32, String)> {
+    let base = stepped_block_position(position)?;
+    let surface = BlockPosition {
+        x: base.x,
+        y: position.y.floor() as i32,
+        z: base.z,
+    };
+    if surface.y != base.y {
+        if let Some((state, name)) = named_non_air_block(world, dimension, &surface) {
+            if is_pressure_plate_block(&name) {
+                return Some((surface, state, name));
+            }
+        }
+    }
+
+    let (state, name) = named_non_air_block(world, dimension, &base)?;
+    Some((base, state, name))
+}
+
+fn named_non_air_block(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> Option<(i32, String)> {
+    let state = world.block_state_at(dimension, position)?;
+    if crate::inventory::is_air_block_state(state) {
+        return None;
+    }
+    let name = crate::inventory::block_name_for_state(state)
+        .unwrap_or_else(|| format!("minecraft:unknown_block_state_{state}"));
+    Some((state, name))
+}
+
+fn is_pressure_plate_block(block_name: &str) -> bool {
+    block_name == "minecraft:pressure_plate" || block_name.ends_with("_pressure_plate")
 }
 
 #[derive(Debug, Clone)]

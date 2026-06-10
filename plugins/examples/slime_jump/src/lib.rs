@@ -13,9 +13,14 @@ qexed_plugin_sdk::qexed_plugin_memory!();
 const CONFIG_PATH: &str = "config.toml";
 #[cfg(not(test))]
 const DEFAULT_TRIGGER_BLOCK: &str = "minecraft:light_weighted_pressure_plate";
+#[cfg(not(test))]
+const LEGACY_TRIGGER_BLOCK: &str = "minecraft:slime_block";
 const GRAVITY_PER_TICK: f64 = 0.08;
 const MIN_ARC_HEIGHT: f64 = 0.5;
 const MIN_FLIGHT_TICKS: f64 = 1.0;
+const DEFAULT_HORIZONTAL_MULTIPLIER: f64 = 5.0;
+const DEFAULT_VERTICAL_MULTIPLIER: f64 = 1.0;
+const DEFAULT_MAX_HORIZONTAL_SPEED: f64 = 16.0;
 
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
@@ -42,7 +47,7 @@ pub extern "C" fn qexed_plugin_player_block_step(ptr: i32, len: i32) -> i64 {
     if !config.enable || payload.dimension != config.target.dimension {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     }
-    if payload.block_name != config.trigger_block {
+    if !config.is_trigger_block(&payload.block_name) {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     }
 
@@ -81,14 +86,19 @@ fn jump_velocity(payload: &BlockStepPayload, config: &Config) -> Option<Velocity
             y: config.target.y,
             z: config.target.z,
         },
-        config.max_height,
+        JumpTuning {
+            max_height: config.max_height,
+            horizontal_multiplier: config.horizontal_multiplier,
+            vertical_multiplier: config.vertical_multiplier,
+            max_horizontal_speed: config.max_horizontal_speed,
+        },
     )
 }
 
-fn ballistic_velocity(start: Point, target: Point, max_height: f64) -> Option<Velocity> {
-    let arc_height = max_height.max(MIN_ARC_HEIGHT);
-    let apex_y = start.y + arc_height;
-    if apex_y < target.y || !start.is_finite() || !target.is_finite() {
+fn ballistic_velocity(start: Point, target: Point, tuning: JumpTuning) -> Option<Velocity> {
+    let arc_height = finite_or(tuning.max_height, MIN_ARC_HEIGHT).max(MIN_ARC_HEIGHT);
+    let apex_y = start.y.max(target.y) + arc_height;
+    if !apex_y.is_finite() || !start.is_finite() || !target.is_finite() {
         return None;
     }
 
@@ -102,11 +112,43 @@ fn ballistic_velocity(start: Point, target: Point, max_height: f64) -> Option<Ve
         return None;
     }
 
+    let horizontal_multiplier =
+        finite_or(tuning.horizontal_multiplier, DEFAULT_HORIZONTAL_MULTIPLIER).max(0.0);
+    let vertical_multiplier =
+        finite_or(tuning.vertical_multiplier, DEFAULT_VERTICAL_MULTIPLIER).max(0.0);
+    let max_horizontal_speed =
+        finite_or(tuning.max_horizontal_speed, DEFAULT_MAX_HORIZONTAL_SPEED).max(0.0);
+    let mut x = (target.x - start.x) / flight_ticks * horizontal_multiplier;
+    let mut z = (target.z - start.z) / flight_ticks * horizontal_multiplier;
+    clamp_horizontal_speed(&mut x, &mut z, max_horizontal_speed);
+
     Some(Velocity {
-        x: (target.x - start.x) / flight_ticks,
-        y: vertical_velocity,
-        z: (target.z - start.z) / flight_ticks,
+        x,
+        y: vertical_velocity * vertical_multiplier,
+        z,
     })
+}
+
+fn finite_or(value: f64, default: f64) -> f64 {
+    if value.is_finite() { value } else { default }
+}
+
+fn clamp_horizontal_speed(x: &mut f64, z: &mut f64, max_speed: f64) {
+    let speed = x.hypot(*z);
+    if !speed.is_finite() || speed <= max_speed || speed <= 0.0 {
+        return;
+    }
+    let scale = max_speed / speed;
+    *x *= scale;
+    *z *= scale;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JumpTuning {
+    max_height: f64,
+    horizontal_multiplier: f64,
+    vertical_multiplier: f64,
+    max_horizontal_speed: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -136,8 +178,16 @@ struct Config {
     enable: bool,
     #[serde(default = "default_trigger_block")]
     trigger_block: String,
+    #[serde(default = "default_trigger_blocks")]
+    trigger_blocks: Vec<String>,
     #[serde(default = "default_max_height")]
     max_height: f64,
+    #[serde(default = "default_horizontal_multiplier")]
+    horizontal_multiplier: f64,
+    #[serde(default = "default_vertical_multiplier")]
+    vertical_multiplier: f64,
+    #[serde(default = "default_max_horizontal_speed")]
+    max_horizontal_speed: f64,
     #[serde(default)]
     target: TargetConfig,
 }
@@ -148,9 +198,21 @@ impl Default for Config {
         Self {
             enable: true,
             trigger_block: default_trigger_block(),
+            trigger_blocks: default_trigger_blocks(),
             max_height: default_max_height(),
+            horizontal_multiplier: default_horizontal_multiplier(),
+            vertical_multiplier: default_vertical_multiplier(),
+            max_horizontal_speed: default_max_horizontal_speed(),
             target: TargetConfig::default(),
         }
+    }
+}
+
+#[cfg(not(test))]
+impl Config {
+    fn is_trigger_block(&self, block_name: &str) -> bool {
+        block_name == self.trigger_block
+            || self.trigger_blocks.iter().any(|name| name == block_name)
     }
 }
 
@@ -190,6 +252,14 @@ fn default_trigger_block() -> String {
 }
 
 #[cfg(not(test))]
+fn default_trigger_blocks() -> Vec<String> {
+    vec![
+        DEFAULT_TRIGGER_BLOCK.to_string(),
+        LEGACY_TRIGGER_BLOCK.to_string(),
+    ]
+}
+
+#[cfg(not(test))]
 fn default_dimension() -> String {
     "minecraft:overworld".to_string()
 }
@@ -215,9 +285,32 @@ fn default_max_height() -> f64 {
 }
 
 #[cfg(not(test))]
+fn default_horizontal_multiplier() -> f64 {
+    DEFAULT_HORIZONTAL_MULTIPLIER
+}
+
+#[cfg(not(test))]
+fn default_vertical_multiplier() -> f64 {
+    DEFAULT_VERTICAL_MULTIPLIER
+}
+
+#[cfg(not(test))]
+fn default_max_horizontal_speed() -> f64 {
+    DEFAULT_MAX_HORIZONTAL_SPEED
+}
+
+#[cfg(not(test))]
 const DEFAULT_CONFIG: &str = r#"enable = true
-trigger_block = "minecraft:light_weighted_pressure_plate"
+# Gold pressure plate; slime block remains as a legacy fallback.
+trigger_blocks = [
+    "minecraft:light_weighted_pressure_plate",
+    "minecraft:slime_block",
+]
 max_height = 8.0
+# Horizontal distance is damped heavily by the client, so long jumps need a boost.
+horizontal_multiplier = 5.0
+vertical_multiplier = 1.0
+max_horizontal_speed = 16.0
 
 [target]
 dimension = "minecraft:overworld"
@@ -243,7 +336,12 @@ mod tests {
                 y: 64.0,
                 z: 8.5,
             },
-            8.0,
+            JumpTuning {
+                max_height: 8.0,
+                horizontal_multiplier: 1.0,
+                vertical_multiplier: 1.0,
+                max_horizontal_speed: 16.0,
+            },
         )
         .expect("reachable target");
 
@@ -253,22 +351,97 @@ mod tests {
     }
 
     #[test]
-    fn target_above_max_height_is_rejected() {
-        assert!(
-            ballistic_velocity(
-                Point {
-                    x: 0.0,
-                    y: 64.0,
-                    z: 0.0,
-                },
-                Point {
-                    x: 0.0,
-                    y: 80.0,
-                    z: 0.0,
-                },
-                8.0,
-            )
-            .is_none()
-        );
+    fn target_above_start_is_reachable() {
+        let velocity = ballistic_velocity(
+            Point {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+            },
+            Point {
+                x: 4.0,
+                y: 80.0,
+                z: 0.0,
+            },
+            JumpTuning {
+                max_height: 8.0,
+                horizontal_multiplier: 1.0,
+                vertical_multiplier: 1.0,
+                max_horizontal_speed: 16.0,
+            },
+        )
+        .expect("target above start");
+
+        assert!(velocity.x > 0.0);
+        assert!(velocity.y > 0.0);
+    }
+
+    #[test]
+    fn horizontal_multiplier_increases_launch_speed() {
+        let base = ballistic_velocity(
+            Point {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+            },
+            Point {
+                x: 80.0,
+                y: 64.0,
+                z: 0.0,
+            },
+            JumpTuning {
+                max_height: 8.0,
+                horizontal_multiplier: 1.0,
+                vertical_multiplier: 1.0,
+                max_horizontal_speed: 16.0,
+            },
+        )
+        .expect("base velocity");
+        let boosted = ballistic_velocity(
+            Point {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+            },
+            Point {
+                x: 80.0,
+                y: 64.0,
+                z: 0.0,
+            },
+            JumpTuning {
+                max_height: 8.0,
+                horizontal_multiplier: 5.0,
+                vertical_multiplier: 1.0,
+                max_horizontal_speed: 16.0,
+            },
+        )
+        .expect("boosted velocity");
+
+        assert!((boosted.x - base.x * 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn horizontal_speed_is_clamped() {
+        let velocity = ballistic_velocity(
+            Point {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+            },
+            Point {
+                x: 100.0,
+                y: 64.0,
+                z: 100.0,
+            },
+            JumpTuning {
+                max_height: 8.0,
+                horizontal_multiplier: 5.0,
+                vertical_multiplier: 1.0,
+                max_horizontal_speed: 10.0,
+            },
+        )
+        .expect("clamped velocity");
+
+        assert!((velocity.x.hypot(velocity.z) - 10.0).abs() < 1e-9);
     }
 }

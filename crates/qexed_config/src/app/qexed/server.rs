@@ -1538,6 +1538,9 @@ pub struct Gameplay {
     #[serde(default = "default_gameplay_potion_effects")]
     pub potion_effects: bool,
 
+    #[serde(default = "default_gameplay_drop_inventory_on_death")]
+    pub drop_inventory_on_death: bool,
+
     #[serde(default = "default_gameplay_furnace_tick_ms")]
     pub furnace_tick_ms: u64,
 
@@ -1562,6 +1565,7 @@ impl Default for Gameplay {
             advancements: default_gameplay_advancements(),
             enchantments: default_gameplay_enchantments(),
             potion_effects: default_gameplay_potion_effects(),
+            drop_inventory_on_death: default_gameplay_drop_inventory_on_death(),
             furnace_tick_ms: default_gameplay_furnace_tick_ms(),
             oxygen_tick_ms: default_gameplay_oxygen_tick_ms(),
             custom_advancements: Vec::new(),
@@ -1657,6 +1661,10 @@ fn default_gameplay_enchantments() -> bool {
 }
 
 fn default_gameplay_potion_effects() -> bool {
+    true
+}
+
+fn default_gameplay_drop_inventory_on_death() -> bool {
     true
 }
 
@@ -2240,6 +2248,9 @@ pub struct World {
     #[serde(default)]
     pub game_mode: GameMode,
 
+    #[serde(default)]
+    pub allow_flight: bool,
+
     #[serde(default = "default_spawn_protection_radius")]
     pub spawn_protection_radius: i32,
 
@@ -2297,6 +2308,7 @@ impl Default for World {
             generator_preset: default_world_generator_preset(),
             seed: 0,
             game_mode: GameMode::default(),
+            allow_flight: false,
             spawn_protection_radius: default_spawn_protection_radius(),
             dimension: default_world_default_dimension(),
             dimension_type: default_world_dimension_type(),
@@ -3481,6 +3493,7 @@ sounds = true
 advancements = true
 enchantments = true
 potion_effects = true
+drop_inventory_on_death = false
 furnace_tick_ms = 100
 oxygen_tick_ms = 500
 
@@ -3497,6 +3510,7 @@ toast = true
 
         assert!(!gameplay.block_updates);
         assert!(gameplay.crafting_table);
+        assert!(!gameplay.drop_inventory_on_death);
         assert_eq!(gameplay.furnace_tick_ms, 100);
         assert_eq!(gameplay.oxygen_tick_ms, 500);
         assert_eq!(gameplay.custom_advancements.len(), 1);

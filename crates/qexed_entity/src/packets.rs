@@ -32,6 +32,10 @@ const TEXT_DISPLAY_DEFAULT_BACKGROUND: i32 = 0x40000000;
 const TEXT_DISPLAY_DEFAULT_OPACITY: u8 = 0xff;
 const TEXT_DISPLAY_SEE_THROUGH: u8 = 0x02;
 const TEXT_DISPLAY_USE_DEFAULT_BACKGROUND: u8 = 0x04;
+const ENTITY_CUSTOM_NAME_METADATA_INDEX: u8 = 2;
+const ENTITY_CUSTOM_NAME_VISIBLE_METADATA_INDEX: u8 = 3;
+const SLIME_SIZE_METADATA_INDEX: u8 = 16;
+const DEFAULT_SLIME_SIZE: i32 = 4;
 
 impl ManagedEntity {
     pub fn spawn_packets(&self) -> Result<Vec<Bytes>> {
@@ -74,7 +78,7 @@ impl ManagedEntity {
                 Some(player_entity_metadata(self.display_name()))
             }
             ManagedEntityKind::Npc => self.display_name().map(named_entity_metadata),
-            ManagedEntityKind::Entity => None,
+            ManagedEntityKind::Entity => ordinary_entity_metadata(self),
         };
         if let Some(metadata) = metadata {
             packets.push(packet_bytes(SetEntityData {
@@ -316,6 +320,62 @@ fn player_entity_metadata(name: Option<&str>) -> EntityMetadata {
     EntityMetadata { data }
 }
 
+fn ordinary_entity_metadata(entity: &ManagedEntity) -> Option<EntityMetadata> {
+    let mut data = Vec::new();
+    if let Some(name) = entity.display_name() {
+        push_display_name_metadata(&mut data, name);
+    }
+
+    if matches!(
+        entity.entity_type.as_str(),
+        "minecraft:slime" | "minecraft:magma_cube"
+    ) {
+        push_slime_size_metadata(&mut data, slime_size_from_data(entity.data));
+    }
+
+    if data.is_empty() {
+        return None;
+    }
+
+    push_metadata_end(&mut data);
+    Some(EntityMetadata { data })
+}
+
+fn push_display_name_metadata(data: &mut Vec<EntityMetadataSub>, name: &str) {
+    data.push(EntityMetadataSub {
+        index: ENTITY_CUSTOM_NAME_METADATA_INDEX,
+        data: Some(EntityMetadataEnum::OptionTextComponent(Some(
+            text_component_or_json(name),
+        ))),
+    });
+    data.push(EntityMetadataSub {
+        index: ENTITY_CUSTOM_NAME_VISIBLE_METADATA_INDEX,
+        data: Some(EntityMetadataEnum::Boolean(true)),
+    });
+}
+
+fn push_slime_size_metadata(data: &mut Vec<EntityMetadataSub>, size: i32) {
+    data.push(EntityMetadataSub {
+        index: SLIME_SIZE_METADATA_INDEX,
+        data: Some(EntityMetadataEnum::VarInt(VarInt(size.clamp(1, 127)))),
+    });
+}
+
+fn push_metadata_end(data: &mut Vec<EntityMetadataSub>) {
+    data.push(EntityMetadataSub {
+        index: 0xff,
+        data: None,
+    });
+}
+
+fn slime_size_from_data(data: i32) -> i32 {
+    if data > 0 {
+        data.clamp(1, 127)
+    } else {
+        DEFAULT_SLIME_SIZE
+    }
+}
+
 fn item_entity_metadata(item: qexed_protocol::types::Slot) -> EntityMetadata {
     EntityMetadata {
         data: vec![
@@ -490,12 +550,15 @@ fn packet_bytes<T: Packet>(packet: T) -> Result<Bytes> {
 #[cfg(test)]
 mod tests {
     use qexed_packet::{Packet, PacketCodec};
-    use qexed_protocol::to_client::play::add_entity::{EntityPosition, EntityPositionSync};
+    use qexed_protocol::to_client::play::{
+        add_entity::{EntityPosition, EntityPositionSync},
+        set_entity_data::SetEntityData,
+    };
 
     use super::*;
 
     #[test]
-    fn ordinary_entity_spawn_does_not_include_display_name_metadata() {
+    fn ordinary_entity_spawn_includes_display_name_metadata() {
         let entity = ManagedEntity {
             key: "zombie".to_string(),
             entity_id: 7,
@@ -530,7 +593,8 @@ mod tests {
 
         let packets = entity.spawn_packets().unwrap();
         let packet_ids = packets
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|mut packet| {
                 let mut reader = qexed_packet::PacketReader::new(&mut packet);
                 let mut packet_id = VarInt::default();
@@ -544,7 +608,93 @@ mod tests {
             vec![
                 qexed_protocol::to_client::play::add_entity::AddEntity::ID,
                 qexed_protocol::to_client::play::add_entity::RotateHead::ID,
+                SetEntityData::ID,
             ]
+        );
+
+        let mut payload = packets[2].clone();
+        let mut reader = qexed_packet::PacketReader::new(&mut payload);
+        let mut packet_id = VarInt::default();
+        packet_id.deserialize(&mut reader).unwrap();
+        let mut metadata = SetEntityData::default();
+        metadata.deserialize(&mut reader).unwrap();
+
+        assert_eq!(packet_id.0, SetEntityData::ID);
+        assert!(metadata.metadata.data.iter().any(|entry| {
+            entry.index == ENTITY_CUSTOM_NAME_METADATA_INDEX
+                && matches!(
+                    &entry.data,
+                    Some(EntityMetadataEnum::OptionTextComponent(Some(_)))
+                )
+        }));
+        assert_eq!(
+            metadata
+                .metadata
+                .data
+                .iter()
+                .find(|entry| entry.index == ENTITY_CUSTOM_NAME_VISIBLE_METADATA_INDEX)
+                .and_then(|entry| match &entry.data {
+                    Some(EntityMetadataEnum::Boolean(visible)) => Some(*visible),
+                    _ => None,
+                }),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn slime_spawn_includes_size_metadata() {
+        let entity = ManagedEntity {
+            key: "slime".to_string(),
+            entity_id: 9,
+            uuid: uuid::Uuid::new_v4(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:slime".to_string(),
+            entity_type_id: 1,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 1.0,
+                y: 64.0,
+                z: 2.0,
+                yaw: 90.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            name: "Slime".to_string(),
+            display_name: String::new(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 2,
+            ai: String::new(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        };
+
+        let packets = entity.spawn_packets().unwrap();
+        let mut payload = packets[2].clone();
+        let mut reader = qexed_packet::PacketReader::new(&mut payload);
+        let mut packet_id = VarInt::default();
+        packet_id.deserialize(&mut reader).unwrap();
+        let mut metadata = SetEntityData::default();
+        metadata.deserialize(&mut reader).unwrap();
+
+        assert_eq!(packet_id.0, SetEntityData::ID);
+        assert_eq!(
+            metadata
+                .metadata
+                .data
+                .iter()
+                .find(|entry| entry.index == SLIME_SIZE_METADATA_INDEX)
+                .and_then(|entry| match &entry.data {
+                    Some(EntityMetadataEnum::VarInt(size)) => Some(size.0),
+                    _ => None,
+                }),
+            Some(2)
         );
     }
 

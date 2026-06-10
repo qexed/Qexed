@@ -25,7 +25,7 @@ Event functions are optional. Except for `qexed_plugin_init()`, event payloads a
 
 `chunk_trace` logs chunk load/unload events and can produce a lot of output when view distance is high. Use it only for ABI debugging.
 
-`slime_jump` listens for `qexed_plugin_player_block_step` and launches players from `minecraft:light_weighted_pressure_plate` toward the configured target position.
+`slime_jump` listens for `qexed_plugin_player_block_step` and launches players from `minecraft:light_weighted_pressure_plate` toward the configured target position. `minecraft:slime_block` remains enabled as a legacy trigger.
 
 `double_jump` listens for `qexed_plugin_player_move` and applies one extra forward/upward velocity boost while the player is airborne.
 

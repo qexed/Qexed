@@ -127,6 +127,8 @@ where
         }
         if result.killed {
             send_death_animation(sink, players, player, target_entity_id).await?;
+            drop_entity_death_loot(sink, players, entities, player, &result.entity, rendering)
+                .await?;
         }
         outcome.killed = result.killed;
         outcome.damaged_held_item = true;
@@ -144,6 +146,69 @@ where
         outcome.damaged_held_item = true;
     }
     Ok(outcome)
+}
+
+async fn drop_entity_death_loot<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &crate::players::PlayerManager,
+    entities: &crate::entities::EntityManager,
+    player: &crate::players::OnlinePlayer,
+    entity: &crate::entities::ManagedEntity,
+    rendering: &qexed_config::app::qexed::server::EntityRendering,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    for (item_name, count) in entity_death_drops(&entity.entity_type) {
+        let Some(item_id) = crate::inventory::item_id_for_name(item_name) else {
+            continue;
+        };
+        let item = crate::inventory::simple_item(item_id, *count);
+        let updates = entities.drop_item_with_rendering(
+            players,
+            player.profile.uuid,
+            &entity.dimension,
+            entity.position,
+            item,
+            rendering,
+        )?;
+        for update in updates {
+            send_dropped_item_update(sink, update).await?;
+        }
+    }
+    Ok(())
+}
+
+fn entity_death_drops(entity_type: &str) -> &'static [(&'static str, i32)] {
+    match entity_type {
+        "minecraft:pig" => &[("minecraft:porkchop", 2)],
+        "minecraft:cow" | "minecraft:mooshroom" => {
+            &[("minecraft:beef", 2), ("minecraft:leather", 1)]
+        }
+        "minecraft:sheep" => &[("minecraft:mutton", 1), ("minecraft:white_wool", 1)],
+        "minecraft:chicken" => &[("minecraft:chicken", 1), ("minecraft:feather", 1)],
+        "minecraft:rabbit" => &[("minecraft:rabbit", 1), ("minecraft:rabbit_hide", 1)],
+        _ => &[],
+    }
+}
+
+async fn send_dropped_item_update<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    update: crate::entities::DroppedItemUpdate,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let packets = match update {
+        crate::entities::DroppedItemUpdate::Spawned(entity) => {
+            entity.spawn_packets(crate::entities::entity_type_id("minecraft:item")?)?
+        }
+        crate::entities::DroppedItemUpdate::Merged(entity) => entity.metadata_packets()?,
+    };
+    for packet in packets {
+        sink.send_raw(packet).await?;
+    }
+    Ok(())
 }
 
 async fn send_death_animation<W>(

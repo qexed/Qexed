@@ -178,6 +178,8 @@ unsafe extern "C" {
         out_ptr: i32,
         out_len: i32,
     ) -> i64;
+    #[link_name = "http_request"]
+    fn host_http_request(request_ptr: i32, request_len: i32, out_ptr: i32, out_len: i32) -> i64;
 }
 
 const HOST_READ_INITIAL_BYTES: usize = 4096;
@@ -910,6 +912,47 @@ pub fn entity_upsert(entity: &RuntimeEntity<'_>) -> bool {
     unsafe { host_entity_upsert(query.as_ptr() as i32, query_len) == 0 }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEntityEvents<'a> {
+    pub main_hand_event: &'a str,
+    pub off_hand_event: &'a str,
+    pub attack_event: &'a str,
+}
+
+pub fn entity_upsert_with_events(
+    entity: &RuntimeEntity<'_>,
+    events: &RuntimeEntityEvents<'_>,
+) -> bool {
+    if !valid_runtime_entity_key(entity.key)
+        || entity.dimension.trim().is_empty()
+        || entity.entity_type.trim().is_empty()
+    {
+        return false;
+    }
+    let query = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        entity.key.trim(),
+        entity.dimension.trim(),
+        entity.entity_type.trim(),
+        entity.x,
+        entity.y,
+        entity.z,
+        entity.yaw,
+        entity.pitch,
+        entity.display_name.trim(),
+        entity.ai.trim(),
+        entity.ai_params_json.trim(),
+        bool_flag(entity.auto_jump),
+        events.main_hand_event.trim(),
+        events.off_hand_event.trim(),
+        events.attack_event.trim(),
+    );
+    let Some(query_len) = i32_len(query.as_bytes()) else {
+        return false;
+    };
+    unsafe { host_entity_upsert(query.as_ptr() as i32, query_len) == 0 }
+}
+
 pub fn entity_move(
     key: &str,
     dimension: &str,
@@ -1036,6 +1079,15 @@ pub fn plugin_call(service: &str, method: &str, payload: &[u8]) -> Option<Vec<u8
             out_len,
         )
     })
+}
+
+pub fn http_request(request: &HttpRequest) -> Option<HttpResponse> {
+    let bytes = postcard::to_allocvec(request).ok()?;
+    let request_len = i32_len(&bytes)?;
+    let response = read_host_buffer(|out_ptr, out_len| unsafe {
+        host_http_request(bytes.as_ptr() as i32, request_len, out_ptr, out_len)
+    })?;
+    postcard::from_bytes(&response).ok()
 }
 
 pub unsafe fn payload_bytes<'a>(ptr: i32, len: i32) -> Option<&'a [u8]> {
