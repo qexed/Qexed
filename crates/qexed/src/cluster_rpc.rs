@@ -147,6 +147,7 @@ pub(crate) struct ClusterEntitySpawning {
     pub per_type_cap: usize,
     pub max_spawn_per_tick: usize,
     pub player_activation_range: f64,
+    pub slime_chunks: qexed_config::app::qexed::server::SlimeChunkSpawning,
     pub rules: Vec<qexed_config::app::qexed::server::EntitySpawnRule>,
 }
 
@@ -192,6 +193,7 @@ impl From<&qexed_config::app::qexed::server::EntitySpawning> for ClusterEntitySp
             per_type_cap: value.per_type_cap,
             max_spawn_per_tick: value.max_spawn_per_tick,
             player_activation_range: value.player_activation_range,
+            slime_chunks: value.slime_chunks.clone(),
             rules: value.rules.clone(),
         }
     }
@@ -208,6 +210,7 @@ impl From<ClusterEntitySpawning> for qexed_config::app::qexed::server::EntitySpa
             per_type_cap: value.per_type_cap,
             max_spawn_per_tick: value.max_spawn_per_tick,
             player_activation_range: value.player_activation_range,
+            slime_chunks: value.slime_chunks,
             rules: value.rules,
         }
     }

@@ -71,6 +71,16 @@ impl PlayerEvent {
                 source_position: _,
                 knockback: _,
             } => Ok(Vec::new()),
+            Self::GameModeChanged {
+                profile_id,
+                username: _,
+                game_mode,
+            } => Ok(vec![game_mode_update_packet(*profile_id, *game_mode)?]),
+            Self::GiveItem {
+                profile_id: _,
+                item: _,
+                item_name: _,
+            } => Ok(Vec::new()),
             Self::DimensionChanged {
                 profile_id: _,
                 entity_id,
@@ -154,6 +164,17 @@ fn player_info_packet(player: &OnlinePlayer) -> anyhow::Result<Bytes> {
             &player.profile,
             player.game_mode,
         )],
+    })
+}
+
+fn game_mode_update_packet(profile_id: uuid::Uuid, game_mode: i32) -> anyhow::Result<Bytes> {
+    packet_bytes(PlayerInfoUpdate {
+        actions: PlayerInfoActions(PlayerInfoActions::UPDATE_GAME_MODE),
+        entries: vec![PlayerInfoEntry {
+            profile_id,
+            game_mode: qexed_packet::net_types::VarInt(game_mode),
+            ..PlayerInfoEntry::default()
+        }],
     })
 }
 

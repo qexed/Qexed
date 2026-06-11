@@ -99,6 +99,7 @@ const ENTITY_ENDERMAN_TELEPORT_CHANCE: f64 = 0.05;
 const ENTITY_ENDERMAN_WATER_DAMAGE: f32 = 1.0;
 const ENTITY_ENDERMAN_WATER_TELEPORT_RADIUS: i32 = 16;
 const ENTITY_OUT_OF_WATER_DAMAGE: f32 = 1.0;
+const ENTITY_WATER_CONTACT_DAMAGE: f32 = 1.0;
 const ENTITY_FLYING_VERTICAL_SPEED: f64 = 0.18;
 const ENTITY_SWIMMING_VERTICAL_SPEED: f64 = 0.12;
 const ENTITY_EVOKER_FANGS_DAMAGE: f32 = 6.0;
@@ -1820,7 +1821,17 @@ impl EntityManager {
                 continue;
             }
 
-            let Some(position) = self.spawn_position_for_rule(rule, dimension, world) else {
+            let spawn_entity_type = custom
+                .as_ref()
+                .map(|registration| registration.shell_entity_type.as_str())
+                .unwrap_or(rule.entity_type.as_str());
+            let Some(position) = self.spawn_position_for_rule(
+                rule,
+                dimension,
+                world,
+                &spawning.slime_chunks,
+                spawn_entity_type,
+            ) else {
                 continue;
             };
 
@@ -2150,6 +2161,7 @@ impl EntityManager {
                     target_memory.remove(&entity.key);
                     path_memory.remove(&entity.key);
                 }
+                apply_water_contact_damage(&entity, world, tick_ms, &mut environment_damage);
                 apply_out_of_water_damage(&entity, world, tick_ms, &mut environment_damage);
 
                 if position_changed(previous, entity.position) {
@@ -2470,8 +2482,11 @@ impl EntityManager {
         rule: &qexed_config::app::qexed::server::EntitySpawnRule,
         dimension: &str,
         world: &crate::world::WorldManager,
+        slime_chunks: &qexed_config::app::qexed::server::SlimeChunkSpawning,
+        entity_type: &str,
     ) -> Option<EntityPosition> {
-        let attempts = if rule.require_air || rule.require_ground {
+        let restrict_to_slime_chunks = slime_chunk_spawning_applies(slime_chunks, entity_type);
+        let attempts = if rule.require_air || rule.require_ground || restrict_to_slime_chunks {
             rule.position_attempts.max(1).min(64)
         } else {
             1
@@ -2490,6 +2505,9 @@ impl EntityManager {
                 pitch: 0.0,
                 on_ground: rule.on_ground,
             };
+            if restrict_to_slime_chunks && !slime_chunk_allows_position(slime_chunks, position) {
+                continue;
+            }
             if spawn_position_passes(rule, dimension, world, &mut collision_cache, position) {
                 return Some(position);
             }
@@ -4113,12 +4131,7 @@ fn vanilla_avoidance_movement(
     tick_ms: u64,
     profile: VanillaEntityAiProfile,
 ) -> Option<EntityMovement> {
-    if ai_param_bool(&entity.ai_params, "disable_avoid_entities", false)
-        || ai_param_bool(&entity.ai_params, "disable_avoid_hostiles", false)
-    {
-        return None;
-    }
-    let threat = nearest_vanilla_avoidance_threat(entity, target_entities)?;
+    let threat = vanilla_avoidance_threat(entity, target_entities)?;
     let dx = entity.position.x - threat.position.x;
     let dz = entity.position.z - threat.position.z;
     let horizontal = (dx * dx + dz * dz).sqrt();
@@ -4152,6 +4165,18 @@ fn vanilla_avoidance_movement(
         y: 0.0,
         z: dz / horizontal * speed,
     })
+}
+
+fn vanilla_avoidance_threat<'a>(
+    entity: &ManagedEntity,
+    target_entities: &'a [ManagedEntity],
+) -> Option<&'a ManagedEntity> {
+    if ai_param_bool(&entity.ai_params, "disable_avoid_entities", false)
+        || ai_param_bool(&entity.ai_params, "disable_avoid_hostiles", false)
+    {
+        return None;
+    }
+    nearest_vanilla_avoidance_threat(entity, target_entities)
 }
 
 fn nearest_vanilla_avoidance_threat<'a>(
@@ -4847,6 +4872,30 @@ fn apply_out_of_water_damage(
     environment_damage.push((entity.entity_id, damage * entity_tick_units(tick_ms) as f32));
 }
 
+fn apply_water_contact_damage(
+    entity: &ManagedEntity,
+    world: &crate::world::WorldManager,
+    tick_ms: u64,
+    environment_damage: &mut Vec<(i32, f32)>,
+) {
+    if !entity_type_takes_water_contact_damage(&entity.entity_type)
+        || ai_param_bool(&entity.ai_params, "disable_water_contact_damage", false)
+        || !entity_is_in_water(entity, world)
+    {
+        return;
+    }
+    let damage = ai_param_f64(
+        &entity.ai_params,
+        "water_contact_damage",
+        f64::from(ENTITY_WATER_CONTACT_DAMAGE),
+    )
+    .max(0.0) as f32;
+    if damage <= 0.0 {
+        return;
+    }
+    environment_damage.push((entity.entity_id, damage * entity_tick_units(tick_ms) as f32));
+}
+
 fn entity_type_takes_out_of_water_damage(entity_type: &str) -> bool {
     matches!(
         normalized_entity_type(entity_type).as_str(),
@@ -4859,6 +4908,13 @@ fn entity_type_takes_out_of_water_damage(entity_type: &str) -> bool {
             | "minecraft:glow_squid"
             | "minecraft:axolotl"
             | "minecraft:dolphin"
+    )
+}
+
+fn entity_type_takes_water_contact_damage(entity_type: &str) -> bool {
+    matches!(
+        normalized_entity_type(entity_type).as_str(),
+        "minecraft:blaze" | "minecraft:snow_golem"
     )
 }
 
@@ -5681,6 +5737,13 @@ fn apply_vanilla_creeper_swell(
         .map(|target| distance_sq(entity.position, target.position))
         .unwrap_or(f64::INFINITY);
     if target_distance_sq > 49.0 {
+        state.swell_ticks = state.swell_ticks.saturating_sub(elapsed_ticks);
+        if state.swell_ticks <= 0 {
+            creeper_state.remove(&entity.key);
+        }
+        return false;
+    }
+    if vanilla_avoidance_threat(entity, target_entities).is_some() {
         state.swell_ticks = state.swell_ticks.saturating_sub(elapsed_ticks);
         if state.swell_ticks <= 0 {
             creeper_state.remove(&entity.key);
@@ -7974,6 +8037,73 @@ fn random_spawn_y(rule: &qexed_config::app::qexed::server::EntitySpawnRule) -> f
         return random_between(rule.min_y, rule.max_y);
     }
     f64::from(rand::Rng::gen_range(&mut rand::thread_rng(), min..=max))
+}
+
+fn slime_chunk_spawning_applies(
+    config: &qexed_config::app::qexed::server::SlimeChunkSpawning,
+    entity_type: &str,
+) -> bool {
+    config.enable
+        && config.entity_types.iter().any(|configured| {
+            normalize_minecraft_key(configured) == normalize_minecraft_key(entity_type)
+        })
+}
+
+fn slime_chunk_allows_position(
+    config: &qexed_config::app::qexed::server::SlimeChunkSpawning,
+    position: EntityPosition,
+) -> bool {
+    let block_x = position.x.floor() as i32;
+    let block_z = position.z.floor() as i32;
+    is_vanilla_slime_chunk(
+        config.seed,
+        block_x.div_euclid(16),
+        block_z.div_euclid(16),
+        config.chance.max(1),
+    )
+}
+
+fn is_vanilla_slime_chunk(seed: i64, chunk_x: i32, chunk_z: i32, chance: u32) -> bool {
+    let chunk_x = i64::from(chunk_x);
+    let chunk_z = i64::from(chunk_z);
+    let mixed = seed
+        .wrapping_add(chunk_x.wrapping_mul(chunk_x).wrapping_mul(4_987_142))
+        .wrapping_add(chunk_x.wrapping_mul(5_947_611))
+        .wrapping_add(chunk_z.wrapping_mul(chunk_z).wrapping_mul(4_392_871))
+        .wrapping_add(chunk_z.wrapping_mul(389_711))
+        ^ 987_234_911;
+    java_random_next_int(mixed, chance.max(1)) == 0
+}
+
+fn java_random_next_int(seed: i64, bound: u32) -> u32 {
+    let bound = bound.max(1);
+    let mut state = ((seed as u64) ^ 0x5DEECE66D) & ((1_u64 << 48) - 1);
+    if bound.is_power_of_two() {
+        return ((u64::from(bound) * u64::from(java_random_next_bits(&mut state, 31))) >> 31)
+            as u32;
+    }
+
+    loop {
+        let bits = i64::from(java_random_next_bits(&mut state, 31));
+        let value = bits % i64::from(bound);
+        if bits - value + (i64::from(bound) - 1) >= 0 {
+            return value as u32;
+        }
+    }
+}
+
+fn java_random_next_bits(state: &mut u64, bits: u32) -> u32 {
+    *state = (*state).wrapping_mul(0x5DEECE66D).wrapping_add(0xB) & ((1_u64 << 48) - 1);
+    (*state >> (48 - bits)) as u32
+}
+
+fn normalize_minecraft_key(value: &str) -> String {
+    let value = value.trim().to_ascii_lowercase();
+    if value.contains(':') {
+        value
+    } else {
+        format!("minecraft:{value}")
+    }
 }
 
 fn simplify_stacked_entities(

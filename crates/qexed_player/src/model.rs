@@ -1,5 +1,8 @@
 use bytes::Bytes;
-use qexed_protocol::to_client::play::{add_entity::EntityPosition, set_equipment::Equipment};
+use qexed_protocol::{
+    to_client::play::{add_entity::EntityPosition, set_equipment::Equipment},
+    types::Slot,
+};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +56,16 @@ pub enum PlayerEvent {
         source_entity_id: i32,
         source_position: EntityPosition,
         knockback: f32,
+    },
+    GameModeChanged {
+        profile_id: uuid::Uuid,
+        username: String,
+        game_mode: i32,
+    },
+    GiveItem {
+        profile_id: uuid::Uuid,
+        item: Slot,
+        item_name: String,
     },
     EquipmentChanged {
         profile_id: uuid::Uuid,

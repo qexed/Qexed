@@ -606,6 +606,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiankeng"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "tictactoe"
 version = "0.1.0"
 dependencies = [

@@ -1235,6 +1235,9 @@ pub struct EntitySpawning {
     #[serde(default = "default_entity_spawn_player_activation_range")]
     pub player_activation_range: f64,
 
+    #[serde(default)]
+    pub slime_chunks: SlimeChunkSpawning,
+
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<EntitySpawnRule>,
 }
@@ -1250,9 +1253,44 @@ impl Default for EntitySpawning {
             per_type_cap: default_entity_spawn_per_type_cap(),
             max_spawn_per_tick: default_entity_spawn_max_per_tick(),
             player_activation_range: default_entity_spawn_player_activation_range(),
+            slime_chunks: SlimeChunkSpawning::default(),
             rules: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SlimeChunkSpawning {
+    #[serde(default)]
+    pub enable: bool,
+
+    #[serde(default)]
+    pub seed: i64,
+
+    #[serde(default = "default_slime_chunk_spawn_chance")]
+    pub chance: u32,
+
+    #[serde(default = "default_slime_chunk_entity_types")]
+    pub entity_types: Vec<String>,
+}
+
+impl Default for SlimeChunkSpawning {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            seed: 0,
+            chance: default_slime_chunk_spawn_chance(),
+            entity_types: default_slime_chunk_entity_types(),
+        }
+    }
+}
+
+fn default_slime_chunk_spawn_chance() -> u32 {
+    10
+}
+
+fn default_slime_chunk_entity_types() -> Vec<String> {
+    vec!["minecraft:slime".to_string()]
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -1514,6 +1552,18 @@ pub struct Gameplay {
     #[serde(default = "default_gameplay_furnace")]
     pub furnace: bool,
 
+    #[serde(default = "default_gameplay_furnace_blocks")]
+    pub furnace_blocks: Vec<String>,
+
+    #[serde(default = "default_gameplay_cauldron")]
+    pub cauldron: bool,
+
+    #[serde(default = "default_gameplay_cauldron_blocks")]
+    pub cauldron_blocks: Vec<String>,
+
+    #[serde(default = "default_gameplay_redstone")]
+    pub redstone: bool,
+
     #[serde(default = "default_gameplay_crafting")]
     pub crafting: bool,
 
@@ -1544,8 +1594,17 @@ pub struct Gameplay {
     #[serde(default = "default_gameplay_furnace_tick_ms")]
     pub furnace_tick_ms: u64,
 
+    #[serde(default = "default_gameplay_redstone_tick_ms")]
+    pub redstone_tick_ms: u64,
+
+    #[serde(default = "default_gameplay_redstone_max_distance")]
+    pub redstone_max_distance: u32,
+
     #[serde(default = "default_gameplay_oxygen_tick_ms")]
     pub oxygen_tick_ms: u64,
+
+    #[serde(default = "default_gameplay_farmland_tick_ms")]
+    pub farmland_tick_ms: u64,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_advancements: Vec<CustomAdvancement>,
@@ -1557,6 +1616,10 @@ impl Default for Gameplay {
             block_updates: default_gameplay_block_updates(),
             crafting_table: default_gameplay_crafting_table(),
             furnace: default_gameplay_furnace(),
+            furnace_blocks: default_gameplay_furnace_blocks(),
+            cauldron: default_gameplay_cauldron(),
+            cauldron_blocks: default_gameplay_cauldron_blocks(),
+            redstone: default_gameplay_redstone(),
             crafting: default_gameplay_crafting(),
             durability: default_gameplay_durability(),
             combat: default_gameplay_combat(),
@@ -1567,7 +1630,10 @@ impl Default for Gameplay {
             potion_effects: default_gameplay_potion_effects(),
             drop_inventory_on_death: default_gameplay_drop_inventory_on_death(),
             furnace_tick_ms: default_gameplay_furnace_tick_ms(),
+            redstone_tick_ms: default_gameplay_redstone_tick_ms(),
+            redstone_max_distance: default_gameplay_redstone_max_distance(),
             oxygen_tick_ms: default_gameplay_oxygen_tick_ms(),
+            farmland_tick_ms: default_gameplay_farmland_tick_ms(),
             custom_advancements: Vec::new(),
         }
     }
@@ -1632,6 +1698,27 @@ fn default_gameplay_furnace() -> bool {
     true
 }
 
+fn default_gameplay_furnace_blocks() -> Vec<String> {
+    vec!["minecraft:furnace".to_string()]
+}
+
+fn default_gameplay_cauldron() -> bool {
+    true
+}
+
+fn default_gameplay_cauldron_blocks() -> Vec<String> {
+    vec![
+        "minecraft:cauldron".to_string(),
+        "minecraft:water_cauldron".to_string(),
+        "minecraft:lava_cauldron".to_string(),
+        "minecraft:powder_snow_cauldron".to_string(),
+    ]
+}
+
+fn default_gameplay_redstone() -> bool {
+    true
+}
+
 fn default_gameplay_crafting() -> bool {
     true
 }
@@ -1672,7 +1759,19 @@ fn default_gameplay_furnace_tick_ms() -> u64 {
     50
 }
 
+fn default_gameplay_redstone_tick_ms() -> u64 {
+    50
+}
+
+fn default_gameplay_redstone_max_distance() -> u32 {
+    32
+}
+
 fn default_gameplay_oxygen_tick_ms() -> u64 {
+    1000
+}
+
+fn default_gameplay_farmland_tick_ms() -> u64 {
     1000
 }
 
@@ -3485,6 +3584,10 @@ leave = "{player} left"
 block_updates = false
 crafting_table = true
 furnace = true
+furnace_blocks = ["minecraft:furnace", "minecraft:blast_furnace"]
+cauldron = true
+cauldron_blocks = ["minecraft:cauldron", "minecraft:water_cauldron"]
+redstone = true
 crafting = true
 durability = true
 combat = true
@@ -3495,7 +3598,10 @@ enchantments = true
 potion_effects = true
 drop_inventory_on_death = false
 furnace_tick_ms = 100
+redstone_tick_ms = 50
+redstone_max_distance = 24
 oxygen_tick_ms = 500
+farmland_tick_ms = 750
 
 [[custom_advancements]]
 id = "qexed:first_mine"
@@ -3510,9 +3616,28 @@ toast = true
 
         assert!(!gameplay.block_updates);
         assert!(gameplay.crafting_table);
+        assert_eq!(
+            gameplay.furnace_blocks,
+            vec![
+                "minecraft:furnace".to_string(),
+                "minecraft:blast_furnace".to_string()
+            ]
+        );
+        assert!(gameplay.cauldron);
+        assert_eq!(
+            gameplay.cauldron_blocks,
+            vec![
+                "minecraft:cauldron".to_string(),
+                "minecraft:water_cauldron".to_string()
+            ]
+        );
+        assert!(gameplay.redstone);
         assert!(!gameplay.drop_inventory_on_death);
         assert_eq!(gameplay.furnace_tick_ms, 100);
+        assert_eq!(gameplay.redstone_tick_ms, 50);
+        assert_eq!(gameplay.redstone_max_distance, 24);
         assert_eq!(gameplay.oxygen_tick_ms, 500);
+        assert_eq!(gameplay.farmland_tick_ms, 750);
         assert_eq!(gameplay.custom_advancements.len(), 1);
         assert_eq!(
             gameplay.custom_advancements[0].trigger,
@@ -3763,6 +3888,12 @@ per_type_cap = 8
 max_spawn_per_tick = 3
 player_activation_range = 48.0
 
+[spawning.slime_chunks]
+enable = true
+seed = 12345
+chance = 10
+entity_types = ["minecraft:slime"]
+
 [[spawning.rules]]
 id = "mine_zombies"
 dimension = "qexed:mine_a"
@@ -3812,6 +3943,13 @@ profile = "aggressive"
         assert_eq!(entities.spawning.per_type_cap, 8);
         assert_eq!(entities.spawning.max_spawn_per_tick, 3);
         assert_eq!(entities.spawning.player_activation_range, 48.0);
+        assert!(entities.spawning.slime_chunks.enable);
+        assert_eq!(entities.spawning.slime_chunks.seed, 12345);
+        assert_eq!(entities.spawning.slime_chunks.chance, 10);
+        assert_eq!(
+            entities.spawning.slime_chunks.entity_types,
+            vec!["minecraft:slime".to_string()]
+        );
         assert_eq!(entities.spawning.rules.len(), 1);
         assert_eq!(entities.spawning.rules[0].id, "mine_zombies");
         assert_eq!(entities.spawning.rules[0].entity_type, "minecraft:zombie");

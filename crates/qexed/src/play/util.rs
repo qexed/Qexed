@@ -90,10 +90,16 @@ pub(super) fn can_modify_world(
     world_config: &World,
     position: &qexed_packet::net_types::Position,
 ) -> bool {
-    matches!(
-        world_config.game_mode,
-        GameMode::Survival | GameMode::Creative
-    ) && !world_config.read_only
+    can_modify_world_for_game_mode(world_config.game_mode, world_config, position)
+}
+
+pub(super) fn can_modify_world_for_game_mode(
+    game_mode: GameMode,
+    world_config: &World,
+    position: &qexed_packet::net_types::Position,
+) -> bool {
+    matches!(game_mode, GameMode::Survival | GameMode::Creative)
+        && !world_config.read_only
         && !is_spawn_protected(
             &world_config.spawn,
             world_config.spawn_protection_radius,
@@ -102,10 +108,14 @@ pub(super) fn can_modify_world(
 }
 
 pub(super) fn can_attempt_world_edit(world_config: &World) -> bool {
-    matches!(
-        world_config.game_mode,
-        GameMode::Survival | GameMode::Creative
-    )
+    can_attempt_world_edit_for_game_mode(world_config.game_mode, world_config)
+}
+
+pub(super) fn can_attempt_world_edit_for_game_mode(
+    game_mode: GameMode,
+    _world_config: &World,
+) -> bool {
+    matches!(game_mode, GameMode::Survival | GameMode::Creative)
 }
 
 fn is_spawn_protected(

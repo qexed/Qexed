@@ -16,6 +16,7 @@ enum ConsoleCommand {
     Plugins,
     Say(String),
     Op(String),
+    Reload,
     Stop,
     Unknown(String),
 }
@@ -39,6 +40,7 @@ impl ConsoleCommand {
             "plugins" => Self::Plugins,
             "say" | "broadcast" => Self::Say(argument),
             "op" => Self::Op(argument),
+            "reload" => Self::Reload,
             "stop" | "exit" | "quit" => Self::Stop,
             _ => Self::Unknown(command.to_string()),
         }
@@ -54,6 +56,7 @@ impl ConsoleCommand {
             Self::Plugins => Some("plugins"),
             Self::Say(_) => Some("say"),
             Self::Op(_) => Some("op"),
+            Self::Reload => Some("reload"),
             Self::Stop => Some("stop"),
             Self::Unknown(command) => Some(command),
         }
@@ -150,6 +153,7 @@ async fn execute(
         ConsoleCommand::Plugins => print_plugins(context),
         ConsoleCommand::Say(message) => broadcast_message(context, &message)?,
         ConsoleCommand::Op(target) => op_player(context, &target).await?,
+        ConsoleCommand::Reload => reload_server(context),
         ConsoleCommand::Stop => {
             print_console(rust_i18n::t!("qexed.console.shutdown", locale = locale));
             let _ = shutdown.send(true);
@@ -247,6 +251,13 @@ fn print_plugins(context: &ServerContext) {
             summaries.join(", ")
         ));
     }
+}
+
+fn reload_server(context: &ServerContext) {
+    context.plugins.emit_config_reload("config/qexed.toml");
+    print_console(
+        "Reloaded plugin configuration events. Runtime server config changes require restart.",
+    );
 }
 
 async fn op_player(context: &ServerContext, target: &str) -> anyhow::Result<()> {
@@ -348,6 +359,7 @@ mod tests {
             ConsoleCommand::parse("op Steve"),
             ConsoleCommand::Op("Steve".to_string())
         );
+        assert_eq!(ConsoleCommand::parse("reload"), ConsoleCommand::Reload);
         assert_eq!(ConsoleCommand::parse("exit"), ConsoleCommand::Stop);
     }
 
@@ -366,8 +378,8 @@ mod tests {
     #[test]
     fn parses_unknown_console_command() {
         assert_eq!(
-            ConsoleCommand::parse("/reload now"),
-            ConsoleCommand::Unknown("reload now".to_string())
+            ConsoleCommand::parse("/missing now"),
+            ConsoleCommand::Unknown("missing now".to_string())
         );
     }
 }

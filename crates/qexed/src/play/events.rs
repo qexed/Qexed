@@ -37,6 +37,16 @@ pub(super) fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool
             source_position: _,
             knockback: _,
         } => *target_id == profile_id,
+        PlayerEvent::GameModeChanged {
+            profile_id: target_id,
+            username: _,
+            game_mode: _,
+        } => *target_id == profile_id,
+        PlayerEvent::GiveItem {
+            profile_id: target_id,
+            item: _,
+            item_name: _,
+        } => *target_id == profile_id,
         PlayerEvent::DimensionChanged {
             profile_id: target_id,
             entity_id: _,
@@ -77,6 +87,7 @@ pub(super) fn player_event_message(
         PlayerEvent::Left { username, .. } => {
             Some(render_player_message(&messages.leave, username))
         }
+        PlayerEvent::GameModeChanged { .. } | PlayerEvent::GiveItem { .. } => None,
         PlayerEvent::ClientboundPackets { packets: _ } => None,
         _ => None,
     }

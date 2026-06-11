@@ -794,6 +794,12 @@ pub fn localized_console_help(locale: &str) -> String {
             Some(rust_i18n::t!("qexed.console.op.description", locale = locale_key).to_string()),
         ),
         CommandHelpEntry::new(
+            "reload",
+            Some(
+                rust_i18n::t!("qexed.console.reload.description", locale = locale_key).to_string(),
+            ),
+        ),
+        CommandHelpEntry::new(
             "stop, exit, quit",
             Some(rust_i18n::t!("qexed.console.stop.description", locale = locale_key).to_string()),
         ),
@@ -879,6 +885,15 @@ fn localized_builtin_help_entry(command: &str, locale: &str) -> Option<CommandHe
         "list" => ("/list", "qexed.command.list.description"),
         "version" => ("/version", "qexed.command.version.description"),
         "plugins" => ("/plugins", "qexed.command.plugin.description"),
+        "gamemode" => (
+            "/gamemode <survival|creative|adventure|spectator> [player]",
+            "qexed.command.gamemode.description",
+        ),
+        "give" => (
+            "/give [player] <item> [count]",
+            "qexed.command.give.description",
+        ),
+        "reload" => ("/reload", "qexed.command.reload.description"),
         "lobby" => ("/lobby [status|refresh]", "qexed.command.lobby.description"),
         "server" => ("/server [id]", "qexed.command.server.description"),
         "spawn" => ("/spawn", "qexed.command.spawn.description"),
@@ -922,6 +937,9 @@ fn builtin_command_literals() -> &'static [&'static str] {
         "list",
         "version",
         "plugins",
+        "gamemode",
+        "give",
+        "reload",
         "lobby",
         "server",
         "spawn",
@@ -1235,6 +1253,6 @@ mod tests {
         assert!(commands.contains(&"help"));
         assert!(commands.contains(&"time"));
         assert!(commands.contains(&"gamerule"));
-        assert!(!commands.contains(&"reload"));
+        assert!(commands.contains(&"reload"));
     }
 }

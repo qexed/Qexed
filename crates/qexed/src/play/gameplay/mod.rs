@@ -7,6 +7,7 @@ pub(super) mod enchanting;
 pub(super) mod furnace;
 pub(super) mod items;
 pub(super) mod oxygen;
+pub(super) mod redstone;
 pub(super) mod sounds;
 
 use std::time::{Duration, Instant};
@@ -21,15 +22,20 @@ pub(super) struct GameplayRuntime {
     pub(super) effects: effects::EffectRuntime,
     pub(super) oxygen: oxygen::OxygenRuntime,
     pub(super) advancements: advancements::AdvancementRuntime,
+    pub(super) redstone: redstone::RedstoneRuntime,
     furnace_tick_due: Instant,
+    redstone_tick_due: Instant,
     oxygen_tick_due: Instant,
+    farmland_tick_due: Instant,
 }
 
 impl GameplayRuntime {
     pub(super) fn new(config: &Gameplay) -> Self {
         let now = Instant::now();
         let furnace_interval = Duration::from_millis(config.furnace_tick_ms.max(1));
+        let redstone_interval = Duration::from_millis(config.redstone_tick_ms.max(1));
         let oxygen_interval = Duration::from_millis(config.oxygen_tick_ms.max(1));
+        let farmland_interval = Duration::from_millis(config.farmland_tick_ms.max(1));
         Self {
             crafting: crafting::CraftingRuntime::new(),
             enchanting: enchanting::EnchantingRuntime::new(),
@@ -37,8 +43,11 @@ impl GameplayRuntime {
             effects: effects::EffectRuntime::new(),
             oxygen: oxygen::OxygenRuntime::new(),
             advancements: advancements::AdvancementRuntime::new(config),
+            redstone: redstone::RedstoneRuntime::new(),
             furnace_tick_due: now + furnace_interval,
+            redstone_tick_due: now + redstone_interval,
             oxygen_tick_due: now + oxygen_interval,
+            farmland_tick_due: now + farmland_interval,
         }
     }
 
@@ -48,6 +57,14 @@ impl GameplayRuntime {
 
     pub(super) fn should_tick_oxygen(&mut self, config: &Gameplay) -> bool {
         tick_due(&mut self.oxygen_tick_due, config.oxygen_tick_ms)
+    }
+
+    pub(super) fn should_tick_redstone(&mut self, config: &Gameplay) -> bool {
+        tick_due(&mut self.redstone_tick_due, config.redstone_tick_ms)
+    }
+
+    pub(super) fn should_tick_farmland(&mut self, config: &Gameplay) -> bool {
+        tick_due(&mut self.farmland_tick_due, config.farmland_tick_ms)
     }
 }
 

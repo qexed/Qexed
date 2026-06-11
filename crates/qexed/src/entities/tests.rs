@@ -634,6 +634,7 @@ fn spawn_rules_respect_caps_and_create_dynamic_entities() {
         per_type_cap: 2,
         max_spawn_per_tick: 4,
         player_activation_range: 16.0,
+        slime_chunks: Default::default(),
         rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
             id: "zombies".to_string(),
             dimension: "minecraft:overworld".to_string(),
@@ -721,6 +722,7 @@ fn spawn_rules_apply_rule_conditions_and_position_checks() {
         per_type_cap: 4,
         max_spawn_per_tick: 4,
         player_activation_range: 1.0,
+        slime_chunks: Default::default(),
         rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
             id: "grounded".to_string(),
             dimension: "minecraft:overworld".to_string(),
@@ -817,6 +819,7 @@ fn spawn_rules_merge_custom_entity_ai_params() {
         per_type_cap: 1,
         max_spawn_per_tick: 1,
         player_activation_range: 16.0,
+        slime_chunks: Default::default(),
         rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
             id: "guards".to_string(),
             dimension: "minecraft:overworld".to_string(),
@@ -900,6 +903,7 @@ fn custom_entity_without_shell_uses_custom_id_as_client_entity_type() {
         per_type_cap: 1,
         max_spawn_per_tick: 1,
         player_activation_range: 16.0,
+        slime_chunks: Default::default(),
         rules: vec![qexed_config::app::qexed::server::EntitySpawnRule {
             id: "guards".to_string(),
             dimension: "minecraft:overworld".to_string(),
@@ -2302,6 +2306,36 @@ fn vanilla_fish_does_not_take_out_of_water_damage_in_water() {
     let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
     let world = empty_world();
     let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
+    for x in -1..=1 {
+        for z in -1..=1 {
+            world.set_runtime_block(
+                "minecraft:overworld",
+                qexed_packet::net_types::Position { x, y: 64, z },
+                water,
+            );
+        }
+    }
+    let mut ai_params = BTreeMap::new();
+    ai_params.insert("stroll_chance".to_string(), serde_json::json!(0.0));
+    spawn_vanilla_entity(
+        &manager,
+        "wet-cod",
+        "minecraft:cod",
+        test_position(0.0, 64.0, 0.0),
+        ai_params,
+    );
+
+    tick_entities(&manager, &players, &world);
+
+    assert_eq!(manager.entity_health_for_tests("wet-cod"), Some(6.0));
+}
+
+#[test]
+fn vanilla_blaze_takes_water_contact_damage() {
+    let (manager, players) = test_manager_and_players();
+    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
+    let world = empty_world();
+    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
     world.set_runtime_block(
         "minecraft:overworld",
         qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
@@ -2309,15 +2343,20 @@ fn vanilla_fish_does_not_take_out_of_water_damage_in_water() {
     );
     spawn_vanilla_entity(
         &manager,
-        "wet-cod",
-        "minecraft:cod",
+        "wet-blaze",
+        "minecraft:blaze",
         test_position(0.0, 64.0, 0.0),
         Default::default(),
     );
 
     tick_entities(&manager, &players, &world);
 
-    assert_eq!(manager.entity_health_for_tests("wet-cod"), Some(6.0));
+    assert!(
+        manager
+            .entity_health_for_tests("wet-blaze")
+            .is_some_and(|health| health < 20.0),
+        "blaze should take damage while touching water"
+    );
 }
 
 #[test]
@@ -2427,16 +2466,19 @@ fn vanilla_enderman_takes_water_damage_and_teleports_to_dry_ground() {
     let world = empty_world();
     place_stone_floor(&world, -2, 2, -2, 2, 63);
     let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
-    world.set_runtime_block(
-        "minecraft:overworld",
-        qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
-        water,
-    );
+    for y in 63..=65 {
+        world.set_runtime_block(
+            "minecraft:overworld",
+            qexed_packet::net_types::Position { x: 0, y, z: 0 },
+            water,
+        );
+    }
     let mut ai_params = BTreeMap::new();
     ai_params.insert(
         "enderman_teleport_chance".to_string(),
         serde_json::json!(0.0),
     );
+    ai_params.insert("stroll_chance".to_string(), serde_json::json!(0.0));
     ai_params.insert(
         "enderman_water_teleport_radius".to_string(),
         serde_json::json!(2),
@@ -2838,6 +2880,59 @@ fn vanilla_creeper_flees_nearby_cat() {
         entity.position.x < -0.01,
         "creeper should move away from nearby cats, got {:?}",
         entity.position
+    );
+}
+
+#[test]
+fn vanilla_creeper_does_not_swell_near_cat() {
+    let entity_ids = std::sync::Arc::new(EntityIdAllocator::new(1));
+    let manager = EntityManager::from_config(
+        &qexed_config::app::qexed::server::Entities::default(),
+        entity_ids.clone(),
+    )
+    .unwrap();
+    let players = crate::players::PlayerManager::new(entity_ids);
+    let _session = players.join(
+        qexed_packet::net_types::GameProfile {
+            uuid: uuid::Uuid::new_v4(),
+            username: "Target".to_string(),
+            properties: Vec::new(),
+        },
+        test_position(2.0, 64.0, 0.0),
+        "minecraft:overworld".to_string(),
+        Vec::new(),
+        "en_us".to_string(),
+    );
+    let world = empty_world();
+    spawn_vanilla_entity(
+        &manager,
+        "cat-fearing-creeper",
+        "minecraft:creeper",
+        test_position(0.0, 64.0, 0.0),
+        Default::default(),
+    );
+    spawn_vanilla_entity(
+        &manager,
+        "nearby-cat",
+        "minecraft:cat",
+        test_position(1.0, 64.0, 0.0),
+        Default::default(),
+    );
+
+    manager
+        .tick_ai(
+            &players,
+            &world,
+            &crate::plugins::PluginManager::empty_for_tests(),
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            1_500,
+        )
+        .unwrap();
+
+    assert!(manager.entity_by_key("cat-fearing-creeper").is_some());
+    assert_eq!(
+        manager.entity_health_for_tests("cat-fearing-creeper"),
+        Some(20.0)
     );
 }
 

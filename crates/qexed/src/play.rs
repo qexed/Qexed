@@ -30,6 +30,7 @@ use qexed_protocol::to_client::play::{
     command_suggestions::{CommandSuggestions, Matches},
     container_set_slot,
     damage_event::{DamageEvent, DamageSourcePosition},
+    game_state_change::GameStateChange,
     hurt_animation::HurtAnimation,
     keep_alive::KeepAlive as ClientboundKeepAlive,
     login::Login,
@@ -79,11 +80,10 @@ use session::PlayerLeaveGuard;
 use survival::{
     DeathMessage, FallContext, FallLanding, FallLocation, SurvivalState, spawn_position,
 };
-#[cfg(test)]
-use util::player_ability_flags;
 use util::{
-    acknowledged_player_ability_flags, can_attempt_world_edit, can_modify_world, chunk_coord,
-    dimension_type_holder_id, keep_alive_id, text_component, translatable_component,
+    acknowledged_player_ability_flags, can_attempt_world_edit_for_game_mode,
+    can_modify_world_for_game_mode, chunk_coord, dimension_type_holder_id, keep_alive_id,
+    player_ability_flags, text_component, translatable_component,
 };
 
 const KEEP_ALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
@@ -518,13 +518,14 @@ where
     let enforce_secure_chat = effective_online_mode(&config.server);
     let mut chat_rate_limit = ChatRateLimit::new(&config.server.player_messages);
     let world_config = &config.world;
+    let mut current_game_mode = world_config.game_mode;
     let simulation_distance = world_config.simulation_distance.max(1);
     let mut position = session.player.position;
     let mut initial_cluster_entity_view_sent = false;
     let mut last_stepped_block: Option<BlockPosition> = None;
     let mut last_input_flags = 0u8;
     let mut movement_observation_logs = 0u8;
-    let mut survival = SurvivalState::from_stored(saved_player.survival, world_config.game_mode);
+    let mut survival = SurvivalState::from_stored(saved_player.survival, current_game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
     let mut gameplay_runtime = gameplay::GameplayRuntime::new(&config.server.gameplay);
     gameplay_runtime
@@ -674,7 +675,7 @@ where
                     sink,
                     players,
                     entities,
-                    world_config.game_mode,
+                    current_game_mode,
                     &play_dimension,
                     profile.uuid,
                     session.player.entity_id,
@@ -702,7 +703,7 @@ where
                         sink,
                         players,
                         entities,
-                        world_config.game_mode,
+                        current_game_mode,
                         profile.uuid,
                         &play_dimension,
                         session.player.entity_id,
@@ -751,6 +752,43 @@ where
                     pending_dig = None;
                 }
 
+                if config.server.gameplay.redstone
+                    && gameplay_runtime.should_tick_redstone(&config.server.gameplay)
+                {
+                    let updates =
+                        gameplay_runtime
+                            .redstone
+                            .tick(world, world_rules, players, &config.server.gameplay);
+                    apply_and_propagate_redstone_updates(
+                        sink,
+                        world,
+                        world_rules,
+                        players,
+                        &config.server.gameplay,
+                        &mut gameplay_runtime.redstone,
+                        &play_dimension,
+                        profile.uuid,
+                        updates,
+                    )
+                    .await?;
+                }
+
+                if config.server.gameplay.block_updates
+                    && gameplay_runtime.should_tick_farmland(&config.server.gameplay)
+                {
+                    let updates = environment_tick_updates(world, &play_dimension, position);
+                    apply_environment_block_state_updates(
+                        sink,
+                        world,
+                        world_rules,
+                        players,
+                        &play_dimension,
+                        profile.uuid,
+                        updates,
+                    )
+                    .await?;
+                }
+
                 if gameplay_runtime.should_tick_furnace(&config.server.gameplay) {
                     let mut outcome = gameplay_runtime
                         .furnace
@@ -788,7 +826,7 @@ where
                             &inventory,
                             &gameplay_runtime.effects,
                             &mut survival,
-                            world_config.game_mode,
+                            current_game_mode,
                         )
                         .await?;
                     if let Some(message) = oxygen.death_message() {
@@ -796,7 +834,7 @@ where
                             sink,
                             players,
                             entities,
-                            world_config.game_mode,
+                            current_game_mode,
                             profile.uuid,
                             &play_dimension,
                             session.player.entity_id,
@@ -889,7 +927,7 @@ where
                             sink,
                             players,
                             entities,
-                            world_config.game_mode,
+                            current_game_mode,
                             profile.uuid,
                             &play_dimension,
                             session.player.entity_id,
@@ -911,6 +949,88 @@ where
                     }
                     continue;
                 }
+                if let crate::players::PlayerEvent::GameModeChanged {
+                    profile_id: target_id,
+                    username: _,
+                    game_mode,
+                } = event
+                {
+                    if target_id == profile.uuid {
+                        if let Some(next_mode) = game_mode_from_protocol_id(game_mode) {
+                            current_game_mode = next_mode;
+                            session.player.game_mode = game_mode;
+                            sink.send(GameStateChange {
+                                reason: 3,
+                                game_mode: game_mode as f32,
+                            })
+                            .await?;
+                            sink.send(ClientboundPlayerAbilities {
+                                flags: player_ability_flags(
+                                    current_game_mode,
+                                    world_config.allow_flight,
+                                ),
+                                flying_speed: 0.05,
+                                walking_speed: 0.1,
+                            })
+                            .await?;
+                            sink.send(PlayerInfoUpdate {
+                                actions: PlayerInfoActions(PlayerInfoActions::UPDATE_GAME_MODE),
+                                entries: vec![PlayerInfoEntry {
+                                    profile_id: profile.uuid,
+                                    game_mode: VarInt(game_mode),
+                                    ..PlayerInfoEntry::default()
+                                }],
+                            })
+                            .await?;
+                            pending_dig = None;
+                            sink.flush().await?;
+                        }
+                    }
+                    continue;
+                }
+                if let crate::players::PlayerEvent::GiveItem {
+                    profile_id: target_id,
+                    item,
+                    item_name,
+                } = event
+                {
+                    if target_id == profile.uuid {
+                        let requested = item.item_count.0.max(0);
+                        let (changes, given) = inventory.add_item_stack_partial(&item);
+                        if !changes.is_empty() {
+                            sync_inventory_changes(
+                                sink,
+                                players,
+                                profile.uuid,
+                                session.player.entity_id,
+                                inventory.selected_slot(),
+                                changes,
+                            )
+                            .await?;
+                        }
+                        if given > 0 {
+                            sink.send(SystemChat {
+                                content: text_component(format!(
+                                    "收到 {given} 个 {item_name}"
+                                )),
+                                overlay: false,
+                            })
+                            .await?;
+                        }
+                        if given < requested {
+                            sink.send(SystemChat {
+                                content: text_component(format!(
+                                    "背包空间不足，剩余 {} 个 {item_name} 未放入",
+                                    requested - given
+                                )),
+                                overlay: false,
+                            })
+                            .await?;
+                        }
+                        sink.flush().await?;
+                    }
+                    continue;
+                }
                 if let crate::players::PlayerEvent::PotionEffect {
                     profile_id: target_id,
                     effect,
@@ -926,7 +1046,7 @@ where
                             sink,
                             players,
                             entities,
-                            world_config.game_mode,
+                            current_game_mode,
                             profile.uuid,
                             &play_dimension,
                             session.player.entity_id,
@@ -968,7 +1088,7 @@ where
                                 )),
                                 dimension_name: target_dimension.clone(),
                                 hashed_seed: 0,
-                                game_mode: world_config.game_mode.protocol_id(),
+                                game_mode: current_game_mode.protocol_id(),
                                 previous_game_mode: -1,
                                 is_debug: false,
                                 is_flat: true,
@@ -1255,7 +1375,7 @@ where
                         );
                         continue;
                     }
-                    if world_config.game_mode != GameMode::Creative {
+                    if current_game_mode != GameMode::Creative {
                         log::debug!(
                             "ignored creative slot update outside creative mode: uuid={}",
                             profile.uuid
@@ -1416,6 +1536,48 @@ where
                         if let Some(block_name) =
                             block_name_at(world, &play_dimension, &use_item_on.block_hit.position)
                         {
+                            if handle_redstone_interaction(
+                                sink,
+                                world,
+                                world_rules,
+                                players,
+                                &config.server.gameplay,
+                                &mut gameplay_runtime.redstone,
+                                &play_dimension,
+                                profile.uuid,
+                                use_item_on.block_hit.position.clone(),
+                                &block_name,
+                            )
+                            .await?
+                            {
+                                send_block_change_ack(sink, sequence).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
+                            if handle_vanilla_block_interaction(
+                                sink,
+                                world,
+                                world_rules,
+                                players,
+                                world_config,
+                                current_game_mode,
+                                &play_dimension,
+                                profile.uuid,
+                                session.player.entity_id,
+                                &config.server.gameplay,
+                                &mut gameplay_runtime.redstone,
+                                &mut inventory,
+                                &mut survival,
+                                use_item_on.block_hit.position.clone(),
+                                use_item_on.block_hit.face.0,
+                                &block_name,
+                            )
+                            .await?
+                            {
+                                send_block_change_ack(sink, sequence).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
                             if config.server.gameplay.crafting_table
                                 && block_name == "minecraft:crafting_table"
                             {
@@ -1424,8 +1586,34 @@ where
                                 sink.flush().await?;
                                 continue;
                             }
-                            if config.server.gameplay.furnace && block_name == "minecraft:furnace" {
+                            if config.server.gameplay.furnace
+                                && configured_gameplay_block_matches(
+                                    &block_name,
+                                    &config.server.gameplay.furnace_blocks,
+                                )
+                            {
                                 gameplay_runtime.furnace.open(sink).await?;
+                                send_block_change_ack(sink, sequence).await?;
+                                sink.flush().await?;
+                                continue;
+                            }
+                            if handle_cauldron_interaction(
+                                sink,
+                                world,
+                                world_rules,
+                                players,
+                                world_config,
+                                current_game_mode,
+                                &play_dimension,
+                                profile.uuid,
+                                session.player.entity_id,
+                                &config.server.gameplay,
+                                &mut inventory,
+                                use_item_on.block_hit.position.clone(),
+                                &block_name,
+                            )
+                            .await?
+                            {
                                 send_block_change_ack(sink, sequence).await?;
                                 sink.flush().await?;
                                 continue;
@@ -1457,6 +1645,7 @@ where
                                 world_rules,
                                 players,
                                 world_config,
+                                current_game_mode,
                                 &play_dimension,
                                 profile.uuid,
                                 &position,
@@ -1479,7 +1668,7 @@ where
                                     sink,
                                     players,
                                     profile.uuid,
-                                    world_config.game_mode,
+                                    current_game_mode,
                                     &mut inventory,
                                 )
                                 .await?;
@@ -1493,6 +1682,21 @@ where
                                     "minecraft:block.stone.place",
                                     "block",
                                     config.server.gameplay.sounds,
+                                )
+                                .await?;
+                                propagate_redstone_from_block_positions(
+                                    sink,
+                                    world,
+                                    world_rules,
+                                    players,
+                                    &config.server.gameplay,
+                                    &mut gameplay_runtime.redstone,
+                                    &play_dimension,
+                                    profile.uuid,
+                                    placed
+                                        .iter()
+                                        .map(|changed| changed.position.clone())
+                                        .collect(),
                                 )
                                 .await?;
                             }
@@ -1581,7 +1785,7 @@ where
                     }
                     if adventure_destroy_packet_violates_can_break(
                         world,
-                        world_config.game_mode,
+                        current_game_mode,
                         &play_dimension,
                         &action.location,
                         action.status.0,
@@ -1627,7 +1831,7 @@ where
                     }
                     match action.status.0 {
                         PLAYER_ACTION_START_DESTROY_BLOCK => {
-                            if should_destroy_block(world_config.game_mode, PLAYER_ACTION_START_DESTROY_BLOCK) {
+                            if should_destroy_block(current_game_mode, PLAYER_ACTION_START_DESTROY_BLOCK) {
                                 if let Some(destroyed) = destroy_block(
                                     sink,
                                     world,
@@ -1637,6 +1841,7 @@ where
                                     entities,
                                     plugins,
                                     world_config,
+                                    current_game_mode,
                                     &play_dimension,
                                     profile.uuid,
                                     inventory.held_item(),
@@ -1652,6 +1857,18 @@ where
                                         destroyed.previous_state,
                                         inventory.held_item().item_id.as_ref().map(|id| id.0),
                                     );
+                                    propagate_redstone_from_block_positions(
+                                        sink,
+                                        world,
+                                        world_rules,
+                                        players,
+                                        &config.server.gameplay,
+                                        &mut gameplay_runtime.redstone,
+                                        &play_dimension,
+                                        profile.uuid,
+                                        vec![destroyed.position],
+                                    )
+                                    .await?;
                                 }
                             } else {
                                 pending_dig = begin_destroy_block(
@@ -1659,7 +1876,7 @@ where
                                     world,
                                     ore_pits,
                                     plugins,
-                                    world_config.game_mode,
+                                    current_game_mode,
                                     &play_dimension,
                                     &action.location,
                                     inventory.held_item(),
@@ -1670,12 +1887,12 @@ where
                         PLAYER_ACTION_CANCEL_DESTROY_BLOCK => {
                             pending_dig = None;
                         }
-                        status if should_destroy_block(world_config.game_mode, status) => {
+                        status if should_destroy_block(current_game_mode, status) => {
                             let can_destroy = can_finish_destroy_block(
                                 sink,
                                 world,
                                 ore_pits,
-                                world_config.game_mode,
+                                current_game_mode,
                                 &play_dimension,
                                 &action.location,
                                 inventory.held_item(),
@@ -1693,6 +1910,7 @@ where
                                     entities,
                                     plugins,
                                     world_config,
+                                    current_game_mode,
                                     &play_dimension,
                                     profile.uuid,
                                     inventory.held_item(),
@@ -1710,8 +1928,20 @@ where
                                         destroyed.previous_state,
                                         inventory.held_item().item_id.as_ref().map(|id| id.0),
                                     );
+                                    propagate_redstone_from_block_positions(
+                                        sink,
+                                        world,
+                                        world_rules,
+                                        players,
+                                        &config.server.gameplay,
+                                        &mut gameplay_runtime.redstone,
+                                        &play_dimension,
+                                        profile.uuid,
+                                        vec![destroyed.position.clone()],
+                                    )
+                                    .await?;
                                     survival.apply_exhaustion(MINING_EXHAUSTION_PER_BLOCK);
-                                    if world_config.game_mode == GameMode::Survival {
+                                    if current_game_mode == GameMode::Survival {
                                         let damaged = gameplay::durability::damage_item(
                                             inventory.held_item_mut(),
                                             &session.player,
@@ -1888,7 +2118,7 @@ where
                             plugins,
                             &session.player,
                             &config.server.gameplay,
-                            world_config.game_mode,
+                            current_game_mode,
                             &mut inventory,
                             &mut survival,
                             &mut gameplay_runtime,
@@ -2496,6 +2726,7 @@ where
                             players,
                             plugins,
                             world_config,
+                            current_game_mode,
                             &mut play_dimension,
                             profile.uuid,
                             session.player.entity_id,
@@ -2520,7 +2751,7 @@ where
                         )?;
                     sink.send(ClientboundPlayerAbilities {
                         flags: acknowledged_player_ability_flags(
-                            world_config.game_mode,
+                            current_game_mode,
                             world_config.allow_flight,
                             abilities.flags,
                         ),
@@ -2552,7 +2783,7 @@ where
                         players,
                         entities,
                         &mut survival,
-                        world_config.game_mode,
+                        current_game_mode,
                         world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
@@ -2703,7 +2934,7 @@ where
                         players,
                         entities,
                         &mut survival,
-                        world_config.game_mode,
+                        current_game_mode,
                         world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
@@ -2851,7 +3082,7 @@ where
                         players,
                         entities,
                         &mut survival,
-                        world_config.game_mode,
+                        current_game_mode,
                         world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
@@ -2981,7 +3212,7 @@ where
                         players,
                         entities,
                         &mut survival,
-                        world_config.game_mode,
+                        current_game_mode,
                         world_config.allow_flight,
                         &play_dimension,
                         profile.uuid,
@@ -3476,6 +3707,21 @@ fn command_suggestion_candidates(
             values.extend(players.online_names());
             values
         }
+        Some("gamemode") => {
+            let mut values = vec![
+                "survival".to_string(),
+                "creative".to_string(),
+                "adventure".to_string(),
+                "spectator".to_string(),
+            ];
+            values.extend(players.online_names());
+            values
+        }
+        Some("give") => {
+            let mut values = players.online_names();
+            values.extend(crate::inventory::item_id_name_map().into_values());
+            values
+        }
         Some("server") => lobby.server_targets_from_status(lobby_status),
         Some("entity") => ["list", "spawn", "move", "remove", "npc", "hologram"]
             .into_iter()
@@ -3560,6 +3806,16 @@ fn default_dimension_suggestions() -> Vec<String> {
         "minecraft:the_nether".to_string(),
         "minecraft:the_end".to_string(),
     ]
+}
+
+fn game_mode_from_protocol_id(game_mode: i32) -> Option<GameMode> {
+    match game_mode {
+        0 => Some(GameMode::Survival),
+        1 => Some(GameMode::Creative),
+        2 => Some(GameMode::Adventure),
+        3 => Some(GameMode::Spectator),
+        _ => None,
+    }
 }
 
 fn login_dimension_names(
@@ -4539,6 +4795,64 @@ fn block_state_property(block_state: i32, key: &str) -> Option<String> {
         .find_map(|(name, value)| (name == key).then_some(value.clone()))
 }
 
+fn block_state_with_property(block_state: i32, key: &str, value: &str) -> Option<i32> {
+    let entry = crate::world::chunk_nbt::block_state_entry(block_state);
+    let mut properties = entry.properties;
+    let mut found = false;
+    for (property_key, property_value) in &mut properties {
+        if property_key == key {
+            *property_value = value.to_string();
+            found = true;
+            break;
+        }
+    }
+    found.then(|| crate::world::chunk_nbt::block_state(&entry.name, &properties).id)
+}
+
+fn block_state_with_name_and_overlapping_properties(
+    block_state: i32,
+    target_name: &str,
+) -> Option<i32> {
+    let source = crate::world::chunk_nbt::block_state_entry(block_state);
+    let mut target = crate::world::chunk_nbt::default_block_state(target_name).properties;
+    for (target_key, target_value) in &mut target {
+        if let Some((_, source_value)) = source
+            .properties
+            .iter()
+            .find(|(source_key, _)| source_key == target_key)
+        {
+            *target_value = source_value.clone();
+        }
+    }
+    block_state_with_exact_properties(target_name, &target)
+}
+
+fn block_state_with_exact_properties(
+    block_name: &str,
+    properties: &[(String, String)],
+) -> Option<i32> {
+    let state = crate::world::chunk_nbt::block_state(block_name, properties).id;
+    let entry = crate::world::chunk_nbt::block_state_entry(state);
+    (entry.name == normalize_resource_key(block_name) && entry.properties == properties)
+        .then_some(state)
+}
+
+fn block_state_bool_property_exists(block_state: i32, key: &str) -> bool {
+    block_state_property(block_state, key).is_some()
+}
+
+fn block_state_u8_property(block_state: i32, key: &str) -> Option<u8> {
+    block_state_property(block_state, key).and_then(|value| value.parse().ok())
+}
+
+fn bool_value(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
+fn block_name_for_manual_state(block_state: i32) -> String {
+    block_name(block_state)
+}
+
 async fn broadcast_death_message<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     players: &PlayerManager,
@@ -4634,6 +4948,7 @@ async fn respawn_player<W>(
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
     play_dimension: &mut String,
     actor: uuid::Uuid,
     entity_id: i32,
@@ -4660,7 +4975,7 @@ where
         dimension_type: VarInt(dimension_type_holder_id(&dimension_rule.dimension_type)),
         dimension_name: respawn_dimension.clone(),
         hashed_seed: 0,
-        game_mode: world_config.game_mode.protocol_id(),
+        game_mode: game_mode.protocol_id(),
         previous_game_mode: -1,
         is_debug: false,
         is_flat: true,
@@ -6130,12 +6445,2819 @@ fn player_action_label(status: i32) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_vanilla_block_interaction<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    gameplay: &qexed_config::app::qexed::server::Gameplay,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    inventory: &mut crate::inventory::PlayerInventory,
+    survival: &mut SurvivalState,
+    position: BlockPosition,
+    face: i32,
+    block_name: &str,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !gameplay.block_updates {
+        return Ok(false);
+    }
+    let Some(block_state) = world.block_state_at(play_dimension, &position) else {
+        return Ok(false);
+    };
+
+    if let Some(updates) = manual_openable_block_updates(
+        world,
+        play_dimension,
+        position.clone(),
+        block_state,
+        block_name,
+    ) {
+        let changed = apply_vanilla_block_state_updates(
+            sink,
+            world,
+            world_rules,
+            players,
+            world_config,
+            game_mode,
+            play_dimension,
+            actor,
+            updates,
+            gameplay.block_updates,
+        )
+        .await?;
+        if !changed.is_empty() {
+            propagate_redstone_from_block_positions(
+                sink,
+                world,
+                world_rules,
+                players,
+                gameplay,
+                runtime,
+                play_dimension,
+                actor,
+                changed,
+            )
+            .await?;
+        }
+        return Ok(true);
+    }
+
+    let held_item = held_item_name(inventory);
+    if let Some(interaction) = bucket_fluid_interaction(
+        world,
+        play_dimension,
+        &position,
+        block_state,
+        block_name,
+        held_item.as_deref(),
+        face,
+    ) {
+        if game_mode != GameMode::Creative
+            && !can_exchange_held_item(inventory, interaction.replacement_item)
+        {
+            return Ok(true);
+        }
+        let changed = apply_vanilla_block_state_updates(
+            sink,
+            world,
+            world_rules,
+            players,
+            world_config,
+            game_mode,
+            play_dimension,
+            actor,
+            vec![(interaction.position.clone(), interaction.target_block_state)],
+            gameplay.block_updates,
+        )
+        .await?;
+        if !changed.is_empty() && game_mode != GameMode::Creative {
+            if let Some(changes) = exchange_held_item(inventory, interaction.replacement_item) {
+                sync_inventory_changes(
+                    sink,
+                    players,
+                    actor,
+                    entity_id,
+                    inventory.selected_slot(),
+                    changes,
+                )
+                .await?;
+            }
+        }
+        if !changed.is_empty() {
+            propagate_redstone_from_block_positions(
+                sink,
+                world,
+                world_rules,
+                players,
+                gameplay,
+                runtime,
+                play_dimension,
+                actor,
+                changed,
+            )
+            .await?;
+        }
+        return Ok(true);
+    }
+
+    if let Some(interaction) = vanilla_state_interaction(
+        world,
+        play_dimension,
+        &position,
+        block_state,
+        block_name,
+        held_item.as_deref(),
+        face,
+    ) {
+        if !can_apply_vanilla_inventory_action(inventory, game_mode, interaction.inventory) {
+            return Ok(true);
+        }
+        let changed = apply_vanilla_block_state_updates(
+            sink,
+            world,
+            world_rules,
+            players,
+            world_config,
+            game_mode,
+            play_dimension,
+            actor,
+            vec![(position.clone(), interaction.target_block_state)],
+            gameplay.block_updates,
+        )
+        .await?;
+        if !changed.is_empty() {
+            let inventory_changes =
+                apply_vanilla_inventory_action(inventory, game_mode, interaction.inventory);
+            if !inventory_changes.is_empty() {
+                sync_inventory_changes(
+                    sink,
+                    players,
+                    actor,
+                    entity_id,
+                    inventory.selected_slot(),
+                    inventory_changes,
+                )
+                .await?;
+            }
+        }
+        if !changed.is_empty() {
+            propagate_redstone_from_block_positions(
+                sink,
+                world,
+                world_rules,
+                players,
+                gameplay,
+                runtime,
+                play_dimension,
+                actor,
+                changed,
+            )
+            .await?;
+        }
+        return Ok(true);
+    }
+
+    if let Some(next_state) = cake_interaction(block_state, block_name, game_mode, survival) {
+        sink.send(survival.health_packet()).await?;
+        let changed = apply_vanilla_block_state_updates(
+            sink,
+            world,
+            world_rules,
+            players,
+            world_config,
+            game_mode,
+            play_dimension,
+            actor,
+            vec![(position.clone(), next_state)],
+            gameplay.block_updates,
+        )
+        .await?;
+        if !changed.is_empty() {
+            propagate_redstone_from_block_positions(
+                sink,
+                world,
+                world_rules,
+                players,
+                gameplay,
+                runtime,
+                play_dimension,
+                actor,
+                changed,
+            )
+            .await?;
+        }
+        return Ok(true);
+    }
+
+    if let Some(interaction) =
+        composter_interaction(block_state, block_name, held_item.as_deref(), &position)
+    {
+        let mut inventory_changes = Vec::new();
+        match interaction.inventory {
+            ComposterInventoryAction::ConsumeHeld if game_mode != GameMode::Creative => {
+                if inventory.held_item().item_count.0 <= 0 {
+                    return Ok(false);
+                }
+                if let Some(change) = inventory.decrement_hotbar_slot(inventory.selected_slot(), 1)
+                {
+                    inventory_changes.push(change);
+                }
+            }
+            ComposterInventoryAction::ConsumeHeld => {}
+            ComposterInventoryAction::Give(item_name) if game_mode != GameMode::Creative => {
+                let Some(item_id) = crate::inventory::item_id_for_name(item_name) else {
+                    return Ok(true);
+                };
+                let item = crate::inventory::simple_item(item_id, 1);
+                let Some(mut changes) = inventory.add_item_stack(&item) else {
+                    return Ok(true);
+                };
+                inventory_changes.append(&mut changes);
+            }
+            ComposterInventoryAction::Give(_) => {}
+        }
+
+        let changed = if let Some(next_state) = interaction.target_block_state {
+            apply_vanilla_block_state_updates(
+                sink,
+                world,
+                world_rules,
+                players,
+                world_config,
+                game_mode,
+                play_dimension,
+                actor,
+                vec![(position.clone(), next_state)],
+                gameplay.block_updates,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        if !inventory_changes.is_empty() {
+            sync_inventory_changes(
+                sink,
+                players,
+                actor,
+                entity_id,
+                inventory.selected_slot(),
+                inventory_changes,
+            )
+            .await?;
+        }
+        if !changed.is_empty() {
+            propagate_redstone_from_block_positions(
+                sink,
+                world,
+                world_rules,
+                players,
+                gameplay,
+                runtime,
+                play_dimension,
+                actor,
+                changed,
+            )
+            .await?;
+        }
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_vanilla_block_state_updates<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
+    dimension: &str,
+    actor: uuid::Uuid,
+    updates: Vec<(BlockPosition, i32)>,
+    gameplay_block_updates: bool,
+) -> Result<Vec<BlockPosition>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut changed = Vec::new();
+    for (position, block_state) in updates {
+        let edit_kind = if crate::inventory::is_air_block_state(block_state) {
+            WorldEditKind::Break
+        } else {
+            WorldEditKind::Place
+        };
+        if apply_block_change(
+            sink,
+            world,
+            world_rules,
+            players,
+            world_config,
+            game_mode,
+            dimension,
+            actor,
+            position.clone(),
+            block_state,
+            edit_kind,
+            gameplay_block_updates,
+        )
+        .await?
+        {
+            changed.push(position);
+        }
+    }
+    Ok(changed)
+}
+
+async fn apply_environment_block_state_updates<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    updates: Vec<(BlockPosition, i32)>,
+) -> Result<Vec<BlockPosition>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut changed = Vec::new();
+    for (position, block_state) in updates {
+        if !world_rules.snapshot(play_dimension).block_updates {
+            continue;
+        }
+        let current = world
+            .block_state_at(play_dimension, &position)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if current == block_state {
+            continue;
+        }
+        world.place_block(play_dimension, position.clone(), block_state);
+        sink.send(crate::inventory::block_update(
+            position.clone(),
+            block_state,
+        ))
+        .await?;
+        let light_update = if world.dynamic_light_enabled()
+            && matches!(
+                world_rules.snapshot(play_dimension).light,
+                qexed_config::app::qexed::server::LightMode::Dynamic
+            ) {
+            let light = world.light_update(
+                play_dimension,
+                position.x.div_euclid(16),
+                position.z.div_euclid(16),
+            );
+            sink.send(light.clone()).await?;
+            Some(qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(light)?)
+        } else {
+            None
+        };
+        players.broadcast_block_changed(
+            actor,
+            play_dimension,
+            position.clone(),
+            block_state,
+            light_update,
+        );
+        changed.push(position);
+    }
+    Ok(changed)
+}
+
+fn environment_tick_updates(
+    world: &WorldManager,
+    dimension: &str,
+    center: EntityPosition,
+) -> Vec<(BlockPosition, i32)> {
+    const HORIZONTAL_RADIUS: i32 = 4;
+    const MIN_Y_OFFSET: i32 = -3;
+    const MAX_Y_OFFSET: i32 = 2;
+    const MAX_UPDATES: usize = 32;
+
+    let center_block = BlockPosition {
+        x: center.x.floor() as i32,
+        y: center.y.floor() as i32,
+        z: center.z.floor() as i32,
+    };
+    let mut updates = Vec::new();
+    let mut updated_positions = HashSet::new();
+    for y in (center_block.y + MIN_Y_OFFSET)..=(center_block.y + MAX_Y_OFFSET) {
+        for x in (center_block.x - HORIZONTAL_RADIUS)..=(center_block.x + HORIZONTAL_RADIUS) {
+            for z in (center_block.z - HORIZONTAL_RADIUS)..=(center_block.z + HORIZONTAL_RADIUS) {
+                let position = BlockPosition { x, y, z };
+                let Some(block_state) = world.block_state_at(dimension, &position) else {
+                    continue;
+                };
+                collect_environment_tick_updates(
+                    world,
+                    dimension,
+                    &position,
+                    block_state,
+                    &mut updates,
+                    &mut updated_positions,
+                );
+                if updates.len() >= MAX_UPDATES {
+                    return updates;
+                }
+            }
+        }
+    }
+    updates
+}
+
+fn collect_environment_tick_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+    updates: &mut Vec<(BlockPosition, i32)>,
+    updated_positions: &mut HashSet<(i32, i32, i32)>,
+) {
+    if let Some(next_state) = environment_next_state(world, dimension, position, block_state) {
+        push_environment_update(position.clone(), next_state, updates, updated_positions);
+    }
+    if let Some((spread_position, spread_state)) =
+        surface_spread_update(world, dimension, position, block_state)
+    {
+        push_environment_update(spread_position, spread_state, updates, updated_positions);
+    }
+    for (growth_position, growth_state) in
+        column_plant_tick_updates(world, dimension, position, block_state)
+    {
+        push_environment_update(growth_position, growth_state, updates, updated_positions);
+    }
+    for (fire_position, fire_state) in fire_tick_updates(world, dimension, position, block_state) {
+        push_environment_update(fire_position, fire_state, updates, updated_positions);
+    }
+}
+
+fn push_environment_update(
+    position: BlockPosition,
+    block_state: i32,
+    updates: &mut Vec<(BlockPosition, i32)>,
+    updated_positions: &mut HashSet<(i32, i32, i32)>,
+) {
+    if !updated_positions.insert((position.x, position.y, position.z)) {
+        return;
+    }
+    updates.push((position, block_state));
+}
+
+fn environment_next_state(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<i32> {
+    farmland_next_state(world, dimension, position, block_state)
+        .or_else(|| covered_surface_next_state(world, dimension, position, block_state))
+}
+
+fn farmland_next_state(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<i32> {
+    if block_name(block_state) != "minecraft:farmland" {
+        return None;
+    }
+    let moisture = block_state_u8_property(block_state, "moisture")
+        .unwrap_or(0)
+        .min(7);
+    if farmland_has_water_nearby(world, dimension, position) {
+        return (moisture < 7).then(|| farmland_state_for_moisture(7));
+    }
+    if moisture > 0 {
+        return Some(farmland_state_for_moisture(moisture - 1));
+    }
+    (!farmland_has_crop_above(world, dimension, position))
+        .then(|| crate::world::chunk_nbt::default_block_state_id("minecraft:dirt"))
+}
+
+fn farmland_has_water_nearby(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    for y in position.y..=position.y + 1 {
+        for x in (position.x - 4)..=(position.x + 4) {
+            for z in (position.z - 4)..=(position.z + 4) {
+                let nearby = BlockPosition { x, y, z };
+                let Some(state) = world.block_state_at(dimension, &nearby) else {
+                    continue;
+                };
+                let name = block_name(state);
+                if name == "minecraft:water" || block_state_bool_property(state, "waterlogged") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn farmland_has_crop_above(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    let above = offset_position(position, 0, 1, 0);
+    world
+        .block_state_at(dimension, &above)
+        .map(block_name)
+        .is_some_and(|name| {
+            matches!(
+                name.as_str(),
+                "minecraft:wheat"
+                    | "minecraft:carrots"
+                    | "minecraft:potatoes"
+                    | "minecraft:beetroots"
+                    | "minecraft:pumpkin_stem"
+                    | "minecraft:melon_stem"
+                    | "minecraft:attached_pumpkin_stem"
+                    | "minecraft:attached_melon_stem"
+                    | "minecraft:torchflower_crop"
+                    | "minecraft:pitcher_crop"
+            )
+        })
+}
+
+fn farmland_state_for_moisture(moisture: u8) -> i32 {
+    crate::world::chunk_nbt::block_state(
+        "minecraft:farmland",
+        &[("moisture".to_string(), moisture.min(7).to_string())],
+    )
+    .id
+}
+
+fn covered_surface_next_state(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<i32> {
+    let name = block_name(block_state);
+    match name.as_str() {
+        "minecraft:grass_block" | "minecraft:mycelium" => {
+            (!surface_above_allows_survival(world, dimension, position))
+                .then(|| crate::world::chunk_nbt::default_block_state_id("minecraft:dirt"))
+        }
+        "minecraft:dirt_path" => {
+            (!block_above_allows_surface_transform(world, dimension, position))
+                .then(|| crate::world::chunk_nbt::default_block_state_id("minecraft:dirt"))
+        }
+        _ => None,
+    }
+}
+
+fn surface_spread_update(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<(BlockPosition, i32)> {
+    let source_name = block_name(block_state);
+    if !matches!(
+        source_name.as_str(),
+        "minecraft:grass_block" | "minecraft:mycelium"
+    ) || !surface_above_allows_survival(world, dimension, position)
+    {
+        return None;
+    }
+
+    const OFFSETS: [(i32, i32, i32); 26] = [
+        (-1, -1, -1),
+        (-1, -1, 0),
+        (-1, -1, 1),
+        (0, -1, -1),
+        (0, -1, 0),
+        (0, -1, 1),
+        (1, -1, -1),
+        (1, -1, 0),
+        (1, -1, 1),
+        (-1, 0, -1),
+        (-1, 0, 0),
+        (-1, 0, 1),
+        (0, 0, -1),
+        (0, 0, 1),
+        (1, 0, -1),
+        (1, 0, 0),
+        (1, 0, 1),
+        (-1, 1, -1),
+        (-1, 1, 0),
+        (-1, 1, 1),
+        (0, 1, -1),
+        (0, 1, 0),
+        (0, 1, 1),
+        (1, 1, -1),
+        (1, 1, 0),
+        (1, 1, 1),
+    ];
+    let start = surface_spread_start(position, block_state) % OFFSETS.len();
+    for index in 0..OFFSETS.len() {
+        let (dx, dy, dz) = OFFSETS[(start + index) % OFFSETS.len()];
+        let target = offset_position(position, dx, dy, dz);
+        let Some(target_state) = world.block_state_at(dimension, &target) else {
+            continue;
+        };
+        if block_name(target_state) != "minecraft:dirt"
+            || !surface_above_allows_survival(world, dimension, &target)
+        {
+            continue;
+        }
+        let spread_state = surface_spread_state(
+            &source_name,
+            surface_has_snow_above(world, dimension, &target),
+        )?;
+        return Some((target, spread_state));
+    }
+    None
+}
+
+fn surface_spread_start(position: &BlockPosition, block_state: i32) -> usize {
+    let mut hash = 0xcbf29ce484222325u64;
+    for value in [position.x, position.y, position.z, block_state] {
+        hash ^= value as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash as usize
+}
+
+fn surface_spread_state(block_name: &str, snowy: bool) -> Option<i32> {
+    match block_name {
+        "minecraft:grass_block" | "minecraft:mycelium" => block_state_with_exact_properties(
+            block_name,
+            &[("snowy".to_string(), bool_value(snowy).to_string())],
+        )
+        .or_else(|| Some(crate::world::chunk_nbt::default_block_state_id(block_name))),
+        _ => None,
+    }
+}
+
+fn surface_above_allows_survival(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    let above = offset_position(position, 0, 1, 0);
+    let above_state = world
+        .block_state_at(dimension, &above)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if crate::inventory::can_replace_block_state(above_state) {
+        return true;
+    }
+    let above_name = block_name(above_state);
+    is_snow_cover_block(&above_name) || !crate::inventory::block_has_collision(above_state)
+}
+
+fn surface_has_snow_above(world: &WorldManager, dimension: &str, position: &BlockPosition) -> bool {
+    let above = offset_position(position, 0, 1, 0);
+    world
+        .block_state_at(dimension, &above)
+        .map(block_name)
+        .is_some_and(|name| is_snow_cover_block(&name))
+}
+
+fn is_snow_cover_block(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:snow" | "minecraft:snow_block")
+}
+
+fn column_plant_tick_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Vec<(BlockPosition, i32)> {
+    let name = block_name(block_state);
+    if !matches!(name.as_str(), "minecraft:sugar_cane" | "minecraft:cactus")
+        || column_plant_has_same_block_above(world, dimension, position, &name)
+    {
+        return Vec::new();
+    }
+
+    let age = block_state_u8_property(block_state, "age")
+        .unwrap_or(0)
+        .min(15);
+    if age < 15 {
+        return block_state_with_property(block_state, "age", &(age + 1).to_string())
+            .filter(|next| *next != block_state)
+            .map(|next| vec![(position.clone(), next)])
+            .unwrap_or_default();
+    }
+
+    if !column_plant_can_grow(world, dimension, position, &name) {
+        return Vec::new();
+    }
+
+    let Some(reset_state) = block_state_with_property(block_state, "age", "0") else {
+        return Vec::new();
+    };
+    let above = offset_position(position, 0, 1, 0);
+    let new_state = column_plant_new_block_state(&name);
+    vec![(position.clone(), reset_state), (above, new_state)]
+}
+
+fn column_plant_has_same_block_above(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_name: &str,
+) -> bool {
+    let above = offset_position(position, 0, 1, 0);
+    world
+        .block_state_at(dimension, &above)
+        .map(block_name_for_manual_state)
+        .is_some_and(|name| name == block_name)
+}
+
+fn column_plant_can_grow(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_name: &str,
+) -> bool {
+    let above = offset_position(position, 0, 1, 0);
+    let above_state = world
+        .block_state_at(dimension, &above)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if !crate::inventory::can_replace_block_state(above_state) {
+        return false;
+    }
+    let height = column_plant_height(world, dimension, position, block_name);
+    match block_name {
+        "minecraft:sugar_cane" => {
+            height < 3 && sugar_cane_has_valid_support_and_water(world, dimension, position, height)
+        }
+        "minecraft:cactus" => {
+            height < 3
+                && cactus_has_valid_support(world, dimension, position, height)
+                && cactus_growth_space_clear(world, dimension, &above)
+        }
+        _ => false,
+    }
+}
+
+fn column_plant_height(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_name: &str,
+) -> usize {
+    let mut height = 1usize;
+    let mut below = offset_position(position, 0, -1, 0);
+    while block_name_at(world, dimension, &below).as_deref() == Some(block_name) {
+        height += 1;
+        below = offset_position(&below, 0, -1, 0);
+        if height >= 32 {
+            break;
+        }
+    }
+    height
+}
+
+fn column_plant_base_position(position: &BlockPosition, height: usize) -> BlockPosition {
+    offset_position(position, 0, -((height as i32) - 1), 0)
+}
+
+fn sugar_cane_has_valid_support_and_water(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    height: usize,
+) -> bool {
+    let base = column_plant_base_position(position, height);
+    let support = offset_position(&base, 0, -1, 0);
+    let Some(support_name) = block_name_at(world, dimension, &support) else {
+        return false;
+    };
+    if !is_sugar_cane_support_block(&support_name) {
+        return false;
+    }
+    for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+        let water_position = offset_position(&support, dx, 0, dz);
+        let Some(state) = world.block_state_at(dimension, &water_position) else {
+            continue;
+        };
+        let name = block_name(state);
+        if name == "minecraft:water" || block_state_bool_property(state, "waterlogged") {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_sugar_cane_support_block(block_name: &str) -> bool {
+    matches!(
+        block_name,
+        "minecraft:grass_block"
+            | "minecraft:dirt"
+            | "minecraft:coarse_dirt"
+            | "minecraft:rooted_dirt"
+            | "minecraft:podzol"
+            | "minecraft:mycelium"
+            | "minecraft:sand"
+            | "minecraft:red_sand"
+            | "minecraft:moss_block"
+            | "minecraft:mud"
+    )
+}
+
+fn cactus_has_valid_support(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    height: usize,
+) -> bool {
+    let base = column_plant_base_position(position, height);
+    let support = offset_position(&base, 0, -1, 0);
+    block_name_at(world, dimension, &support)
+        .is_some_and(|name| matches!(name.as_str(), "minecraft:sand" | "minecraft:red_sand"))
+}
+
+fn cactus_growth_space_clear(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+        let side = offset_position(position, dx, 0, dz);
+        let side_state = world
+            .block_state_at(dimension, &side)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if crate::inventory::block_has_collision(side_state)
+            && !crate::inventory::can_replace_block_state(side_state)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn column_plant_new_block_state(block_name: &str) -> i32 {
+    let default_state = crate::world::chunk_nbt::default_block_state_id(block_name);
+    block_state_with_property(default_state, "age", "0").unwrap_or(default_state)
+}
+
+fn fire_tick_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Vec<(BlockPosition, i32)> {
+    let name = block_name(block_state);
+    match name.as_str() {
+        "minecraft:soul_fire" => {
+            if fire_block_below(world, dimension, position)
+                .is_some_and(|below| is_soul_fire_base(&below))
+            {
+                Vec::new()
+            } else {
+                vec![(position.clone(), crate::inventory::air_block_state())]
+            }
+        }
+        "minecraft:fire" => {
+            fire_tick_updates_for_normal_fire(world, dimension, position, block_state)
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn fire_tick_updates_for_normal_fire(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Vec<(BlockPosition, i32)> {
+    let below = fire_block_below(world, dimension, position);
+    let eternal_base = below.as_deref().is_some_and(is_eternal_fire_base);
+    let has_fuel = fire_has_flammable_neighbor(world, dimension, position);
+    if !eternal_base && !has_fuel {
+        return vec![(position.clone(), crate::inventory::air_block_state())];
+    }
+
+    let mut updates = Vec::new();
+    let age = block_state_u8_property(block_state, "age")
+        .unwrap_or(0)
+        .min(15);
+    if age < 15 {
+        if let Some(next_state) =
+            block_state_with_property(block_state, "age", &(age + 1).to_string())
+        {
+            updates.push((position.clone(), next_state));
+        }
+    }
+    if let Some(spread_position) = fire_spread_position(world, dimension, position, block_state) {
+        updates.push((spread_position, fire_state_for_age(0)));
+    }
+    updates
+}
+
+fn fire_block_below(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> Option<String> {
+    let below = offset_position(position, 0, -1, 0);
+    block_name_at(world, dimension, &below)
+}
+
+fn fire_has_flammable_neighbor(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    fire_neighbor_offsets().iter().any(|(dx, dy, dz)| {
+        let neighbor = offset_position(position, *dx, *dy, *dz);
+        block_name_at(world, dimension, &neighbor)
+            .as_deref()
+            .is_some_and(is_flammable_block)
+    })
+}
+
+fn fire_spread_position(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<BlockPosition> {
+    let offsets = fire_neighbor_offsets();
+    let start = surface_spread_start(position, block_state) % offsets.len();
+    for index in 0..offsets.len() {
+        let (dx, dy, dz) = offsets[(start + index) % offsets.len()];
+        let target = offset_position(position, dx, dy, dz);
+        let target_state = world
+            .block_state_at(dimension, &target)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if !crate::inventory::can_replace_block_state(target_state)
+            || !fire_has_flammable_neighbor(world, dimension, &target)
+        {
+            continue;
+        }
+        return Some(target);
+    }
+    None
+}
+
+fn fire_neighbor_offsets() -> &'static [(i32, i32, i32); 6] {
+    &[
+        (-1, 0, 0),
+        (1, 0, 0),
+        (0, -1, 0),
+        (0, 1, 0),
+        (0, 0, -1),
+        (0, 0, 1),
+    ]
+}
+
+fn fire_state_for_age(age: u8) -> i32 {
+    let default_state = crate::world::chunk_nbt::default_block_state_id("minecraft:fire");
+    block_state_with_property(default_state, "age", &age.min(15).to_string())
+        .unwrap_or(default_state)
+}
+
+fn is_eternal_fire_base(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:netherrack" | "minecraft:magma_block")
+}
+
+fn is_soul_fire_base(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:soul_sand" | "minecraft:soul_soil")
+}
+
+fn is_flammable_block(block_name: &str) -> bool {
+    is_flammable_wood_family_block(block_name)
+        || block_name.ends_with("_leaves")
+        || block_name.ends_with("_wool")
+        || block_name.ends_with("_carpet")
+        || matches!(
+            block_name,
+            "minecraft:bookshelf"
+                | "minecraft:chiseled_bookshelf"
+                | "minecraft:lectern"
+                | "minecraft:crafting_table"
+                | "minecraft:chest"
+                | "minecraft:trapped_chest"
+                | "minecraft:barrel"
+                | "minecraft:beehive"
+                | "minecraft:bee_nest"
+                | "minecraft:hay_block"
+                | "minecraft:bamboo"
+                | "minecraft:scaffolding"
+                | "minecraft:dead_bush"
+                | "minecraft:grass"
+                | "minecraft:tall_grass"
+                | "minecraft:fern"
+                | "minecraft:large_fern"
+                | "minecraft:azalea"
+                | "minecraft:flowering_azalea"
+                | "minecraft:dry_grass"
+        )
+}
+
+fn is_flammable_wood_family_block(block_name: &str) -> bool {
+    let mut local = block_name.strip_prefix("minecraft:").unwrap_or(block_name);
+    if let Some(stripped) = local.strip_prefix("stripped_") {
+        local = stripped;
+    }
+    const WOOD_FAMILIES: [&str; 10] = [
+        "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry", "pale_oak",
+        "bamboo",
+    ];
+    let Some(family) = WOOD_FAMILIES
+        .iter()
+        .find(|family| local == **family || local.starts_with(&format!("{family}_")))
+    else {
+        return false;
+    };
+    let suffix = local.strip_prefix(family).unwrap_or(local);
+    matches!(
+        suffix,
+        "_planks"
+            | "_log"
+            | "_wood"
+            | "_stem"
+            | "_hyphae"
+            | "_block"
+            | "_mosaic"
+            | "_slab"
+            | "_mosaic_slab"
+            | "_stairs"
+            | "_mosaic_stairs"
+            | "_fence"
+            | "_fence_gate"
+            | "_door"
+            | "_trapdoor"
+            | "_sign"
+            | "_wall_sign"
+            | "_hanging_sign"
+            | "_wall_hanging_sign"
+            | "_button"
+            | "_pressure_plate"
+    )
+}
+
+fn manual_openable_block_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: BlockPosition,
+    block_state: i32,
+    block_name: &str,
+) -> Option<Vec<(BlockPosition, i32)>> {
+    if !manual_openable_block(block_name) || !block_state_bool_property_exists(block_state, "open")
+    {
+        return None;
+    }
+    let open = block_state_bool_property(block_state, "open");
+    let next = block_state_with_property(block_state, "open", bool_value(!open))?;
+    let mut updates = vec![(position.clone(), next)];
+
+    if is_door_block(block_name) {
+        let other = if block_state_property(block_state, "half").as_deref() == Some("upper") {
+            offset_position(&position, 0, -1, 0)
+        } else {
+            offset_position(&position, 0, 1, 0)
+        };
+        if let Some(other_state) = world.block_state_at(dimension, &other)
+            && block_name_for_manual_state(other_state) == block_name
+            && block_state_bool_property_exists(other_state, "open")
+            && let Some(next_other) =
+                block_state_with_property(other_state, "open", bool_value(!open))
+        {
+            updates.push((other, next_other));
+        }
+    }
+
+    Some(updates)
+}
+
+fn manual_openable_block(block_name: &str) -> bool {
+    (is_door_block(block_name) && block_name != "minecraft:iron_door")
+        || (block_name.ends_with("_trapdoor") && block_name != "minecraft:iron_trapdoor")
+        || block_name.ends_with("_fence_gate")
+}
+
+fn is_door_block(block_name: &str) -> bool {
+    block_name.ends_with("_door")
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BucketFluidInteraction {
+    position: BlockPosition,
+    target_block_state: i32,
+    replacement_item: &'static str,
+}
+
+fn bucket_fluid_interaction(
+    world: &WorldManager,
+    dimension: &str,
+    clicked_position: &BlockPosition,
+    clicked_state: i32,
+    clicked_block_name: &str,
+    held_item: Option<&str>,
+    face: i32,
+) -> Option<BucketFluidInteraction> {
+    if is_cauldron_block(clicked_block_name) {
+        return None;
+    }
+    let held_item = normalize_resource_key(held_item?).to_ascii_lowercase();
+    match held_item.as_str() {
+        "minecraft:bucket" => {
+            bucket_fill_interaction(clicked_position, clicked_state, clicked_block_name)
+        }
+        "minecraft:water_bucket" => bucket_empty_interaction(
+            world,
+            dimension,
+            clicked_position,
+            clicked_state,
+            face,
+            "minecraft:water",
+            "minecraft:bucket",
+        ),
+        "minecraft:lava_bucket" => bucket_empty_interaction(
+            world,
+            dimension,
+            clicked_position,
+            clicked_state,
+            face,
+            "minecraft:lava",
+            "minecraft:bucket",
+        ),
+        "minecraft:powder_snow_bucket" => bucket_empty_interaction(
+            world,
+            dimension,
+            clicked_position,
+            clicked_state,
+            face,
+            "minecraft:powder_snow",
+            "minecraft:bucket",
+        ),
+        _ => None,
+    }
+}
+
+fn bucket_fill_interaction(
+    clicked_position: &BlockPosition,
+    clicked_state: i32,
+    clicked_block_name: &str,
+) -> Option<BucketFluidInteraction> {
+    let replacement_item = match clicked_block_name {
+        "minecraft:water" if block_state_u8_property(clicked_state, "level") == Some(0) => {
+            "minecraft:water_bucket"
+        }
+        "minecraft:lava" if block_state_u8_property(clicked_state, "level") == Some(0) => {
+            "minecraft:lava_bucket"
+        }
+        "minecraft:powder_snow" => "minecraft:powder_snow_bucket",
+        _ => return None,
+    };
+    Some(BucketFluidInteraction {
+        position: clicked_position.clone(),
+        target_block_state: crate::inventory::air_block_state(),
+        replacement_item,
+    })
+}
+
+fn bucket_empty_interaction(
+    world: &WorldManager,
+    dimension: &str,
+    clicked_position: &BlockPosition,
+    clicked_state: i32,
+    face: i32,
+    fluid_block_name: &'static str,
+    replacement_item: &'static str,
+) -> Option<BucketFluidInteraction> {
+    let target = if crate::inventory::can_replace_block_state(clicked_state) {
+        clicked_position.clone()
+    } else {
+        crate::inventory::placement_position(clicked_position, face)
+    };
+    let target_state = world
+        .block_state_at(dimension, &target)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if !crate::inventory::can_replace_block_state(target_state) {
+        return None;
+    }
+    Some(BucketFluidInteraction {
+        position: target,
+        target_block_state: crate::world::chunk_nbt::default_block_state_id(fluid_block_name),
+        replacement_item,
+    })
+}
+
+fn is_cauldron_block(block_name: &str) -> bool {
+    matches!(
+        block_name,
+        "minecraft:cauldron"
+            | "minecraft:water_cauldron"
+            | "minecraft:lava_cauldron"
+            | "minecraft:powder_snow_cauldron"
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VanillaStateInteraction {
+    target_block_state: i32,
+    inventory: VanillaInventoryAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VanillaInventoryAction {
+    None,
+    ConsumeHeld,
+    Give(&'static str, i32),
+    ExchangeHeld(&'static str),
+}
+
+fn vanilla_state_interaction(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+    face: i32,
+) -> Option<VanillaStateInteraction> {
+    if let Some(interaction) = candle_placement_interaction(block_state, block_name, held_item) {
+        return Some(interaction);
+    }
+
+    if let Some(interaction) = beehive_interaction(block_state, block_name, held_item) {
+        return Some(interaction);
+    }
+
+    if let Some(interaction) = pumpkin_shear_interaction(block_state, block_name, held_item, face) {
+        return Some(interaction);
+    }
+
+    if let Some(interaction) = water_bottle_dirt_interaction(block_name, held_item) {
+        return Some(interaction);
+    }
+
+    if let Some(target_block_state) = note_block_interaction(block_state, block_name) {
+        return Some(VanillaStateInteraction {
+            target_block_state,
+            inventory: VanillaInventoryAction::None,
+        });
+    }
+
+    if let Some(interaction) = bone_meal_interaction(block_state, block_name, held_item) {
+        return Some(interaction);
+    }
+
+    if let Some(interaction) = harvestable_block_interaction(block_state, block_name) {
+        return Some(interaction);
+    }
+
+    if let Some(interaction) = lit_block_interaction(block_state, block_name, held_item) {
+        return Some(interaction);
+    }
+
+    let held_item = held_item?;
+    tool_block_interaction(
+        world,
+        dimension,
+        position,
+        block_state,
+        block_name,
+        held_item,
+        face,
+    )
+    .map(|target_block_state| VanillaStateInteraction {
+        target_block_state,
+        inventory: VanillaInventoryAction::None,
+    })
+}
+
+fn can_apply_vanilla_inventory_action(
+    inventory: &crate::inventory::PlayerInventory,
+    game_mode: GameMode,
+    action: VanillaInventoryAction,
+) -> bool {
+    match action {
+        VanillaInventoryAction::None => true,
+        VanillaInventoryAction::ConsumeHeld => {
+            game_mode == GameMode::Creative || inventory.held_item().item_count.0 > 0
+        }
+        VanillaInventoryAction::Give(item_name, count) => {
+            game_mode == GameMode::Creative
+                || crate::inventory::item_id_for_name(item_name).is_some_and(|item_id| {
+                    inventory.can_accept_item_stack(&crate::inventory::simple_item(
+                        item_id,
+                        count.max(0),
+                    ))
+                })
+        }
+        VanillaInventoryAction::ExchangeHeld(replacement_item) => {
+            game_mode == GameMode::Creative || can_exchange_held_item(inventory, replacement_item)
+        }
+    }
+}
+
+fn apply_vanilla_inventory_action(
+    inventory: &mut crate::inventory::PlayerInventory,
+    game_mode: GameMode,
+    action: VanillaInventoryAction,
+) -> Vec<crate::inventory::InventorySlotChange> {
+    if game_mode == GameMode::Creative {
+        return Vec::new();
+    }
+    match action {
+        VanillaInventoryAction::None => Vec::new(),
+        VanillaInventoryAction::ConsumeHeld => inventory
+            .decrement_hotbar_slot(inventory.selected_slot(), 1)
+            .into_iter()
+            .collect(),
+        VanillaInventoryAction::Give(item_name, count) => {
+            crate::inventory::item_id_for_name(item_name)
+                .and_then(|item_id| {
+                    inventory.add_item_stack(&crate::inventory::simple_item(item_id, count.max(0)))
+                })
+                .unwrap_or_default()
+        }
+        VanillaInventoryAction::ExchangeHeld(replacement_item) => {
+            exchange_held_item(inventory, replacement_item).unwrap_or_default()
+        }
+    }
+}
+
+fn harvestable_block_interaction(
+    block_state: i32,
+    block_name: &str,
+) -> Option<VanillaStateInteraction> {
+    match block_name {
+        "minecraft:sweet_berry_bush" => {
+            let age = block_state_u8_property(block_state, "age")?;
+            if age < 2 {
+                return None;
+            }
+            Some(VanillaStateInteraction {
+                target_block_state: block_state_with_property(block_state, "age", "1")?,
+                inventory: VanillaInventoryAction::Give(
+                    "minecraft:sweet_berries",
+                    if age >= 3 { 2 } else { 1 },
+                ),
+            })
+        }
+        "minecraft:cave_vines" | "minecraft:cave_vines_plant"
+            if block_state_bool_property(block_state, "berries") =>
+        {
+            Some(VanillaStateInteraction {
+                target_block_state: block_state_with_property(block_state, "berries", "false")?,
+                inventory: VanillaInventoryAction::Give("minecraft:glow_berries", 1),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn candle_placement_interaction(
+    block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+) -> Option<VanillaStateInteraction> {
+    let held_item = normalize_resource_key(held_item?).to_ascii_lowercase();
+    if block_name == "minecraft:cake"
+        && block_state_u8_property(block_state, "bites").unwrap_or(0) == 0
+    {
+        return Some(VanillaStateInteraction {
+            target_block_state: crate::world::chunk_nbt::default_block_state_id(
+                candle_cake_block_for_item(&held_item)?,
+            ),
+            inventory: VanillaInventoryAction::ConsumeHeld,
+        });
+    }
+
+    if block_name == held_item && is_standalone_candle_block(block_name) {
+        let candles = block_state_u8_property(block_state, "candles")?;
+        if candles >= 4 {
+            return None;
+        }
+        return Some(VanillaStateInteraction {
+            target_block_state: block_state_with_property(
+                block_state,
+                "candles",
+                &(candles + 1).to_string(),
+            )?,
+            inventory: VanillaInventoryAction::ConsumeHeld,
+        });
+    }
+
+    None
+}
+
+fn candle_cake_block_for_item(item_name: &str) -> Option<&'static str> {
+    match item_name {
+        "minecraft:candle" => Some("minecraft:candle_cake"),
+        "minecraft:white_candle" => Some("minecraft:white_candle_cake"),
+        "minecraft:orange_candle" => Some("minecraft:orange_candle_cake"),
+        "minecraft:magenta_candle" => Some("minecraft:magenta_candle_cake"),
+        "minecraft:light_blue_candle" => Some("minecraft:light_blue_candle_cake"),
+        "minecraft:yellow_candle" => Some("minecraft:yellow_candle_cake"),
+        "minecraft:lime_candle" => Some("minecraft:lime_candle_cake"),
+        "minecraft:pink_candle" => Some("minecraft:pink_candle_cake"),
+        "minecraft:gray_candle" => Some("minecraft:gray_candle_cake"),
+        "minecraft:light_gray_candle" => Some("minecraft:light_gray_candle_cake"),
+        "minecraft:cyan_candle" => Some("minecraft:cyan_candle_cake"),
+        "minecraft:purple_candle" => Some("minecraft:purple_candle_cake"),
+        "minecraft:blue_candle" => Some("minecraft:blue_candle_cake"),
+        "minecraft:brown_candle" => Some("minecraft:brown_candle_cake"),
+        "minecraft:green_candle" => Some("minecraft:green_candle_cake"),
+        "minecraft:red_candle" => Some("minecraft:red_candle_cake"),
+        "minecraft:black_candle" => Some("minecraft:black_candle_cake"),
+        _ => None,
+    }
+}
+
+fn is_standalone_candle_block(block_name: &str) -> bool {
+    (block_name == "minecraft:candle" || block_name.ends_with("_candle"))
+        && !block_name.ends_with("_candle_cake")
+}
+
+fn beehive_interaction(
+    block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+) -> Option<VanillaStateInteraction> {
+    if !matches!(block_name, "minecraft:bee_nest" | "minecraft:beehive")
+        || block_state_u8_property(block_state, "honey_level")? < 5
+    {
+        return None;
+    }
+    let held_item = normalize_resource_key(held_item?).to_ascii_lowercase();
+    match held_item.as_str() {
+        "minecraft:shears" => Some(VanillaStateInteraction {
+            target_block_state: block_state_with_property(block_state, "honey_level", "0")?,
+            inventory: VanillaInventoryAction::Give("minecraft:honeycomb", 3),
+        }),
+        "minecraft:glass_bottle" => Some(VanillaStateInteraction {
+            target_block_state: block_state_with_property(block_state, "honey_level", "0")?,
+            inventory: VanillaInventoryAction::ExchangeHeld("minecraft:honey_bottle"),
+        }),
+        _ => None,
+    }
+}
+
+fn pumpkin_shear_interaction(
+    _block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+    face: i32,
+) -> Option<VanillaStateInteraction> {
+    if block_name != "minecraft:pumpkin"
+        || held_item.map(normalize_resource_key).as_deref() != Some("minecraft:shears")
+    {
+        return None;
+    }
+    let facing = horizontal_facing_for_clicked_face(face);
+    Some(VanillaStateInteraction {
+        target_block_state: crate::world::chunk_nbt::block_state(
+            "minecraft:carved_pumpkin",
+            &[("facing".to_string(), facing.to_string())],
+        )
+        .id,
+        inventory: VanillaInventoryAction::Give("minecraft:pumpkin_seeds", 4),
+    })
+}
+
+fn water_bottle_dirt_interaction(
+    block_name: &str,
+    held_item: Option<&str>,
+) -> Option<VanillaStateInteraction> {
+    if held_item.map(normalize_resource_key).as_deref() != Some("minecraft:potion")
+        || !matches!(
+            block_name,
+            "minecraft:dirt" | "minecraft:coarse_dirt" | "minecraft:rooted_dirt"
+        )
+    {
+        return None;
+    }
+    Some(VanillaStateInteraction {
+        target_block_state: crate::world::chunk_nbt::default_block_state_id("minecraft:mud"),
+        inventory: VanillaInventoryAction::ExchangeHeld("minecraft:glass_bottle"),
+    })
+}
+
+fn horizontal_facing_for_clicked_face(face: i32) -> &'static str {
+    match face {
+        2 => "north",
+        3 => "south",
+        4 => "west",
+        5 => "east",
+        _ => "north",
+    }
+}
+
+fn note_block_interaction(block_state: i32, block_name: &str) -> Option<i32> {
+    if block_name != "minecraft:note_block" {
+        return None;
+    }
+    let note = block_state_u8_property(block_state, "note").unwrap_or(0);
+    block_state_with_property(block_state, "note", &((note + 1) % 25).to_string())
+}
+
+fn bone_meal_interaction(
+    block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+) -> Option<VanillaStateInteraction> {
+    if held_item.map(normalize_resource_key).as_deref() != Some("minecraft:bone_meal") {
+        return None;
+    }
+    Some(VanillaStateInteraction {
+        target_block_state: bone_meal_growth_state(block_state, block_name)?,
+        inventory: VanillaInventoryAction::ConsumeHeld,
+    })
+}
+
+fn bone_meal_growth_state(block_state: i32, block_name: &str) -> Option<i32> {
+    if let Some(max_age) = bone_meal_age_max(block_name) {
+        let age = block_state_u8_property(block_state, "age")?;
+        if age >= max_age {
+            return None;
+        }
+        let growth = bone_meal_growth_step(block_name);
+        return block_state_with_property(
+            block_state,
+            "age",
+            &(age + growth).min(max_age).to_string(),
+        );
+    }
+
+    if is_berrying_vine_block(block_name)
+        && block_state_bool_property_exists(block_state, "berries")
+        && !block_state_bool_property(block_state, "berries")
+    {
+        return block_state_with_property(block_state, "berries", "true");
+    }
+
+    None
+}
+
+fn bone_meal_age_max(block_name: &str) -> Option<u8> {
+    match block_name {
+        "minecraft:wheat"
+        | "minecraft:carrots"
+        | "minecraft:potatoes"
+        | "minecraft:melon_stem"
+        | "minecraft:pumpkin_stem" => Some(7),
+        "minecraft:beetroots" | "minecraft:sweet_berry_bush" => Some(3),
+        "minecraft:cocoa" => Some(2),
+        "minecraft:torchflower_crop" => Some(1),
+        "minecraft:pitcher_crop" => Some(4),
+        _ => None,
+    }
+}
+
+fn bone_meal_growth_step(block_name: &str) -> u8 {
+    match block_name {
+        "minecraft:beetroots" | "minecraft:torchflower_crop" => 1,
+        "minecraft:sweet_berry_bush" | "minecraft:cocoa" => 1,
+        _ => 2,
+    }
+}
+
+fn is_berrying_vine_block(block_name: &str) -> bool {
+    matches!(
+        block_name,
+        "minecraft:cave_vines" | "minecraft:cave_vines_plant"
+    )
+}
+
+fn lit_block_interaction(
+    block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+) -> Option<VanillaStateInteraction> {
+    if !block_state_bool_property_exists(block_state, "lit") {
+        return None;
+    }
+    let lit = block_state_bool_property(block_state, "lit");
+    let held_item = held_item.map(|item| normalize_resource_key(item).to_ascii_lowercase());
+    let held_item = held_item.as_deref();
+
+    if lit && held_item.is_none() && is_candle_block(block_name) {
+        return Some(VanillaStateInteraction {
+            target_block_state: block_state_with_property(block_state, "lit", "false")?,
+            inventory: VanillaInventoryAction::None,
+        });
+    }
+
+    if lit && is_campfire_block(block_name) && held_item.is_some_and(is_shovel_item) {
+        return Some(VanillaStateInteraction {
+            target_block_state: block_state_with_property(block_state, "lit", "false")?,
+            inventory: VanillaInventoryAction::None,
+        });
+    }
+
+    if !lit
+        && is_lightable_block(block_name)
+        && !block_state_bool_property(block_state, "waterlogged")
+        && held_item.is_some_and(is_igniter_item)
+    {
+        return Some(VanillaStateInteraction {
+            target_block_state: block_state_with_property(block_state, "lit", "true")?,
+            inventory: if held_item == Some("minecraft:fire_charge") {
+                VanillaInventoryAction::ConsumeHeld
+            } else {
+                VanillaInventoryAction::None
+            },
+        });
+    }
+
+    None
+}
+
+fn tool_block_interaction(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+    block_name: &str,
+    held_item: &str,
+    face: i32,
+) -> Option<i32> {
+    let held_item = normalize_resource_key(held_item).to_ascii_lowercase();
+    if is_axe_item(&held_item) {
+        return axe_block_transform(block_state, block_name);
+    }
+    if is_shovel_item(&held_item) {
+        return shovel_block_transform(world, dimension, position, block_name, face);
+    }
+    if is_hoe_item(&held_item) {
+        return hoe_block_transform(world, dimension, position, block_name, face);
+    }
+    None
+}
+
+fn axe_block_transform(block_state: i32, block_name: &str) -> Option<i32> {
+    let block_name = normalize_resource_key(block_name).to_ascii_lowercase();
+    if let Some(target_name) = stripped_wood_name(&block_name) {
+        return block_state_with_name_and_overlapping_properties(block_state, target_name);
+    }
+    if let Some(unwaxed) = block_name.strip_prefix("minecraft:waxed_") {
+        let target_name = format!("minecraft:{unwaxed}");
+        return block_state_with_name_and_overlapping_properties(block_state, &target_name);
+    }
+    if let Some(weathered) = block_name.strip_prefix("minecraft:oxidized_") {
+        let target_name = format!("minecraft:weathered_{weathered}");
+        return block_state_with_name_and_overlapping_properties(block_state, &target_name);
+    }
+    if let Some(exposed) = block_name.strip_prefix("minecraft:weathered_") {
+        let target_name = format!("minecraft:exposed_{exposed}");
+        return block_state_with_name_and_overlapping_properties(block_state, &target_name);
+    }
+    if let Some(copper) = block_name.strip_prefix("minecraft:exposed_") {
+        let target_name = format!("minecraft:{copper}");
+        return block_state_with_name_and_overlapping_properties(block_state, &target_name);
+    }
+    None
+}
+
+fn shovel_block_transform(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_name: &str,
+    face: i32,
+) -> Option<i32> {
+    if face == 0 || !block_above_allows_surface_transform(world, dimension, position) {
+        return None;
+    }
+    matches!(
+        block_name,
+        "minecraft:grass_block"
+            | "minecraft:dirt"
+            | "minecraft:podzol"
+            | "minecraft:mycelium"
+            | "minecraft:coarse_dirt"
+            | "minecraft:rooted_dirt"
+    )
+    .then(|| crate::world::chunk_nbt::default_block_state_id("minecraft:dirt_path"))
+}
+
+fn hoe_block_transform(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_name: &str,
+    face: i32,
+) -> Option<i32> {
+    if face == 0 || !block_above_allows_surface_transform(world, dimension, position) {
+        return None;
+    }
+    match block_name {
+        "minecraft:grass_block" | "minecraft:dirt" | "minecraft:dirt_path" => Some(
+            crate::world::chunk_nbt::default_block_state_id("minecraft:farmland"),
+        ),
+        "minecraft:coarse_dirt" | "minecraft:rooted_dirt" => Some(
+            crate::world::chunk_nbt::default_block_state_id("minecraft:dirt"),
+        ),
+        _ => None,
+    }
+}
+
+fn block_above_allows_surface_transform(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> bool {
+    let above = offset_position(position, 0, 1, 0);
+    let above_state = world
+        .block_state_at(dimension, &above)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    crate::inventory::can_replace_block_state(above_state)
+}
+
+fn stripped_wood_name(block_name: &str) -> Option<&'static str> {
+    match block_name {
+        "minecraft:oak_log" => Some("minecraft:stripped_oak_log"),
+        "minecraft:oak_wood" => Some("minecraft:stripped_oak_wood"),
+        "minecraft:spruce_log" => Some("minecraft:stripped_spruce_log"),
+        "minecraft:spruce_wood" => Some("minecraft:stripped_spruce_wood"),
+        "minecraft:birch_log" => Some("minecraft:stripped_birch_log"),
+        "minecraft:birch_wood" => Some("minecraft:stripped_birch_wood"),
+        "minecraft:jungle_log" => Some("minecraft:stripped_jungle_log"),
+        "minecraft:jungle_wood" => Some("minecraft:stripped_jungle_wood"),
+        "minecraft:acacia_log" => Some("minecraft:stripped_acacia_log"),
+        "minecraft:acacia_wood" => Some("minecraft:stripped_acacia_wood"),
+        "minecraft:dark_oak_log" => Some("minecraft:stripped_dark_oak_log"),
+        "minecraft:dark_oak_wood" => Some("minecraft:stripped_dark_oak_wood"),
+        "minecraft:mangrove_log" => Some("minecraft:stripped_mangrove_log"),
+        "minecraft:mangrove_wood" => Some("minecraft:stripped_mangrove_wood"),
+        "minecraft:cherry_log" => Some("minecraft:stripped_cherry_log"),
+        "minecraft:cherry_wood" => Some("minecraft:stripped_cherry_wood"),
+        "minecraft:pale_oak_log" => Some("minecraft:stripped_pale_oak_log"),
+        "minecraft:pale_oak_wood" => Some("minecraft:stripped_pale_oak_wood"),
+        "minecraft:crimson_stem" => Some("minecraft:stripped_crimson_stem"),
+        "minecraft:crimson_hyphae" => Some("minecraft:stripped_crimson_hyphae"),
+        "minecraft:warped_stem" => Some("minecraft:stripped_warped_stem"),
+        "minecraft:warped_hyphae" => Some("minecraft:stripped_warped_hyphae"),
+        "minecraft:bamboo_block" => Some("minecraft:stripped_bamboo_block"),
+        _ => None,
+    }
+}
+
+fn is_lightable_block(block_name: &str) -> bool {
+    is_campfire_block(block_name) || is_candle_block(block_name)
+}
+
+fn is_campfire_block(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:campfire" | "minecraft:soul_campfire")
+}
+
+fn is_candle_block(block_name: &str) -> bool {
+    block_name == "minecraft:candle"
+        || block_name.ends_with("_candle")
+        || block_name == "minecraft:candle_cake"
+        || block_name.ends_with("_candle_cake")
+}
+
+fn is_igniter_item(item_name: &str) -> bool {
+    matches!(
+        item_name,
+        "minecraft:flint_and_steel" | "minecraft:fire_charge"
+    )
+}
+
+fn is_axe_item(item_name: &str) -> bool {
+    item_name.ends_with("_axe")
+}
+
+fn is_shovel_item(item_name: &str) -> bool {
+    item_name.ends_with("_shovel")
+}
+
+fn is_hoe_item(item_name: &str) -> bool {
+    item_name.ends_with("_hoe")
+}
+
+fn cake_interaction(
+    block_state: i32,
+    block_name: &str,
+    game_mode: GameMode,
+    survival: &mut SurvivalState,
+) -> Option<i32> {
+    if block_name != "minecraft:cake" || game_mode != GameMode::Survival {
+        return None;
+    }
+    if !survival.can_eat(false) || !survival.eat(2, 0.1) {
+        return None;
+    }
+    let bites = block_state_u8_property(block_state, "bites").unwrap_or(0);
+    if bites >= 6 {
+        Some(crate::inventory::air_block_state())
+    } else {
+        block_state_with_property(block_state, "bites", &(bites + 1).to_string())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComposterInteraction {
+    target_block_state: Option<i32>,
+    inventory: ComposterInventoryAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComposterInventoryAction {
+    ConsumeHeld,
+    Give(&'static str),
+}
+
+fn composter_interaction(
+    block_state: i32,
+    block_name: &str,
+    held_item: Option<&str>,
+    position: &BlockPosition,
+) -> Option<ComposterInteraction> {
+    if block_name != "minecraft:composter" {
+        return None;
+    }
+    let level = block_state_u8_property(block_state, "level")
+        .unwrap_or(0)
+        .min(8);
+    if level >= 8 {
+        return Some(ComposterInteraction {
+            target_block_state: Some(composter_state(0)),
+            inventory: ComposterInventoryAction::Give("minecraft:bone_meal"),
+        });
+    }
+
+    let held_item = held_item?;
+    let chance = compostable_chance(held_item)?;
+    let accepted = composter_accepts_item(held_item, position, level, chance);
+    Some(ComposterInteraction {
+        target_block_state: accepted.then(|| composter_state(level.saturating_add(1).min(8))),
+        inventory: ComposterInventoryAction::ConsumeHeld,
+    })
+}
+
+fn composter_state(level: u8) -> i32 {
+    crate::world::chunk_nbt::block_state(
+        "minecraft:composter",
+        &[("level".to_string(), level.min(8).to_string())],
+    )
+    .id
+}
+
+fn composter_accepts_item(
+    item_name: &str,
+    position: &BlockPosition,
+    level: u8,
+    chance_percent: u8,
+) -> bool {
+    if chance_percent >= 100 {
+        return true;
+    }
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in item_name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    for value in [position.x, position.y, position.z, i32::from(level)] {
+        hash ^= value as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash % 100 < u64::from(chance_percent)
+}
+
+fn compostable_chance(item_name: &str) -> Option<u8> {
+    let item_name = normalize_resource_key(item_name).to_ascii_lowercase();
+    match item_name.as_str() {
+        "minecraft:cake" | "minecraft:pumpkin_pie" => Some(100),
+        "minecraft:baked_potato"
+        | "minecraft:bread"
+        | "minecraft:cookie"
+        | "minecraft:hay_block"
+        | "minecraft:mushroom_stew"
+        | "minecraft:beetroot_soup"
+        | "minecraft:suspicious_stew"
+        | "minecraft:nether_wart_block"
+        | "minecraft:warped_wart_block"
+        | "minecraft:flowering_azalea_leaves" => Some(85),
+        "minecraft:apple"
+        | "minecraft:beetroot"
+        | "minecraft:carrot"
+        | "minecraft:cocoa_beans"
+        | "minecraft:fern"
+        | "minecraft:lily_pad"
+        | "minecraft:melon"
+        | "minecraft:potato"
+        | "minecraft:pumpkin"
+        | "minecraft:sea_pickle"
+        | "minecraft:wheat"
+        | "minecraft:brown_mushroom"
+        | "minecraft:red_mushroom"
+        | "minecraft:crimson_fungus"
+        | "minecraft:warped_fungus"
+        | "minecraft:azalea"
+        | "minecraft:flowering_azalea" => Some(65),
+        name if name.ends_with("_sapling")
+            || name.ends_with("_leaves")
+            || name.ends_with("_flowers")
+            || name.ends_with("_tulip")
+            || matches!(
+                name,
+                "minecraft:dandelion"
+                    | "minecraft:poppy"
+                    | "minecraft:blue_orchid"
+                    | "minecraft:allium"
+                    | "minecraft:azure_bluet"
+                    | "minecraft:oxeye_daisy"
+                    | "minecraft:cornflower"
+                    | "minecraft:lily_of_the_valley"
+                    | "minecraft:wither_rose"
+                    | "minecraft:sunflower"
+                    | "minecraft:lilac"
+                    | "minecraft:rose_bush"
+                    | "minecraft:peony"
+            ) =>
+        {
+            Some(65)
+        }
+        "minecraft:cactus"
+        | "minecraft:dried_kelp_block"
+        | "minecraft:melon_slice"
+        | "minecraft:sugar_cane"
+        | "minecraft:tall_grass"
+        | "minecraft:vine"
+        | "minecraft:weeping_vines"
+        | "minecraft:twisting_vines"
+        | "minecraft:nether_sprouts"
+        | "minecraft:crimson_roots"
+        | "minecraft:warped_roots"
+        | "minecraft:moss_block"
+        | "minecraft:big_dripleaf" => Some(50),
+        "minecraft:beetroot_seeds"
+        | "minecraft:dried_kelp"
+        | "minecraft:grass"
+        | "minecraft:kelp"
+        | "minecraft:melon_seeds"
+        | "minecraft:pumpkin_seeds"
+        | "minecraft:seagrass"
+        | "minecraft:sweet_berries"
+        | "minecraft:glow_berries"
+        | "minecraft:wheat_seeds"
+        | "minecraft:moss_carpet"
+        | "minecraft:small_dripleaf"
+        | "minecraft:hanging_roots"
+        | "minecraft:mangrove_roots"
+        | "minecraft:pink_petals"
+        | "minecraft:torchflower_seeds"
+        | "minecraft:pitcher_pod" => Some(30),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_redstone_interaction<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    gameplay: &qexed_config::app::qexed::server::Gameplay,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    position: BlockPosition,
+    block_name: &str,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !gameplay.redstone || !gameplay.block_updates {
+        return Ok(false);
+    }
+    let Some(block_state) = world.block_state_at(play_dimension, &position) else {
+        return Ok(false);
+    };
+    let Some(interaction) =
+        gameplay::redstone::interaction_for_block_state(block_state, block_name)
+    else {
+        return Ok(false);
+    };
+    let changes = vec![gameplay::redstone::RedstoneBlockChange {
+        dimension: play_dimension.to_string(),
+        position: position.clone(),
+        block_state: interaction.block_state,
+    }];
+    let applied = apply_redstone_updates(
+        sink,
+        world,
+        world_rules,
+        players,
+        runtime,
+        play_dimension,
+        actor,
+        changes,
+    )
+    .await?;
+    if applied.is_empty() {
+        return Ok(true);
+    }
+    if let Some(delay_ms) = interaction.button_release_ms {
+        runtime.schedule_button_release(play_dimension.to_string(), position, delay_ms);
+    }
+    propagate_redstone_from_positions(
+        sink,
+        world,
+        world_rules,
+        players,
+        gameplay,
+        runtime,
+        play_dimension,
+        actor,
+        applied,
+    )
+    .await?;
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_and_propagate_redstone_updates<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    gameplay: &qexed_config::app::qexed::server::Gameplay,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    updates: Vec<gameplay::redstone::RedstoneBlockChange>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !gameplay.redstone || !gameplay.block_updates {
+        return Ok(());
+    }
+    let applied = apply_redstone_updates(
+        sink,
+        world,
+        world_rules,
+        players,
+        runtime,
+        play_dimension,
+        actor,
+        updates,
+    )
+    .await?;
+    let observer_applied = apply_observer_updates_after_block_changes(
+        sink,
+        world,
+        world_rules,
+        players,
+        runtime,
+        play_dimension,
+        actor,
+        &applied,
+    )
+    .await?;
+    let mut origins = applied;
+    origins.extend(observer_applied);
+    propagate_redstone_from_positions(
+        sink,
+        world,
+        world_rules,
+        players,
+        gameplay,
+        runtime,
+        play_dimension,
+        actor,
+        origins,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn propagate_redstone_from_positions<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    gameplay: &qexed_config::app::qexed::server::Gameplay,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    origins: Vec<gameplay::redstone::RedstoneBlockChange>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !gameplay.redstone || !gameplay.block_updates || origins.is_empty() {
+        return Ok(());
+    }
+    let mut by_dimension = std::collections::HashMap::<String, Vec<BlockPosition>>::new();
+    for origin in origins {
+        by_dimension
+            .entry(origin.dimension)
+            .or_default()
+            .push(origin.position);
+    }
+    for (dimension, positions) in by_dimension {
+        let observer_applied = apply_observer_updates_after_block_positions(
+            sink,
+            world,
+            world_rules,
+            players,
+            runtime,
+            play_dimension,
+            actor,
+            &dimension,
+            &positions,
+        )
+        .await?;
+        let mut positions = positions;
+        positions.extend(
+            observer_applied
+                .iter()
+                .map(|changed| changed.position.clone()),
+        );
+        let updates = gameplay::redstone::updates_after_block_changes(
+            world,
+            &dimension,
+            &positions,
+            gameplay.redstone_max_distance,
+        );
+        let applied_updates = apply_redstone_updates(
+            sink,
+            world,
+            world_rules,
+            players,
+            runtime,
+            play_dimension,
+            actor,
+            updates,
+        )
+        .await?;
+        let network_observer_applied = apply_observer_updates_after_block_changes(
+            sink,
+            world,
+            world_rules,
+            players,
+            runtime,
+            play_dimension,
+            actor,
+            &applied_updates,
+        )
+        .await?;
+        if !network_observer_applied.is_empty() {
+            let observer_positions = network_observer_applied
+                .iter()
+                .map(|changed| changed.position.clone())
+                .collect::<Vec<_>>();
+            let updates = gameplay::redstone::updates_after_block_changes(
+                world,
+                &dimension,
+                &observer_positions,
+                gameplay.redstone_max_distance,
+            );
+            apply_redstone_updates(
+                sink,
+                world,
+                world_rules,
+                players,
+                runtime,
+                play_dimension,
+                actor,
+                updates,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn propagate_redstone_from_block_positions<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    gameplay: &qexed_config::app::qexed::server::Gameplay,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    positions: Vec<BlockPosition>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if positions.is_empty() {
+        return Ok(());
+    }
+    let origins = positions
+        .into_iter()
+        .map(|position| gameplay::redstone::RedstoneBlockChange {
+            dimension: play_dimension.to_string(),
+            position,
+            block_state: crate::inventory::air_block_state(),
+        })
+        .collect();
+    propagate_redstone_from_positions(
+        sink,
+        world,
+        world_rules,
+        players,
+        gameplay,
+        runtime,
+        play_dimension,
+        actor,
+        origins,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_observer_updates_after_block_changes<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    changes: &[gameplay::redstone::RedstoneBlockChange],
+) -> Result<Vec<gameplay::redstone::RedstoneBlockChange>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut by_dimension = std::collections::HashMap::<String, Vec<BlockPosition>>::new();
+    for change in changes {
+        by_dimension
+            .entry(change.dimension.clone())
+            .or_default()
+            .push(change.position.clone());
+    }
+
+    let mut applied = Vec::new();
+    for (dimension, positions) in by_dimension {
+        applied.extend(
+            apply_observer_updates_after_block_positions(
+                sink,
+                world,
+                world_rules,
+                players,
+                runtime,
+                play_dimension,
+                actor,
+                &dimension,
+                &positions,
+            )
+            .await?,
+        );
+    }
+    Ok(applied)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_observer_updates_after_block_positions<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    dimension: &str,
+    positions: &[BlockPosition],
+) -> Result<Vec<gameplay::redstone::RedstoneBlockChange>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let updates = runtime.observer_updates_after_block_changes(world, dimension, positions);
+    apply_redstone_updates(
+        sink,
+        world,
+        world_rules,
+        players,
+        runtime,
+        play_dimension,
+        actor,
+        updates,
+    )
+    .await
+}
+
+fn piston_side_effect_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    current_state: i32,
+    next_state: i32,
+) -> Option<Vec<gameplay::redstone::RedstoneBlockChange>> {
+    let current_name = block_name(current_state);
+    let next_name = block_name(next_state);
+    if !is_piston_base_block(&current_name) || !is_piston_base_block(&next_name) {
+        return Some(Vec::new());
+    }
+
+    let was_extended = block_state_bool_property(current_state, "extended");
+    let will_extend = block_state_bool_property(next_state, "extended");
+    if was_extended == will_extend {
+        return Some(Vec::new());
+    }
+
+    let (dx, dy, dz, facing) = piston_facing_offset(current_state)?;
+    let sticky = current_name == "minecraft:sticky_piston";
+    if will_extend {
+        piston_extension_updates(world, dimension, position, dx, dy, dz, &facing, sticky)
+    } else {
+        Some(piston_retraction_updates(
+            world, dimension, position, dx, dy, dz, sticky,
+        ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn piston_extension_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    dx: i32,
+    dy: i32,
+    dz: i32,
+    facing: &str,
+    sticky: bool,
+) -> Option<Vec<gameplay::redstone::RedstoneBlockChange>> {
+    let front = offset_position(position, dx, dy, dz);
+    let head_state = piston_head_state(facing, sticky);
+    let mut updates = Vec::new();
+    let mut movable = Vec::<(BlockPosition, i32)>::new();
+    let mut cursor = front.clone();
+
+    loop {
+        let state = world
+            .block_state_at(dimension, &cursor)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if crate::inventory::is_air_block_state(state)
+            || crate::inventory::can_replace_block_state(state)
+        {
+            break;
+        }
+        if movable.len() >= 12 || !piston_can_move_block(state) {
+            return None;
+        }
+        movable.push((cursor.clone(), state));
+        cursor = offset_position(&cursor, dx, dy, dz);
+    }
+
+    for (source, state) in movable.iter().rev() {
+        updates.push(gameplay::redstone::RedstoneBlockChange {
+            dimension: dimension.to_string(),
+            position: offset_position(source, dx, dy, dz),
+            block_state: *state,
+        });
+    }
+    updates.push(gameplay::redstone::RedstoneBlockChange {
+        dimension: dimension.to_string(),
+        position: front,
+        block_state: head_state,
+    });
+    Some(updates)
+}
+
+fn piston_retraction_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    dx: i32,
+    dy: i32,
+    dz: i32,
+    sticky: bool,
+) -> Vec<gameplay::redstone::RedstoneBlockChange> {
+    let front = offset_position(position, dx, dy, dz);
+    let mut updates = Vec::new();
+    let front_state = world
+        .block_state_at(dimension, &front)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if block_name(front_state) == "minecraft:piston_head" {
+        updates.push(gameplay::redstone::RedstoneBlockChange {
+            dimension: dimension.to_string(),
+            position: front.clone(),
+            block_state: crate::inventory::air_block_state(),
+        });
+    }
+
+    if sticky {
+        let pull = offset_position(&front, dx, dy, dz);
+        let pull_state = world
+            .block_state_at(dimension, &pull)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if piston_can_move_block(pull_state) {
+            updates.push(gameplay::redstone::RedstoneBlockChange {
+                dimension: dimension.to_string(),
+                position: front,
+                block_state: pull_state,
+            });
+            updates.push(gameplay::redstone::RedstoneBlockChange {
+                dimension: dimension.to_string(),
+                position: pull,
+                block_state: crate::inventory::air_block_state(),
+            });
+        }
+    }
+
+    updates
+}
+
+fn piston_head_state(facing: &str, sticky: bool) -> i32 {
+    crate::world::chunk_nbt::block_state(
+        "minecraft:piston_head",
+        &[
+            ("facing".to_string(), facing.to_string()),
+            ("short".to_string(), "false".to_string()),
+            (
+                "type".to_string(),
+                if sticky { "sticky" } else { "normal" }.to_string(),
+            ),
+        ],
+    )
+    .id
+}
+
+fn piston_can_move_block(block_state: i32) -> bool {
+    if crate::inventory::is_air_block_state(block_state)
+        || crate::inventory::can_replace_block_state(block_state)
+    {
+        return false;
+    }
+    !matches!(
+        block_name(block_state).as_str(),
+        "minecraft:bedrock"
+            | "minecraft:obsidian"
+            | "minecraft:crying_obsidian"
+            | "minecraft:reinforced_deepslate"
+            | "minecraft:end_portal_frame"
+            | "minecraft:piston"
+            | "minecraft:sticky_piston"
+            | "minecraft:piston_head"
+            | "minecraft:moving_piston"
+    )
+}
+
+fn piston_facing_offset(block_state: i32) -> Option<(i32, i32, i32, String)> {
+    let facing = block_state_property(block_state, "facing")?;
+    let (dx, dy, dz) = match facing.as_str() {
+        "east" => (1, 0, 0),
+        "west" => (-1, 0, 0),
+        "up" => (0, 1, 0),
+        "down" => (0, -1, 0),
+        "south" => (0, 0, 1),
+        "north" => (0, 0, -1),
+        _ => return None,
+    };
+    Some((dx, dy, dz, facing))
+}
+
+fn is_piston_base_block(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:piston" | "minecraft:sticky_piston")
+}
+
+fn block_state_bool_property(block_state: i32, key: &str) -> bool {
+    block_state_property(block_state, key).is_some_and(|value| value == "true")
+}
+
+async fn apply_redstone_updates<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    runtime: &mut gameplay::redstone::RedstoneRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    updates: Vec<gameplay::redstone::RedstoneBlockChange>,
+) -> Result<Vec<gameplay::redstone::RedstoneBlockChange>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut applied = Vec::new();
+    let mut expanded = Vec::new();
+    for update in updates {
+        let current = world
+            .block_state_at(&update.dimension, &update.position)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if let Some(piston_updates) = piston_side_effect_updates(
+            world,
+            &update.dimension,
+            &update.position,
+            current,
+            update.block_state,
+        ) {
+            expanded.extend(piston_updates);
+        } else {
+            continue;
+        }
+        expanded.push(update);
+    }
+
+    for update in expanded {
+        if !world_rules.snapshot(&update.dimension).block_updates {
+            continue;
+        }
+        let current = world
+            .block_state_at(&update.dimension, &update.position)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if current == update.block_state {
+            continue;
+        }
+        if runtime.should_delay_redstone_update(current, &update) {
+            continue;
+        }
+        if block_name(current) == "minecraft:tnt"
+            && crate::inventory::is_air_block_state(update.block_state)
+        {
+            runtime.schedule_tnt_explosion(
+                update.dimension.clone(),
+                update.position.clone(),
+                4_000,
+            );
+        }
+        world.place_block(
+            &update.dimension,
+            update.position.clone(),
+            update.block_state,
+        );
+        if update.dimension == play_dimension {
+            sink.send(crate::inventory::block_update(
+                update.position.clone(),
+                update.block_state,
+            ))
+            .await?;
+        }
+        let light_update = if world.dynamic_light_enabled()
+            && matches!(
+                world_rules.snapshot(&update.dimension).light,
+                qexed_config::app::qexed::server::LightMode::Dynamic
+            ) {
+            let light = world.light_update(
+                &update.dimension,
+                update.position.x.div_euclid(16),
+                update.position.z.div_euclid(16),
+            );
+            if update.dimension == play_dimension {
+                sink.send(light.clone()).await?;
+            }
+            Some(qexed_tcp_connect::PacketSink::<tokio::io::Sink>::build_send_packet(light)?)
+        } else {
+            None
+        };
+        players.broadcast_block_changed(
+            actor,
+            &update.dimension,
+            update.position.clone(),
+            update.block_state,
+            light_update,
+        );
+        applied.push(update);
+    }
+    Ok(applied)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_cauldron_interaction<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
+    dimension: &str,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    gameplay: &qexed_config::app::qexed::server::Gameplay,
+    inventory: &mut crate::inventory::PlayerInventory,
+    position: BlockPosition,
+    block_name: &str,
+) -> Result<bool>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if !gameplay.cauldron
+        || !configured_gameplay_block_matches(block_name, &gameplay.cauldron_blocks)
+    {
+        return Ok(false);
+    }
+
+    let Some(block_state) = world.block_state_at(dimension, &position) else {
+        return Ok(false);
+    };
+    let Some(held_item) = held_item_name(inventory) else {
+        return Ok(false);
+    };
+    let Some(interaction) = cauldron_interaction(block_state, block_name, &held_item) else {
+        return Ok(false);
+    };
+    if game_mode != GameMode::Creative
+        && !can_exchange_held_item(inventory, interaction.replacement_item)
+    {
+        return Ok(true);
+    }
+
+    let changed = apply_block_change(
+        sink,
+        world,
+        world_rules,
+        players,
+        world_config,
+        game_mode,
+        dimension,
+        actor,
+        position,
+        interaction.target_block_state,
+        WorldEditKind::Place,
+        gameplay.block_updates,
+    )
+    .await?;
+    if !changed {
+        return Ok(true);
+    }
+    if game_mode == GameMode::Creative {
+        return Ok(true);
+    }
+
+    let Some(changes) = exchange_held_item(inventory, interaction.replacement_item) else {
+        return Ok(true);
+    };
+    sync_inventory_changes(
+        sink,
+        players,
+        actor,
+        entity_id,
+        inventory.selected_slot(),
+        changes,
+    )
+    .await?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CauldronInteraction {
+    target_block_state: i32,
+    replacement_item: &'static str,
+}
+
+fn cauldron_interaction(
+    block_state: i32,
+    block_name: &str,
+    held_item: &str,
+) -> Option<CauldronInteraction> {
+    let block_name = normalize_resource_key(block_name).to_ascii_lowercase();
+    let held_item = normalize_resource_key(held_item).to_ascii_lowercase();
+    match (block_name.as_str(), held_item.as_str()) {
+        ("minecraft:cauldron", "minecraft:water_bucket") => Some(CauldronInteraction {
+            target_block_state: leveled_cauldron_state("minecraft:water_cauldron", 3),
+            replacement_item: "minecraft:bucket",
+        }),
+        ("minecraft:cauldron", "minecraft:lava_bucket") => Some(CauldronInteraction {
+            target_block_state: crate::world::chunk_nbt::default_block_state_id(
+                "minecraft:lava_cauldron",
+            ),
+            replacement_item: "minecraft:bucket",
+        }),
+        ("minecraft:cauldron", "minecraft:powder_snow_bucket") => Some(CauldronInteraction {
+            target_block_state: leveled_cauldron_state("minecraft:powder_snow_cauldron", 3),
+            replacement_item: "minecraft:bucket",
+        }),
+        ("minecraft:cauldron", "minecraft:potion") => Some(CauldronInteraction {
+            target_block_state: water_cauldron_state_for_level(1),
+            replacement_item: "minecraft:glass_bottle",
+        }),
+        ("minecraft:water_cauldron", "minecraft:bucket") if cauldron_level(block_state) >= 3 => {
+            Some(CauldronInteraction {
+                target_block_state: crate::world::chunk_nbt::default_block_state_id(
+                    "minecraft:cauldron",
+                ),
+                replacement_item: "minecraft:water_bucket",
+            })
+        }
+        ("minecraft:water_cauldron", "minecraft:glass_bottle")
+            if cauldron_level(block_state) > 0 =>
+        {
+            Some(CauldronInteraction {
+                target_block_state: water_cauldron_state_for_level(
+                    cauldron_level(block_state).saturating_sub(1),
+                ),
+                replacement_item: "minecraft:potion",
+            })
+        }
+        ("minecraft:water_cauldron", "minecraft:potion") if cauldron_level(block_state) < 3 => {
+            Some(CauldronInteraction {
+                target_block_state: water_cauldron_state_for_level(
+                    cauldron_level(block_state).saturating_add(1),
+                ),
+                replacement_item: "minecraft:glass_bottle",
+            })
+        }
+        ("minecraft:lava_cauldron", "minecraft:bucket") => Some(CauldronInteraction {
+            target_block_state: crate::world::chunk_nbt::default_block_state_id(
+                "minecraft:cauldron",
+            ),
+            replacement_item: "minecraft:lava_bucket",
+        }),
+        ("minecraft:powder_snow_cauldron", "minecraft:bucket")
+            if cauldron_level(block_state) >= 3 =>
+        {
+            Some(CauldronInteraction {
+                target_block_state: crate::world::chunk_nbt::default_block_state_id(
+                    "minecraft:cauldron",
+                ),
+                replacement_item: "minecraft:powder_snow_bucket",
+            })
+        }
+        _ => None,
+    }
+}
+
+fn water_cauldron_state_for_level(level: u8) -> i32 {
+    if level == 0 {
+        crate::world::chunk_nbt::default_block_state_id("minecraft:cauldron")
+    } else {
+        leveled_cauldron_state("minecraft:water_cauldron", level)
+    }
+}
+
+fn leveled_cauldron_state(block_name: &str, level: u8) -> i32 {
+    crate::world::chunk_nbt::block_state(
+        block_name,
+        &[("level".to_string(), level.clamp(1, 3).to_string())],
+    )
+    .id
+}
+
+fn cauldron_level(block_state: i32) -> u8 {
+    crate::inventory::block_properties_for_state(block_state)
+        .and_then(|properties| properties.get("level").and_then(|value| value.parse().ok()))
+        .unwrap_or(0)
+}
+
+fn configured_gameplay_block_matches(block_name: &str, configured_blocks: &[String]) -> bool {
+    let block_name = normalize_resource_key(block_name).to_ascii_lowercase();
+    configured_blocks
+        .iter()
+        .any(|configured| normalize_resource_key(configured).to_ascii_lowercase() == block_name)
+}
+
+fn held_item_name(inventory: &crate::inventory::PlayerInventory) -> Option<String> {
+    inventory
+        .held_item()
+        .item_id
+        .as_ref()
+        .and_then(|id| crate::inventory::item_name_for_id(id.0))
+}
+
+fn can_exchange_held_item(
+    inventory: &crate::inventory::PlayerInventory,
+    replacement_item: &str,
+) -> bool {
+    let Some(item_id) = crate::inventory::item_id_for_name(replacement_item) else {
+        return false;
+    };
+    if inventory.held_item().item_count.0 <= 0 {
+        return false;
+    }
+    inventory.held_item().item_count.0 == 1
+        || inventory.can_accept_item_stack(&crate::inventory::simple_item(item_id, 1))
+}
+
+fn exchange_held_item(
+    inventory: &mut crate::inventory::PlayerInventory,
+    replacement_item: &str,
+) -> Option<Vec<crate::inventory::InventorySlotChange>> {
+    let item_id = crate::inventory::item_id_for_name(replacement_item)?;
+    let replacement = crate::inventory::simple_item(item_id, 1);
+    let selected_slot = inventory.selected_slot();
+    if inventory.held_item().item_count.0 == 1 {
+        return inventory
+            .set_hotbar_slot(selected_slot, replacement)
+            .map(|change| vec![change]);
+    }
+
+    let mut changes = Vec::new();
+    if let Some(change) = inventory.decrement_hotbar_slot(selected_slot, 1) {
+        changes.push(change);
+    }
+    changes.extend(inventory.add_item_stack(&replacement)?);
+    Some(changes)
+}
+
 async fn place_held_block<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
     dimension: &str,
     actor: uuid::Uuid,
     player_position: &EntityPosition,
@@ -6195,6 +9317,7 @@ where
             world_rules,
             players,
             world_config,
+            game_mode,
             dimension,
             actor,
             target.clone(),
@@ -6212,6 +9335,7 @@ where
             world_rules,
             players,
             world_config,
+            game_mode,
             dimension,
             actor,
             upper.clone(),
@@ -6239,6 +9363,7 @@ where
         world_rules,
         players,
         world_config,
+        game_mode,
         dimension,
         actor,
         target.clone(),
@@ -6265,6 +9390,7 @@ async fn destroy_block<W>(
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
     dimension: &str,
     actor: uuid::Uuid,
     held_item: &qexed_protocol::types::Slot,
@@ -6303,6 +9429,7 @@ where
         world_rules,
         players,
         world_config,
+        game_mode,
         dimension,
         actor,
         position.clone(),
@@ -6319,6 +9446,7 @@ where
                 world_rules,
                 players,
                 world_config,
+                game_mode,
                 dimension,
                 actor,
                 paired_position,
@@ -6337,6 +9465,7 @@ where
             entities,
             plugins,
             world_config,
+            game_mode,
             actor,
             dimension,
             current,
@@ -6363,6 +9492,7 @@ async fn drop_broken_block<W>(
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
     actor: uuid::Uuid,
     dimension: &str,
     block_state: i32,
@@ -6374,7 +9504,7 @@ async fn drop_broken_block<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    if world_config.game_mode != GameMode::Survival {
+    if game_mode != GameMode::Survival {
         return Ok(());
     }
 
@@ -6425,6 +9555,7 @@ where
             world_rules,
             players,
             world_config,
+            game_mode,
             dimension,
             actor,
             extra_position.clone(),
@@ -7146,6 +10277,7 @@ async fn apply_block_change<W>(
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
     dimension: &str,
     actor: uuid::Uuid,
     position: BlockPosition,
@@ -7159,6 +10291,7 @@ where
     let write_mode = world_write_mode(
         world,
         world_config,
+        game_mode,
         world_rules,
         dimension,
         &position,
@@ -7227,6 +10360,7 @@ struct WorldWriteMode {
 fn world_write_mode(
     world: &WorldManager,
     world_config: &qexed_config::app::qexed::server::World,
+    game_mode: GameMode,
     world_rules: &crate::world::WorldRulesManager,
     dimension: &str,
     position: &BlockPosition,
@@ -7241,7 +10375,7 @@ fn world_write_mode(
         };
     }
 
-    if !can_attempt_world_edit(world_config) {
+    if !can_attempt_world_edit_for_game_mode(game_mode, world_config) {
         return WorldWriteMode {
             allowed: false,
             runtime_only: false,
@@ -7258,7 +10392,7 @@ fn world_write_mode(
         };
     }
 
-    if can_modify_world(world_config, position) && !rule.read_only {
+    if can_modify_world_for_game_mode(game_mode, world_config, position) && !rule.read_only {
         return WorldWriteMode {
             allowed: true,
             runtime_only: false,

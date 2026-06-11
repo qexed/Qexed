@@ -27,6 +27,14 @@ qexed:
       description:
         en: "Lists loaded plugins."
         zh-CN: "列出已加载插件。"
+    gamemode:
+      description:
+        en: "Changes a player's game mode."
+        zh-CN: "修改玩家游戏模式。"
+    give:
+      description:
+        en: "Gives an item to a player."
+        zh-CN: "给予玩家物品。"
     lobby:
       description:
         en: "Opens the lobby menu, shows status, or refreshes backend status."
@@ -71,6 +79,10 @@ qexed:
       description:
         en: "Lists, places, or locates built-in structures."
         zh-CN: "列出、放置或定位内置结构。"
+    reload:
+      description:
+        en: "Reloads plugin configuration events."
+        zh-CN: "Reloads plugin configuration events."
     max_players:
       unlimited:
         en: "unlimited"
@@ -136,6 +148,10 @@ qexed:
       description:
         en: "Grants '*' permission to an online player."
         zh-CN: "授予在线玩家 '*' 权限。"
+    reload:
+      description:
+        en: "Reloads plugin configuration events."
+        zh-CN: "Reloads plugin configuration events."
     players:
       empty:
         en: "No players are currently online."

@@ -266,6 +266,44 @@ impl PlayerManager {
             .is_ok()
     }
 
+    pub fn set_game_mode(&self, profile_id: uuid::Uuid, game_mode: i32) -> Option<OnlinePlayer> {
+        let mut players = self.players.lock().expect("player manager poisoned");
+        let player = {
+            let handle = players.get_mut(&profile_id)?;
+            handle.player.game_mode = game_mode;
+            handle.player.clone()
+        };
+        broadcast_all_locked(
+            &players,
+            PlayerEvent::GameModeChanged {
+                profile_id,
+                username: player.profile.username.clone(),
+                game_mode,
+            },
+        );
+        Some(player)
+    }
+
+    pub fn give_item(
+        &self,
+        profile_id: uuid::Uuid,
+        item: qexed_protocol::types::Slot,
+        item_name: impl Into<String>,
+    ) -> bool {
+        let players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get(&profile_id) else {
+            return false;
+        };
+        handle
+            .sender
+            .send(PlayerEvent::GiveItem {
+                profile_id,
+                item,
+                item_name: item_name.into(),
+            })
+            .is_ok()
+    }
+
     pub fn player_by_name(&self, username: &str) -> Option<OnlinePlayer> {
         let username = username.trim();
         if username.is_empty() {

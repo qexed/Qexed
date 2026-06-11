@@ -10,7 +10,7 @@ use qexed_protocol::to_client::play::{
     transfer::Transfer,
 };
 
-use qexed_config::app::qexed::server::{ForwardingMode, Server};
+use qexed_config::app::qexed::server::{ForwardingMode, GameMode, Server};
 
 use crate::players::PlayerManager;
 
@@ -275,6 +275,44 @@ where
                 teleported,
                 ..CommandOutcome::default()
             })
+        }
+        "gamemode" => {
+            handle_gamemode_command(
+                sink,
+                players,
+                profile,
+                actor_entity_id,
+                *position,
+                play_dimension,
+                argument.as_str(),
+            )
+            .await?;
+            Ok(CommandOutcome::default())
+        }
+        "give" => {
+            handle_give_command(
+                sink,
+                players,
+                profile,
+                actor_entity_id,
+                *position,
+                play_dimension,
+                argument.as_str(),
+            )
+            .await?;
+            Ok(CommandOutcome::default())
+        }
+        "reload" => {
+            plugins.emit_config_reload("config/qexed.toml");
+            sink.send(SystemChat {
+                content: text_component(
+                    "Reloaded plugin configuration events. Runtime server config changes require restart."
+                        .to_string(),
+                ),
+                overlay: false,
+            })
+            .await?;
+            Ok(CommandOutcome::default())
         }
         "time" => {
             handle_time_command(sink, world_rules, argument.as_str()).await?;
@@ -728,6 +766,230 @@ fn resolve_single_player(
     match value {
         "@s" | "@p" => Some(source.clone()),
         name => players.player_by_name(name),
+    }
+}
+
+async fn handle_gamemode_command<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    profile: &qexed_packet::net_types::GameProfile,
+    actor_entity_id: i32,
+    position: EntityPosition,
+    dimension: &str,
+    argument: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let parts = argument.split_whitespace().collect::<Vec<_>>();
+    if parts.is_empty() || parts.len() > 2 {
+        send_unknown_or_incomplete_command(sink, format!("gamemode {}", argument.trim())).await?;
+        return Ok(());
+    }
+    let Some(game_mode) = parse_game_mode(parts[0]) else {
+        send_unknown_or_incomplete_command(sink, format!("gamemode {}", argument.trim())).await?;
+        return Ok(());
+    };
+    let source = players.player_by_uuid(profile.uuid).unwrap_or_else(|| {
+        command_source_player(
+            profile,
+            actor_entity_id,
+            position,
+            dimension,
+            "zh_cn".to_string(),
+        )
+    });
+    let target = if let Some(target) = parts.get(1) {
+        let Some(target) = resolve_single_player(players, &source, target) else {
+            send_unknown_player(sink, target).await?;
+            return Ok(());
+        };
+        target
+    } else {
+        source
+    };
+    let mode_id = i32::from(game_mode.protocol_id());
+    if players
+        .set_game_mode(target.profile.uuid, mode_id)
+        .is_none()
+    {
+        send_unknown_player(sink, &target.profile.username).await?;
+        return Ok(());
+    }
+    sink.send(SystemChat {
+        content: text_component(format!(
+            "已将 {} 的游戏模式设置为 {}",
+            target.profile.username,
+            game_mode_label(game_mode)
+        )),
+        overlay: false,
+    })
+    .await?;
+    Ok(())
+}
+
+async fn handle_give_command<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    players: &PlayerManager,
+    profile: &qexed_packet::net_types::GameProfile,
+    actor_entity_id: i32,
+    position: EntityPosition,
+    dimension: &str,
+    argument: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let parts = argument.split_whitespace().collect::<Vec<_>>();
+    if parts.is_empty() {
+        send_unknown_or_incomplete_command(sink, "give".to_string()).await?;
+        return Ok(());
+    }
+    let source = players.player_by_uuid(profile.uuid).unwrap_or_else(|| {
+        command_source_player(
+            profile,
+            actor_entity_id,
+            position,
+            dimension,
+            "zh_cn".to_string(),
+        )
+    });
+    let parsed = parse_give_command(&parts, players, &source);
+    let GiveCommand {
+        target,
+        item_name,
+        count,
+    } = match parsed {
+        GiveParse::Parsed(command) => command,
+        GiveParse::UnknownPlayer(player) => {
+            send_unknown_player(sink, &player).await?;
+            return Ok(());
+        }
+        GiveParse::Invalid => {
+            send_unknown_or_incomplete_command(sink, format!("give {}", argument.trim())).await?;
+            return Ok(());
+        }
+    };
+    let Some((item, display_name)) = command_item_stack(&item_name, count) else {
+        sink.send(SystemChat {
+            content: text_component(format!("未知物品: {item_name}")),
+            overlay: false,
+        })
+        .await?;
+        return Ok(());
+    };
+    if !players.give_item(target.profile.uuid, item, display_name.clone()) {
+        send_unknown_player(sink, &target.profile.username).await?;
+        return Ok(());
+    }
+    sink.send(SystemChat {
+        content: text_component(format!(
+            "已给予 {} {} 个 {}",
+            target.profile.username, count, display_name
+        )),
+        overlay: false,
+    })
+    .await?;
+    Ok(())
+}
+
+struct GiveCommand {
+    target: crate::players::OnlinePlayer,
+    item_name: String,
+    count: i32,
+}
+
+enum GiveParse {
+    Parsed(GiveCommand),
+    UnknownPlayer(String),
+    Invalid,
+}
+
+fn parse_give_command(
+    parts: &[&str],
+    players: &PlayerManager,
+    source: &crate::players::OnlinePlayer,
+) -> GiveParse {
+    let first = parts[0];
+    let first_is_item = command_item_id(first).is_some();
+    let first_is_known_target =
+        matches!(first, "@s" | "@p") || players.player_by_name(first).is_some();
+    let second_is_item = parts
+        .get(1)
+        .is_some_and(|item| command_item_id(item).is_some());
+    let likely_vanilla_target = parts.len() >= 2 && second_is_item && !first_is_item;
+    let (target, item_name, count_token) = if parts.len() >= 2 && first_is_known_target {
+        let Some(target) = resolve_single_player(players, source, first) else {
+            return GiveParse::UnknownPlayer(first.to_string());
+        };
+        if parts.len() > 3 {
+            return GiveParse::Invalid;
+        }
+        (target, parts[1], parts.get(2).copied())
+    } else if likely_vanilla_target {
+        return GiveParse::UnknownPlayer(first.to_string());
+    } else {
+        if parts.len() > 2 {
+            return GiveParse::Invalid;
+        }
+        (source.clone(), first, parts.get(1).copied())
+    };
+    let Some(count) = parse_give_count(count_token) else {
+        return GiveParse::Invalid;
+    };
+    GiveParse::Parsed(GiveCommand {
+        target,
+        item_name: item_name.to_string(),
+        count,
+    })
+}
+
+fn parse_give_count(value: Option<&str>) -> Option<i32> {
+    match value {
+        Some(value) => value.parse::<i32>().ok().filter(|count| *count > 0),
+        None => Some(1),
+    }
+    .map(|count| count.clamp(1, 64 * 36))
+}
+
+fn command_item_stack(
+    item_name: &str,
+    count: i32,
+) -> Option<(qexed_protocol::types::Slot, String)> {
+    let normalized = normalize_resource_key(item_name).to_ascii_lowercase();
+    let item_id = crate::inventory::item_id_for_name(&normalized)?;
+    Some((crate::inventory::simple_item(item_id, count), normalized))
+}
+
+fn command_item_id(item_name: &str) -> Option<i32> {
+    crate::inventory::item_id_for_name(&normalize_resource_key(item_name).to_ascii_lowercase())
+}
+
+fn normalize_resource_key(value: &str) -> String {
+    let value = value.trim();
+    if value.contains(':') {
+        value.to_string()
+    } else {
+        format!("minecraft:{value}")
+    }
+}
+
+fn parse_game_mode(value: &str) -> Option<GameMode> {
+    match value.to_ascii_lowercase().as_str() {
+        "0" | "s" | "survival" => Some(GameMode::Survival),
+        "1" | "c" | "creative" => Some(GameMode::Creative),
+        "2" | "a" | "adventure" => Some(GameMode::Adventure),
+        "3" | "sp" | "spectator" => Some(GameMode::Spectator),
+        _ => None,
+    }
+}
+
+fn game_mode_label(game_mode: GameMode) -> &'static str {
+    match game_mode {
+        GameMode::Survival => "生存模式",
+        GameMode::Creative => "创造模式",
+        GameMode::Adventure => "冒险模式",
+        GameMode::Spectator => "旁观模式",
     }
 }
 
