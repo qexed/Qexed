@@ -1883,6 +1883,7 @@ impl EntityManager {
         tick_ms: u64,
     ) -> Result<()> {
         if !self.should_run_ai_tick(tick_ms) {
+        let _span = crate::profile_span!("entity:tick_ai");
             return Ok(());
         }
         let now = Instant::now();
@@ -2448,6 +2449,7 @@ impl EntityManager {
     }
 
     fn should_run_ai_tick(&self, interval_ms: u64) -> bool {
+        let _span = crate::profile_span!("entity:tick_ai");
         should_run_tick(&self.last_ai_tick, interval_ms)
     }
 

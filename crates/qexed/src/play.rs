@@ -615,6 +615,7 @@ where
                 }
             }
             loaded_chunk = chunk_receiver.recv(), if chunk_state.has_loading_chunks() => {
+                let _span = crate::profile_span!("world:chunk_load");
                 let Some(loaded_chunk) = loaded_chunk else {
                     anyhow::bail!("chunk load task channel closed");
                 };
@@ -638,6 +639,7 @@ where
                 .await?;
             }
             _ = chunk_send_tick.tick(), if chunk_state.has_ready_chunks() => {
+                let _span = crate::profile_span!("net:chunk_send");
                 chunk_state
                     .send_ready_chunks(sink, world, plugins, &chunk_sender, true)
                     .await?;
@@ -655,6 +657,7 @@ where
                 .await?;
             }
             _ = chunk_unload_sweep.tick(), if chunk_state.has_pending_unloads() => {
+                let _span = crate::profile_span!("world:chunk_unload");
                 let unloaded = chunk_state
                     .unload_expired_chunks(sink, plugins, Instant::now())
                     .await?;
@@ -671,6 +674,7 @@ where
                 }
             }
             _ = survival_tick.tick() => {
+                let _span = crate::profile_span!("tick:survival");
                 if apply_survival_tick(
                     sink,
                     players,
@@ -718,6 +722,7 @@ where
                 }
             }
             _ = gameplay_tick.tick() => {
+                let _span = crate::profile_span!("tick:gameplay");
                 let mut tick_player = session.player.clone();
                 tick_player.position = position;
                 tick_player.dimension = play_dimension.clone();
@@ -869,6 +874,7 @@ where
                 }
             }
             _ = world_time_tick.tick() => {
+                let _span = crate::profile_span!("tick:world_time");
                 let game_time = world_rules.tick_dimension_time(&play_dimension);
                 sink.send(SetTime {
                     game_time,
@@ -878,6 +884,7 @@ where
                 sink.flush().await?;
             }
             _ = sidebar_refresh_tick.tick() => {
+                let _span = crate::profile_span!("ui:sidebar");
                 let mut sidebar_player = session.player.clone();
                 sidebar_player.position = position;
                 sidebar_player.dimension = play_dimension.clone();
@@ -896,6 +903,7 @@ where
                 sink.flush().await?;
             }
             _ = player_data_autosave.tick() => {
+                let _span = crate::profile_span!("io:player_autosave");
                 save_player_runtime(
                     player_data,
                     saved_player,
@@ -910,6 +918,7 @@ where
                 world.flush_block_writes();
             }
             event = session.receiver.recv() => {
+                let _span = crate::profile_span!("event:player");
                 let Some(event) = event else {
                     continue;
                 };
@@ -1205,6 +1214,7 @@ where
                 sink.flush().await?;
             }
             packet = packets.read_packet() => {
+                let _span = crate::profile_span!("net:packet_process");
                 let Some(mut payload) = packet? else {
                     break Ok(());
                 };
@@ -3533,6 +3543,7 @@ where
                 log::trace!("skipped unhandled Play serverbound packet ID: {packet_id}");
             }
             _ = keep_alive.tick() => {
+                let _span = crate::profile_span!("net:keep_alive");
                 if let Some(expected) = pending_keep_alive {
                     anyhow::bail!("client KeepAlive response timed out: id={expected}");
                 }
