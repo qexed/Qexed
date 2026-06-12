@@ -24,6 +24,16 @@ pub async fn load(
     crate::registry_sync::configure_mojang_cache_path(&config.server.mojang_cache_path);
     crate::registry_sync::ensure_data_ready()?;
 
+    // Initialize the l10n/i18n module with Mojang language files
+    let fallback_language = "en_us".to_string();
+    if let Some(lang_dir) = crate::registry_sync::lang_dir() {
+        if let Err(err) = crate::l10n::initialize(&lang_dir, &fallback_language) {
+            log::warn!("failed to initialize l10n module: {err:#}");
+        }
+    } else {
+        log::warn!("Mojang language files not found, i18n will be unavailable");
+    }
+
     Ok(Some(config))
 }
 

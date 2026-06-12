@@ -788,6 +788,22 @@ pub enum EntityAiOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalizedNameQuery {
+    pub key: String,
+    pub language: String,
+    #[serde(default)]
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LocalizedNameResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub found: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PlayerAction {
     SystemMessage {
         #[serde(default)]

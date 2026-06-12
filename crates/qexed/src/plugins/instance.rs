@@ -12,8 +12,8 @@ use super::{
         host_economy_deposit_async, host_economy_register_currency, host_economy_set_balance,
         host_economy_set_balance_async, host_economy_storage, host_economy_withdraw,
         host_economy_withdraw_async, host_entity_move, host_entity_remove, host_entity_upsert,
-        host_http_request, host_log, host_lottery_roll, host_pathfinding_find, host_plugin_call,
-        host_plugin_service_exists, host_random_pool_roll, host_storage_delete,
+        host_http_request, host_localize, host_log, host_lottery_roll, host_pathfinding_find,
+        host_plugin_call, host_plugin_service_exists, host_random_pool_roll, host_storage_delete,
         host_storage_exists, host_storage_get, host_storage_set,
         host_structured_storage_async_forget, host_structured_storage_async_poll,
         host_structured_storage_delete, host_structured_storage_delete_async,
@@ -230,6 +230,9 @@ fn register_host_apis(linker: &mut Linker<PluginState>) -> Result<()> {
     linker
         .func_wrap("qexed", "http_request", host_http_request)
         .context("register http_request API")?;
+    linker
+        .func_wrap("qexed", "localize", host_localize)
+        .context("register plugin localize API")?;
     Ok(())
 }
 

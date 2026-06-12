@@ -89,6 +89,19 @@ pub(crate) fn ensure_data_ready() -> anyhow::Result<()> {
     );
 }
 
+/// Returns the path to the cached Mojang language files directory, if available.
+/// This will trigger data download if not already cached.
+pub(crate) fn lang_dir() -> Option<std::path::PathBuf> {
+    let roots = data_roots();
+    for root in &roots {
+        let lang_dir = root.join("lang");
+        if lang_dir.exists() && lang_dir.is_dir() {
+            return Some(lang_dir);
+        }
+    }
+    None
+}
+
 pub(crate) fn configure_mojang_cache_path(path: impl Into<PathBuf>) {
     let path = path.into();
     if path.as_os_str().is_empty() {

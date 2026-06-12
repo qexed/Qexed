@@ -248,14 +248,16 @@ fn extract_minecraft_data(jar_path: &Path, cache_root: &Path) -> Result<()> {
     let mut archive = zip::ZipArchive::new(reader)
         .with_context(|| format!("无法读取 Mojang jar zip: {}", jar_path.display()))?;
     let extracted = extract_data_from_archive(&mut archive, &tmp_root)?;
+    let lang_extracted = extract_lang_files_from_archive(&mut archive, &tmp_root)?;
 
     if extracted == 0 {
         anyhow::bail!("Mojang jar 中没有找到 data/minecraft JSON 数据");
     }
 
+    let total_extracted = extracted + lang_extracted;
     std::fs::write(
         tmp_root.join("minecraft").join(DATA_MARKER),
-        extracted.to_string(),
+        total_extracted.to_string(),
     )
     .with_context(|| "无法写入 Mojang 数据缓存完成标记")?;
     if data_root.exists() {
@@ -270,9 +272,10 @@ fn extract_minecraft_data(jar_path: &Path, cache_root: &Path) -> Result<()> {
     std::fs::rename(&tmp_root, &final_root)
         .with_context(|| format!("无法安装 Mojang 数据缓存: {}", final_root.display()))?;
     log::info!(
-        "Mojang registry data cached: version={}, files={}, path={}",
+        "Mojang registry data cached: version={}, registry_files={}, lang_files={}, path={}",
         qexed_config::MC_VERSION,
         extracted,
+        lang_extracted,
         data_root.display()
     );
     Ok(())
@@ -310,6 +313,57 @@ where
         extracted += 1;
     }
     Ok(extracted)
+}
+
+fn extract_lang_files_from_archive<R>(
+    archive: &mut zip::ZipArchive<R>,
+    tmp_root: &Path,
+) -> Result<usize>
+where
+    R: Read + Seek,
+{
+    let mut extracted = 0usize;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(name) = entry.enclosed_name() else {
+            continue;
+        };
+        let Some(relative) = strip_minecraft_lang_prefix(&name) else {
+            continue;
+        };
+        if relative.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+
+        let target = tmp_root.join("minecraft").join("lang").join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("无法创建 Mojang lang 目录: {}", parent.display()))?;
+        }
+        let mut output = File::create(&target)
+            .with_context(|| format!("无法写入 Mojang lang 文件: {}", target.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .with_context(|| format!("无法抽取 Mojang lang 文件: {}", target.display()))?;
+        extracted += 1;
+    }
+    Ok(extracted)
+}
+
+fn strip_minecraft_lang_prefix(path: &Path) -> Option<PathBuf> {
+    let mut components = path.components();
+    match (components.next(), components.next(), components.next()) {
+        (
+            Some(std::path::Component::Normal(assets)),
+            Some(std::path::Component::Normal(minecraft)),
+            Some(std::path::Component::Normal(lang)),
+        ) if assets == "assets" && minecraft == "minecraft" && lang == "lang" => {
+            Some(components.as_path().to_path_buf())
+        }
+        _ => None,
+    }
 }
 
 fn strip_minecraft_data_prefix(path: &Path) -> Option<PathBuf> {
@@ -394,7 +448,7 @@ struct DownloadInfo {
 mod tests {
     use std::path::Path;
 
-    use super::strip_minecraft_data_prefix;
+    use super::{strip_minecraft_data_prefix, strip_minecraft_lang_prefix};
 
     #[test]
     fn strips_minecraft_data_prefix() {
@@ -410,6 +464,32 @@ mod tests {
     fn rejects_non_minecraft_data_path() {
         assert!(
             strip_minecraft_data_prefix(Path::new("assets/minecraft/lang/en_us.json")).is_none()
+        );
+    }
+
+    #[test]
+    fn strips_minecraft_lang_prefix() {
+        let path = Path::new("assets/minecraft/lang/en_us.json");
+        assert_eq!(
+            strip_minecraft_lang_prefix(path).unwrap(),
+            Path::new("en_us.json")
+        );
+    }
+
+    #[test]
+    fn strips_minecraft_lang_prefix_for_zh_cn() {
+        let path = Path::new("assets/minecraft/lang/zh_cn.json");
+        assert_eq!(
+            strip_minecraft_lang_prefix(path).unwrap(),
+            Path::new("zh_cn.json")
+        );
+    }
+
+    #[test]
+    fn rejects_non_minecraft_lang_path() {
+        assert!(
+            strip_minecraft_lang_prefix(Path::new("data/minecraft/tags/damage_type/is_fire.json"))
+                .is_none()
         );
     }
 }

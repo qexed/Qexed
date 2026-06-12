@@ -687,6 +687,40 @@ pub(super) fn host_log(mut caller: Caller<'_, PluginState>, ptr: i32, len: i32) 
     }
 }
 
+pub(super) fn host_localize(
+    mut caller: Caller<'_, PluginState>,
+    key_ptr: i32,
+    key_len: i32,
+    language_ptr: i32,
+    language_len: i32,
+    kind_ptr: i32,
+    kind_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(key) = host_string(&mut caller, key_ptr, key_len, 256) else {
+        return -1;
+    };
+    let Some(language) = host_string(&mut caller, language_ptr, language_len, 64) else {
+        return -1;
+    };
+    let kind = host_string(&mut caller, kind_ptr, kind_len, 64).unwrap_or_default();
+    let name = match kind.as_str() {
+        "entity" => crate::l10n::localize_entity(&key, &language),
+        "enchantment" => crate::l10n::localize_enchantment(&key, &language),
+        _ => crate::l10n::localize(&key, &language),
+    };
+    let found = name.is_some();
+    let response = qexed_plugin_api::LocalizedNameResponse {
+        name: name.unwrap_or_default(),
+        found,
+    };
+    let Ok(bytes) = postcard::to_allocvec(&response) else {
+        return -1;
+    };
+    write_host_response(&mut caller, out_ptr, out_len, &bytes)
+}
+
 pub(super) fn host_time_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

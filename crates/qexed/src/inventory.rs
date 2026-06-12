@@ -585,6 +585,31 @@ pub fn item_name_for_id(item_id: i32) -> Option<String> {
     block_item_registry().item_name_by_id.get(&item_id).cloned()
 }
 
+/// Get the localized display name for an item by its numeric ID.
+/// Falls back to the registry name (e.g., "minecraft:stone") if no i18n data is available.
+pub fn item_localized_name(item_id: i32, language: &str) -> Option<String> {
+    let key = item_name_for_id(item_id)?;
+    Some(crate::l10n::localize(&key, language).unwrap_or(key))
+}
+
+/// Get the localized display name for a block by its registry name
+/// (e.g., "minecraft:stone").
+/// Falls back to the registry name if no i18n data is available.
+pub fn block_localized_name(block_name: &str, language: &str) -> Option<String> {
+    Some(crate::l10n::localize(block_name, language).unwrap_or_else(|| block_name.to_string()))
+}
+
+/// Get the localized display name for a key, supporting kind hints
+/// ("block", "item", "entity", "enchantment").
+pub fn localized_name_for_key(key: &str, language: &str, kind: &str) -> Option<String> {
+    let localized = match kind {
+        "entity" => crate::l10n::localize_entity(key, language),
+        "enchantment" => crate::l10n::localize_enchantment(key, language),
+        _ => crate::l10n::localize(key, language),
+    };
+    Some(localized.unwrap_or_else(|| key.to_string()))
+}
+
 pub fn is_air_block_state(block_state: i32) -> bool {
     block_item_registry()
         .air_block_states

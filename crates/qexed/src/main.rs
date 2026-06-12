@@ -12,6 +12,7 @@ mod console;
 mod content_filter;
 mod entities;
 mod inventory;
+mod l10n;
 mod lan_discovery;
 mod permissions;
 mod placeholders;
