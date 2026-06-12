@@ -18,8 +18,12 @@ enum ConsoleCommand {
     Op(String),
     Reload,
     Stop,
+    Profile(ProfileAction),
     Unknown(String),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileAction { Start, Stop, Report }
 
 impl ConsoleCommand {
     fn parse(input: &str) -> Self {
@@ -42,6 +46,11 @@ impl ConsoleCommand {
             "op" => Self::Op(argument),
             "reload" => Self::Reload,
             "stop" | "exit" | "quit" => Self::Stop,
+            "profile" => match argument.as_str() {
+                "start" | "on" | "enable" => Self::Profile(ProfileAction::Start),
+                "stop" | "off" | "disable" => Self::Profile(ProfileAction::Stop),
+                _ => Self::Profile(ProfileAction::Report),
+            },
             _ => Self::Unknown(command.to_string()),
         }
     }
@@ -58,6 +67,7 @@ impl ConsoleCommand {
             Self::Op(_) => Some("op"),
             Self::Reload => Some("reload"),
             Self::Stop => Some("stop"),
+            Self::Profile(_) => Some("profile"),
             Self::Unknown(command) => Some(command),
         }
     }
@@ -159,6 +169,7 @@ async fn execute(
             let _ = shutdown.send(true);
             return Ok(true);
         }
+        ConsoleCommand::Profile(action) => handle_profile(context, action),
         ConsoleCommand::Unknown(command) => {
             print_console(rust_i18n::t!(
                 "qexed.console.unknown",
@@ -169,6 +180,23 @@ async fn execute(
     }
 
     Ok(false)
+}
+
+fn handle_profile(context: &ServerContext, action: ProfileAction) {
+    let Some(p) = crate::profiler::get() else { print_console("Profiler not initialized"); return; };
+    match action {
+        ProfileAction::Start => { p.enable(); print_console("Profiler started. Run 'profile report' to generate."); }
+        ProfileAction::Stop => { p.disable(); print_console("Profiler stopped."); }
+        ProfileAction::Report => {
+            p.disable();
+            let html = p.report_html();
+            let path = std::env::current_dir().unwrap_or_default().join("profile_report.html");
+            match std::fs::write(&path, &html) {
+                Ok(_) => print_console(format!("Report: {}", path.display())),
+                Err(e) => print_console(format!("Failed: {e}")),
+            }
+        }
+    }
 }
 
 fn print_help(context: &ServerContext) {

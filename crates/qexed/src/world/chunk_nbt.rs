@@ -1019,5 +1019,17 @@ impl BlockPaletteEntry {
     }
 }
 
+pub fn all_section_block_states(root: &Tag) -> Result<Vec<SectionBlockStates>> {
+    let root = compound(root).context("not a compound")?;
+    let sections = sections_by_y(root);
+    let mut result = Vec::with_capacity(sections.len());
+    for (&sy, section) in &sections {
+        let values = block_values(section.get("block_states"))?;
+        result.push(SectionBlockStates { section_y: sy, states: values.global_ids });
+    }
+    Ok(result)
+}
+pub struct SectionBlockStates { pub section_y: i32, pub states: Vec<i32> }
+
 #[cfg(test)]
 mod tests;

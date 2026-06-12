@@ -2948,6 +2948,7 @@ dependencies = [
  "qexed_packet",
  "qexed_player",
  "qexed_plugin_api",
+ "qexed_profiler",
  "qexed_protocol",
  "qexed_tcp_connect",
  "rand 0.8.6",
@@ -3099,6 +3100,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "qexed_profiler"
+version = "0.1.0"
 
 [[package]]
 name = "qexed_protocol"

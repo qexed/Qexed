@@ -15,6 +15,7 @@ members = [
     "crates/qexed_protocol",
     "crates/qexed_nbt", 
     "crates/qexed_tools",
+    "crates/qexed_profiler",
     "crates/macros/qexed_error_macros",
 ]
 [workspace.dependencies]

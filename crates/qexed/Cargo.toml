@@ -8,6 +8,7 @@ build = "build.rs"
 default = []
 
 [dependencies]
+qexed_profiler = { path = "../qexed_profiler" }
 qexed_log.workspace = true
 qexed_config.workspace = true
 qexed_entity.workspace = true

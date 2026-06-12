@@ -145,27 +145,57 @@ impl WorldWriteQueue {
 
 #[derive(Debug, Default)]
 struct RegionChunkCache {
-    chunks: std::collections::HashMap<ChunkKey, region::ChunkData>,
+    chunks: std::collections::HashMap<ChunkKey, CachedChunk>,
     order: std::collections::VecDeque<ChunkKey>,
 }
 
+#[derive(Debug, Clone)]
+struct CachedChunk {
+    compressed: region::ChunkData,
+    parsed: Option<std::sync::Arc<qexed_nbt::Tag>>,
+    flat_blocks: Option<std::sync::Arc<FlatBlockStates>>,
+}
+
+#[derive(Debug)]
+struct FlatBlockStates { states: Box<[i32]> }
+
+impl FlatBlockStates {
+    fn from_nbt(root: &qexed_nbt::Tag) -> Option<Self> {
+        let sections = chunk_nbt::all_section_block_states(root).ok()?;
+        let total = 16usize * 16 * (super::OVERWORLD_HEIGHT as usize);
+        let mut states = vec![0i32; total].into_boxed_slice();
+        for sec in &sections {
+            let sy = sec.section_y;
+            if sy < super::WORLD_MIN_SECTION_Y || sy >= super::WORLD_MIN_SECTION_Y + super::WORLD_SECTION_COUNT as i32 { continue; }
+            let by = (sy - super::WORLD_MIN_SECTION_Y) as usize * 16;
+            let src = by.checked_mul(256)?;
+            let len = sec.states.len().min(total.saturating_sub(src));
+            if src + len <= total { states[src..src + len].copy_from_slice(&sec.states[..len]); }
+        }
+        Some(Self { states })
+    }
+    fn get(&self, x: i32, y: i32, z: i32) -> Option<i32> {
+        let lx = x.rem_euclid(16) as usize;
+        let ly = y.checked_sub(super::WORLD_MIN_Y)? as usize;
+        let lz = z.rem_euclid(16) as usize;
+        let idx = lx + lz.checked_mul(16)? + ly.checked_mul(256)?;
+        if idx < self.states.len() { Some(self.states[idx]) } else { None }
+    }
+}
+
 impl RegionChunkCache {
-    fn get(&mut self, key: &ChunkKey) -> Option<region::ChunkData> {
+    fn get(&mut self, key: &ChunkKey) -> Option<CachedChunk> {
         let chunk = self.chunks.get(key).cloned()?;
         self.touch(key.clone());
         Some(chunk)
     }
 
-    fn insert(&mut self, key: ChunkKey, chunk: region::ChunkData) {
-        self.chunks.insert(key.clone(), chunk);
+    fn insert(&mut self, key: ChunkKey, compressed: region::ChunkData) {
+        self.chunks.insert(key.clone(), CachedChunk { compressed, parsed: None, flat_blocks: None });
         self.touch(key.clone());
         while self.chunks.len() > REGION_CHUNK_CACHE_LIMIT {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            if oldest != key {
-                self.chunks.remove(&oldest);
-            }
+            let Some(oldest) = self.order.pop_front() else { break; };
+            if oldest != key { self.chunks.remove(&oldest); }
         }
     }
 
@@ -907,13 +937,13 @@ impl WorldManager {
         }
 
         let key = ChunkKey::new(dimension, chunk_x, chunk_z);
-        if let Some(chunk) = self
+        if let Some(cached) = self
             .region_chunk_cache
             .lock()
             .expect("world region chunk cache poisoned")
             .get(&key)
         {
-            return Ok(Some(chunk));
+            return Ok(Some(cached.compressed));
         }
 
         let loaded = self.with_region_read_lock(dimension, chunk_x, chunk_z, || {
@@ -1372,6 +1402,7 @@ impl WorldManager {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
+        if let Some(state) = self.cached_block_state_at(dimension, position) { return Some(state); }
         if let Some(block_state) = self
             .placed_blocks
             .lock()
@@ -1451,30 +1482,24 @@ impl WorldManager {
             return Some(block_state);
         }
 
-        let chunk_key = ChunkKey::new(
-            dimension,
-            position.x.div_euclid(16),
-            position.z.div_euclid(16),
-        );
-        let chunk = self
-            .region_chunk_cache
-            .lock()
-            .expect("world region chunk cache poisoned")
-            .get(&chunk_key)?;
-        let block_state = match chunk_nbt::block_state_at_from_region(&chunk, position) {
-            Ok(block_state) => block_state,
-            Err(err) => {
-                log::debug!(
-                    "failed to read cached block state: dimension={dimension}, position=({}, {}, {}), error={err:#}",
-                    position.x,
-                    position.y,
-                    position.z
-                );
-                None
+        let chunk_key = ChunkKey::new(dimension, position.x.div_euclid(16), position.z.div_euclid(16));
+        let mut cache = self.region_chunk_cache.lock().expect("world region chunk cache poisoned");
+        let Some(entry) = cache.chunks.get_mut(&chunk_key) else { return None; };
+        if entry.flat_blocks.is_none() {
+            if entry.parsed.is_none() {
+                let raw = match entry.compressed.decompress() { Ok(r) => r, Err(_) => return None };
+                match qexed_nbt::from_slice(&raw) {
+                    Ok((_, root)) => entry.parsed = Some(std::sync::Arc::new(root)),
+                    Err(_) => return None,
+                }
             }
-        }?;
-        self.remember_block_state(block_key, block_state);
-        Some(block_state)
+            if let Some(p) = &entry.parsed { entry.flat_blocks = FlatBlockStates::from_nbt(p).map(std::sync::Arc::new); }
+        }
+        if let Some(flat) = &entry.flat_blocks { return flat.get(position.x, position.y, position.z); }
+        let parsed = entry.parsed.as_ref()?;
+        let bs = chunk_nbt::block_state_at_from_nbt(parsed, position).ok()??;
+        self.remember_block_state(block_key, bs);
+        Some(bs)
     }
 
     pub fn placed_block_updates(

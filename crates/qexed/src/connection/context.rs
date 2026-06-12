@@ -19,6 +19,7 @@ pub struct ServerContext {
     pub player_data: Arc<crate::player_data::PlayerDataManager>,
     pub permissions: Arc<crate::permissions::PermissionManager>,
     pub plugins: Arc<crate::plugins::PluginManager>,
+    pub profiler: Arc<qexed_profiler::Profiler>,
     pub player_audit: Arc<crate::audit::PlayerAuditLogger>,
     pub content_filter: Arc<crate::content_filter::ContentFilter>,
     pub resource_pack: Arc<crate::resource_pack::ResourcePackManager>,
@@ -126,6 +127,8 @@ impl ServerContext {
             config.server.code_of_conduct,
             code_of_conduct_dir,
         )?;
+        let profiler = Arc::new(qexed_profiler::Profiler::new());
+        crate::profiler::init(profiler.as_ref().clone());
         Ok(Self {
             config: Arc::new(config),
             authenticator: Arc::new(Authenticator::new()?),
@@ -138,6 +141,7 @@ impl ServerContext {
             player_data: Arc::new(player_data),
             permissions: Arc::new(permissions),
             plugins,
+            profiler,
             player_audit: Arc::new(player_audit),
             content_filter: Arc::new(content_filter),
             resource_pack: Arc::new(resource_pack),

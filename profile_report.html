@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qexed 性能报告</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#c9d1d9;padding:24px}
+h1{font-size:24px;color:#58a6ff;margin-bottom:4px}
+.sub{color:#8b949e;font-size:13px;margin-bottom:20px}
+.summary{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-width:160px}
+.card .v{font-size:28px;font-weight:600;color:#58a6ff}
+.card .l{font-size:12px;color:#8b949e;margin-top:4px}
+table{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+th{text-align:left;padding:10px 14px;background:#1c2129;font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px}
+td{padding:8px 14px;font-size:13px;border-top:1px solid #21262d}
+.bar-cell{width:40%;position:relative}
+.bar-bg{height:6px;background:#21262d;border-radius:3px;overflow:hidden}
+.bar-fg{height:6px;background:#58a6ff;border-radius:3px;transition:width 0.3s}
+.bar-fg.warn{background:#d29922}
+.bar-fg.hot{background:#f85149}
+tr:hover{background:#1c2129}
+.footer{margin-top:20px;font-size:11px;color:#484f58}
+</style>
+</head>
+<body>
+<h1>🔬 Qexed 性能报告</h1>
+<div class="sub">会话时长: 5.0s &nbsp;|&nbsp; 总采样时间: 202.2ms &nbsp;|&nbsp; 热点数: 5</div><div class="summary"><div class="card"><div class="v">5</div><div class="l">热点总数</div></div><div class="card"><div class="v">202.2ms</div><div class="l">总采样时间</div></div><div class="card"><div class="v">5.0s</div><div class="l">会话时长</div></div><div class="card"><div class="v">tick:entities (120.1ms)</div><div class="l">最大热点</div></div></div><table><thead><tr><th>排名</th><th>热点名称</th><th>总时间</th><th>占比</th><th>调用次数</th><th>平均</th><th>最小</th><th>最大</th></tr></thead><tbody><tr><td>1</td><td><strong>tick:entities</strong></td><td>120.08ms</td><td>59.4%</td><td>100</td><td>1.201ms</td><td>1.200ms</td><td>1.266ms</td></tr><tr><td colspan="8" class="bar-cell"><div class="bar-bg"><div class="bar-fg hot" style="width:100.0%"></div></div></td></tr><tr><td>2</td><td><strong>tick:survival</strong></td><td>40.07ms</td><td>19.8%</td><td>100</td><td>0.401ms</td><td>0.400ms</td><td>0.421ms</td></tr><tr><td colspan="8" class="bar-cell"><div class="bar-bg"><div class="bar-fg warn" style="width:33.4%"></div></div></td></tr><tr><td>3</td><td><strong>tick:block_updates</strong></td><td>30.16ms</td><td>14.9%</td><td>100</td><td>0.302ms</td><td>0.300ms</td><td>0.392ms</td></tr><tr><td colspan="8" class="bar-cell"><div class="bar-bg"><div class="bar-fg warn" style="width:25.1%"></div></div></td></tr><tr><td>4</td><td><strong>tick:fluid</strong></td><td>10.06ms</td><td>5.0%</td><td>100</td><td>0.101ms</td><td>0.100ms</td><td>0.150ms</td></tr><tr><td colspan="8" class="bar-cell"><div class="bar-bg"><div class="bar-fg " style="width:8.4%"></div></div></td></tr><tr><td>5</td><td><strong>tick:redstone</strong></td><td>1.80ms</td><td>0.9%</td><td>3</td><td>0.600ms</td><td>0.600ms</td><td>0.600ms</td></tr><tr><td colspan="8" class="bar-cell"><div class="bar-bg"><div class="bar-fg " style="width:1.5%"></div></div></td></tr></tbody></table><div class="footer">Qexed Profiler v0.1 · day 20616 02:02:31 UTC</div></body></html>

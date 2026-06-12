@@ -16,6 +16,7 @@ mod lan_discovery;
 mod permissions;
 mod placeholders;
 mod play;
+pub(crate) mod profiler;
 mod player_data;
 mod players;
 mod plugins;
