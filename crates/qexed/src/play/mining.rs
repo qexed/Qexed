@@ -664,6 +664,24 @@ fn is_pickaxe_block(name: &str) -> bool {
         || name.contains("concrete")
         || name.contains("anvil")
         || name.contains("furnace")
+        || name.contains("ancient_debris")
+        || name.contains("netherite")
+        || name.contains("end_stone")
+        || name.contains("sandstone")
+        || name.contains("calcite")
+        || name.contains("amethyst")
+        || name.contains("dripstone")
+        || name.contains("shulker")
+        || name.contains("lodestone")
+        || name.contains("bell")
+        || name.contains("enchanting_table")
+        || name.contains("ender_chest")
+        || name.contains("grindstone")
+        || name.contains("hopper")
+        || name.contains("piston")
+        || name.contains("purpur")
+        || name.contains("spawner")
+        || name.contains("ice")
 }
 
 fn is_axe_block(name: &str) -> bool {
@@ -718,8 +736,10 @@ fn is_shears_block(name: &str) -> bool {
 fn block_hardness(name: &str) -> f32 {
     if name == "minecraft:air" {
         0.0
-    } else if name.contains("obsidian") || name.contains("ancient_debris") {
+    } else if name.contains("obsidian") {
         50.0
+    } else if name.contains("ancient_debris") {
+        30.0
     } else if name.contains("ender_chest") {
         22.5
     } else if name.contains("deepslate") || name.contains("anvil") {
