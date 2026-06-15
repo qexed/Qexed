@@ -65,6 +65,8 @@ struct SpawnPlatform {
     y: i32,
     min_z: i32,
     max_z: i32,
+    /// Template blocks: (x, y, z, block_name). Overrides the flat platform.
+    template_blocks: Vec<(i32, i32, i32, String)>,
 }
 
 impl SpawnPlatformGenerator {
@@ -92,6 +94,31 @@ impl SpawnPlatformGenerator {
         let chunk_max_x = chunk_min_x + 15;
         let chunk_min_z = chunk_z * 16;
         let chunk_max_z = chunk_min_z + 15;
+
+        // Template mode: place specific blocks at specific positions
+        if !self.platform.template_blocks.is_empty() {
+            let mut blocks = Vec::new();
+            for (x, y, z, block_name) in &self.platform.template_blocks {
+                if *x < chunk_min_x || *x > chunk_max_x || *z < chunk_min_z || *z > chunk_max_z {
+                    continue;
+                }
+                if let Some(block_state) = chunk_nbt::default_block_state_id_if_known(block_name) {
+                    let position = qexed_packet::net_types::Position {
+                        x: *x,
+                        y: *y,
+                        z: *z,
+                    };
+                    blocks.push((
+                        position.clone(),
+                        block_state,
+                        self.inner.block_state_at(dimension, &position),
+                    ));
+                }
+            }
+            return blocks;
+        }
+
+        // Flat platform mode
         let min_x = self.platform.min_x.max(chunk_min_x);
         let max_x = self.platform.max_x.min(chunk_max_x);
         let min_z = self.platform.min_z.max(chunk_min_z);
@@ -125,6 +152,25 @@ impl SpawnPlatform {
         if !configured.enable {
             return None;
         }
+        let dimension = configured.dimension.trim();
+        if dimension.is_empty() {
+            return None;
+        }
+
+        // Skyblock mode: predefined island template
+        if configured.block.trim() == "skyblock" {
+            return Some(Self {
+                dimension: dimension.to_string(),
+                block_state: 0, // unused in template mode
+                min_x: -3,
+                max_x: 3,
+                y: configured.y,
+                min_z: -3,
+                max_z: 3,
+                template_blocks: skyblock_island_template(configured.y),
+            });
+        }
+
         if !(super::WORLD_MIN_Y..=super::WORLD_MAX_Y).contains(&configured.y) {
             log::warn!(
                 "spawn platform y is outside world height and will be ignored: y={}",
@@ -141,10 +187,6 @@ impl SpawnPlatform {
             );
             return None;
         };
-        let dimension = configured.dimension.trim();
-        if dimension.is_empty() {
-            return None;
-        }
         Some(Self {
             dimension: dimension.to_string(),
             block_state,
@@ -153,6 +195,7 @@ impl SpawnPlatform {
             y: configured.y,
             min_z: configured.min_z.min(configured.max_z),
             max_z: configured.min_z.max(configured.max_z),
+            template_blocks: Vec::new(),
         })
     }
 
@@ -162,6 +205,86 @@ impl SpawnPlatform {
             && (self.min_x..=self.max_x).contains(&position.x)
             && (self.min_z..=self.max_z).contains(&position.z)
     }
+
+    fn template_block_state_at(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<i32> {
+        if dimension.trim() != self.dimension || self.template_blocks.is_empty() {
+            return None;
+        }
+        self.template_blocks
+            .iter()
+            .find(|(x, y, z, _)| *x == position.x && *y == position.y && *z == position.z)
+            .and_then(|(_, _, _, block)| chunk_nbt::default_block_state_id_if_known(block))
+    }
+}
+
+/// Skyblock island template.
+/// Produces a 7x7 dirt/grass platform with a central oak tree and a water pool.
+fn skyblock_island_template(platform_y: i32) -> Vec<(i32, i32, i32, String)> {
+    let y = platform_y;
+    let mut blocks = Vec::new();
+
+    // ── Platform layer (y): grass_block perimeter, dirt under tree area ──
+    for x in -3..=3i32 {
+        for z in -3..=3i32 {
+            let block = if x == 0 && (z == 0 || z == 1) {
+                // Dirt under tree roots
+                "minecraft:dirt"
+            } else {
+                "minecraft:grass_block"
+            };
+            blocks.push((x, y, z, block.to_string()));
+        }
+    }
+
+    // ── Oak tree at (0, 0) ──
+    let log = "minecraft:oak_log";
+    let leaves = "minecraft:oak_leaves";
+
+    // Trunk: y+1 to y+4
+    for ty in 1..=4 {
+        blocks.push((0, y + ty, 0, log.to_string()));
+    }
+    // Canopy layer 1: y+2 expanded ring
+    for tx in -2..=2i32 {
+        for tz in -2..=2i32 {
+            // skip trunk, skip outer corners
+            if tx == 0 && tz == 0 { continue; }
+            if tx.abs() == 2 && tz.abs() == 2 { continue; }
+            blocks.push((tx, y + 2, tz, leaves.to_string()));
+        }
+    }
+    // Canopy layer 2-3: y+3 to y+4
+    for ty in 3..=4 {
+        for tx in -2..=2i32 {
+            for tz in -2..=2i32 {
+                if tx == 0 && tz == 0
+                    && ty < 4 { continue; } // trunk occupies y+3 center
+                if tx.abs() == 2 && tz.abs() == 2 { continue; }
+                blocks.push((tx, y + ty, tz, leaves.to_string()));
+            }
+        }
+    }
+    // Top: y+5
+    for tx in -1..=1i32 {
+        for tz in -1..=1i32 {
+            if tx == 0 && tz == 0 { continue; }
+            blocks.push((tx, y + 5, tz, leaves.to_string()));
+        }
+    }
+    blocks.push((0, y + 5, 0, leaves.to_string()));
+
+    // ── Water pool at (2, 2) ──
+    blocks.push((2, y + 1, 2, "minecraft:water".to_string()));
+
+    // ── Dirt patches for farming (dirt + farmland-ready) ──
+    blocks.push((-2, y + 1, 0, "minecraft:dirt".to_string()));
+    blocks.push((-1, y + 1, 0, "minecraft:dirt".to_string()));
+
+    blocks
 }
 
 impl WorldChunkGenerator for SpawnPlatformGenerator {
@@ -224,6 +347,9 @@ impl WorldChunkGenerator for SpawnPlatformGenerator {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
+        if let Some(block_state) = self.platform.template_block_state_at(dimension, position) {
+            return Some(block_state);
+        }
         if self.platform.contains(dimension, position) {
             return Some(self.platform.block_state);
         }

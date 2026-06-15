@@ -16,14 +16,15 @@ mod util;
 
 use anyhow::Result;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    sync::{Mutex, mpsc},
     time::{Duration, Instant},
 };
 
 use qexed_config::app::qexed::server::GameMode;
 use qexed_packet::{
     Packet,
-    net_types::{Position as BlockPosition, VarInt},
+    net_types::{Position as BlockPosition, VarInt, VarLong},
 };
 use qexed_protocol::to_client::play::{
     add_entity::EntityPosition,
@@ -94,6 +95,25 @@ const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const SIDEBAR_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const MIN_PLAYER_DATA_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(10);
+const FLUID_TICK_INTERVAL: Duration = Duration::from_millis(50);
+const FLUID_WATER_TICK_DELAY: u64 = 5;
+const FLUID_LAVA_TICK_DELAY: u64 = 30;
+const FLUID_NETHER_LAVA_TICK_DELAY: u64 = 10;
+const FLUID_MAX_ACTIVE_POSITIONS_PER_TICK: usize = 4096;
+const FLUID_MAX_CHANGES_PER_TICK: usize = 8192;
+const FLUID_MAX_QUEUE: usize = 262_144;
+const FLUID_MAX_DOWNWARD_SPREAD_PER_TICK: usize = 96;
+const FLUID_WATER_SLOPE_SEARCH_DISTANCE: i32 = 4;
+const FLUID_LAVA_SLOPE_SEARCH_DISTANCE: i32 = 2;
+const FLUID_NEIGHBOR_OFFSETS: [(i32, i32, i32); 7] = [
+    (0, 0, 0),
+    (1, 0, 0),
+    (-1, 0, 0),
+    (0, 1, 0),
+    (0, -1, 0),
+    (0, 0, 1),
+    (0, 0, -1),
+];
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
 const PLAYER_ACTION_START_DESTROY_BLOCK: i32 = 0;
 const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
@@ -101,6 +121,444 @@ const PLAYER_ACTION_STOP_DESTROY_BLOCK: i32 = 2;
 const PLAYER_ACTION_DROP_ITEM_STACK: i32 = 3;
 const PLAYER_ACTION_DROP_ITEM: i32 = 4;
 const ADVENTURE_BREAK_CHEAT_BAN_REASON: &str = "开第三方客户端";
+
+type FluidSeed = (BlockPosition, i32);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum FluidKind {
+    Water,
+    Lava,
+}
+
+impl FluidKind {
+    fn from_block_name(name: &str) -> Option<Self> {
+        match name {
+            "minecraft:water" => Some(Self::Water),
+            "minecraft:lava" => Some(Self::Lava),
+            _ => None,
+        }
+    }
+
+    fn from_block_state(block_state: i32) -> Option<Self> {
+        Self::from_block_name(&block_name(block_state))
+    }
+
+    fn tick_delay(self, dimension: &str, dimension_type: Option<&str>) -> u64 {
+        match self {
+            Self::Water => FLUID_WATER_TICK_DELAY,
+            Self::Lava if dimension_is_ultrawarm(dimension, dimension_type) => {
+                FLUID_NETHER_LAVA_TICK_DELAY
+            }
+            Self::Lava => FLUID_LAVA_TICK_DELAY,
+        }
+    }
+}
+
+fn dimension_is_ultrawarm(dimension: &str, dimension_type: Option<&str>) -> bool {
+    dimension_type == Some("minecraft:the_nether") || dimension == "minecraft:the_nether"
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FluidTickDelays {
+    water: u64,
+    lava: u64,
+}
+
+impl FluidTickDelays {
+    fn for_kind(self, kind: FluidKind) -> u64 {
+        match kind {
+            FluidKind::Water => self.water,
+            FluidKind::Lava => self.lava,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct FluidRuntime {
+    state: Mutex<FluidRuntimeState>,
+    world_rules: Option<crate::world::WorldRulesManager>,
+}
+
+#[derive(Debug)]
+struct FluidRuntimeState {
+    origin: Instant,
+    current_tick: u64,
+    last_started_tick: Option<u64>,
+    scheduled: BTreeMap<u64, VecDeque<FluidQueueEntry>>,
+    scheduled_keys: HashMap<FluidQueueEntry, u64>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct FluidQueueEntry {
+    dimension: String,
+    x: i32,
+    y: i32,
+    z: i32,
+    kind: FluidKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FluidBlockChange {
+    dimension: String,
+    position: BlockPosition,
+    block_state: i32,
+}
+
+struct FluidTickJob {
+    receiver: mpsc::Receiver<FluidTickResult>,
+}
+
+#[derive(Debug)]
+struct FluidTickResult {
+    changes: Vec<FluidBlockChange>,
+    deferred: Vec<FluidQueueEntry>,
+}
+
+impl FluidRuntime {
+    pub(crate) fn new() -> Self {
+        Self::with_optional_world_rules(None)
+    }
+
+    pub(crate) fn with_world_rules(world_rules: crate::world::WorldRulesManager) -> Self {
+        Self::with_optional_world_rules(Some(world_rules))
+    }
+
+    fn with_optional_world_rules(world_rules: Option<crate::world::WorldRulesManager>) -> Self {
+        Self {
+            state: Mutex::new(FluidRuntimeState {
+                origin: Instant::now(),
+                current_tick: 0,
+                last_started_tick: None,
+                scheduled: BTreeMap::new(),
+                scheduled_keys: HashMap::new(),
+            }),
+            world_rules,
+        }
+    }
+
+    fn tick_delays(&self, dimension: &str) -> FluidTickDelays {
+        let dimension_type = self
+            .world_rules
+            .as_ref()
+            .map(|world_rules| world_rules.snapshot(dimension).dimension_type);
+        FluidTickDelays {
+            water: FluidKind::Water.tick_delay(dimension, dimension_type.as_deref()),
+            lava: FluidKind::Lava.tick_delay(dimension, dimension_type.as_deref()),
+        }
+    }
+
+    pub(crate) fn enqueue_block_change(&self, dimension: &str, position: &BlockPosition) {
+        let delays = self.tick_delays(dimension);
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        update_fluid_clock(&mut state, Instant::now());
+        for (dx, dy, dz) in FLUID_NEIGHBOR_OFFSETS {
+            for kind in [FluidKind::Water, FluidKind::Lava] {
+                schedule_fluid_position(
+                    &mut state,
+                    FluidQueueEntry {
+                        dimension: dimension.to_string(),
+                        x: position.x + dx,
+                        y: position.y + dy,
+                        z: position.z + dz,
+                        kind,
+                    },
+                    delays.for_kind(kind),
+                );
+            }
+        }
+    }
+
+    fn enqueue_fluid_seeds(&self, dimension: &str, seeds: impl IntoIterator<Item = FluidSeed>) {
+        let delays = self.tick_delays(dimension);
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        update_fluid_clock(&mut state, Instant::now());
+        for (position, block_state) in seeds {
+            let Some(kind) = FluidKind::from_block_state(block_state) else {
+                continue;
+            };
+            schedule_fluid_position(
+                &mut state,
+                FluidQueueEntry {
+                    dimension: dimension.to_string(),
+                    x: position.x,
+                    y: position.y,
+                    z: position.z,
+                    kind,
+                },
+                delays.for_kind(kind),
+            );
+        }
+    }
+
+    fn enqueue_fluid_continuation(
+        &self,
+        dimension: &str,
+        position: &BlockPosition,
+        block_state: i32,
+    ) {
+        let Some(kind) = FluidKind::from_block_state(block_state) else {
+            return;
+        };
+        let delays = self.tick_delays(dimension);
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        update_fluid_clock(&mut state, Instant::now());
+        schedule_fluid_position(
+            &mut state,
+            FluidQueueEntry {
+                dimension: dimension.to_string(),
+                x: position.x,
+                y: position.y,
+                z: position.z,
+                kind,
+            },
+            delays.for_kind(kind),
+        );
+    }
+
+    fn try_start_tick_job(
+        &self,
+        world: WorldManager,
+        active: &mut Option<FluidTickJob>,
+        wake_sender: &tokio::sync::mpsc::UnboundedSender<()>,
+    ) -> bool {
+        if active.is_some() {
+            return false;
+        }
+
+        let entries = self.take_due_entries(Instant::now());
+        if entries.is_empty() {
+            return false;
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        let wake_sender = wake_sender.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = sender.send(compute_fluid_tick_changes(&world, entries));
+            let _ = wake_sender.send(());
+        });
+        *active = Some(FluidTickJob { receiver });
+        true
+    }
+
+    fn poll_completed_tick_job(&self, active: &mut Option<FluidTickJob>) -> Vec<FluidBlockChange> {
+        let Some(job) = active.as_ref() else {
+            return Vec::new();
+        };
+
+        match job.receiver.try_recv() {
+            Ok(result) => {
+                *active = None;
+                self.requeue_deferred(result.deferred);
+                result.changes
+            }
+            Err(mpsc::TryRecvError::Empty) => Vec::new(),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                *active = None;
+                log::warn!("fluid tick job ended without returning a result");
+                Vec::new()
+            }
+        }
+    }
+
+    fn take_due_entries(&self, now: Instant) -> Vec<FluidQueueEntry> {
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        update_fluid_clock(&mut state, now);
+        take_due_fluid_entries(&mut state)
+    }
+
+    fn requeue_deferred(&self, deferred: Vec<FluidQueueEntry>) {
+        if deferred.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        update_fluid_clock(&mut state, Instant::now());
+        for entry in deferred {
+            schedule_fluid_position(&mut state, entry, 1);
+        }
+    }
+
+    #[cfg(test)]
+    fn force_tick_due(&self) {
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        if let Some(due_tick) = state.scheduled.keys().next().copied() {
+            force_fluid_state_tick(&mut state, due_tick);
+            state.last_started_tick = None;
+        }
+    }
+
+    #[cfg(test)]
+    fn force_current_tick(&self, tick: u64) {
+        let mut state = self.state.lock().expect("fluid runtime poisoned");
+        force_fluid_state_tick(&mut state, tick);
+        state.last_started_tick = None;
+    }
+}
+
+impl Default for FluidRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FluidQueueEntry {
+    fn position(&self) -> BlockPosition {
+        BlockPosition {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+        }
+    }
+}
+
+fn update_fluid_clock(state: &mut FluidRuntimeState, now: Instant) {
+    let tick = now
+        .saturating_duration_since(state.origin)
+        .as_millis()
+        .checked_div(FLUID_TICK_INTERVAL.as_millis())
+        .and_then(|tick| u64::try_from(tick).ok())
+        .unwrap_or(u64::MAX);
+    state.current_tick = state.current_tick.max(tick);
+    if state
+        .last_started_tick
+        .is_some_and(|started| started > state.current_tick)
+    {
+        state.last_started_tick = None;
+    }
+}
+
+#[cfg(test)]
+fn force_fluid_state_tick(state: &mut FluidRuntimeState, tick: u64) {
+    let elapsed = Duration::from_millis(
+        u64::try_from(FLUID_TICK_INTERVAL.as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(tick),
+    );
+    state.origin = Instant::now()
+        .checked_sub(elapsed)
+        .unwrap_or_else(Instant::now);
+    state.current_tick = tick;
+}
+
+fn schedule_fluid_position(state: &mut FluidRuntimeState, entry: FluidQueueEntry, delay: u64) {
+    let due_tick = state.current_tick.saturating_add(delay.max(1));
+    if let Some(existing_due) = state.scheduled_keys.get(&entry).copied() {
+        if existing_due <= due_tick {
+            return;
+        }
+    } else if state.scheduled_keys.len() >= FLUID_MAX_QUEUE {
+        return;
+    }
+    state.scheduled_keys.insert(entry.clone(), due_tick);
+    state
+        .scheduled
+        .entry(due_tick)
+        .or_default()
+        .push_back(entry);
+}
+
+fn take_due_fluid_entries(state: &mut FluidRuntimeState) -> Vec<FluidQueueEntry> {
+    let mut entries = Vec::new();
+    if state.last_started_tick == Some(state.current_tick) {
+        return entries;
+    }
+
+    while entries.len() < FLUID_MAX_ACTIVE_POSITIONS_PER_TICK {
+        let Some(due_tick) = state.scheduled.keys().next().copied() else {
+            break;
+        };
+        if due_tick > state.current_tick {
+            break;
+        }
+        let (entry, remove_bucket) = {
+            let queue = state
+                .scheduled
+                .get_mut(&due_tick)
+                .expect("scheduled fluid bucket exists");
+            let entry = queue.pop_front();
+            (entry, queue.is_empty())
+        };
+        if remove_bucket {
+            state.scheduled.remove(&due_tick);
+        }
+        let Some(entry) = entry else {
+            continue;
+        };
+        if state.scheduled_keys.get(&entry).copied() != Some(due_tick) {
+            continue;
+        }
+        state.scheduled_keys.remove(&entry);
+        entries.push(entry);
+    }
+
+    if !entries.is_empty() {
+        state.last_started_tick = Some(state.current_tick);
+    }
+    entries
+}
+
+fn compute_fluid_tick_changes(
+    world: &WorldManager,
+    entries: Vec<FluidQueueEntry>,
+) -> FluidTickResult {
+    let mut changes = Vec::new();
+    let mut changed_positions = HashSet::new();
+    let mut deferred = Vec::new();
+    'entries: for entry in entries {
+        if changes.len() >= FLUID_MAX_CHANGES_PER_TICK {
+            deferred.push(entry);
+            continue;
+        }
+        let position = entry.position();
+        let Some(state) = world.block_state_at(&entry.dimension, &position) else {
+            continue;
+        };
+        let name = block_name(state);
+        if FluidKind::from_block_name(&name) != Some(entry.kind) {
+            continue;
+        }
+        if let Some((position, block_state)) =
+            fluid_collision_update(world, &entry.dimension, &position, state)
+        {
+            if changed_positions.insert((
+                entry.dimension.clone(),
+                position.x,
+                position.y,
+                position.z,
+            )) {
+                changes.push(FluidBlockChange {
+                    dimension: entry.dimension,
+                    position,
+                    block_state,
+                });
+            }
+            continue;
+        }
+        for (position, block_state) in fluid_flow_updates(world, &entry.dimension, &position, state)
+        {
+            if changes.len() >= FLUID_MAX_CHANGES_PER_TICK {
+                deferred.push(entry);
+                continue 'entries;
+            }
+            if changed_positions.insert((
+                entry.dimension.clone(),
+                position.x,
+                position.y,
+                position.z,
+            )) {
+                changes.push(FluidBlockChange {
+                    dimension: entry.dimension.clone(),
+                    position,
+                    block_state,
+                });
+            }
+        }
+        if changes.len() >= FLUID_MAX_CHANGES_PER_TICK {
+            deferred.push(entry);
+            continue;
+        }
+    }
+    FluidTickResult { changes, deferred }
+}
 
 struct ChatRateLimit {
     window: Duration,
@@ -261,6 +719,7 @@ pub async fn initialize<R, W>(
     ore_pits: &crate::world::OrePitManager,
     cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     entities: &crate::entities::EntityManager,
     player_data: &PlayerDataManager,
     permissions: &crate::permissions::PermissionManager,
@@ -432,6 +891,7 @@ where
         ore_pits,
         cluster_entities,
         players,
+        fluid,
         player_data,
         entities,
         permissions,
@@ -465,6 +925,7 @@ async fn wait_for_play_packets<R, W>(
     ore_pits: &crate::world::OrePitManager,
     cluster_entities: Option<&crate::cluster_entities::ClusterEntityController>,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     player_data: &PlayerDataManager,
     entities: &crate::entities::EntityManager,
     permissions: &crate::permissions::PermissionManager,
@@ -520,6 +981,7 @@ where
     let world_config = &config.world;
     let mut current_game_mode = world_config.game_mode;
     let simulation_distance = world_config.simulation_distance.max(1);
+    let block_update_distance = block_update_distance(world_config.view_distance.max(1));
     let mut position = session.player.position;
     let mut initial_cluster_entity_view_sent = false;
     let mut last_stepped_block: Option<BlockPosition> = None;
@@ -599,10 +1061,13 @@ where
         sink.flush().await?;
     }
     let (chunk_sender, mut chunk_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (fluid_wake_sender, mut fluid_wake_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut fluid_tick_job = None;
     chunk_state.refresh_pending_chunks();
-    chunk_state
+    let fluid_seeds = chunk_state
         .send_center_chunk_first(sink, world, plugins)
         .await?;
+    fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
     chunk_state.start_next_chunk_load(world, Some(&chunk_sender), sink.compression_threshold());
 
     let result: Result<()> = async {
@@ -622,9 +1087,10 @@ where
                 chunk_state
                     .queue_loaded_chunk(loaded_chunk);
                 chunk_state.start_next_chunk_load(world, Some(&chunk_sender), sink.compression_threshold());
-                chunk_state
+                let fluid_seeds = chunk_state
                     .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
                     .await?;
+                fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
                 send_initial_cluster_entity_view_after_chunks(
                     sink,
                     cluster_entities,
@@ -640,9 +1106,10 @@ where
             }
             _ = chunk_send_tick.tick(), if chunk_state.has_ready_chunks() => {
                 let _span = crate::profile_span!("net:chunk_send");
-                chunk_state
+                let fluid_seeds = chunk_state
                     .send_ready_chunks(sink, world, plugins, &chunk_sender, true)
                     .await?;
+                fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
                 send_initial_cluster_entity_view_after_chunks(
                     sink,
                     cluster_entities,
@@ -754,7 +1221,29 @@ where
                 )
                 .await?;
                 if handled {
+                    if let Some(ref pending) = pending_dig {
+                        send_block_destruction_stage(
+                            sink,
+                            session.player.entity_id,
+                            pending.position.clone(),
+                            -1,
+                        )
+                        .await?;
+                    }
                     pending_dig = None;
+                }
+
+                // Send block destruction stage updates for active mining
+                if let Some(ref pending) = pending_dig {
+                    if let Some(stage) = pending.destroy_stage(Instant::now()) {
+                        send_block_destruction_stage(
+                            sink,
+                            session.player.entity_id,
+                            pending.position.clone(),
+                            stage,
+                        )
+                        .await?;
+                    }
                 }
 
                 if config.server.gameplay.redstone
@@ -769,11 +1258,29 @@ where
                         world,
                         world_rules,
                         players,
+                        fluid,
                         &config.server.gameplay,
                         &mut gameplay_runtime.redstone,
                         &play_dimension,
                         profile.uuid,
                         updates,
+                    )
+                    .await?;
+                }
+
+                if config.server.gameplay.block_updates {
+                    poll_apply_and_restart_fluid_tick(
+                        sink,
+                        world,
+                        world_rules,
+                        players,
+                        fluid,
+                        &play_dimension,
+                        profile.uuid,
+                        position,
+                        block_update_distance,
+                        &mut fluid_tick_job,
+                        &fluid_wake_sender,
                     )
                     .await?;
                 }
@@ -787,6 +1294,7 @@ where
                         world,
                         world_rules,
                         players,
+                        fluid,
                         &play_dimension,
                         profile.uuid,
                         updates,
@@ -852,7 +1360,7 @@ where
                         .await?;
                         pending_dig = None;
                     }
-                    if underwater {
+                if underwater {
                         let mut outcome = gameplay::GameplayActionOutcome::default();
                         outcome.grant_triggers.push(
                             qexed_config::app::qexed::server::CustomAdvancementTrigger::EnterWater,
@@ -872,6 +1380,23 @@ where
                         .await?;
                     }
                 }
+            }
+            _ = fluid_wake_receiver.recv(), if config.server.gameplay.block_updates => {
+                let _span = crate::profile_span!("tick:fluid_apply");
+                poll_apply_and_restart_fluid_tick(
+                    sink,
+                    world,
+                    world_rules,
+                    players,
+                    fluid,
+                    &play_dimension,
+                    profile.uuid,
+                    position,
+                    block_update_distance,
+                    &mut fluid_tick_job,
+                    &fluid_wake_sender,
+                )
+                .await?;
             }
             _ = world_time_tick.tick() => {
                 let _span = crate::profile_span!("tick:world_time");
@@ -1135,7 +1660,7 @@ where
                         })
                         .await?;
                         if changed_dimension {
-                            chunk_state
+                            let fluid_seeds = chunk_state
                             .reset_dimension_after_respawn(
                                 sink,
                                 &chunk_sender,
@@ -1146,6 +1671,7 @@ where
                                 position.z,
                             )
                             .await?;
+                            fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
                             resync_inventory_state(
                                 sink,
                                 players,
@@ -1155,7 +1681,7 @@ where
                             )
                             .await?;
                         } else {
-                            chunk_state
+                            let fluid_seeds = chunk_state
                                 .reset_after_respawn(
                                     sink,
                                     &chunk_sender,
@@ -1165,6 +1691,7 @@ where
                                     position.z,
                                 )
                                 .await?;
+                            fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
                         }
                         session.player.position = position;
                         session.player.dimension = play_dimension.clone();
@@ -1199,6 +1726,7 @@ where
                     &play_dimension,
                     position,
                     config.server.entity_rendering.player_distance,
+                    block_update_distance,
                     &mut visible_player_entities,
                 )?;
                 for packet in event_packets {
@@ -1250,9 +1778,10 @@ where
                 if packet_id == ChunkBatchReceived::ID {
                     let batch = crate::connection::decode_payload::<ChunkBatchReceived>(&mut payload)?;
                     chunk_state.on_chunk_batch_received(batch.desired_chunks_per_tick);
-                    chunk_state
+                    let fluid_seeds = chunk_state
                         .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
                         .await?;
+                    fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
                     send_initial_cluster_entity_view_after_chunks(
                         sink,
                         cluster_entities,
@@ -1274,9 +1803,10 @@ where
 
                 if packet_id == PlayerLoaded::ID {
                     let _loaded = crate::connection::decode_payload::<PlayerLoaded>(&mut payload)?;
-                    chunk_state
+                    let fluid_seeds = chunk_state
                         .send_ready_chunks(sink, world, plugins, &chunk_sender, false)
                         .await?;
+                    fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
                     send_initial_cluster_entity_view_after_chunks(
                         sink,
                         cluster_entities,
@@ -1551,6 +2081,7 @@ where
                                 world,
                                 world_rules,
                                 players,
+                                fluid,
                                 &config.server.gameplay,
                                 &mut gameplay_runtime.redstone,
                                 &play_dimension,
@@ -1569,6 +2100,7 @@ where
                                 world,
                                 world_rules,
                                 players,
+                                fluid,
                                 world_config,
                                 current_game_mode,
                                 &play_dimension,
@@ -1612,6 +2144,7 @@ where
                                 world,
                                 world_rules,
                                 players,
+                                fluid,
                                 world_config,
                                 current_game_mode,
                                 &play_dimension,
@@ -1654,6 +2187,7 @@ where
                                 world,
                                 world_rules,
                                 players,
+                                fluid,
                                 world_config,
                                 current_game_mode,
                                 &play_dimension,
@@ -1699,6 +2233,7 @@ where
                                     world,
                                     world_rules,
                                     players,
+                                    fluid,
                                     &config.server.gameplay,
                                     &mut gameplay_runtime.redstone,
                                     &play_dimension,
@@ -1848,6 +2383,7 @@ where
                                     world_rules,
                                     ore_pits,
                                     players,
+                                    fluid,
                                     entities,
                                     plugins,
                                     world_config,
@@ -1872,6 +2408,7 @@ where
                                         world,
                                         world_rules,
                                         players,
+                                        fluid,
                                         &config.server.gameplay,
                                         &mut gameplay_runtime.redstone,
                                         &play_dimension,
@@ -1892,9 +2429,29 @@ where
                                     inventory.held_item(),
                                 )
                                 .await?;
+                                // Send stage 0 immediately so the client doesn't jump to a high stage
+                                // on the first gameplay_tick (which may be up to 50ms later).
+                                if let Some(ref pending) = pending_dig {
+                                    send_block_destruction_stage(
+                                        sink,
+                                        session.player.entity_id,
+                                        pending.position.clone(),
+                                        0,
+                                    )
+                                    .await?;
+                                }
                             }
                         }
                         PLAYER_ACTION_CANCEL_DESTROY_BLOCK => {
+                            if let Some(ref pending) = pending_dig {
+                                send_block_destruction_stage(
+                                    sink,
+                                    session.player.entity_id,
+                                    pending.position.clone(),
+                                    -1,
+                                )
+                                .await?;
+                            }
                             pending_dig = None;
                         }
                         status if should_destroy_block(current_game_mode, status) => {
@@ -1909,6 +2466,16 @@ where
                                 &pending_dig,
                             )
                             .await?;
+                            // Send clear destruction stage before clearing pending_dig
+                            if let Some(ref pending) = pending_dig {
+                                send_block_destruction_stage(
+                                    sink,
+                                    session.player.entity_id,
+                                    pending.position.clone(),
+                                    -1,
+                                )
+                                .await?;
+                            }
                             pending_dig = None;
                             if can_destroy {
                                 let destroyed = destroy_block(
@@ -1917,6 +2484,7 @@ where
                                     world_rules,
                                     ore_pits,
                                     players,
+                                    fluid,
                                     entities,
                                     plugins,
                                     world_config,
@@ -1943,6 +2511,7 @@ where
                                         world,
                                         world_rules,
                                         players,
+                                        fluid,
                                         &config.server.gameplay,
                                         &mut gameplay_runtime.redstone,
                                         &play_dimension,
@@ -2735,6 +3304,7 @@ where
                             world_rules,
                             players,
                             plugins,
+                            fluid,
                             world_config,
                             current_game_mode,
                             &mut play_dimension,
@@ -3490,6 +4060,7 @@ where
                         world,
                         world_rules,
                         players,
+                        fluid,
                         entities,
                         permissions,
                         plugins,
@@ -4958,6 +5529,7 @@ async fn respawn_player<W>(
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     game_mode: GameMode,
     play_dimension: &mut String,
@@ -5016,7 +5588,7 @@ where
     *play_dimension = respawn_dimension.clone();
     send_respawn_player_state(sink, world_config, world_rules, play_dimension, *position).await?;
     sink.send(survival.health_packet()).await?;
-    chunk_state
+    let fluid_seeds = chunk_state
         .reset_dimension_after_respawn(
             sink,
             chunk_sender,
@@ -5027,6 +5599,7 @@ where
             position.z,
         )
         .await?;
+    fluid.enqueue_fluid_seeds(play_dimension, fluid_seeds);
     resync_inventory_state(sink, players, actor, entity_id, inventory).await?;
     players.update_position_and_dimension(actor, play_dimension.clone(), *position);
     sink.flush().await?;
@@ -5039,6 +5612,7 @@ async fn teleport_to_spawn<W>(
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
     plugins: &crate::plugins::PluginManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     dimension: &str,
     actor: uuid::Uuid,
@@ -5067,9 +5641,10 @@ where
     })
     .await?;
     send_respawn_player_state(sink, world_config, world_rules, dimension, *position).await?;
-    chunk_state
+    let fluid_seeds = chunk_state
         .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
         .await?;
+    fluid.enqueue_fluid_seeds(dimension, fluid_seeds);
     players.update_position(actor, *position);
     Ok(())
 }
@@ -5654,6 +6229,7 @@ fn filtered_player_event_packets(
     viewer_dimension: &str,
     viewer_position: EntityPosition,
     render_distance: f64,
+    block_update_distance: f64,
     visible_player_entities: &mut HashSet<uuid::Uuid>,
 ) -> Result<Vec<bytes::Bytes>> {
     match event {
@@ -5765,6 +6341,41 @@ fn filtered_player_event_packets(
             }
             event.packets(player_entity_type, viewer_dimension)
         }
+        crate::players::PlayerEvent::BlockChanged {
+            dimension,
+            position,
+            ..
+        } => {
+            if dimension != viewer_dimension
+                || !block_position_within_horizontal_distance(
+                    viewer_position,
+                    position,
+                    block_update_distance,
+                )
+            {
+                return Ok(Vec::new());
+            }
+            event.packets(player_entity_type, viewer_dimension)
+        }
+        crate::players::PlayerEvent::BlockChanges {
+            dimension, changes, ..
+        } => {
+            if dimension != viewer_dimension {
+                return Ok(Vec::new());
+            }
+            let visible_changes = changes
+                .iter()
+                .filter(|change| {
+                    block_position_within_horizontal_distance(
+                        viewer_position,
+                        &change.position,
+                        block_update_distance,
+                    )
+                })
+                .map(|change| (change.position.clone(), change.block_state))
+                .collect::<Vec<_>>();
+            block_update_packets(visible_changes)
+        }
         _ => event.packets(player_entity_type, viewer_dimension),
     }
 }
@@ -5822,6 +6433,83 @@ fn within_horizontal_distance(left: EntityPosition, right: EntityPosition, dista
     let dx = left.x - right.x;
     let dz = left.z - right.z;
     (dx * dx + dz * dz) <= distance * distance
+}
+
+fn block_update_distance(view_distance_chunks: i32) -> f64 {
+    f64::from(view_distance_chunks.max(1) * 16 + 16)
+}
+
+fn block_position_within_horizontal_distance(
+    viewer: EntityPosition,
+    block: &BlockPosition,
+    distance: f64,
+) -> bool {
+    if distance <= 0.0 {
+        return false;
+    }
+    let dx = viewer.x - (f64::from(block.x) + 0.5);
+    let dz = viewer.z - (f64::from(block.z) + 0.5);
+    (dx * dx + dz * dz) <= distance * distance
+}
+
+fn block_update_packets(
+    changes: impl IntoIterator<Item = (BlockPosition, i32)>,
+) -> Result<Vec<bytes::Bytes>> {
+    let mut by_section: BTreeMap<(i32, i32, i32), Vec<(BlockPosition, i32)>> = BTreeMap::new();
+    for (position, block_state) in changes {
+        by_section
+            .entry((
+                position.x.div_euclid(16),
+                position.y.div_euclid(16),
+                position.z.div_euclid(16),
+            ))
+            .or_default()
+            .push((position, block_state));
+    }
+
+    let mut packets = Vec::new();
+    for ((section_x, section_y, section_z), mut section_changes) in by_section {
+        if section_changes.len() == 1 {
+            let (position, block_state) = section_changes.pop().expect("one block change");
+            packets.push(crate::players::packet_bytes(
+                qexed_protocol::to_client::play::block_update::BlockUpdate {
+                    location: position,
+                    block_state: VarInt(block_state),
+                },
+            )?);
+            continue;
+        }
+        section_changes.sort_by_key(|(position, _)| {
+            (
+                position.y.rem_euclid(16),
+                position.z.rem_euclid(16),
+                position.x.rem_euclid(16),
+            )
+        });
+        let blocks = section_changes
+            .into_iter()
+            .map(|(position, block_state)| {
+                VarLong((i64::from(block_state) << 12) | i64::from(section_relative_pos(&position)))
+            })
+            .collect();
+        packets.push(crate::players::packet_bytes(
+            qexed_protocol::to_client::play::section_blocks_update::SectionBlocksUpdate {
+                section_position: section_position(section_x, section_y, section_z),
+                blocks,
+            },
+        )?);
+    }
+    Ok(packets)
+}
+
+fn section_relative_pos(position: &BlockPosition) -> i32 {
+    (position.x.rem_euclid(16) << 8) | (position.z.rem_euclid(16) << 4) | position.y.rem_euclid(16)
+}
+
+fn section_position(section_x: i32, section_y: i32, section_z: i32) -> i64 {
+    ((i64::from(section_x) & 0x3f_ffff) << 42)
+        | ((i64::from(section_z) & 0x3f_ffff) << 20)
+        | (i64::from(section_y) & 0x0f_ffff)
 }
 
 fn player_action_drops_item(status: i32) -> bool {
@@ -6462,6 +7150,7 @@ async fn handle_vanilla_block_interaction<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     game_mode: GameMode,
     play_dimension: &str,
@@ -6497,6 +7186,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             play_dimension,
@@ -6511,6 +7201,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 gameplay,
                 runtime,
                 play_dimension,
@@ -6542,6 +7233,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             play_dimension,
@@ -6569,6 +7261,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 gameplay,
                 runtime,
                 play_dimension,
@@ -6578,6 +7271,161 @@ where
             .await?;
         }
         return Ok(true);
+    }
+
+    // Sapling bone meal: grow tree instantly
+    if is_sapling(block_name)
+        && held_item.as_deref().map(normalize_resource_key).as_deref()
+            == Some("minecraft:bone_meal")
+    {
+        if let Some(tree_blocks) =
+            sapling_bone_meal_blocks(world, play_dimension, &position, block_name)
+        {
+            if can_apply_vanilla_inventory_action(
+                inventory,
+                game_mode,
+                VanillaInventoryAction::ConsumeHeld,
+            ) {
+                let changed = apply_vanilla_block_state_updates(
+                    sink,
+                    world,
+                    world_rules,
+                    players,
+                    fluid,
+                    world_config,
+                    game_mode,
+                    play_dimension,
+                    actor,
+                    tree_blocks,
+                    gameplay.block_updates,
+                )
+                .await?;
+                if !changed.is_empty() {
+                    let changes = apply_vanilla_inventory_action(
+                        inventory,
+                        game_mode,
+                        VanillaInventoryAction::ConsumeHeld,
+                    );
+                    if !changes.is_empty() {
+                        sync_inventory_changes(
+                            sink,
+                            players,
+                            actor,
+                            entity_id,
+                            inventory.selected_slot(),
+                            changes,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            send_bone_meal_particles(sink, position.clone()).await?;
+            return Ok(true);
+        }
+        // Sapling can't grow (no space, blocked, etc.) — fall through to bone meal
+        // on the ground which may grow flowers/grass.
+    }
+
+    // Grass block bone meal: if a sapling is on top, grow tree instead of flowers
+    if is_grass_block(block_name)
+        && held_item.as_deref().map(normalize_resource_key).as_deref()
+            == Some("minecraft:bone_meal")
+    {
+        // Check if there's a sapling directly above — bone meal the sapling instead
+        let above = offset_position(&position, 0, 1, 0);
+        let above_name = world
+            .block_state_at(play_dimension, &above)
+            .and_then(|s| crate::inventory::block_name_for_state(s))
+            .unwrap_or_default();
+        if is_sapling(&above_name) {
+            if let Some(tree_blocks) =
+                sapling_bone_meal_blocks(world, play_dimension, &above, &above_name)
+            {
+                if can_apply_vanilla_inventory_action(
+                    inventory,
+                    game_mode,
+                    VanillaInventoryAction::ConsumeHeld,
+                ) {
+                    let changed = apply_vanilla_block_state_updates(
+                        sink,
+                        world,
+                        world_rules,
+                        players,
+                        fluid,
+                        world_config,
+                        game_mode,
+                        play_dimension,
+                        actor,
+                        tree_blocks,
+                        gameplay.block_updates,
+                    )
+                    .await?;
+                    if !changed.is_empty() {
+                        let changes = apply_vanilla_inventory_action(
+                            inventory,
+                            game_mode,
+                            VanillaInventoryAction::ConsumeHeld,
+                        );
+                        if !changes.is_empty() {
+                            sync_inventory_changes(
+                                sink,
+                                players,
+                                actor,
+                                entity_id,
+                                inventory.selected_slot(),
+                                changes,
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                send_bone_meal_particles(sink, above.clone()).await?;
+                return Ok(true);
+            }
+        }
+        // No sapling above — grow flowers/grass
+        if let Some(growth) = grass_bone_meal_growth(world, play_dimension, &position) {
+            if can_apply_vanilla_inventory_action(
+                inventory,
+                game_mode,
+                VanillaInventoryAction::ConsumeHeld,
+            ) {
+                let changed = apply_vanilla_block_state_updates(
+                    sink,
+                    world,
+                    world_rules,
+                    players,
+                    fluid,
+                    world_config,
+                    game_mode,
+                    play_dimension,
+                    actor,
+                    growth,
+                    gameplay.block_updates,
+                )
+                .await?;
+                if !changed.is_empty() {
+                    let changes = apply_vanilla_inventory_action(
+                        inventory,
+                        game_mode,
+                        VanillaInventoryAction::ConsumeHeld,
+                    );
+                    if !changes.is_empty() {
+                        sync_inventory_changes(
+                            sink,
+                            players,
+                            actor,
+                            entity_id,
+                            inventory.selected_slot(),
+                            changes,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            send_bone_meal_particles(sink, position.clone()).await?;
+            return Ok(true);
+        }
     }
 
     if let Some(interaction) = vanilla_state_interaction(
@@ -6597,6 +7445,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             play_dimension,
@@ -6626,6 +7475,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 gameplay,
                 runtime,
                 play_dimension,
@@ -6644,6 +7494,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             play_dimension,
@@ -6658,6 +7509,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 gameplay,
                 runtime,
                 play_dimension,
@@ -6703,6 +7555,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 world_config,
                 game_mode,
                 play_dimension,
@@ -6731,6 +7584,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 gameplay,
                 runtime,
                 play_dimension,
@@ -6751,6 +7605,7 @@ async fn apply_vanilla_block_state_updates<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     game_mode: GameMode,
     dimension: &str,
@@ -6761,6 +7616,10 @@ async fn apply_vanilla_block_state_updates<W>(
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
+    if world.read_only() {
+        return Ok(Vec::new());
+    }
+
     let mut changed = Vec::new();
     for (position, block_state) in updates {
         let edit_kind = if crate::inventory::is_air_block_state(block_state) {
@@ -6773,6 +7632,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             dimension,
@@ -6790,11 +7650,118 @@ where
     Ok(changed)
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn poll_apply_and_restart_fluid_tick<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    fluid: &FluidRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    viewer_position: EntityPosition,
+    block_update_distance: f64,
+    fluid_tick_job: &mut Option<FluidTickJob>,
+    fluid_wake_sender: &tokio::sync::mpsc::UnboundedSender<()>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let fluid_updates = fluid.poll_completed_tick_job(fluid_tick_job);
+    if !fluid_updates.is_empty() {
+        let applied_fluid_updates = apply_fluid_updates(
+            sink,
+            world,
+            world_rules,
+            players,
+            fluid,
+            play_dimension,
+            actor,
+            viewer_position,
+            block_update_distance,
+            fluid_updates,
+        )
+        .await?;
+        if !applied_fluid_updates.is_empty() {
+            sink.flush().await?;
+        }
+    }
+    fluid.try_start_tick_job(world.clone(), fluid_tick_job, fluid_wake_sender);
+    Ok(())
+}
+
+async fn apply_fluid_updates<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    world: &WorldManager,
+    world_rules: &crate::world::WorldRulesManager,
+    players: &PlayerManager,
+    fluid: &FluidRuntime,
+    play_dimension: &str,
+    actor: uuid::Uuid,
+    viewer_position: EntityPosition,
+    block_update_distance: f64,
+    updates: Vec<FluidBlockChange>,
+) -> Result<Vec<BlockPosition>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut changed = Vec::new();
+    let mut viewer_changes = Vec::new();
+    let mut broadcast_by_dimension: HashMap<String, Vec<crate::players::BlockChange>> =
+        HashMap::new();
+    let mut persist_by_dimension: HashMap<String, Vec<(BlockPosition, i32)>> = HashMap::new();
+    for update in updates {
+        if !world_rules.snapshot(&update.dimension).block_updates {
+            continue;
+        }
+        if FluidKind::from_block_state(update.block_state).is_some() {
+            fluid.enqueue_fluid_continuation(
+                &update.dimension,
+                &update.position,
+                update.block_state,
+            );
+        }
+        fluid.enqueue_block_change(&update.dimension, &update.position);
+        if update.dimension == play_dimension
+            && block_position_within_horizontal_distance(
+                viewer_position,
+                &update.position,
+                block_update_distance,
+            )
+        {
+            viewer_changes.push((update.position.clone(), update.block_state));
+        }
+        broadcast_by_dimension
+            .entry(update.dimension.clone())
+            .or_default()
+            .push(crate::players::BlockChange {
+                position: update.position.clone(),
+                block_state: update.block_state,
+            });
+        persist_by_dimension
+            .entry(update.dimension.clone())
+            .or_default()
+            .push((update.position.clone(), update.block_state));
+        changed.push(update.position);
+    }
+    for (dimension, blocks) in persist_by_dimension {
+        world.place_blocks_deferred(&dimension, blocks)?;
+    }
+    for packet in block_update_packets(viewer_changes)? {
+        sink.send_raw(packet).await?;
+    }
+    for (dimension, changes) in broadcast_by_dimension {
+        players.broadcast_block_changes(actor, &dimension, changes);
+    }
+    Ok(changed)
+}
+
 async fn apply_environment_block_state_updates<W>(
     sink: &mut qexed_tcp_connect::PacketSink<W>,
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     play_dimension: &str,
     actor: uuid::Uuid,
     updates: Vec<(BlockPosition, i32)>,
@@ -6814,6 +7781,7 @@ where
             continue;
         }
         world.place_block(play_dimension, position.clone(), block_state);
+        fluid.enqueue_block_change(play_dimension, &position);
         sink.send(crate::inventory::block_update(
             position.clone(),
             block_state,
@@ -6854,7 +7822,7 @@ fn environment_tick_updates(
     const HORIZONTAL_RADIUS: i32 = 4;
     const MIN_Y_OFFSET: i32 = -3;
     const MAX_Y_OFFSET: i32 = 2;
-    const MAX_UPDATES: usize = 32;
+    const MAX_UPDATES: usize = 64;
 
     let center_block = BlockPosition {
         x: center.x.floor() as i32,
@@ -6870,6 +7838,10 @@ fn environment_tick_updates(
                 let Some(block_state) = world.block_state_at(dimension, &position) else {
                     continue;
                 };
+                let name = block_name(block_state);
+                if is_fluid_block(&name) {
+                    continue;
+                }
                 collect_environment_tick_updates(
                     world,
                     dimension,
@@ -6879,7 +7851,7 @@ fn environment_tick_updates(
                     &mut updated_positions,
                 );
                 if updates.len() >= MAX_UPDATES {
-                    return updates;
+                    break;
                 }
             }
         }
@@ -6911,6 +7883,102 @@ fn collect_environment_tick_updates(
     for (fire_position, fire_state) in fire_tick_updates(world, dimension, position, block_state) {
         push_environment_update(fire_position, fire_state, updates, updated_positions);
     }
+    if let Some(next_state) = crop_random_tick(world, dimension, position, block_state) {
+        push_environment_update(position.clone(), next_state, updates, updated_positions);
+    }
+    // Sapling growth: natural tree growth
+    let name = block_name(block_state);
+    if is_sapling(&name) {
+        for (tree_pos, tree_state) in
+            sapling_random_tick(world, dimension, position, block_state, &name)
+        {
+            push_environment_update(tree_pos, tree_state, updates, updated_positions);
+        }
+    }
+}
+
+fn crop_random_tick(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<i32> {
+    // Only grow crops with ~14% chance per tick (approximates vanilla random tick rate)
+    if rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..100) < 14 {
+        return None;
+    }
+    let name = block_name(block_state);
+    let max_age = crop_max_age(&name)?;
+    let age = block_state_u8_property(block_state, "age")?;
+    if age >= max_age {
+        return None;
+    }
+    // Check if crop is on farmland (required for most crops)
+    if crop_needs_farmland(&name) && !is_on_farmland(world, dimension, position) {
+        return None;
+    }
+    // Check light level (crops need light to grow)
+    if !position_has_sky_light(world, dimension, position) {
+        return None;
+    }
+    let new_age = (age + 1).min(max_age);
+    block_state_with_property(block_state, "age", &new_age.to_string())
+}
+
+fn crop_max_age(name: &str) -> Option<u8> {
+    match name {
+        "minecraft:wheat"
+        | "minecraft:carrots"
+        | "minecraft:potatoes"
+        | "minecraft:melon_stem"
+        | "minecraft:pumpkin_stem" => Some(7),
+        "minecraft:beetroots" | "minecraft:sweet_berry_bush" => Some(3),
+        "minecraft:cocoa" => Some(2),
+        "minecraft:torchflower_crop" => Some(1),
+        "minecraft:pitcher_crop" => Some(4),
+        "minecraft:nether_wart" => Some(3),
+        _ => None,
+    }
+}
+
+fn crop_needs_farmland(name: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:wheat"
+            | "minecraft:carrots"
+            | "minecraft:potatoes"
+            | "minecraft:beetroots"
+            | "minecraft:melon_stem"
+            | "minecraft:pumpkin_stem"
+            | "minecraft:torchflower_crop"
+            | "minecraft:pitcher_crop"
+    )
+}
+
+fn is_on_farmland(world: &WorldManager, dimension: &str, position: &BlockPosition) -> bool {
+    let below = offset_position(position, 0, -1, 0);
+    world
+        .block_state_at(dimension, &below)
+        .map(|state| block_name(state) == "minecraft:farmland")
+        .unwrap_or(false)
+}
+
+fn position_has_sky_light(world: &WorldManager, dimension: &str, position: &BlockPosition) -> bool {
+    // Check that there's no solid block above the crop
+    let mut check = offset_position(position, 0, 1, 0);
+    // Check up to 16 blocks above for sky access
+    for _ in 0..16 {
+        let state = world
+            .block_state_at(dimension, &check)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if !crate::inventory::is_air_block_state(state)
+            && !crate::inventory::can_replace_block_state(state)
+        {
+            return false;
+        }
+        check = offset_position(&check, 0, 1, 0);
+    }
+    true
 }
 
 fn push_environment_update(
@@ -7518,6 +8586,693 @@ fn is_flammable_wood_family_block(block_name: &str) -> bool {
     )
 }
 
+// ── Sapling growth ──
+
+/// Returns the tree blocks to place when a sapling grows naturally.
+/// The sapling position itself is replaced with air (the caller handles this).
+fn sapling_random_tick(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    _block_state: i32,
+    block_name: &str,
+) -> Vec<(BlockPosition, i32)> {
+    if !is_sapling(block_name) {
+        return Vec::new();
+    }
+    // ~5% chance per tick
+    if rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..100) >= 5 {
+        return Vec::new();
+    }
+    // Check light — at least sky access
+    if !position_has_sky_light(world, dimension, position) {
+        return Vec::new();
+    }
+    // Check there's enough space above for the tree
+    if !sapling_has_growth_space(world, dimension, position, block_name) {
+        return Vec::new();
+    }
+    // Place tree blocks: logs + leaves, sapling replaced by air via environment tick
+    let mut tree_blocks = grow_tree_blocks(position, block_name);
+    // Replace sapling itself with air (first log will be at sapling position)
+    tree_blocks.insert(0, (position.clone(), crate::inventory::air_block_state()));
+    tree_blocks
+}
+
+pub(super) fn is_sapling(block_name: &str) -> bool {
+    matches!(
+        block_name,
+        "minecraft:oak_sapling"
+            | "minecraft:birch_sapling"
+            | "minecraft:spruce_sapling"
+            | "minecraft:jungle_sapling"
+            | "minecraft:acacia_sapling"
+            | "minecraft:dark_oak_sapling"
+            | "minecraft:cherry_sapling"
+            | "minecraft:mangrove_propagule"
+    )
+}
+
+/// Check if there's enough air space above the sapling for a tree to grow
+fn sapling_has_growth_space(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    sapling_name: &str,
+) -> bool {
+    let min_height = sapling_min_log_height(sapling_name) + 2;
+    // Start at y+1 — the sapling itself is at position.y and will be replaced
+    for y_off in 1..=min_height {
+        let check = BlockPosition {
+            x: position.x,
+            y: position.y + y_off,
+            z: position.z,
+        };
+        let state = world
+            .block_state_at(dimension, &check)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if !crate::inventory::can_replace_block_state(state)
+            && !crate::inventory::is_air_block_state(state)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn sapling_min_log_height(sapling_name: &str) -> i32 {
+    match sapling_name {
+        "minecraft:spruce_sapling" => 6,
+        "minecraft:jungle_sapling" => 7,
+        "minecraft:dark_oak_sapling" => 5,
+        _ => 4,
+    }
+}
+
+fn sapling_log_name(sapling_name: &str) -> &str {
+    match sapling_name {
+        "minecraft:birch_sapling" => "minecraft:birch_log",
+        "minecraft:spruce_sapling" => "minecraft:spruce_log",
+        "minecraft:jungle_sapling" => "minecraft:jungle_log",
+        "minecraft:acacia_sapling" => "minecraft:acacia_log",
+        "minecraft:dark_oak_sapling" => "minecraft:dark_oak_log",
+        "minecraft:cherry_sapling" => "minecraft:cherry_log",
+        "minecraft:mangrove_propagule" => "minecraft:mangrove_log",
+        _ => "minecraft:oak_log",
+    }
+}
+
+fn sapling_leaves_name(sapling_name: &str) -> &str {
+    match sapling_name {
+        "minecraft:birch_sapling" => "minecraft:birch_leaves",
+        "minecraft:spruce_sapling" => "minecraft:spruce_leaves",
+        "minecraft:jungle_sapling" => "minecraft:jungle_leaves",
+        "minecraft:acacia_sapling" => "minecraft:acacia_leaves",
+        "minecraft:dark_oak_sapling" => "minecraft:dark_oak_leaves",
+        "minecraft:cherry_sapling" => "minecraft:cherry_leaves",
+        "minecraft:mangrove_propagule" => "minecraft:mangrove_leaves",
+        _ => "minecraft:oak_leaves",
+    }
+}
+
+/// Generate the list of (position, block_id) for a tree grown from a sapling.
+/// Tree shapes are simplified approximations of vanilla trees.
+/// The sapling is at `position`; first log block replaces it.
+pub(super) fn grow_tree_blocks(
+    sapling_pos: &BlockPosition,
+    sapling_name: &str,
+) -> Vec<(BlockPosition, i32)> {
+    let log_name = sapling_log_name(sapling_name);
+    let leaves_name = sapling_leaves_name(sapling_name);
+    let log = crate::world::chunk_nbt::default_block_state(log_name).id;
+    let leaves = crate::world::chunk_nbt::default_block_state(leaves_name).id;
+
+    let trunk_height = match sapling_name {
+        "minecraft:spruce_sapling" => {
+            6 + (rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..5) as i32)
+        }
+        "minecraft:jungle_sapling" => {
+            7 + (rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..5) as i32)
+        }
+        "minecraft:dark_oak_sapling" => {
+            5 + (rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..2) as i32)
+        }
+        "minecraft:birch_sapling" => {
+            5 + (rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..3) as i32)
+        }
+        "minecraft:acacia_sapling" => {
+            5 + (rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..4) as i32)
+        }
+        _ => 4 + (rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..2) as i32), // oak, cherry
+    };
+
+    let mut blocks = Vec::new();
+
+    // Place trunk logs
+    for y_off in 0..=trunk_height {
+        blocks.push((
+            BlockPosition {
+                x: sapling_pos.x,
+                y: sapling_pos.y + y_off,
+                z: sapling_pos.z,
+            },
+            log,
+        ));
+    }
+
+    // Place leaves canopy
+    let canopy_bottom = trunk_height - 2;
+    let canopy_top = trunk_height + 1;
+    let canopy_radius = if sapling_name == "minecraft:spruce_sapling" {
+        2 // narrower
+    } else if sapling_name == "minecraft:acacia_sapling" {
+        3 // wider flat
+    } else {
+        2
+    };
+
+    for y_off in canopy_bottom..=canopy_top {
+        let y = sapling_pos.y + y_off;
+        let radius = if sapling_name == "minecraft:spruce_sapling" {
+            // Spruce: pyramid shape, narrower at top
+            ((canopy_top - y_off) as i32 + 1).min(2)
+        } else if sapling_name == "minecraft:acacia_sapling" {
+            // Acacia: flat top
+            if y_off >= canopy_top - 1 { 3 } else { 2 }
+        } else {
+            if y_off == canopy_top {
+                1
+            } else if y_off <= canopy_bottom + 1 {
+                2
+            } else {
+                2
+            }
+        };
+
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                // Skip corners for a more rounded shape
+                if radius > 1 && (dx.abs() == radius && dz.abs() == radius) {
+                    if rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..3) == 0 {
+                        continue;
+                    }
+                }
+                // Don't overwrite log blocks
+                if dx == 0 && dz == 0 && y_off <= trunk_height {
+                    continue;
+                }
+                blocks.push((
+                    BlockPosition {
+                        x: sapling_pos.x + dx,
+                        y,
+                        z: sapling_pos.z + dz,
+                    },
+                    leaves,
+                ));
+            }
+        }
+    }
+
+    // Top leaves
+    let top_y = sapling_pos.y + trunk_height + 1;
+    if sapling_name != "minecraft:spruce_sapling" {
+        blocks.push((
+            BlockPosition {
+                x: sapling_pos.x,
+                y: top_y,
+                z: sapling_pos.z,
+            },
+            leaves,
+        ));
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                blocks.push((
+                    BlockPosition {
+                        x: sapling_pos.x + dx,
+                        y: top_y,
+                        z: sapling_pos.z + dz,
+                    },
+                    leaves,
+                ));
+            }
+        }
+    }
+
+    blocks
+}
+
+/// Handle bone meal on a sapling — returns the blocks to place for a full tree.
+pub(super) fn sapling_bone_meal_blocks(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    sapling_name: &str,
+) -> Option<Vec<(BlockPosition, i32)>> {
+    if !is_sapling(sapling_name) {
+        return None;
+    }
+    if !sapling_has_growth_space(world, dimension, position, sapling_name) {
+        return None;
+    }
+    let mut tree_blocks = grow_tree_blocks(position, sapling_name);
+    // Replace sapling with trunk base
+    tree_blocks.insert(0, (position.clone(), crate::inventory::air_block_state()));
+    Some(tree_blocks)
+}
+
+// ── Fluid flow ──
+
+fn fluid_flow_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Vec<(BlockPosition, i32)> {
+    let name = block_name(block_state);
+    if name != "minecraft:water" && name != "minecraft:lava" {
+        return Vec::new();
+    }
+    let mut effective_level = block_state_u8_property(block_state, "level").unwrap_or(0);
+    let mut updates = Vec::new();
+
+    if effective_level != 0 && current_fluid_can_decay(world, dimension, position, &name) {
+        match fluid_recomputed_state(world, dimension, position, &name) {
+            Some(next_state) if next_state != block_state => {
+                updates.push((position.clone(), next_state));
+                effective_level = block_state_u8_property(next_state, "level").unwrap_or(0);
+            }
+            Some(_) => {}
+            None => {
+                updates.push((position.clone(), crate::inventory::air_block_state()));
+                return updates;
+            }
+        }
+    }
+
+    updates.extend(fluid_spread_updates(
+        world,
+        dimension,
+        position,
+        &name,
+        effective_level,
+    ));
+    updates
+}
+
+fn current_fluid_can_decay(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+) -> bool {
+    let current = world
+        .block_state_at(dimension, position)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    block_name(current) == name && block_state_u8_property(current, "level").unwrap_or(0) != 0
+}
+
+fn fluid_recomputed_state(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+) -> Option<i32> {
+    let mut source_neighbors = 0u8;
+    let mut highest_neighbor_amount = 0u8;
+    for (dx, dz) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        let adjacent = offset_position(position, *dx, 0, *dz);
+        let adjacent_state = world
+            .block_state_at(dimension, &adjacent)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if block_name(adjacent_state) != name {
+            continue;
+        }
+        let adjacent_level = block_state_u8_property(adjacent_state, "level").unwrap_or(0);
+        if adjacent_level == 0 {
+            source_neighbors = source_neighbors.saturating_add(1);
+        }
+        highest_neighbor_amount =
+            highest_neighbor_amount.max(fluid_amount_from_legacy_level(adjacent_level));
+    }
+
+    if name == "minecraft:water"
+        && source_neighbors >= 2
+        && fluid_source_conversion_supported_below(world, dimension, position, name)
+    {
+        return Some(fluid_state_with_level(name, 0));
+    }
+
+    let above = offset_position(position, 0, 1, 0);
+    let above_state = world
+        .block_state_at(dimension, &above)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if block_name(above_state) == name {
+        return Some(fluid_state_with_level(name, 8));
+    }
+
+    let next_amount = highest_neighbor_amount.saturating_sub(fluid_drop_off(dimension, name));
+    (next_amount > 0)
+        .then(|| fluid_state_with_level(name, fluid_legacy_level_from_amount(next_amount)))
+}
+
+fn fluid_spread_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+    level: u8,
+) -> Vec<(BlockPosition, i32)> {
+    let falling = level >= 8;
+    let mut updates = Vec::new();
+
+    let below = offset_position(position, 0, -1, 0);
+    let down_state = fluid_state_with_level(name, 8);
+    let can_flow_down = fluid_can_replace_with(world, dimension, &below, name, down_state);
+    if can_flow_down {
+        updates.extend(fluid_downward_spread_updates(
+            world, dimension, &below, name, down_state,
+        ));
+        if !falling && fluid_source_neighbor_count(world, dimension, position, name) >= 3 {
+            updates.extend(fluid_side_spread_updates(
+                world, dimension, position, name, level, down_state,
+            ));
+        }
+        return updates;
+    }
+
+    updates.extend(fluid_side_spread_updates(
+        world, dimension, position, name, level, down_state,
+    ));
+    updates
+}
+
+fn fluid_side_spread_updates(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+    level: u8,
+    down_state: i32,
+) -> Vec<(BlockPosition, i32)> {
+    let next_amount = if level >= 8 {
+        7
+    } else {
+        fluid_amount_from_legacy_level(level).saturating_sub(fluid_drop_off(dimension, name))
+    };
+    if next_amount == 0 {
+        return Vec::new();
+    }
+    let next_state = fluid_state_with_level(name, fluid_legacy_level_from_amount(next_amount));
+    let mut updates = Vec::new();
+
+    for (dx, dz) in fluid_horizontal_spread_directions(world, dimension, position, name, next_state)
+    {
+        let adjacent = offset_position(position, dx, 0, dz);
+        updates.push((adjacent.clone(), next_state));
+        let adjacent_below = offset_position(&adjacent, 0, -1, 0);
+        if fluid_can_replace_with(world, dimension, &adjacent_below, name, down_state) {
+            updates.extend(fluid_downward_spread_updates(
+                world,
+                dimension,
+                &adjacent_below,
+                name,
+                down_state,
+            ));
+        }
+    }
+    updates
+}
+
+fn fluid_downward_spread_updates(
+    world: &WorldManager,
+    dimension: &str,
+    first_position: &BlockPosition,
+    name: &str,
+    down_state: i32,
+) -> Vec<(BlockPosition, i32)> {
+    let mut updates = Vec::new();
+    let mut position = first_position.clone();
+    while updates.len() < FLUID_MAX_DOWNWARD_SPREAD_PER_TICK
+        && fluid_can_replace_with(world, dimension, &position, name, down_state)
+    {
+        updates.push((position.clone(), down_state));
+        position = offset_position(&position, 0, -1, 0);
+    }
+    updates
+}
+
+fn fluid_amount_from_legacy_level(level: u8) -> u8 {
+    if level == 0 {
+        8
+    } else if level >= 8 {
+        8
+    } else {
+        8u8.saturating_sub(level)
+    }
+}
+
+fn fluid_legacy_level_from_amount(amount: u8) -> u8 {
+    8u8.saturating_sub(amount.min(8))
+}
+
+fn fluid_drop_off(dimension: &str, name: &str) -> u8 {
+    if name == "minecraft:lava" && !dimension_is_ultrawarm(dimension, None) {
+        2
+    } else {
+        1
+    }
+}
+
+fn fluid_source_conversion_supported_below(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+) -> bool {
+    let below = offset_position(position, 0, -1, 0);
+    let below_state = world
+        .block_state_at(dimension, &below)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    let below_name = block_name(below_state);
+    if below_name == name && block_state_u8_property(below_state, "level").unwrap_or(0) == 0 {
+        return true;
+    }
+    !crate::inventory::is_air_block_state(below_state)
+        && !crate::inventory::can_replace_block_state(below_state)
+        && !is_fluid_block(&below_name)
+}
+
+fn fluid_source_neighbor_count(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+) -> u8 {
+    let mut count = 0u8;
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        let adjacent = offset_position(position, dx, 0, dz);
+        let adjacent_state = world
+            .block_state_at(dimension, &adjacent)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        if block_name(adjacent_state) == name
+            && block_state_u8_property(adjacent_state, "level").unwrap_or(0) == 0
+        {
+            count = count.saturating_add(1);
+        }
+    }
+    count
+}
+
+fn fluid_horizontal_spread_directions(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+    next_state: i32,
+) -> Vec<(i32, i32)> {
+    let mut spread = Vec::new();
+    let mut best_distance = i32::MAX;
+    let max_slope_distance = fluid_slope_search_distance(dimension, name);
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        let adjacent = offset_position(position, dx, 0, dz);
+        if !fluid_can_replace_with(world, dimension, &adjacent, name, next_state) {
+            continue;
+        }
+        let distance = fluid_downhill_distance(
+            world,
+            dimension,
+            &adjacent,
+            name,
+            max_slope_distance,
+            (-dx, -dz),
+        )
+        .unwrap_or(i32::MAX);
+        if distance < best_distance {
+            spread.clear();
+            best_distance = distance;
+        }
+        if distance == best_distance {
+            spread.push((dx, dz));
+        }
+    }
+    spread
+}
+
+fn fluid_slope_search_distance(dimension: &str, name: &str) -> i32 {
+    if name == "minecraft:lava" {
+        if dimension_is_ultrawarm(dimension, None) {
+            FLUID_WATER_SLOPE_SEARCH_DISTANCE
+        } else {
+            FLUID_LAVA_SLOPE_SEARCH_DISTANCE
+        }
+    } else {
+        FLUID_WATER_SLOPE_SEARCH_DISTANCE
+    }
+}
+
+fn fluid_downhill_distance(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+    remaining: i32,
+    blocked_direction: (i32, i32),
+) -> Option<i32> {
+    if fluid_can_flow_down_from(world, dimension, position, name) {
+        return Some(0);
+    }
+    if remaining <= 0 {
+        return None;
+    }
+
+    let next_state = fluid_state_with_level(name, 1);
+    let mut best = None;
+    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        if (dx, dz) == blocked_direction {
+            continue;
+        }
+        let adjacent = offset_position(position, dx, 0, dz);
+        if !fluid_can_replace_with(world, dimension, &adjacent, name, next_state) {
+            continue;
+        }
+        let Some(distance) =
+            fluid_downhill_distance(world, dimension, &adjacent, name, remaining - 1, (-dx, -dz))
+        else {
+            continue;
+        };
+        let distance = distance.saturating_add(1);
+        best = Some(best.map_or(distance, |current: i32| current.min(distance)));
+    }
+    best
+}
+
+fn fluid_can_flow_down_from(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+) -> bool {
+    let below = offset_position(position, 0, -1, 0);
+    fluid_can_replace_with(
+        world,
+        dimension,
+        &below,
+        name,
+        fluid_state_with_level(name, 8),
+    )
+}
+
+fn fluid_can_replace_with(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    name: &str,
+    next_state: i32,
+) -> bool {
+    let current = world
+        .block_state_at(dimension, position)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    if current == next_state {
+        return false;
+    }
+    if block_name(current) == name {
+        let current_level = block_state_u8_property(current, "level").unwrap_or(0);
+        let next_level = block_state_u8_property(next_state, "level").unwrap_or(0);
+        return current_level != 0 && next_level < current_level;
+    }
+    if crate::inventory::is_air_block_state(current)
+        || crate::inventory::can_replace_block_state(current)
+    {
+        return true;
+    }
+    false
+}
+
+fn fluid_state_with_level(name: &str, level: u8) -> i32 {
+    crate::world::chunk_nbt::block_state(name, &[("level".to_string(), level.to_string())]).id
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn is_fluid_source(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:water" | "minecraft:lava")
+}
+
+fn is_fluid_block(block_name: &str) -> bool {
+    matches!(block_name, "minecraft:water" | "minecraft:lava")
+}
+
+// ── Cobblestone generator (water + lava interaction) ──
+
+fn fluid_collision_update(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+    block_state: i32,
+) -> Option<(BlockPosition, i32)> {
+    let name = block_name(block_state);
+    // Only flowing fluids (non-source) can create cobblestone
+    let level = block_state_u8_property(block_state, "level").unwrap_or(0);
+    if (name != "minecraft:water" && name != "minecraft:lava") || level == 0 {
+        return None;
+    }
+    // Flowing fluid touches opposite fluid source → cobblestone/stone/obsidian
+    let opposite = if name == "minecraft:water" {
+        "minecraft:lava"
+    } else {
+        "minecraft:water"
+    };
+    for (dx, dy, dz) in &[
+        (1, 0, 0),
+        (-1, 0, 0),
+        (0, 1, 0),
+        (0, -1, 0),
+        (0, 0, 1),
+        (0, 0, -1),
+    ] {
+        let adj = offset_position(position, *dx, *dy, *dz);
+        let adj_state = world
+            .block_state_at(dimension, &adj)
+            .unwrap_or_else(crate::inventory::air_block_state);
+        let adj_name = block_name(adj_state);
+        if adj_name == opposite {
+            let adj_level = block_state_u8_property(adj_state, "level").unwrap_or(0);
+            let result = if adj_level == 0 {
+                // Opposite fluid is a source block → obsidian
+                "minecraft:obsidian"
+            } else {
+                // Both are flowing → cobblestone
+                "minecraft:cobblestone"
+            };
+            let result_state = crate::world::chunk_nbt::default_block_state(result);
+            return Some((position.clone(), result_state.id));
+        }
+    }
+    None
+}
+
 fn manual_openable_block_updates(
     world: &WorldManager,
     dimension: &str,
@@ -8045,6 +9800,44 @@ fn is_berrying_vine_block(block_name: &str) -> bool {
     )
 }
 
+fn is_grass_block(block_name: &str) -> bool {
+    matches!(
+        block_name,
+        "minecraft:grass_block" | "minecraft:dirt" | "minecraft:podzol" | "minecraft:mycelium"
+    )
+}
+
+/// Bone meal on grass/dirt: grow tall grass and flowers on top.
+fn grass_bone_meal_growth(
+    world: &WorldManager,
+    dimension: &str,
+    position: &BlockPosition,
+) -> Option<Vec<(BlockPosition, i32)>> {
+    let above = offset_position(position, 0, 1, 0);
+    let above_state = world
+        .block_state_at(dimension, &above)
+        .unwrap_or_else(crate::inventory::air_block_state);
+    // Only grow on air blocks — don't overwrite saplings or other plants
+    if !crate::inventory::is_air_block_state(above_state) {
+        return None;
+    }
+    // Pick a random plant: short_grass (60%), dandelion (15%), poppy (15%), oxeye_daisy (5%), cornflower (5%)
+    let r = rand::Rng::gen_range(&mut rand::thread_rng(), 0u32..100);
+    let plant = if r < 60 {
+        "minecraft:short_grass"
+    } else if r < 75 {
+        "minecraft:dandelion"
+    } else if r < 90 {
+        "minecraft:poppy"
+    } else if r < 95 {
+        "minecraft:oxeye_daisy"
+    } else {
+        "minecraft:cornflower"
+    };
+    let plant_state = crate::world::chunk_nbt::default_block_state(plant).id;
+    Some(vec![(above, plant_state)])
+}
+
 fn lit_block_interaction(
     block_state: i32,
     block_name: &str,
@@ -8436,6 +10229,7 @@ async fn handle_redstone_interaction<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     gameplay: &qexed_config::app::qexed::server::Gameplay,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
@@ -8467,6 +10261,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         runtime,
         play_dimension,
         actor,
@@ -8484,6 +10279,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         gameplay,
         runtime,
         play_dimension,
@@ -8500,6 +10296,7 @@ async fn apply_and_propagate_redstone_updates<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     gameplay: &qexed_config::app::qexed::server::Gameplay,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
@@ -8517,6 +10314,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         runtime,
         play_dimension,
         actor,
@@ -8528,6 +10326,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         runtime,
         play_dimension,
         actor,
@@ -8541,6 +10340,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         gameplay,
         runtime,
         play_dimension,
@@ -8556,6 +10356,7 @@ async fn propagate_redstone_from_positions<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     gameplay: &qexed_config::app::qexed::server::Gameplay,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
@@ -8581,6 +10382,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             runtime,
             play_dimension,
             actor,
@@ -8605,6 +10407,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             runtime,
             play_dimension,
             actor,
@@ -8616,6 +10419,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             runtime,
             play_dimension,
             actor,
@@ -8638,6 +10442,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 runtime,
                 play_dimension,
                 actor,
@@ -8655,6 +10460,7 @@ async fn propagate_redstone_from_block_positions<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     gameplay: &qexed_config::app::qexed::server::Gameplay,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
@@ -8680,6 +10486,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         gameplay,
         runtime,
         play_dimension,
@@ -8695,6 +10502,7 @@ async fn apply_observer_updates_after_block_changes<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
     actor: uuid::Uuid,
@@ -8719,6 +10527,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 runtime,
                 play_dimension,
                 actor,
@@ -8737,6 +10546,7 @@ async fn apply_observer_updates_after_block_positions<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
     actor: uuid::Uuid,
@@ -8752,6 +10562,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         runtime,
         play_dimension,
         actor,
@@ -8944,6 +10755,7 @@ async fn apply_redstone_updates<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     runtime: &mut gameplay::redstone::RedstoneRuntime,
     play_dimension: &str,
     actor: uuid::Uuid,
@@ -8999,6 +10811,7 @@ where
             update.position.clone(),
             update.block_state,
         );
+        fluid.enqueue_block_change(&update.dimension, &update.position);
         if update.dimension == play_dimension {
             sink.send(crate::inventory::block_update(
                 update.position.clone(),
@@ -9041,6 +10854,7 @@ async fn handle_cauldron_interaction<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     game_mode: GameMode,
     dimension: &str,
@@ -9080,6 +10894,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         world_config,
         game_mode,
         dimension,
@@ -9267,6 +11082,7 @@ async fn place_held_block<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     game_mode: GameMode,
     dimension: &str,
@@ -9327,6 +11143,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             dimension,
@@ -9345,6 +11162,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             dimension,
@@ -9373,6 +11191,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         world_config,
         game_mode,
         dimension,
@@ -9398,6 +11217,7 @@ async fn destroy_block<W>(
     world_rules: &crate::world::WorldRulesManager,
     ore_pits: &crate::world::OrePitManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
@@ -9439,6 +11259,7 @@ where
         world,
         world_rules,
         players,
+        fluid,
         world_config,
         game_mode,
         dimension,
@@ -9456,6 +11277,7 @@ where
                 world,
                 world_rules,
                 players,
+                fluid,
                 world_config,
                 game_mode,
                 dimension,
@@ -9473,6 +11295,7 @@ where
             world_rules,
             ore_pits,
             players,
+            fluid,
             entities,
             plugins,
             world_config,
@@ -9500,6 +11323,7 @@ async fn drop_broken_block<W>(
     world_rules: &crate::world::WorldRulesManager,
     ore_pits: &crate::world::OrePitManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     entities: &crate::entities::EntityManager,
     plugins: &crate::plugins::PluginManager,
     world_config: &qexed_config::app::qexed::server::World,
@@ -9565,6 +11389,7 @@ where
             world,
             world_rules,
             players,
+            fluid,
             world_config,
             game_mode,
             dimension,
@@ -10287,6 +12112,7 @@ async fn apply_block_change<W>(
     world: &WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     players: &PlayerManager,
+    fluid: &FluidRuntime,
     world_config: &qexed_config::app::qexed::server::World,
     game_mode: GameMode,
     dimension: &str,
@@ -10330,6 +12156,7 @@ where
     } else {
         world.place_block(dimension, position.clone(), block_state);
     }
+    fluid.enqueue_block_change(dimension, &position);
     sink.send(crate::inventory::block_update(
         position.clone(),
         block_state,
@@ -10458,6 +12285,46 @@ where
 {
     sink.send(crate::inventory::acknowledge_block_change(sequence).packet())
         .await?;
+    Ok(())
+}
+
+async fn send_block_destruction_stage<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    entity_id: i32,
+    position: BlockPosition,
+    stage: i8,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use qexed_packet::net_types::VarInt;
+    use qexed_protocol::to_client::play::block_destruction::BlockDestruction;
+    sink.send(BlockDestruction {
+        entity_id: VarInt(entity_id),
+        location: position,
+        destroy_stage: stage,
+    })
+    .await?;
+    Ok(())
+}
+
+const BONE_MEAL_PARTICLE_ID: i32 = 2005;
+
+async fn send_bone_meal_particles<W>(
+    sink: &mut qexed_tcp_connect::PacketSink<W>,
+    position: BlockPosition,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use qexed_protocol::to_client::play::level_event::LevelEvent;
+    sink.send(LevelEvent {
+        event_id: BONE_MEAL_PARTICLE_ID,
+        position,
+        data: 0,
+        global_event: false,
+    })
+    .await?;
     Ok(())
 }
 

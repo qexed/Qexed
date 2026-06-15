@@ -15,7 +15,7 @@ use qexed_protocol::to_client::play::{
 
 use crate::world::WorldManager;
 
-use super::util::chunk_coord;
+use super::{FluidSeed, util::chunk_coord};
 
 const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
 const DEFAULT_CHUNK_LOAD_PARALLELISM: usize = 4;
@@ -54,7 +54,13 @@ pub(super) struct ChunkSendState {
 pub(super) struct ChunkLoadResult {
     pub(super) chunk_x: i32,
     pub(super) chunk_z: i32,
+    pub(super) fluid_seeds: Vec<FluidSeed>,
     frame: Result<bytes::Bytes>,
+}
+
+pub(super) struct ChunkPayloadResult {
+    frame: bytes::Bytes,
+    fluid_seeds: Vec<FluidSeed>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -131,7 +137,7 @@ impl ChunkTaskPool {
         chunk_z: i32,
         cache_epoch: u64,
         compression_threshold: Option<i32>,
-    ) -> Result<bytes::Bytes> {
+    ) -> Result<ChunkPayloadResult> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         self.sender
             .send(ChunkTask::BuildPayload {
@@ -309,20 +315,25 @@ fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
 }
 
 enum ChunkTaskReply {
-    OneShot(tokio::sync::oneshot::Sender<Result<bytes::Bytes>>),
+    OneShot(tokio::sync::oneshot::Sender<Result<ChunkPayloadResult>>),
     Channel(tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>),
 }
 
 impl ChunkTaskReply {
-    fn send(self, chunk_x: i32, chunk_z: i32, frame: Result<bytes::Bytes>) {
+    fn send(self, chunk_x: i32, chunk_z: i32, payload: Result<ChunkPayloadResult>) {
         match self {
             ChunkTaskReply::OneShot(sender) => {
-                let _ = sender.send(frame);
+                let _ = sender.send(payload);
             }
             ChunkTaskReply::Channel(sender) => {
+                let (fluid_seeds, frame) = match payload {
+                    Ok(payload) => (payload.fluid_seeds, Ok(payload.frame)),
+                    Err(err) => (Vec::new(), Err(err)),
+                };
                 let _ = sender.send(ChunkLoadResult {
                     chunk_x,
                     chunk_z,
+                    fluid_seeds,
                     frame,
                 });
             }
@@ -557,7 +568,7 @@ impl ChunkSendState {
         plugins: &crate::plugins::PluginManager,
         x: f64,
         z: f64,
-    ) -> Result<()>
+    ) -> Result<Vec<FluidSeed>>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
@@ -570,11 +581,11 @@ impl ChunkSendState {
         .await?;
 
         self.reset_view(chunk_x, chunk_z);
-        self.send_center_chunk_first(sink, world, plugins).await?;
+        let fluid_seeds = self.send_center_chunk_first(sink, world, plugins).await?;
         self.start_next_chunk_load(world, Some(chunk_sender), sink.compression_threshold());
         sink.flush().await?;
         log::debug!("respawn chunk view reset: center=({chunk_x}, {chunk_z})");
-        Ok(())
+        Ok(fluid_seeds)
     }
 
     pub(super) async fn reset_dimension_after_respawn<W>(
@@ -586,7 +597,7 @@ impl ChunkSendState {
         dimension: impl Into<String>,
         x: f64,
         z: f64,
-    ) -> Result<()>
+    ) -> Result<Vec<FluidSeed>>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
@@ -614,13 +625,13 @@ impl ChunkSendState {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         world: &WorldManager,
         plugins: &crate::plugins::PluginManager,
-    ) -> Result<bool>
+    ) -> Result<Vec<FluidSeed>>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
         let chunk = (self.center_x, self.center_z);
         if self.visible_chunks.contains(&chunk) {
-            return Ok(false);
+            return Ok(Vec::new());
         }
 
         self.remove_pending_chunk(chunk);
@@ -639,7 +650,7 @@ impl ChunkSendState {
             .await?;
 
         sink.send(ChunkBatchStart {}).await?;
-        sink.send_encoded_frame(chunk_payload).await?;
+        sink.send_encoded_frame(chunk_payload.frame).await?;
         for update in world.placed_block_updates(&self.dimension, chunk.0, chunk.1) {
             sink.send(update).await?;
         }
@@ -652,7 +663,7 @@ impl ChunkSendState {
         .await?;
         sink.flush().await?;
         self.log_initial_view_progress();
-        Ok(true)
+        Ok(chunk_payload.fluid_seeds)
     }
 
     pub(super) async fn send_missing_chunks<W>(
@@ -660,15 +671,16 @@ impl ChunkSendState {
         sink: &mut qexed_tcp_connect::PacketSink<W>,
         world: &WorldManager,
         cache_epoch: u64,
-    ) -> Result<usize>
+    ) -> Result<Vec<FluidSeed>>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
         let chunks = self.missing_chunks();
         if chunks.is_empty() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
+        let mut fluid_seeds = Vec::new();
         sink.send(ChunkBatchStart {}).await?;
         for (chunk_x, chunk_z) in &chunks {
             let chunk_x = *chunk_x;
@@ -683,7 +695,8 @@ impl ChunkSendState {
                     sink.compression_threshold(),
                 )
                 .await?;
-            sink.send_encoded_frame(chunk_payload).await?;
+            sink.send_encoded_frame(chunk_payload.frame).await?;
+            fluid_seeds.extend(chunk_payload.fluid_seeds);
             for update in world.placed_block_updates(&self.dimension, chunk_x, chunk_z) {
                 sink.send(update).await?;
             }
@@ -693,7 +706,7 @@ impl ChunkSendState {
             batch_size: VarInt(chunks.len() as i32),
         })
         .await?;
-        Ok(chunks.len())
+        Ok(fluid_seeds)
     }
 
     pub(super) fn missing_chunks(&self) -> Vec<(i32, i32)> {
@@ -847,14 +860,14 @@ impl ChunkSendState {
         plugins: &crate::plugins::PluginManager,
         sender: &tokio::sync::mpsc::UnboundedSender<ChunkLoadResult>,
         replenish_quota: bool,
-    ) -> Result<usize>
+    ) -> Result<Vec<FluidSeed>>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
         if self.ready_chunks.is_empty()
             || self.unacknowledged_batches >= self.max_unacknowledged_batches
         {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         if replenish_quota {
@@ -863,20 +876,22 @@ impl ChunkSendState {
                 (self.batch_quota + self.desired_chunks_per_tick).min(max_batch_size);
         }
         if self.batch_quota < 1.0 {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         let selected = self
             .take_ready_chunks((self.batch_quota.floor() as usize).min(MAX_CHUNKS_PER_SEND_BATCH));
         if selected.is_empty() {
             self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         let mut chunks = Vec::with_capacity(selected.len());
         for loaded in selected {
             match loaded.frame {
-                Ok(frame) => chunks.push((loaded.chunk_x, loaded.chunk_z, frame)),
+                Ok(frame) => {
+                    chunks.push((loaded.chunk_x, loaded.chunk_z, frame, loaded.fluid_seeds))
+                }
                 Err(err) if is_expired_world_session_error(&err) => {
                     log::debug!(
                         "requeue expired chunk load result: dimension={}, chunk=({}, {})",
@@ -891,12 +906,14 @@ impl ChunkSendState {
         }
         if chunks.is_empty() {
             self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
+        let mut fluid_seeds = Vec::new();
         sink.send(ChunkBatchStart {}).await?;
-        for (chunk_x, chunk_z, chunk_frame) in &chunks {
+        for (chunk_x, chunk_z, chunk_frame, chunk_fluid_seeds) in &chunks {
             sink.send_encoded_frame(chunk_frame.clone()).await?;
+            fluid_seeds.extend(chunk_fluid_seeds.iter().cloned());
             for update in world.placed_block_updates(&self.dimension, *chunk_x, *chunk_z) {
                 sink.send(update).await?;
             }
@@ -913,7 +930,7 @@ impl ChunkSendState {
         self.log_initial_view_progress();
 
         self.start_next_chunk_load(world, Some(sender), sink.compression_threshold());
-        Ok(chunks.len())
+        Ok(fluid_seeds)
     }
 
     fn take_ready_chunks(&mut self, max_count: usize) -> Vec<ChunkLoadResult> {
@@ -1155,7 +1172,7 @@ fn build_saved_chunk_payload_sync(
     chunk_z: i32,
     cache_epoch: u64,
     compression_threshold: Option<i32>,
-) -> Result<Option<bytes::Bytes>> {
+) -> Result<Option<ChunkPayloadResult>> {
     let total_start = Instant::now();
     if let Some(payload) = world.precompiled_chunk_packet(
         dimension,
@@ -1168,7 +1185,11 @@ fn build_saved_chunk_payload_sync(
             "chunk frame cache hit: phase=load, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), bytes={}",
             payload.len()
         );
-        return Ok(Some(payload));
+        let fluid_seeds = world.fluid_positions_in_chunk(dimension, chunk_x, chunk_z)?;
+        return Ok(Some(ChunkPayloadResult {
+            frame: payload,
+            fluid_seeds,
+        }));
     }
 
     let chunk_start = Instant::now();
@@ -1202,7 +1223,11 @@ fn build_saved_chunk_payload_sync(
         );
     }
 
-    Ok(Some(payload))
+    let fluid_seeds = world.fluid_positions_in_chunk(dimension, chunk_x, chunk_z)?;
+    Ok(Some(ChunkPayloadResult {
+        frame: payload,
+        fluid_seeds,
+    }))
 }
 
 fn build_generated_chunk_payload_sync(
@@ -1212,7 +1237,7 @@ fn build_generated_chunk_payload_sync(
     chunk_z: i32,
     cache_epoch: u64,
     compression_threshold: Option<i32>,
-) -> Result<bytes::Bytes> {
+) -> Result<ChunkPayloadResult> {
     let total_start = Instant::now();
     if let Some(payload) = world.precompiled_chunk_packet(
         &dimension,
@@ -1225,7 +1250,11 @@ fn build_generated_chunk_payload_sync(
             "chunk frame cache hit: phase=generate, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), bytes={}",
             payload.len()
         );
-        return Ok(payload);
+        let fluid_seeds = world.fluid_positions_in_chunk(&dimension, chunk_x, chunk_z)?;
+        return Ok(ChunkPayloadResult {
+            frame: payload,
+            fluid_seeds,
+        });
     }
 
     let chunk_start = Instant::now();
@@ -1256,7 +1285,11 @@ fn build_generated_chunk_payload_sync(
         );
     }
 
-    Ok(payload)
+    let fluid_seeds = world.fluid_positions_in_chunk(&dimension, chunk_x, chunk_z)?;
+    Ok(ChunkPayloadResult {
+        frame: payload,
+        fluid_seeds,
+    })
 }
 
 fn encode_chunk_payload(
@@ -1379,7 +1412,7 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let mut chunk_state = ChunkSendState::new(dimension.to_string(), center_x, center_z, 1, 1);
-    chunk_state
+    let _ = chunk_state
         .send_missing_chunks(sink, world, world.cache_epoch())
         .await?;
     Ok(())
@@ -1399,6 +1432,7 @@ mod tests {
         ChunkLoadResult {
             chunk_x,
             chunk_z,
+            fluid_seeds: Vec::new(),
             frame: Ok(bytes::Bytes::new()),
         }
     }

@@ -22,4 +22,7 @@ members = [
     "xiangqi",
     "chess",
     "tiankeng",
+    "skyblock",
+    "backpack",
+    "digfight",
 ]

@@ -66,6 +66,11 @@ pub(super) fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool
             block_state: _,
             light_update: _,
         } => *changed_id == profile_id,
+        PlayerEvent::BlockChanges {
+            profile_id: changed_id,
+            dimension: _,
+            changes: _,
+        } => *changed_id == profile_id,
         PlayerEvent::ClientboundPackets { packets: _ } => false,
     }
 }
@@ -87,7 +92,9 @@ pub(super) fn player_event_message(
         PlayerEvent::Left { username, .. } => {
             Some(render_player_message(&messages.leave, username))
         }
-        PlayerEvent::GameModeChanged { .. } | PlayerEvent::GiveItem { .. } => None,
+        PlayerEvent::GameModeChanged { .. }
+        | PlayerEvent::GiveItem { .. }
+        | PlayerEvent::BlockChanges { .. } => None,
         PlayerEvent::ClientboundPackets { packets: _ } => None,
         _ => None,
     }

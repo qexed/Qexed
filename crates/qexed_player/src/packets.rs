@@ -130,6 +130,24 @@ impl PlayerEvent {
                 }
                 Ok(packets)
             }
+            Self::BlockChanges {
+                profile_id: _,
+                dimension,
+                changes,
+            } => {
+                if dimension != viewer_dimension {
+                    return Ok(Vec::new());
+                }
+                changes
+                    .iter()
+                    .map(|change| {
+                        packet_bytes(qexed_protocol::to_client::play::block_update::BlockUpdate {
+                            location: change.position.clone(),
+                            block_state: qexed_packet::net_types::VarInt(change.block_state),
+                        })
+                    })
+                    .collect()
+            }
             Self::ClientboundPackets { packets } => Ok(packets.clone()),
         }
     }

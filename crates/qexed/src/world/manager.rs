@@ -39,6 +39,15 @@ pub struct WorldManager {
     block_write_revision: Arc<AtomicU64>,
     active_sessions: Arc<AtomicUsize>,
     cache_epoch: Arc<AtomicU64>,
+    deferred_block_saves: Arc<
+        Mutex<
+            std::collections::BTreeMap<
+                ChunkKey,
+                std::collections::BTreeMap<BlockKey, PendingBlock>,
+            >,
+        >,
+    >,
+    deferred_block_save_epoch: Arc<AtomicU64>,
 }
 
 const REGION_CHUNK_CACHE_LIMIT: usize = 256;
@@ -157,7 +166,9 @@ struct CachedChunk {
 }
 
 #[derive(Debug)]
-struct FlatBlockStates { states: Box<[i32]> }
+struct FlatBlockStates {
+    states: Box<[i32]>,
+}
 
 impl FlatBlockStates {
     fn from_nbt(root: &qexed_nbt::Tag) -> Option<Self> {
@@ -166,11 +177,17 @@ impl FlatBlockStates {
         let mut states = vec![0i32; total].into_boxed_slice();
         for sec in &sections {
             let sy = sec.section_y;
-            if sy < super::WORLD_MIN_SECTION_Y || sy >= super::WORLD_MIN_SECTION_Y + super::WORLD_SECTION_COUNT as i32 { continue; }
+            if sy < super::WORLD_MIN_SECTION_Y
+                || sy >= super::WORLD_MIN_SECTION_Y + super::WORLD_SECTION_COUNT as i32
+            {
+                continue;
+            }
             let by = (sy - super::WORLD_MIN_SECTION_Y) as usize * 16;
             let src = by.checked_mul(256)?;
             let len = sec.states.len().min(total.saturating_sub(src));
-            if src + len <= total { states[src..src + len].copy_from_slice(&sec.states[..len]); }
+            if src + len <= total {
+                states[src..src + len].copy_from_slice(&sec.states[..len]);
+            }
         }
         Some(Self { states })
     }
@@ -179,7 +196,8 @@ impl FlatBlockStates {
         let ly = y.checked_sub(super::WORLD_MIN_Y)? as usize;
         let lz = z.rem_euclid(16) as usize;
         let idx = lx + lz.checked_mul(16)? + ly.checked_mul(256)?;
-        if idx < self.states.len() { Some(self.states[idx]) } else { None }
+        let state = self.states.get(idx).copied()?;
+        (!crate::inventory::is_air_block_state(state)).then_some(state)
     }
 }
 
@@ -191,11 +209,22 @@ impl RegionChunkCache {
     }
 
     fn insert(&mut self, key: ChunkKey, compressed: region::ChunkData) {
-        self.chunks.insert(key.clone(), CachedChunk { compressed, parsed: None, flat_blocks: None });
+        self.chunks.insert(
+            key.clone(),
+            CachedChunk {
+                compressed,
+                parsed: None,
+                flat_blocks: None,
+            },
+        );
         self.touch(key.clone());
         while self.chunks.len() > REGION_CHUNK_CACHE_LIMIT {
-            let Some(oldest) = self.order.pop_front() else { break; };
-            if oldest != key { self.chunks.remove(&oldest); }
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if oldest != key {
+                self.chunks.remove(&oldest);
+            }
         }
     }
 
@@ -451,6 +480,8 @@ impl WorldManager {
             block_write_revision: Default::default(),
             active_sessions: Default::default(),
             cache_epoch: Default::default(),
+            deferred_block_saves: Default::default(),
+            deferred_block_save_epoch: Default::default(),
         }
     }
 
@@ -704,6 +735,12 @@ impl WorldManager {
     }
 
     pub(crate) fn flush_block_writes(&self) {
+        self.deferred_block_save_epoch
+            .fetch_add(1, Ordering::AcqRel);
+        let world = self.clone();
+        self.block_write_queue.spawn(move || {
+            world.persist_due_deferred_blocks();
+        });
         self.block_write_queue.flush();
     }
 
@@ -953,6 +990,21 @@ impl WorldManager {
             self.remember_region_chunk(dimension, chunk_x, chunk_z, chunk.clone());
         }
         Ok(loaded)
+    }
+
+    pub(crate) fn fluid_positions_in_chunk(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Vec<(qexed_packet::net_types::Position, i32)>> {
+        let Some(chunk) = self.load_region_chunk(dimension, chunk_x, chunk_z)? else {
+            let Some(chunk) = self.generator.region_chunk(dimension, chunk_x, chunk_z)? else {
+                return Ok(Vec::new());
+            };
+            return chunk_nbt::fluid_positions_from_region(chunk_x, chunk_z, &chunk);
+        };
+        chunk_nbt::fluid_positions_from_region(chunk_x, chunk_z, &chunk)
     }
 
     fn read_region_chunk_for_network(
@@ -1214,6 +1266,63 @@ impl WorldManager {
         Ok(updates)
     }
 
+    pub fn place_blocks_deferred(
+        &self,
+        dimension: &str,
+        blocks: impl IntoIterator<Item = (qexed_packet::net_types::Position, i32)>,
+    ) -> Result<Vec<BlockUpdate>> {
+        const DEFERRED_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
+
+        if self.read_only {
+            log::debug!("ignored deferred bulk block placement because world is read-only");
+            return Ok(Vec::new());
+        }
+
+        let blocks = blocks.into_iter().collect::<Vec<_>>();
+        if blocks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let updates = blocks
+            .iter()
+            .map(|(position, block_state)| BlockUpdate {
+                location: position.clone(),
+                block_state: VarInt(*block_state),
+            })
+            .collect::<Vec<_>>();
+
+        {
+            let mut placed_blocks = self
+                .placed_blocks
+                .lock()
+                .expect("world block store poisoned");
+            for (position, block_state) in &blocks {
+                let pending = PendingBlock {
+                    block_state: *block_state,
+                    revision: self.next_block_write_revision(),
+                };
+                placed_blocks.insert(BlockKey::new(dimension, position), pending);
+                self.mark_chunk_dirty_for_block_change(dimension, position);
+            }
+        }
+
+        for (position, block_state) in &blocks {
+            self.mark_placed_block_light_dampening(
+                dimension,
+                position,
+                if *block_state == AIR_BLOCK_STATE_ID {
+                    0
+                } else {
+                    15
+                },
+            );
+        }
+
+        self.queue_deferred_chunk_persist(dimension.to_string(), blocks, DEFERRED_SAVE_DELAY);
+
+        Ok(updates)
+    }
+
     fn remember_block_overlay(
         &self,
         dimension: &str,
@@ -1314,6 +1423,138 @@ impl WorldManager {
         });
     }
 
+    fn queue_deferred_chunk_persist(
+        &self,
+        dimension: String,
+        blocks: Vec<(qexed_packet::net_types::Position, i32)>,
+        delay: std::time::Duration,
+    ) {
+        let mut chunks = std::collections::BTreeSet::new();
+        {
+            let placed_blocks = self
+                .placed_blocks
+                .lock()
+                .expect("world block store poisoned");
+            let mut deferred = self
+                .deferred_block_saves
+                .lock()
+                .expect("world deferred block save store poisoned");
+            for (position, _) in blocks {
+                let block_key = BlockKey::new(&dimension, &position);
+                let Some(pending) = placed_blocks.get(&block_key).copied() else {
+                    continue;
+                };
+                let chunk_key = ChunkKey::new(
+                    &dimension,
+                    position.x.div_euclid(16),
+                    position.z.div_euclid(16),
+                );
+                chunks.insert(chunk_key.clone());
+                deferred
+                    .entry(chunk_key)
+                    .or_default()
+                    .insert(block_key, pending);
+            }
+        }
+        if chunks.is_empty() {
+            return;
+        }
+
+        let epoch = self
+            .deferred_block_save_epoch
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        let world = self.clone();
+        let queue = self.block_write_queue.clone();
+        std::thread::Builder::new()
+            .name("qexed-deferred-world-save".to_string())
+            .spawn(move || {
+                if !delay.is_zero() {
+                    std::thread::sleep(delay);
+                }
+                if world.deferred_block_save_epoch.load(Ordering::Acquire) != epoch {
+                    return;
+                }
+
+                queue.spawn(move || {
+                    world.persist_due_deferred_blocks();
+                });
+            })
+            .expect("create deferred world save timer");
+    }
+
+    fn persist_due_deferred_blocks(&self) {
+        let chunks = {
+            let mut deferred = self
+                .deferred_block_saves
+                .lock()
+                .expect("world deferred block save store poisoned");
+            std::mem::take(&mut *deferred)
+        };
+        for (chunk, expected) in chunks {
+            self.persist_deferred_chunk_blocks(&chunk, expected);
+        }
+    }
+
+    fn persist_deferred_chunk_blocks(
+        &self,
+        chunk: &ChunkKey,
+        expected: std::collections::BTreeMap<BlockKey, PendingBlock>,
+    ) {
+        let blocks = self.current_expected_blocks(expected);
+        if blocks.is_empty() {
+            return;
+        }
+
+        let dimension = chunk.dimension.clone();
+        let persist_blocks = blocks
+            .iter()
+            .map(|(position, pending)| (position.clone(), pending.block_state))
+            .collect::<Vec<_>>();
+        match self.persist_block_changes(&dimension, &persist_blocks) {
+            Ok(()) => {
+                self.remove_placed_blocks_if_current(&dimension, &blocks);
+                for (position, _) in &blocks {
+                    self.clear_dirty_chunk_if_clean(&dimension, position);
+                }
+            }
+            Err(err) => {
+                log::warn!(
+                    "failed to persist deferred block changes, keeping in memory overlay: dimension={}, chunk=({}, {}), count={}, error={err:#}",
+                    chunk.dimension,
+                    chunk.x,
+                    chunk.z,
+                    blocks.len()
+                );
+            }
+        }
+    }
+
+    fn current_expected_blocks(
+        &self,
+        expected: std::collections::BTreeMap<BlockKey, PendingBlock>,
+    ) -> Vec<(qexed_packet::net_types::Position, PendingBlock)> {
+        let placed_blocks = self
+            .placed_blocks
+            .lock()
+            .expect("world block store poisoned");
+        expected
+            .into_iter()
+            .filter_map(|(key, pending)| {
+                (placed_blocks.get(&key).copied() == Some(pending)).then(|| {
+                    (
+                        qexed_packet::net_types::Position {
+                            x: key.x,
+                            y: key.y,
+                            z: key.z,
+                        },
+                        pending,
+                    )
+                })
+            })
+            .collect()
+    }
+
     fn placed_block_is_current(
         &self,
         dimension: &str,
@@ -1402,7 +1643,9 @@ impl WorldManager {
         dimension: &str,
         position: &qexed_packet::net_types::Position,
     ) -> Option<i32> {
-        if let Some(state) = self.cached_block_state_at(dimension, position) { return Some(state); }
+        if let Some(state) = self.cached_block_state_at(dimension, position) {
+            return Some(state);
+        }
         if let Some(block_state) = self
             .placed_blocks
             .lock()
@@ -1482,20 +1725,36 @@ impl WorldManager {
             return Some(block_state);
         }
 
-        let chunk_key = ChunkKey::new(dimension, position.x.div_euclid(16), position.z.div_euclid(16));
-        let mut cache = self.region_chunk_cache.lock().expect("world region chunk cache poisoned");
-        let Some(entry) = cache.chunks.get_mut(&chunk_key) else { return None; };
+        let chunk_key = ChunkKey::new(
+            dimension,
+            position.x.div_euclid(16),
+            position.z.div_euclid(16),
+        );
+        let mut cache = self
+            .region_chunk_cache
+            .lock()
+            .expect("world region chunk cache poisoned");
+        let Some(entry) = cache.chunks.get_mut(&chunk_key) else {
+            return None;
+        };
         if entry.flat_blocks.is_none() {
             if entry.parsed.is_none() {
-                let raw = match entry.compressed.decompress() { Ok(r) => r, Err(_) => return None };
+                let raw = match entry.compressed.decompress() {
+                    Ok(r) => r,
+                    Err(_) => return None,
+                };
                 match qexed_nbt::from_slice(&raw) {
                     Ok((_, root)) => entry.parsed = Some(std::sync::Arc::new(root)),
                     Err(_) => return None,
                 }
             }
-            if let Some(p) = &entry.parsed { entry.flat_blocks = FlatBlockStates::from_nbt(p).map(std::sync::Arc::new); }
+            if let Some(p) = &entry.parsed {
+                entry.flat_blocks = FlatBlockStates::from_nbt(p).map(std::sync::Arc::new);
+            }
         }
-        if let Some(flat) = &entry.flat_blocks { return flat.get(position.x, position.y, position.z); }
+        if let Some(flat) = &entry.flat_blocks {
+            return flat.get(position.x, position.y, position.z);
+        }
         let parsed = entry.parsed.as_ref()?;
         let bs = chunk_nbt::block_state_at_from_nbt(parsed, position).ok()??;
         self.remember_block_state(block_key, bs);
@@ -2077,7 +2336,7 @@ impl Drop for WorldSession {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct BlockKey {
     dimension: String,
     x: i32,
@@ -2152,7 +2411,7 @@ impl BlockKey {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct ChunkKey {
     dimension: String,
     x: i32,

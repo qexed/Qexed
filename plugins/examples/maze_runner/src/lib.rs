@@ -2,9 +2,10 @@ use qexed_plugin_sdk::{
     ConfigReloadPayload, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
     PlaceholderQuery, PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerMovePayload,
     PlayerPayload, PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, WorldEditRegion, config_load_or_create, config_read_to_string,
-    storage_delete, storage_get, storage_get_typed, storage_set, storage_set_typed, time_millis,
-    world_register_edit_region, world_set_blocks,
+    PluginCommandResponse, RuntimeEntity, WorldEditRegion, config_load_or_create,
+    config_read_to_string, entity_move, entity_remove, entity_upsert, storage_delete, storage_get,
+    storage_get_typed, storage_set, storage_set_typed, time_millis, world_register_edit_region,
+    world_set_blocks,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,12 @@ const BUILD_BLOCKS_PER_TICK: usize = 1024;
 const BUILD_BLOCKS_PER_STORAGE_CHUNK: usize = 4096;
 const MAX_STALE_BUILD_STORAGE_CHUNKS: usize = 256;
 const MAZE_GENERATION_ATTEMPTS: usize = 8;
+const MAZE_COMPASS_BAR_ID: &str = "maze_runner:compass";
+const MAZE_STORY_PREFIX: &str = "maze_story/";
+const MAZE_GUARD_PREFIX: &str = "maze_guard/";
+const GUARD_REACH_DISTANCE: f64 = 0.35;
+const GUARD_DETECT_DISTANCE: f64 = 7.5;
+const GUARD_DETECT_DOT: f64 = 0.35;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_priority() -> i32 {
@@ -70,6 +77,15 @@ pub extern "C" fn qexed_plugin_player_join(ptr: i32, len: i32) {
             &MazeSession::lobby(&config.lobby.dimension),
         );
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_player_leave(ptr: i32, len: i32) {
+    let Some(payload) = (unsafe { qexed_plugin_sdk::decode_payload::<PlayerPayload>(ptr, len) })
+    else {
+        return;
+    };
+    clear_guard_runtime(&payload.uuid);
 }
 
 #[unsafe(no_mangle)]
@@ -200,6 +216,7 @@ pub extern "C" fn qexed_plugin_player_move(ptr: i32, len: i32) -> i64 {
         if best.is_none_or(|value| elapsed < value) {
             let _ = storage_set_typed(&best_key, &elapsed);
         }
+        clear_guard_runtime(&payload.player.uuid);
         let _ = storage_set_typed(
             &instance_key(&payload.player.uuid),
             &MazeSession::lobby(&config.lobby.dimension),
@@ -210,6 +227,9 @@ pub extern "C" fn qexed_plugin_player_move(ptr: i32, len: i32) -> i64 {
             format_duration(elapsed)
         )));
         actions.push(PlayerAction::SetPlayersVisible { visible: true });
+        actions.push(PlayerAction::RemoveBossBar {
+            id: MAZE_COMPASS_BAR_ID.to_string(),
+        });
         actions.push(PlayerAction::Teleport {
             dimension: config.lobby.dimension,
             x: config.lobby.spawn_x,
@@ -233,8 +253,14 @@ pub extern "C" fn qexed_plugin_player_tick(ptr: i32, len: i32) -> i64 {
     else {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     };
-    let response = continue_maze_build(&payload.player.uuid);
-    qexed_plugin_sdk::response_ptr_len(&response)
+    let mut actions = continue_maze_build(&payload.player.uuid).actions;
+    if let Some(mut response_actions) = tick_active_maze(&payload) {
+        actions.append(&mut response_actions);
+    }
+    qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse {
+        handled: !actions.is_empty(),
+        actions,
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -309,6 +335,7 @@ fn start_maze_loading(
             actions: vec![message("未知难度，可选 easy, normal, hard")],
         };
     };
+    clear_guard_runtime(player_uuid);
     let instance = instance_origin(config, player_uuid, &difficulty);
     let maze = generate_maze(&difficulty, stable_seed(player_uuid, &difficulty.id));
     let session = MazeSession {
@@ -324,6 +351,9 @@ fn start_maze_loading(
         finish_z: instance.2 + cell_center_offset(maze.finish_z),
         min_y: instance.1,
         started_at_ms: time_millis(),
+        origin_x: instance.0,
+        origin_y: instance.1,
+        origin_z: instance.2,
     };
     register_instance_region(&difficulty, instance);
     let blocks = maze_blocks(&difficulty, instance, &maze);
@@ -370,6 +400,7 @@ fn start_maze(config: &Config, player_uuid: &str, difficulty_id: &str) -> Plugin
             actions: vec![message("未知难度，可选: easy, normal, hard")],
         };
     };
+    clear_guard_runtime(player_uuid);
     let instance = instance_origin(config, player_uuid, &difficulty);
     let maze = generate_maze(&difficulty, stable_seed(player_uuid, &difficulty.id));
     let session = MazeSession {
@@ -385,10 +416,14 @@ fn start_maze(config: &Config, player_uuid: &str, difficulty_id: &str) -> Plugin
         finish_z: instance.2 + cell_center_offset(maze.finish_z),
         min_y: instance.1,
         started_at_ms: time_millis(),
+        origin_x: instance.0,
+        origin_y: instance.1,
+        origin_z: instance.2,
     };
     register_instance_region(&difficulty, instance);
     build_maze(&difficulty, instance, &maze);
     let _ = storage_set_typed(&instance_key(player_uuid), &session);
+    initialize_runtime_features(config, player_uuid, &difficulty, instance, &maze);
     let _ = storage_set_typed(
         &format!("{STARTED_PREFIX}{player_uuid}"),
         &session.started_at_ms,
@@ -413,6 +448,7 @@ fn start_maze(config: &Config, player_uuid: &str, difficulty_id: &str) -> Plugin
 
 fn leave_to_lobby(config: &Config, player_uuid: &str) -> PluginCommandResponse {
     clear_build_storage(player_uuid);
+    clear_guard_runtime(player_uuid);
     let _ = storage_set_typed(
         &instance_key(player_uuid),
         &MazeSession::lobby(&config.lobby.dimension),
@@ -421,6 +457,9 @@ fn leave_to_lobby(config: &Config, player_uuid: &str) -> PluginCommandResponse {
         handled: true,
         actions: vec![
             PlayerAction::SetPlayersVisible { visible: true },
+            PlayerAction::RemoveBossBar {
+                id: MAZE_COMPASS_BAR_ID.to_string(),
+            },
             PlayerAction::Teleport {
                 dimension: config.lobby.dimension.clone(),
                 x: config.lobby.spawn_x,
@@ -507,6 +546,11 @@ fn continue_maze_build(player_uuid: &str) -> PluginCommandResponse {
         &session.started_at_ms,
     );
     clear_build_storage(player_uuid);
+    if let Some(difficulty) = difficulty_by_id(&session.difficulty) {
+        let origin = session.origin();
+        let maze = generate_maze(&difficulty, stable_seed(player_uuid, &difficulty.id));
+        initialize_runtime_features(&load_config(), player_uuid, &difficulty, origin, &maze);
+    }
 
     PluginCommandResponse {
         handled: true,
@@ -521,6 +565,7 @@ fn continue_maze_build(player_uuid: &str) -> PluginCommandResponse {
                 id: MAZE_LOADING_BAR_ID.to_string(),
             },
             PlayerAction::SetPlayersVisible { visible: false },
+            compass_item(),
             PlayerAction::Teleport {
                 dimension: session.dimension,
                 x: session.start_x as f64 + 0.5,
@@ -727,6 +772,39 @@ fn build_maze_into(
         ),
         "minecraft:emerald_block",
     );
+    decorate_story_rooms(sink, difficulty, origin, maze);
+}
+
+fn decorate_story_rooms(
+    sink: &mut impl BlockSink,
+    difficulty: &DifficultyConfig,
+    origin: (i32, i32, i32),
+    maze: &MazeData,
+) {
+    if difficulty.levels > 1 {
+        return;
+    }
+    let route = maze_route(difficulty, maze);
+    for (index, point) in story_points(&route).into_iter().enumerate() {
+        let base_y = origin.1 + point.level * difficulty.level_height;
+        let center_x = origin.0 + cell_center_offset(point.x);
+        let center_z = origin.2 + cell_center_offset(point.z);
+        let marker = match index {
+            0 => "minecraft:chiseled_stone_bricks",
+            1 => "minecraft:cracked_stone_bricks",
+            _ => "minecraft:gold_block",
+        };
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                set_block(
+                    sink,
+                    &difficulty.dimension,
+                    (center_x + dx, base_y, center_z + dz),
+                    marker,
+                );
+            }
+        }
+    }
 }
 
 fn fill_wall_column(
@@ -1131,6 +1209,439 @@ fn reached_finish(session: &MazeSession, x: f64, y: f64, z: f64) -> bool {
         && (z - (session.finish_z as f64 + 0.5)).abs() <= 1.25
 }
 
+fn tick_active_maze(payload: &PlayerTickPayload) -> Option<Vec<PlayerAction>> {
+    let session = storage_get_typed::<MazeSession>(&instance_key(&payload.player.uuid))?;
+    if !session.active || payload.dimension != session.dimension {
+        return None;
+    }
+    let config = load_config();
+    let difficulty = config.difficulty(&session.difficulty)?.clone();
+    let origin = if session.origin_x == 0 && session.origin_z == 0 {
+        instance_origin(&config, &payload.player.uuid, &difficulty)
+    } else {
+        session.origin()
+    };
+    let maze = generate_maze(&difficulty, stable_seed(&payload.player.uuid, &difficulty.id));
+    let route = maze_route(&difficulty, &maze);
+    let mut actions = vec![compass_bar(&session, &payload.position)];
+    actions.extend(trigger_story_rooms(
+        &payload.player.uuid,
+        &difficulty,
+        origin,
+        &route,
+        payload.position.x,
+        payload.position.y,
+        payload.position.z,
+    ));
+    update_maze_guards(
+        &payload.player.uuid,
+        &difficulty,
+        origin,
+        &route,
+        &payload.position,
+        payload.tick_millis,
+    );
+    Some(actions)
+}
+
+fn initialize_runtime_features(
+    _config: &Config,
+    player_uuid: &str,
+    difficulty: &DifficultyConfig,
+    origin: (i32, i32, i32),
+    maze: &MazeData,
+) {
+    let route = maze_route(difficulty, maze);
+    let _ = storage_delete(&story_key(player_uuid));
+    initialize_maze_guards(player_uuid, difficulty, origin, &route);
+}
+
+fn compass_item() -> PlayerAction {
+    PlayerAction::GiveItem {
+        item: "minecraft:compass".to_string(),
+        count: 1,
+        name: "出口罗盘".to_string(),
+        lore: vec!["罗盘条会显示终点方向".to_string()],
+        enchantments: Vec::new(),
+        plugin_enchantments: Vec::new(),
+    }
+}
+
+fn compass_bar(session: &MazeSession, position: &qexed_plugin_sdk::PlayerPositionPayload) -> PlayerAction {
+    let dx = session.finish_x as f64 + 0.5 - position.x;
+    let dz = session.finish_z as f64 + 0.5 - position.z;
+    let distance = (dx * dx + dz * dz).sqrt();
+    let direction = compass_direction(dx, dz, position.yaw);
+    PlayerAction::BossBar {
+        id: MAZE_COMPASS_BAR_ID.to_string(),
+        title: format!("出口方向: {direction}  距离: {}m", distance.round() as i32),
+        progress: (1.0 - (distance / 180.0) as f32).clamp(0.05, 1.0),
+        color: "yellow".to_string(),
+        overlay: "progress".to_string(),
+    }
+}
+
+fn compass_direction(dx: f64, dz: f64, yaw: f32) -> &'static str {
+    let target = dx.atan2(dz).to_degrees();
+    let mut relative = target - yaw as f64;
+    while relative <= -180.0 {
+        relative += 360.0;
+    }
+    while relative > 180.0 {
+        relative -= 360.0;
+    }
+    match relative {
+        value if value.abs() <= 22.5 => "正前方",
+        value if value > 22.5 && value <= 67.5 => "右前方",
+        value if value > 67.5 && value <= 112.5 => "右侧",
+        value if value > 112.5 && value <= 157.5 => "右后方",
+        value if value < -22.5 && value >= -67.5 => "左前方",
+        value if value < -67.5 && value >= -112.5 => "左侧",
+        value if value < -112.5 && value >= -157.5 => "左后方",
+        _ => "后方",
+    }
+}
+
+fn trigger_story_rooms(
+    player_uuid: &str,
+    difficulty: &DifficultyConfig,
+    origin: (i32, i32, i32),
+    route: &[MazePoint],
+    player_x: f64,
+    player_y: f64,
+    player_z: f64,
+) -> Vec<PlayerAction> {
+    if route.len() < 5 {
+        return Vec::new();
+    }
+    let mut seen = storage_get_typed::<StoryState>(&story_key(player_uuid)).unwrap_or_default();
+    let stories = story_points(route);
+    let mut actions = Vec::new();
+    for (index, point) in stories.into_iter().enumerate() {
+        if seen.triggered.contains(&(index as u8)) {
+            continue;
+        }
+        let (x, y, z) = world_cell_center(difficulty, origin, point);
+        if distance_sq((player_x, player_y, player_z), (x, y, z)) <= 5.0 * 5.0 {
+            seen.triggered.push(index as u8);
+            actions.push(message(story_text(index)));
+        }
+    }
+    if !actions.is_empty() {
+        let _ = storage_set_typed(&story_key(player_uuid), &seen);
+    }
+    actions
+}
+
+fn story_points(route: &[MazePoint]) -> Vec<MazePoint> {
+    [route.len() / 4, route.len() / 2, route.len() * 3 / 4]
+        .into_iter()
+        .filter_map(|index| route.get(index).copied())
+        .collect()
+}
+
+fn story_text(index: usize) -> &'static str {
+    match index {
+        0 => "墙上刻着旧字：别相信第一条直路。",
+        1 => "你听见远处有铁链拖过石面的声音。",
+        _ => "空气变冷了，出口应该已经不远。",
+    }
+}
+
+fn initialize_maze_guards(
+    player_uuid: &str,
+    difficulty: &DifficultyConfig,
+    origin: (i32, i32, i32),
+    route: &[MazePoint],
+) {
+    clear_guard_runtime(player_uuid);
+    let count = guard_count(difficulty);
+    if count == 0 || route.len() < 6 {
+        return;
+    }
+    for index in 0..count {
+        let start_index = ((index + 1) * route.len() / (count + 2)).min(route.len() - 2);
+        let end_index = (start_index + route.len().max(8) / 8).min(route.len() - 1);
+        let route_points = route[start_index..=end_index]
+            .iter()
+            .copied()
+            .map(|point| world_cell_center(difficulty, origin, point))
+            .collect::<Vec<_>>();
+        if route_points.len() < 2 {
+            continue;
+        }
+        let state = GuardState {
+            index: index as u8,
+            route: route_points,
+            cursor: 0,
+            forward: true,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            yaw: 0.0,
+            alert: false,
+        }
+        .spawned_at_start();
+        let key = guard_key(player_uuid, index);
+        let _ = entity_upsert(&guard_entity(&key, difficulty, &state, false));
+        let _ = storage_set_typed(&guard_state_key(player_uuid, index), &state);
+    }
+}
+
+fn update_maze_guards(
+    player_uuid: &str,
+    difficulty: &DifficultyConfig,
+    _origin: (i32, i32, i32),
+    _route: &[MazePoint],
+    player: &qexed_plugin_sdk::PlayerPositionPayload,
+    tick_millis: u64,
+) {
+    for index in 0..guard_count(difficulty) {
+        let key = guard_key(player_uuid, index);
+        let Some(mut state) = storage_get_typed::<GuardState>(&guard_state_key(player_uuid, index))
+        else {
+            continue;
+        };
+        let detected = guard_sees_player(&state, player);
+        if detected != state.alert {
+            state.alert = detected;
+            let _ = entity_upsert(&guard_entity(&key, difficulty, &state, detected));
+        }
+        if !detected {
+            state.patrol_step(guard_speed(difficulty) * tick_millis as f64 / 50.0);
+            let _ = entity_move(&key, &difficulty.dimension, state.x, state.y, state.z, state.yaw, 0.0);
+        }
+        let _ = storage_set_typed(&guard_state_key(player_uuid, index), &state);
+    }
+}
+
+fn guard_entity<'a>(
+    key: &'a str,
+    difficulty: &'a DifficultyConfig,
+    state: &'a GuardState,
+    alert: bool,
+) -> RuntimeEntity<'a> {
+    RuntimeEntity {
+        key,
+        dimension: &difficulty.dimension,
+        entity_type: "minecraft:zombie",
+        x: state.x,
+        y: state.y,
+        z: state.z,
+        yaw: state.yaw,
+        pitch: 0.0,
+        display_name: "迷宫巡逻者",
+        ai: if alert { "hostile_melee" } else { "plugin:maze_patrol" },
+        ai_params_json: if alert {
+            r#"{"attack_damage":3.0,"follow_range":10.0,"attack_range":1.8}"#
+        } else {
+            "{}"
+        },
+        auto_jump: true,
+    }
+}
+
+fn guard_sees_player(state: &GuardState, player: &qexed_plugin_sdk::PlayerPositionPayload) -> bool {
+    let dx = player.x - state.x;
+    let dz = player.z - state.z;
+    let distance = (dx * dx + dz * dz).sqrt();
+    if distance > GUARD_DETECT_DISTANCE || (player.y - state.y).abs() > 2.5 || distance <= 0.1 {
+        return false;
+    }
+    let facing = yaw_vector(state.yaw);
+    let dot = (facing.0 * dx + facing.1 * dz) / distance;
+    dot >= GUARD_DETECT_DOT
+}
+
+fn yaw_vector(yaw: f32) -> (f64, f64) {
+    let radians = (yaw as f64).to_radians();
+    (-radians.sin(), radians.cos())
+}
+
+fn guard_count(difficulty: &DifficultyConfig) -> usize {
+    match difficulty.id.as_str() {
+        "hard" => 3,
+        "normal" => 1,
+        _ => 0,
+    }
+}
+
+fn guard_speed(difficulty: &DifficultyConfig) -> f64 {
+    if difficulty.id == "hard" { 0.18 } else { 0.14 }
+}
+
+fn clear_guard_runtime(player_uuid: &str) {
+    for index in 0..4 {
+        let _ = entity_remove(&guard_key(player_uuid, index));
+        let _ = storage_delete(&guard_state_key(player_uuid, index));
+    }
+    let _ = storage_delete(&story_key(player_uuid));
+}
+
+fn guard_key(player_uuid: &str, index: usize) -> String {
+    format!("{MAZE_GUARD_PREFIX}{player_uuid}/{index}")
+}
+
+fn guard_state_key(player_uuid: &str, index: usize) -> String {
+    format!("{MAZE_GUARD_PREFIX}state/{player_uuid}/{index}")
+}
+
+fn story_key(player_uuid: &str) -> String {
+    format!("{MAZE_STORY_PREFIX}{player_uuid}")
+}
+
+fn difficulty_by_id(id: &str) -> Option<DifficultyConfig> {
+    load_config()
+        .difficulties
+        .into_iter()
+        .find(|difficulty| difficulty.id == id)
+}
+
+fn distance_sq(a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
+    let dx = a.0 - b.0;
+    let dy = a.1 - b.1;
+    let dz = a.2 - b.2;
+    dx * dx + dy * dy + dz * dz
+}
+
+fn world_cell_center(
+    difficulty: &DifficultyConfig,
+    origin: (i32, i32, i32),
+    point: MazePoint,
+) -> (f64, f64, f64) {
+    (
+        origin.0 as f64 + cell_center_offset(point.x) as f64 + 0.5,
+        origin.1 as f64 + (point.level * difficulty.level_height) as f64 + 1.0,
+        origin.2 as f64 + cell_center_offset(point.z) as f64 + 0.5,
+    )
+}
+
+fn maze_route(difficulty: &DifficultyConfig, maze: &MazeData) -> Vec<MazePoint> {
+    let total = (difficulty.levels * difficulty.width * difficulty.depth).max(1) as usize;
+    let start = cell_index(difficulty, 0, 0, 0);
+    let finish = cell_index(difficulty, maze.finish_level, maze.finish_x, maze.finish_z);
+    let mut parent = vec![usize::MAX; total];
+    let mut queue = std::collections::VecDeque::from([(0, 0, 0)]);
+    parent[start] = start;
+    while let Some((level, x, z)) = queue.pop_front() {
+        let current = cell_index(difficulty, level, x, z);
+        if current == finish {
+            break;
+        }
+        for (next_level, next_x, next_z) in maze_neighbors(difficulty, &maze.cells, level, x, z) {
+            let next = cell_index(difficulty, next_level, next_x, next_z);
+            if parent[next] == usize::MAX {
+                parent[next] = current;
+                queue.push_back((next_level, next_x, next_z));
+            }
+        }
+    }
+    if parent[finish] == usize::MAX {
+        return vec![MazePoint { level: 0, x: 0, z: 0 }];
+    }
+    let mut route = Vec::new();
+    let mut current = finish;
+    loop {
+        route.push(point_from_index(difficulty, current));
+        if current == start {
+            break;
+        }
+        current = parent[current];
+    }
+    route.reverse();
+    route
+}
+
+fn point_from_index(difficulty: &DifficultyConfig, index: usize) -> MazePoint {
+    let index = index as i32;
+    let layer = difficulty.width * difficulty.depth;
+    let level = index / layer;
+    let local = index % layer;
+    MazePoint {
+        level,
+        x: local % difficulty.width,
+        z: local / difficulty.width,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MazePoint {
+    level: i32,
+    x: i32,
+    z: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StoryState {
+    triggered: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GuardState {
+    index: u8,
+    route: Vec<(f64, f64, f64)>,
+    cursor: usize,
+    forward: bool,
+    x: f64,
+    y: f64,
+    z: f64,
+    yaw: f32,
+    alert: bool,
+}
+
+impl GuardState {
+    fn spawned_at_start(mut self) -> Self {
+        let first = self.route[0];
+        let second = self.route.get(1).copied().unwrap_or(first);
+        self.x = first.0;
+        self.y = first.1;
+        self.z = first.2;
+        self.yaw = yaw_between(first, second);
+        self
+    }
+
+    fn patrol_step(&mut self, distance: f64) {
+        if self.route.len() < 2 {
+            return;
+        }
+        let target_index = self.next_cursor();
+        let target = self.route[target_index];
+        let dx = target.0 - self.x;
+        let dy = target.1 - self.y;
+        let dz = target.2 - self.z;
+        let remaining = (dx * dx + dy * dy + dz * dz).sqrt();
+        self.yaw = yaw_between((self.x, self.y, self.z), target);
+        if remaining <= GUARD_REACH_DISTANCE || remaining <= distance {
+            self.x = target.0;
+            self.y = target.1;
+            self.z = target.2;
+            self.cursor = target_index;
+            if self.cursor == 0 || self.cursor + 1 == self.route.len() {
+                self.forward = !self.forward;
+            }
+            return;
+        }
+        let scale = distance / remaining;
+        self.x += dx * scale;
+        self.y += dy * scale;
+        self.z += dz * scale;
+    }
+
+    fn next_cursor(&self) -> usize {
+        if self.forward {
+            (self.cursor + 1).min(self.route.len() - 1)
+        } else {
+            self.cursor.saturating_sub(1)
+        }
+    }
+}
+
+fn yaw_between(from: (f64, f64, f64), to: (f64, f64, f64)) -> f32 {
+    let dx = to.0 - from.0;
+    let dz = to.2 - from.2;
+    (-dx.atan2(dz).to_degrees()) as f32
+}
+
 fn elapsed_ms(started_at_ms: i64) -> i64 {
     time_millis().saturating_sub(started_at_ms).max(0)
 }
@@ -1216,6 +1727,12 @@ struct MazeSession {
     finish_z: i32,
     min_y: i32,
     started_at_ms: i64,
+    #[serde(default)]
+    origin_x: i32,
+    #[serde(default)]
+    origin_y: i32,
+    #[serde(default)]
+    origin_z: i32,
 }
 
 impl MazeSession {
@@ -1233,7 +1750,14 @@ impl MazeSession {
             finish_z: 0,
             min_y: -64,
             started_at_ms: 0,
+            origin_x: 0,
+            origin_y: 0,
+            origin_z: 0,
         }
+    }
+
+    fn origin(&self) -> (i32, i32, i32) {
+        (self.origin_x, self.origin_y, self.origin_z)
     }
 }
 
@@ -1504,23 +2028,44 @@ fn encode_session(encoded: &mut String, session: &MazeSession) {
     encoded.push_str(&session.min_y.to_string());
     encoded.push('\t');
     encoded.push_str(&session.started_at_ms.to_string());
+    encoded.push('\t');
+    encoded.push_str(&session.origin_x.to_string());
+    encoded.push('\t');
+    encoded.push_str(&session.origin_y.to_string());
+    encoded.push('\t');
+    encoded.push_str(&session.origin_z.to_string());
 }
 
 fn decode_session(encoded: &str) -> Option<MazeSession> {
     let mut parts = encoded.split('\t');
+    let active = parts.next()? == "1";
+    let difficulty = parts.next()?.to_string();
+    let difficulty_label = parts.next()?.to_string();
+    let dimension = parts.next()?.to_string();
+    let start_x = parts.next()?.parse().ok()?;
+    let start_y = parts.next()?.parse().ok()?;
+    let start_z = parts.next()?.parse().ok()?;
+    let finish_x = parts.next()?.parse().ok()?;
+    let finish_y = parts.next()?.parse().ok()?;
+    let finish_z = parts.next()?.parse().ok()?;
+    let min_y = parts.next()?.parse().ok()?;
+    let started_at_ms = parts.next()?.parse().ok()?;
     Some(MazeSession {
-        active: parts.next()? == "1",
-        difficulty: parts.next()?.to_string(),
-        difficulty_label: parts.next()?.to_string(),
-        dimension: parts.next()?.to_string(),
-        start_x: parts.next()?.parse().ok()?,
-        start_y: parts.next()?.parse().ok()?,
-        start_z: parts.next()?.parse().ok()?,
-        finish_x: parts.next()?.parse().ok()?,
-        finish_y: parts.next()?.parse().ok()?,
-        finish_z: parts.next()?.parse().ok()?,
-        min_y: parts.next()?.parse().ok()?,
-        started_at_ms: parts.next()?.parse().ok()?,
+        active,
+        difficulty,
+        difficulty_label,
+        dimension,
+        start_x,
+        start_y,
+        start_z,
+        finish_x,
+        finish_y,
+        finish_z,
+        min_y,
+        started_at_ms,
+        origin_x: parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
+        origin_y: parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
+        origin_z: parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
     })
 }
 
@@ -1810,6 +2355,91 @@ mod tests {
     }
 
     #[unsafe(no_mangle)]
+    extern "C" fn economy_storage(_currency_ptr: i32, _currency_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn economy_balance_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn economy_set_balance_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32, _amount: i64) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn economy_deposit_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32, _amount: i64) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn economy_withdraw_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32, _amount: i64) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn economy_async_poll(_id: i64) -> i64 {
+        i64::MIN + 2
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn economy_async_forget(_id: i64) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_exists(_key_ptr: i32, _key_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_get(_key_ptr: i32, _key_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_set(_key_ptr: i32, _key_len: i32, _data_ptr: i32, _data_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_delete(_key_ptr: i32, _key_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_exists_async(_key_ptr: i32, _key_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_get_async(_key_ptr: i32, _key_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_set_async(_key_ptr: i32, _key_len: i32, _data_ptr: i32, _data_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_delete_async(_key_ptr: i32, _key_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_async_poll(_id: i64, _out_ptr: i32, _out_len: i32) -> i64 {
+        i64::MIN + 2
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn structured_storage_async_forget(_id: i64) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
     extern "C" fn lottery_roll(
         _entries_ptr: i32,
         _entries_len: i32,
@@ -1850,6 +2480,21 @@ mod tests {
     }
 
     #[unsafe(no_mangle)]
+    extern "C" fn entity_upsert(_query_ptr: i32, _query_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn entity_move(_query_ptr: i32, _query_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn entity_remove(_query_ptr: i32, _query_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
     extern "C" fn random_pool_roll(
         _request_ptr: i32,
         _request_len: i32,
@@ -1862,6 +2507,21 @@ mod tests {
     #[unsafe(no_mangle)]
     extern "C" fn time_millis() -> i64 {
         0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn plugin_service_exists(_service_ptr: i32, _service_len: i32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn plugin_call(_service_ptr: i32, _service_len: i32, _method_ptr: i32, _method_len: i32, _payload_ptr: i32, _payload_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+        -1
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn http_request(_request_ptr: i32, _request_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+        -1
     }
 
     #[test]

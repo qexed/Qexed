@@ -1025,11 +1025,58 @@ pub fn all_section_block_states(root: &Tag) -> Result<Vec<SectionBlockStates>> {
     let mut result = Vec::with_capacity(sections.len());
     for (&sy, section) in &sections {
         let values = block_values(section.get("block_states"))?;
-        result.push(SectionBlockStates { section_y: sy, states: values.global_ids });
+        result.push(SectionBlockStates {
+            section_y: sy,
+            states: values.global_ids,
+        });
     }
     Ok(result)
 }
-pub struct SectionBlockStates { pub section_y: i32, pub states: Vec<i32> }
+pub struct SectionBlockStates {
+    pub section_y: i32,
+    pub states: Vec<i32>,
+}
+
+pub fn fluid_positions_from_region(
+    chunk_x: i32,
+    chunk_z: i32,
+    chunk: &ChunkData,
+) -> Result<Vec<(qexed_packet::net_types::Position, i32)>> {
+    let raw = chunk.decompress().context("decompress chunk nbt")?;
+    let (_, root) = qexed_nbt::from_slice(&raw).context("parse chunk nbt")?;
+    fluid_positions_from_nbt(chunk_x, chunk_z, &root)
+}
+
+pub fn fluid_positions_from_nbt(
+    chunk_x: i32,
+    chunk_z: i32,
+    root: &Tag,
+) -> Result<Vec<(qexed_packet::net_types::Position, i32)>> {
+    let root = compound(root).context("chunk root is not a compound")?;
+    let sections = sections_by_y(root);
+    let mut result = Vec::new();
+    for (&section_y, section) in &sections {
+        let values = block_values(section.get("block_states"))?;
+        for (index, block_state) in values.global_ids.iter().copied().enumerate() {
+            let entry = block_state_entry(block_state);
+            if !matches!(entry.name.as_str(), "minecraft:water" | "minecraft:lava") {
+                continue;
+            }
+            let local_x = (index & 15) as i32;
+            let local_z = ((index >> 4) & 15) as i32;
+            let local_y = ((index >> 8) & 15) as i32;
+            result.push((
+                qexed_packet::net_types::Position {
+                    x: chunk_x * 16 + local_x,
+                    y: section_y * 16 + local_y,
+                    z: chunk_z * 16 + local_z,
+                },
+                block_state,
+            ));
+        }
+    }
+    Ok(result)
+}
 
 #[cfg(test)]
 mod tests;

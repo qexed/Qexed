@@ -15,6 +15,7 @@ pub struct ServerContext {
     pub ore_pits: Arc<crate::world::OrePitManager>,
     pub cluster_entities: Option<Arc<crate::cluster_entities::ClusterEntityController>>,
     pub players: Arc<crate::players::PlayerManager>,
+    pub fluid: Arc<crate::play::FluidRuntime>,
     pub entities: Arc<crate::entities::EntityManager>,
     pub player_data: Arc<crate::player_data::PlayerDataManager>,
     pub permissions: Arc<crate::permissions::PermissionManager>,
@@ -97,9 +98,13 @@ impl ServerContext {
         let warden = crate::warden::WardenManager::from_config(config.warden.clone());
         let entity_ids = Arc::new(crate::entities::EntityIdAllocator::default());
         let players = Arc::new(crate::players::PlayerManager::new(entity_ids.clone()));
+        let fluid = Arc::new(crate::play::FluidRuntime::with_world_rules(
+            world_rules.clone(),
+        ));
         plugins.set_world_edit_service(Arc::new(ServerWorldEditService {
             world: Arc::new(world.clone()),
             players: players.clone(),
+            fluid: fluid.clone(),
         }));
         let gateway_entities = if cluster_entities.is_some() {
             qexed_config::app::qexed::server::Entities::default()
@@ -137,6 +142,7 @@ impl ServerContext {
             ore_pits: Arc::new(ore_pits),
             cluster_entities,
             players,
+            fluid,
             entities,
             player_data: Arc::new(player_data),
             permissions: Arc::new(permissions),
@@ -212,6 +218,7 @@ impl crate::plugins::host::PathfindingService for ServerPathfindingService {
 struct ServerWorldEditService {
     world: Arc<crate::world::WorldManager>,
     players: Arc<crate::players::PlayerManager>,
+    fluid: Arc<crate::play::FluidRuntime>,
 }
 
 impl crate::plugins::host::WorldEditService for ServerWorldEditService {
@@ -231,6 +238,8 @@ impl crate::plugins::host::WorldEditService for ServerWorldEditService {
             request.block_state,
             region.runtime_only,
         );
+        self.fluid
+            .enqueue_block_change(&request.dimension, &request.position);
         self.broadcast_change(&request.dimension, request.position, request.block_state);
         0
     }
@@ -257,6 +266,8 @@ impl crate::plugins::host::WorldEditService for ServerWorldEditService {
                 request.block_state,
                 runtime_only,
             );
+            self.fluid
+                .enqueue_block_change(&request.dimension, &request.position);
             self.broadcast_change(&request.dimension, request.position, request.block_state);
         }
         0
@@ -279,6 +290,8 @@ impl crate::plugins::host::WorldEditService for ServerWorldEditService {
             air,
             region.runtime_only,
         );
+        self.fluid
+            .enqueue_block_change(&request.dimension, &request.position);
         self.broadcast_change(&request.dimension, request.position, air);
         0
     }

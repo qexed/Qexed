@@ -384,6 +384,27 @@ impl PlayerManager {
         );
     }
 
+    pub fn broadcast_block_changes(
+        &self,
+        profile_id: uuid::Uuid,
+        dimension: &str,
+        changes: Vec<crate::BlockChange>,
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        let players = self.players.lock().expect("player manager poisoned");
+        broadcast_locked(
+            &players,
+            profile_id,
+            PlayerEvent::BlockChanges {
+                profile_id,
+                dimension: dimension.to_string(),
+                changes,
+            },
+        );
+    }
+
     pub fn broadcast_packets(&self, packets: Vec<Bytes>) {
         let players = self.players.lock().expect("player manager poisoned");
         broadcast_all_locked(&players, PlayerEvent::ClientboundPackets { packets });

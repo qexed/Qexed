@@ -60,6 +60,18 @@ impl PendingDig {
             .saturating_add(Duration::from_millis(75))
             >= self.required
     }
+
+    /// Calculate the block destruction stage (0-9) based on elapsed time.
+    /// Returns None if breaking hasn't started or the required time is zero.
+    pub(super) fn destroy_stage(&self, now: Instant) -> Option<i8> {
+        if self.required.is_zero() {
+            return None;
+        }
+        let elapsed = now.duration_since(self.started_at);
+        let progress = elapsed.as_secs_f64() / self.required.as_secs_f64();
+        let stage = (progress * 10.0).floor() as i8;
+        Some(stage.min(9))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

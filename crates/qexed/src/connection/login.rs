@@ -80,6 +80,7 @@ where
         &context.ore_pits,
         context.cluster_entities.as_deref(),
         &context.players,
+        &context.fluid,
         &context.entities,
         &context.player_data,
         &context.permissions,

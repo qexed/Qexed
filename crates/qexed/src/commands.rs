@@ -1053,7 +1053,10 @@ mod tests {
     fn command_tree_contains_help_and_list() {
         let tree = super::command_tree();
         assert_eq!(tree.root_index.0, 0);
-        assert_eq!(tree.nodes[0].children.len(), 15);
+        assert_eq!(
+            tree.nodes[0].children.len(),
+            super::builtin_command_literals().len()
+        );
 
         let root_command_names = tree.nodes[0]
             .children
@@ -1068,7 +1071,10 @@ mod tests {
         assert!(root_command_names.contains(&"help"));
         assert!(root_command_names.contains(&"list"));
         assert!(root_command_names.contains(&"version"));
-        assert!(root_command_names.contains(&"plugin"));
+        assert!(root_command_names.contains(&"plugins"));
+        assert!(root_command_names.contains(&"gamemode"));
+        assert!(root_command_names.contains(&"give"));
+        assert!(root_command_names.contains(&"reload"));
         assert!(root_command_names.contains(&"lobby"));
         assert!(root_command_names.contains(&"server"));
         assert!(root_command_names.contains(&"spawn"));

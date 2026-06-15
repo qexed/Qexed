@@ -15,6 +15,12 @@ pub enum PlayerDamageKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct BlockChange {
+    pub position: qexed_packet::net_types::Position,
+    pub block_state: i32,
+}
+
+#[derive(Debug, Clone)]
 pub enum PlayerEvent {
     Joined(OnlinePlayer),
     Left {
@@ -79,6 +85,11 @@ pub enum PlayerEvent {
         position: qexed_packet::net_types::Position,
         block_state: i32,
         light_update: Option<Bytes>,
+    },
+    BlockChanges {
+        profile_id: uuid::Uuid,
+        dimension: String,
+        changes: Vec<BlockChange>,
     },
     ClientboundPackets {
         packets: Vec<Bytes>,

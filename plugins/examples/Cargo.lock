@@ -47,6 +47,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "backpack"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,6 +144,15 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "digfight"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "double_jump"
@@ -516,6 +535,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "skyblock"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

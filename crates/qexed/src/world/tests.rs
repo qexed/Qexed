@@ -971,6 +971,51 @@ pitch = 0.0
     assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
 }
 
+#[test]
+fn skyblock_spawn_platform_water_is_queryable() {
+    let water = super::chunk_nbt::default_block_state_id("minecraft:water");
+    let config: qexed_config::app::qexed::server::World = toml::from_str(
+        r#"
+default_dimension = "minecraft:overworld"
+path = "world"
+read_only = false
+generator = "empty"
+seed = 0
+game_mode = "survival"
+spawn_protection_radius = 0
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+view_distance = 3
+chunk_load_parallelism = 4
+chunk_update_delay_ms = 50
+simulation_distance = 3
+light = "static"
+light_algorithm = "fast"
+
+[spawn_platform]
+enable = true
+dimension = "minecraft:overworld"
+block = "skyblock"
+y = 64
+
+[spawn]
+x = 0.0
+y = 65.0
+z = 0.0
+yaw = 0.0
+pitch = 0.0
+"#,
+    )
+    .unwrap();
+    let generator = generator::from_config(&config);
+    let position = qexed_packet::net_types::Position { x: 2, y: 65, z: 2 };
+
+    assert_eq!(
+        generator.block_state_at("minecraft:overworld", &position),
+        Some(water)
+    );
+}
+
 fn region_shard(
     id: &str,
     min_chunk_x: Option<i32>,
@@ -1061,6 +1106,66 @@ fn world_manager_bulk_persists_placed_blocks_across_chunks() {
             Some(stone)
         );
     }
+}
+
+#[test]
+fn world_manager_deferred_blocks_are_visible_then_persisted_on_flush() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
+    let water =
+        super::chunk_nbt::block_state("minecraft:water", &[("level".to_string(), "1".to_string())])
+            .id;
+    let positions = [
+        qexed_packet::net_types::Position { x: 1, y: 64, z: 1 },
+        qexed_packet::net_types::Position { x: 17, y: 64, z: 1 },
+    ];
+
+    let updates = manager
+        .place_blocks_deferred(
+            "minecraft:overworld",
+            positions.iter().cloned().map(|position| (position, water)),
+        )
+        .unwrap();
+
+    assert_eq!(updates.len(), positions.len());
+    for position in &positions {
+        assert_eq!(
+            manager.block_state_at("minecraft:overworld", position),
+            Some(water)
+        );
+    }
+
+    manager.flush_block_writes();
+    let reloaded = WorldManager::new(dir.path());
+    for position in &positions {
+        assert_eq!(
+            reloaded.block_state_at("minecraft:overworld", position),
+            Some(water)
+        );
+    }
+}
+
+#[test]
+fn world_manager_deferred_blocks_do_not_overwrite_newer_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = WorldManager::new(dir.path());
+    let water =
+        super::chunk_nbt::block_state("minecraft:water", &[("level".to_string(), "1".to_string())])
+            .id;
+    let stone = super::chunk_nbt::default_block_state_id("minecraft:stone");
+    let position = qexed_packet::net_types::Position { x: 1, y: 64, z: 1 };
+
+    manager
+        .place_blocks_deferred("minecraft:overworld", [(position.clone(), water)])
+        .unwrap();
+    manager.place_block("minecraft:overworld", position.clone(), stone);
+    manager.flush_block_writes();
+
+    let reloaded = WorldManager::new(dir.path());
+    assert_eq!(
+        reloaded.block_state_at("minecraft:overworld", &position),
+        Some(stone)
+    );
 }
 
 #[test]

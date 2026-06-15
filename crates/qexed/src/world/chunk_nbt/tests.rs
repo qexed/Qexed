@@ -74,6 +74,58 @@ fn converts_region_chunk_payload() {
 }
 
 #[test]
+fn fluid_positions_from_nbt_returns_world_coordinates() {
+    let mut values = vec![0_i32; BLOCK_ENTRY_COUNT];
+    values[1 + 2 * 16 + 3 * 256] = 1;
+    values[4 + 5 * 16 + 6 * 256] = 2;
+    let data = pack_values(&values, 4)
+        .unwrap()
+        .into_iter()
+        .map(|value| value as i64)
+        .collect();
+    let root = chunk_root(vec![section(
+        4,
+        paletted_container(
+            vec![
+                block_state("minecraft:air", &[]),
+                block_state("minecraft:water", &[("level", "0")]),
+                block_state("minecraft:lava", &[("level", "0")]),
+            ],
+            Some(data),
+        ),
+        paletted_container(vec![string("minecraft:plains")], None),
+    )]);
+
+    let fluids = fluid_positions_from_nbt(2, -3, &root).unwrap();
+
+    assert_eq!(
+        fluids
+            .iter()
+            .map(|(position, _)| position.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            qexed_packet::net_types::Position {
+                x: 33,
+                y: 67,
+                z: -46,
+            },
+            qexed_packet::net_types::Position {
+                x: 36,
+                y: 70,
+                z: -43,
+            },
+        ]
+    );
+    assert_eq!(
+        fluids
+            .iter()
+            .map(|(_, block_state)| block_state_entry(*block_state).name)
+            .collect::<Vec<_>>(),
+        vec!["minecraft:water".to_string(), "minecraft:lava".to_string()]
+    );
+}
+
+#[test]
 fn converts_saved_block_entities_to_chunk_packet() {
     let mut root = chunk_root(vec![section(
         0,
