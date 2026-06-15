@@ -1,0 +1,8 @@
+[package]
+name = "qexed_log"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_config.workspace = true
+tklog.workspace = true
