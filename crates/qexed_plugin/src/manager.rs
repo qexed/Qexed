@@ -110,6 +110,13 @@ impl PluginManager {
 
     // ——— 内部 ———
 
+    pub fn plugin_summaries(&self) -> Vec<String> {
+        self.handles
+            .iter()
+            .map(|entry| format!("{} v{}", entry.meta.name, entry.meta.version))
+            .collect()
+    }
+
     async fn call_on_load(&mut self, handles: &[PluginHandle]) {
         let host: *const dyn HostApi = self as &dyn HostApi;
         for &handle in handles {

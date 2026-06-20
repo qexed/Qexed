@@ -44,3 +44,13 @@ pub async fn init() -> anyhow::Result<()> {
 pub fn plugin_manager() -> &'static PluginManager {
     unsafe { &*PLUGIN_MANAGER.load(Ordering::Relaxed) }
 }
+
+pub fn try_plugin_manager() -> Option<&'static PluginManager> {
+    let ptr = PLUGIN_MANAGER.load(Ordering::Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: initialized pointer is created by Box::into_raw in init and lives for process lifetime.
+        Some(unsafe { &*ptr })
+    }
+}

@@ -1,0 +1,93 @@
+_fallback_language: zh-CN
+_version: 2
+qexed_tcp_connect:
+  addr_parse_error:
+    en: "Invalid socket address syntax: %{addr}. Example: 0.0.0.0:25565."
+    zh-CN: "无效的套接字地址语法：%{addr}。示例：0.0.0.0:25565。"
+  invalid_input:
+    en: "Could not resolve to any address, please enter the correct address."
+    zh-CN: "无法解析为任何地址，请输入正确的地址。"
+  addr_in_use:
+    en: "Address already in use: unable to bind to %{addr}. The port may already be in use by another process."
+    zh-CN: "地址已被占用：无法绑定到 %{addr}。端口可能已被其他进程使用。"
+  permission_denied:
+    en: "Permission denied: unable to bind to address. Administrator privileges may be required."
+    zh-CN: "权限不足：无法绑定到地址。可能需要管理员权限。"
+  addr_not_available:
+    en: "Address not available: %{addr} (IP: %{ip}) is not available on the current system."
+    zh-CN: "地址不可用：%{addr} (IP: %{ip}) 在当前系统上不可用。"
+  network_unreachable:
+    en: "Network unreachable: unable to access address %{addr} (IP: %{ip})."
+    zh-CN: "网络不可达：无法访问地址 %{addr} (IP: %{ip})。"
+  connection_refused:
+    en: "Connection refused: binding to %{addr} was refused."
+    zh-CN: "连接被拒绝：绑定到 %{addr} 被拒绝。"
+  timed_out:
+    en: "Operation timed out: binding to %{addr} timed out."
+    zh-CN: "操作超时：绑定到 %{addr} 超时。"
+  other:
+    en: "TCP bind error: %{error}"
+    zh-CN: "TCP 绑定错误：%{error}"
+  packet_read_varint:
+    incomplete:
+      en: "Incomplete VarInt."
+      zh-CN: "VarInt 不完整。"
+    too_large:
+      en: "VarInt is too large."
+      zh-CN: "VarInt 字节数过大。"
+    read_error:
+      en: "VarInt read error: %{error}"
+      zh-CN: "VarInt 读取错误：%{error}"
+  packet_read:
+    packet_read_varint_error:
+      en: "%{error}"
+      zh-CN: "%{error}"
+    connection_closed_with_incomplete_packet:
+      en: "Connection closed while a packet was incomplete."
+      zh-CN: "连接关闭时数据包尚未读取完整。"
+    io_error:
+      en: "I/O error: %{error}"
+      zh-CN: "I/O 错误：%{error}"
+    invalid_packet_length:
+      en: "Invalid packet length: %{length}."
+      zh-CN: "无效的数据包长度：%{length}。"
+    packet_too_large:
+      en: "Packet is too large: %{size} bytes, max %{max} bytes."
+      zh-CN: "数据包过大：%{size} 字节，最大允许 %{max} 字节。"
+    invalid_compressed_data_length:
+      en: "Invalid compressed packet data length: %{length}."
+      zh-CN: "无效的压缩数据包原始长度：%{length}。"
+    compressed_data_length_too_small:
+      en: "Compressed packet data length %{size} is below compression threshold %{threshold}."
+      zh-CN: "压缩数据包原始长度 %{size} 小于压缩阈值 %{threshold}。"
+    decompression_error:
+      en: "Packet decompression failed: %{error}"
+      zh-CN: "数据包解压失败：%{error}"
+    decompression_size_mismatch:
+      en: "Packet decompression size mismatch: expected %{expected}, got %{actual}."
+      zh-CN: "数据包解压长度不匹配：期望 %{expected}，实际 %{actual}。"
+    crypto_error:
+      en: "Packet cryptography error: %{error}"
+      zh-CN: "数据包加解密错误：%{error}"
+    invalid_encryption_key_length:
+      en: "Invalid encryption key length: %{length}; AES-128 requires 16 bytes."
+      zh-CN: "无效的加密密钥长度：%{length}；AES-128 需要 16 字节。"
+  packet_write:
+    io_error:
+      en: "I/O error: %{error}"
+      zh-CN: "I/O 错误：%{error}"
+    packet_too_large:
+      en: "Packet is too large: %{size} bytes, max %{max} bytes."
+      zh-CN: "数据包过大：%{size} 字节，最大允许 %{max} 字节。"
+    compression_error:
+      en: "Packet compression failed: %{error}"
+      zh-CN: "数据包压缩失败：%{error}"
+    crypto_error:
+      en: "Packet cryptography error: %{error}"
+      zh-CN: "数据包加解密错误：%{error}"
+    invalid_encryption_key_length:
+      en: "Invalid encryption key length: %{length}; AES-128 requires 16 bytes."
+      zh-CN: "无效的加密密钥长度：%{length}；AES-128 需要 16 字节。"
+    packet_encode_error:
+      en: "Packet encoding failed: %{error}"
+      zh-CN: "数据包编码失败：%{error}"

@@ -1,4 +1,4 @@
-use bytes::{BufMut as _, BytesMut};
+use bytes::{BufMut as _, Bytes, BytesMut};
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
     net_types::{GameProfile, JsonValue, RestBuffer, VarInt},
@@ -16,14 +16,201 @@ use qexed_protocol::{
         status::{ping::Ping as ServerboundPing, ping_start::PingStart},
     },
 };
+use qexed_tcp_connect::{FramePart, PacketReadError, PacketSink, PacketStream, PacketWriteError};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
+    io::{AsyncRead, AsyncWrite},
+    net::{
+        TcpStream,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+    },
+    time::{Duration, timeout},
 };
 
 const SERVER_BRAND: &str = "qexed";
-const MAX_PACKET_SIZE: usize = 2 * 1024 * 1024;
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(30);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 static SERVER_SESSION_ID: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
+
+type ClientConnection = ConnectionIo<OwnedReadHalf, OwnedWriteHalf>;
+
+#[derive(Debug)]
+struct ConnectionClosed;
+
+impl std::fmt::Display for ConnectionClosed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("connection closed")
+    }
+}
+
+impl std::error::Error for ConnectionClosed {}
+
+struct ConnectionIo<R, W> {
+    reader: PacketStream<R>,
+    writer: PacketSink<W>,
+}
+
+impl<R, W> ConnectionIo<R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    fn new(reader: R, writer: W) -> Self {
+        Self {
+            reader: PacketStream::new(reader),
+            writer: PacketSink::new(writer),
+        }
+    }
+
+    async fn read_frame(&mut self) -> anyhow::Result<BytesMut> {
+        read_frame(&mut self.reader).await
+    }
+
+    async fn read_frame_with_timeout(
+        &mut self,
+        duration: Duration,
+        operation: &'static str,
+    ) -> anyhow::Result<BytesMut> {
+        with_timeout(duration, operation, self.read_frame()).await
+    }
+
+    async fn read_expected_packet<T>(&mut self) -> anyhow::Result<T>
+    where
+        T: Packet + Default,
+    {
+        read_expected_packet(&mut self.reader).await
+    }
+
+    async fn read_expected_packet_with_timeout<T>(
+        &mut self,
+        duration: Duration,
+        operation: &'static str,
+    ) -> anyhow::Result<T>
+    where
+        T: Packet + Default,
+    {
+        with_timeout(duration, operation, self.read_expected_packet::<T>()).await
+    }
+
+    async fn send_packet<T>(&mut self, packet: &T) -> anyhow::Result<()>
+    where
+        T: Packet,
+    {
+        with_timeout(
+            WRITE_TIMEOUT,
+            "send packet",
+            send_packet(&mut self.writer, packet),
+        )
+        .await
+    }
+
+    async fn send_packet_batch(
+        &mut self,
+        build: impl FnOnce(&mut PacketBatch<'_, W>) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.send_packet_batch_with_capacity(0, build).await
+    }
+
+    async fn send_packet_batch_with_capacity(
+        &mut self,
+        capacity: usize,
+        build: impl FnOnce(&mut PacketBatch<'_, W>) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let frames = {
+            let mut batch = PacketBatch::with_capacity(&self.writer, capacity);
+            build(&mut batch)?;
+            batch.into_frames()
+        };
+        with_timeout(
+            WRITE_TIMEOUT,
+            "send packet batch",
+            self.writer.send_encoded_frames_vectored(&frames),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        with_timeout(WRITE_TIMEOUT, "flush connection", self.writer.flush()).await?;
+        Ok(())
+    }
+}
+
+struct PacketBatch<'a, W> {
+    sink: &'a PacketSink<W>,
+    frames: Vec<FramePart>,
+    current: BytesMut,
+}
+
+impl<'a, W> PacketBatch<'a, W>
+where
+    W: AsyncWrite + Unpin,
+{
+    fn with_capacity(sink: &'a PacketSink<W>, capacity: usize) -> Self {
+        Self {
+            sink,
+            frames: Vec::new(),
+            current: BytesMut::with_capacity(capacity),
+        }
+    }
+
+    fn push<T>(&mut self, packet: &T) -> anyhow::Result<()>
+    where
+        T: Packet,
+    {
+        self.sink
+            .append_packet_frame_ref(packet, &mut self.current)?;
+        Ok(())
+    }
+
+    fn push_empty_chunk(
+        &mut self,
+        chunk_x: i32,
+        chunk_z: i32,
+        chunk_body: &'static Bytes,
+    ) -> anyhow::Result<()> {
+        if self.sink.compression_threshold().is_some() {
+            anyhow::bail!("zero-copy empty chunk fast path requires compression to be disabled");
+        }
+        let payload_len =
+            varint_len(to_client::play::map_chunk::MapChunk::ID) + 4 + 4 + chunk_body.len();
+        if payload_len > self.sink.max_packet_size() {
+            anyhow::bail!(
+                "empty chunk packet is too large: {payload_len} bytes, max {} bytes",
+                self.sink.max_packet_size()
+            );
+        }
+
+        let header_len =
+            varint_len(payload_len as i32) + varint_len(to_client::play::map_chunk::MapChunk::ID);
+        let mut header = BytesMut::with_capacity(header_len + 8);
+        write_varint(payload_len as i32, &mut header);
+        write_varint(to_client::play::map_chunk::MapChunk::ID, &mut header);
+        header.put_i32(chunk_x);
+        header.put_i32(chunk_z);
+
+        self.flush_current();
+        self.frames.push(FramePart::Bytes(header.freeze()));
+        self.frames.push(FramePart::Shared(chunk_body));
+        Ok(())
+    }
+
+    fn flush_current(&mut self) {
+        if self.current.is_empty() {
+            return;
+        }
+
+        let current = std::mem::take(&mut self.current);
+        self.frames.push(FramePart::Bytes(current.freeze()));
+    }
+
+    fn into_frames(mut self) -> Vec<FramePart> {
+        self.flush_current();
+        self.frames
+    }
+}
 
 pub async fn handle(stream: TcpStream, config: qexed_config::app::qexed::Qexed) {
     let peer = stream.peer_addr().ok();
@@ -40,37 +227,71 @@ pub async fn handle(stream: TcpStream, config: qexed_config::app::qexed::Qexed) 
 }
 
 fn is_expected_disconnect(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<std::io::Error>().is_some_and(|err| {
-        matches!(
-            err.kind(),
-            std::io::ErrorKind::UnexpectedEof
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::ConnectionReset
-        )
-    })
+    if err.downcast_ref::<ConnectionClosed>().is_some() {
+        return true;
+    }
+
+    if let Some(err) = err.downcast_ref::<PacketReadError>() {
+        return match err {
+            PacketReadError::ConnectionClosedWithIncompletePacket => true,
+            PacketReadError::OtherError(err) => is_expected_io_error(err),
+            _ => false,
+        };
+    }
+
+    if let Some(err) = err.downcast_ref::<PacketWriteError>() {
+        return match err {
+            PacketWriteError::OtherError(err) => is_expected_io_error(err),
+            _ => false,
+        };
+    }
+
+    err.downcast_ref::<std::io::Error>()
+        .is_some_and(is_expected_io_error)
+}
+
+fn is_expected_io_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::BrokenPipe
+    )
 }
 
 async fn handle_inner(
-    mut stream: TcpStream,
+    stream: TcpStream,
     config: &qexed_config::app::qexed::Qexed,
 ) -> anyhow::Result<()> {
-    let handshake = read_expected_packet::<SetProtocol>(&mut stream).await?;
+    let (reader, writer) = stream.into_split();
+    let mut connection = ClientConnection::new(reader, writer);
+    let handshake = connection
+        .read_expected_packet_with_timeout::<SetProtocol>(
+            HANDSHAKE_TIMEOUT,
+            "read handshake packet",
+        )
+        .await?;
     match handshake.next_state.0 {
-        1 => handle_status(&mut stream, config).await,
-        2 | 3 => handle_login(&mut stream, config, handshake).await,
+        1 => handle_status(&mut connection, config).await,
+        2 | 3 => handle_login(&mut connection, config, handshake).await,
         state => anyhow::bail!("unsupported handshake target state: {state}"),
     }
 }
 
 async fn handle_status(
-    stream: &mut TcpStream,
+    connection: &mut ClientConnection,
     config: &qexed_config::app::qexed::Qexed,
 ) -> anyhow::Result<()> {
-    read_expected_packet::<PingStart>(stream).await?;
+    connection
+        .read_expected_packet_with_timeout::<PingStart>(
+            STATUS_TIMEOUT,
+            "read status ping start packet",
+        )
+        .await?;
 
-    send_packet(
-        stream,
-        &to_client::status::server_info::ServerInfo {
+    connection
+        .send_packet(&to_client::status::server_info::ServerInfo {
             response: JsonValue(serde_json::json!({
                 "version": {
                     "name": qexed_config::MC_VERSION,
@@ -84,25 +305,32 @@ async fn handle_status(
                     "text": config.server.motd,
                 },
             })),
-        },
-    )
-    .await?;
+        })
+        .await?;
 
-    if let Ok(ping) = read_expected_packet::<ServerboundPing>(stream).await {
-        send_packet(stream, &to_client::status::ping::Ping { time: ping.time }).await?;
+    if let Ok(ping) = connection
+        .read_expected_packet_with_timeout::<ServerboundPing>(
+            STATUS_TIMEOUT,
+            "read status ping packet",
+        )
+        .await
+    {
+        connection
+            .send_packet(&to_client::status::ping::Ping { time: ping.time })
+            .await?;
     }
 
     Ok(())
 }
 
 async fn handle_login(
-    stream: &mut TcpStream,
+    connection: &mut ClientConnection,
     config: &qexed_config::app::qexed::Qexed,
     handshake: SetProtocol,
 ) -> anyhow::Result<()> {
     if handshake.protocol_version.0 != qexed_config::PROTOCOL_VERSION {
         send_login_disconnect(
-            stream,
+            connection,
             format!(
                 "Unsupported protocol {}. This server expects {} ({})",
                 handshake.protocol_version.0,
@@ -114,71 +342,74 @@ async fn handle_login(
         return Ok(());
     }
 
-    let login_start = read_expected_packet::<LoginStart>(stream).await?;
+    let login_start = connection
+        .read_expected_packet_with_timeout::<LoginStart>(LOGIN_TIMEOUT, "read login start packet")
+        .await?;
     let profile = offline_profile(login_start);
 
-    send_packet(
-        stream,
-        &to_client::login::success::Success {
+    connection
+        .send_packet(&to_client::login::success::Success {
             game_profile: profile.clone(),
             session_id: server_session_id(),
-        },
-    )
-    .await?;
+        })
+        .await?;
 
-    read_expected_packet::<LoginAcknowledged>(stream).await?;
-    handle_configuration(stream).await?;
-    enter_play(stream, config, &profile).await
+    connection
+        .read_expected_packet_with_timeout::<LoginAcknowledged>(
+            LOGIN_TIMEOUT,
+            "read login acknowledged packet",
+        )
+        .await?;
+    handle_configuration(connection).await?;
+    enter_play(connection, config, &profile).await
 }
 
-async fn handle_configuration(stream: &mut TcpStream) -> anyhow::Result<()> {
-    send_packet(
-        stream,
-        &to_client::configuration::custom_payload::CustomPayload {
-            channel: "minecraft:brand".to_string(),
-            data: RestBuffer(string_payload(SERVER_BRAND)?),
-        },
-    )
-    .await?;
+async fn handle_configuration(connection: &mut ClientConnection) -> anyhow::Result<()> {
+    connection
+        .send_packet_batch(|batch| {
+            batch.push(&to_client::configuration::custom_payload::CustomPayload {
+                channel: "minecraft:brand".to_string(),
+                data: RestBuffer(string_payload(SERVER_BRAND)?),
+            })?;
+            batch.push(&to_client::configuration::feature_flags::FeatureFlags {
+                features: vec![qexed_registry::VANILLA_FEATURE.to_string()],
+            })?;
+            batch.push(
+                &to_client::configuration::select_known_packs::SelectKnownPacks {
+                    known_packs: qexed_registry::known_packs(),
+                },
+            )
+        })
+        .await?;
 
-    send_packet(
-        stream,
-        &to_client::configuration::feature_flags::FeatureFlags {
-            features: vec![qexed_registry::VANILLA_FEATURE.to_string()],
-        },
-    )
-    .await?;
-
-    send_packet(
-        stream,
-        &to_client::configuration::select_known_packs::SelectKnownPacks {
-            known_packs: qexed_registry::known_packs(),
-        },
-    )
-    .await?;
-
-    let selected_packs = wait_for_known_packs(stream).await?;
+    let selected_packs = wait_for_known_packs(connection).await?;
     let include_contents = !qexed_registry::accepts_vanilla_core_pack(&selected_packs.entries);
-    for packet in qexed_registry::load_registry_packets(include_contents)? {
-        send_packet(stream, &packet).await?;
-    }
-
+    let registry_packets = qexed_registry::load_registry_packets(include_contents)?;
     let tags = qexed_registry::load_tag_packet()?;
-    send_packet(stream, &tags).await?;
 
-    send_packet(
-        stream,
-        &to_client::configuration::finish_configuration::FinishConfiguration {},
-    )
-    .await?;
-    wait_for_finish_configuration(stream).await
+    connection
+        .send_packet_batch_with_capacity(64 * 1024, |batch| {
+            for packet in &registry_packets {
+                batch.push(packet)?;
+            }
+            batch.push(&tags)?;
+            batch.push(&to_client::configuration::finish_configuration::FinishConfiguration {})
+        })
+        .await?;
+
+    wait_for_finish_configuration(connection).await
 }
 
 async fn wait_for_known_packs(
-    stream: &mut TcpStream,
+    connection: &mut ClientConnection,
 ) -> anyhow::Result<ServerboundSelectKnownPacks> {
     loop {
-        let mut payload = read_frame(stream).await?;
+        let mut payload = connection
+            .read_frame_with_timeout(
+                CONFIGURATION_TIMEOUT,
+                "read configuration known packs packet",
+            )
+            .await?;
         let packet_id = read_packet_id(&mut payload)?;
         if packet_id == ServerboundSelectKnownPacks::ID {
             return decode_payload::<ServerboundSelectKnownPacks>(&mut payload);
@@ -193,9 +424,11 @@ async fn wait_for_known_packs(
     }
 }
 
-async fn wait_for_finish_configuration(stream: &mut TcpStream) -> anyhow::Result<()> {
+async fn wait_for_finish_configuration(connection: &mut ClientConnection) -> anyhow::Result<()> {
     loop {
-        let mut payload = read_frame(stream).await?;
+        let mut payload = connection
+            .read_frame_with_timeout(CONFIGURATION_TIMEOUT, "read finish configuration packet")
+            .await?;
         let packet_id = read_packet_id(&mut payload)?;
         if packet_id == ServerboundFinishConfiguration::ID {
             let _packet = decode_payload::<ServerboundFinishConfiguration>(&mut payload)?;
@@ -212,7 +445,7 @@ async fn wait_for_finish_configuration(stream: &mut TcpStream) -> anyhow::Result
 }
 
 async fn enter_play(
-    stream: &mut TcpStream,
+    connection: &mut ClientConnection,
     config: &qexed_config::app::qexed::Qexed,
     profile: &GameProfile,
 ) -> anyhow::Result<()> {
@@ -220,219 +453,214 @@ async fn enter_play(
     let simulation_distance = config.server.simulation_distance.max(1);
     let dimension_type = qexed_registry::dimension_type_holder_id("minecraft:overworld")?;
 
-    send_packet(
-        stream,
-        &to_client::play::login::Login {
-            entity_id: 1,
-            is_hardcore: false,
-            dimension_names: vec!["minecraft:overworld".to_string()],
-            max_player: VarInt(config.server.max_players.max(0)),
-            view_distance: VarInt(view_distance),
-            simulation_distance: VarInt(simulation_distance),
-            reduced_debug_info: false,
-            enable_respawn_screen: true,
-            do_limited_crafting: false,
-            dimension_type: VarInt(dimension_type),
-            dimension_name: "minecraft:overworld".to_string(),
-            hashed_seed: 0,
-            game_mode: 1,
-            previous_game_mode: -1,
-            is_debug: false,
-            is_flat: true,
-            has_death_location: false,
-            death_dimension_name: None,
-            death_position: None,
-            portal_cooldown: VarInt(0),
-            sea_level: VarInt(63),
-            online_mode: false,
-            enforces_secure_chat: false,
-        },
-    )
-    .await?;
+    connection
+        .send_packet_batch_with_capacity(initial_play_batch_capacity(view_distance), |batch| {
+            batch.push(&to_client::play::login::Login {
+                entity_id: 1,
+                is_hardcore: false,
+                dimension_names: vec!["minecraft:overworld".to_string()],
+                max_player: VarInt(config.server.max_players.max(0)),
+                view_distance: VarInt(view_distance),
+                simulation_distance: VarInt(simulation_distance),
+                reduced_debug_info: false,
+                enable_respawn_screen: true,
+                do_limited_crafting: false,
+                dimension_type: VarInt(dimension_type),
+                dimension_name: "minecraft:overworld".to_string(),
+                hashed_seed: 0,
+                game_mode: 1,
+                previous_game_mode: -1,
+                is_debug: false,
+                is_flat: true,
+                has_death_location: false,
+                death_dimension_name: None,
+                death_position: None,
+                portal_cooldown: VarInt(0),
+                sea_level: VarInt(63),
+                online_mode: false,
+                enforces_secure_chat: false,
+            })?;
+            batch.push(&to_client::play::position::Position {
+                teleport_id: VarInt(1),
+                x: 0.5,
+                y: 64.0,
+                z: 0.5,
+                dx: 0.0,
+                dy: 0.0,
+                dz: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                flags: 0,
+            })?;
+            batch.push(&to_client::play::change_difficulty::ChangeDifficulty {
+                difficulty: 2,
+                locked: false,
+            })?;
+            batch.push(&to_client::play::set_held_slot::SetHeldSlot { slot: VarInt(0) })?;
+            batch.push(&to_client::play::server_data::ServerData {
+                motd: text_component(config.server.motd.clone()),
+                icon_bytes: None,
+            })?;
+            batch.push(&to_client::play::player_info_update::PlayerInfoUpdate {
+                actions:
+                    to_client::play::player_info_update::PlayerInfoActions::player_initializing(),
+                entries: vec![
+                    to_client::play::player_info_update::PlayerInfoEntry::from_profile(profile, 1),
+                ],
+            })?;
+            batch.push(&to_client::play::player_abilities::PlayerAbilities {
+                flags: to_client::play::player_abilities::PlayerAbilities::INVULNERABLE
+                    | to_client::play::player_abilities::PlayerAbilities::CAN_FLY
+                    | to_client::play::player_abilities::PlayerAbilities::INSTABUILD,
+                flying_speed: 0.05,
+                walking_speed: 0.1,
+            })?;
+            batch.push(&to_client::play::set_health::SetHealth {
+                health: 20.0,
+                food: VarInt(20),
+                saturation: 5.0,
+            })?;
+            batch.push(&to_client::play::set_experience::SetExperience {
+                experience_progress: 0.0,
+                experience_level: VarInt(0),
+                total_experience: VarInt(0),
+            })?;
+            batch.push(&to_client::play::initialize_border::InitializeBorder::default())?;
+            batch.push(&to_client::play::set_time::SetTime {
+                game_time: 0,
+                clock_updates: Vec::new(),
+            })?;
+            batch.push(
+                &to_client::play::set_default_spawn_position::SetDefaultSpawnPosition {
+                    dimension: "minecraft:overworld".to_string(),
+                    position: qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
+                    yaw: 0.0,
+                    pitch: 0.0,
+                },
+            )?;
+            batch.push(&to_client::play::game_state_change::GameStateChange {
+                reason: 13,
+                game_mode: 0.0,
+            })?;
+            batch.push(&qexed_command::command_tree())?;
+            batch.push(
+                &to_client::play::set_simulation_distance::SetSimulationDistance {
+                    simulation_distance: VarInt(simulation_distance),
+                },
+            )?;
+            batch.push(&to_client::play::update_view_distance::UpdateViewDistance {
+                view_distance: VarInt(view_distance),
+            })?;
+            batch.push(&to_client::play::update_view_position::UpdateViewPosition {
+                chunk_x: VarInt(0),
+                chunk_z: VarInt(0),
+            })?;
+            push_initial_chunks(batch, view_distance)?;
+            batch.push(&to_client::play::ticking_state::TickingState::default())?;
+            batch.push(&to_client::play::system_chat::SystemChat {
+                content: text_component(format!("{} joined qexed-v5", profile.username)),
+                overlay: false,
+            })
+        })
+        .await?;
 
-    send_packet(
-        stream,
-        &to_client::play::position::Position {
-            teleport_id: VarInt(1),
-            x: 0.5,
-            y: 64.0,
-            z: 0.5,
-            dx: 0.0,
-            dy: 0.0,
-            dz: 0.0,
-            yaw: 0.0,
-            pitch: 0.0,
-            flags: 0,
-        },
-    )
-    .await?;
-
-    send_packet(
-        stream,
-        &to_client::play::change_difficulty::ChangeDifficulty {
-            difficulty: 2,
-            locked: false,
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::set_held_slot::SetHeldSlot { slot: VarInt(0) },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::server_data::ServerData {
-            motd: text_component(config.server.motd.clone()),
-            icon_bytes: None,
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::player_info_update::PlayerInfoUpdate {
-            actions: to_client::play::player_info_update::PlayerInfoActions::player_initializing(),
-            entries: vec![
-                to_client::play::player_info_update::PlayerInfoEntry::from_profile(profile, 1),
-            ],
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::player_abilities::PlayerAbilities {
-            flags: to_client::play::player_abilities::PlayerAbilities::INVULNERABLE
-                | to_client::play::player_abilities::PlayerAbilities::CAN_FLY
-                | to_client::play::player_abilities::PlayerAbilities::INSTABUILD,
-            flying_speed: 0.05,
-            walking_speed: 0.1,
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::set_health::SetHealth {
-            health: 20.0,
-            food: VarInt(20),
-            saturation: 5.0,
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::set_experience::SetExperience {
-            experience_progress: 0.0,
-            experience_level: VarInt(0),
-            total_experience: VarInt(0),
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::initialize_border::InitializeBorder::default(),
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::set_time::SetTime {
-            game_time: 0,
-            clock_updates: Vec::new(),
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::set_default_spawn_position::SetDefaultSpawnPosition {
-            dimension: "minecraft:overworld".to_string(),
-            position: qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
-            yaw: 0.0,
-            pitch: 0.0,
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::game_state_change::GameStateChange {
-            reason: 13,
-            game_mode: 0.0,
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::set_simulation_distance::SetSimulationDistance {
-            simulation_distance: VarInt(simulation_distance),
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::update_view_distance::UpdateViewDistance {
-            view_distance: VarInt(view_distance),
-        },
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::update_view_position::UpdateViewPosition {
-            chunk_x: VarInt(0),
-            chunk_z: VarInt(0),
-        },
-    )
-    .await?;
-    send_initial_chunks(stream, view_distance).await?;
-    send_packet(
-        stream,
-        &to_client::play::ticking_state::TickingState::default(),
-    )
-    .await?;
-    send_packet(
-        stream,
-        &to_client::play::system_chat::SystemChat {
-            content: text_component(format!("{} joined qexed-v5", profile.username)),
-            overlay: false,
-        },
-    )
-    .await?;
-
-    stream.flush().await?;
-    sustain_play_connection(stream).await
+    connection.flush().await?;
+    let command_context = command_context(config, profile);
+    sustain_play_connection(connection, command_context).await
 }
 
-async fn send_initial_chunks(stream: &mut TcpStream, view_distance: i32) -> anyhow::Result<()> {
+fn initial_play_batch_capacity(view_distance: i32) -> usize {
+    let radius = view_distance.clamp(0, 1) as usize;
+    let chunk_count = (radius * 2 + 1).pow(2);
+    8 * 1024 + chunk_count * 16
+}
+
+fn push_initial_chunks<W>(batch: &mut PacketBatch<'_, W>, view_distance: i32) -> anyhow::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
     let radius = view_distance.clamp(0, 1);
     let mut count = 0;
+    let chunk_body = qexed_world::empty_chunk_body_bytes()?;
 
-    send_packet(
-        stream,
-        &to_client::play::chunk_batch_start::ChunkBatchStart {},
-    )
-    .await?;
+    batch.push(&to_client::play::chunk_batch_start::ChunkBatchStart {})?;
     for chunk_z in -radius..=radius {
         for chunk_x in -radius..=radius {
-            let chunk = crate::world::empty_chunk_packet(chunk_x, chunk_z)?;
-            send_packet(stream, &chunk).await?;
+            batch.push_empty_chunk(chunk_x, chunk_z, chunk_body)?;
             count += 1;
         }
     }
-    send_packet(
-        stream,
-        &to_client::play::chunk_batch_finished::ChunkBatchFinished {
-            batch_size: VarInt(count),
-        },
-    )
-    .await
+    batch.push(&to_client::play::chunk_batch_finished::ChunkBatchFinished {
+        batch_size: VarInt(count),
+    })
 }
 
-async fn sustain_play_connection(stream: &mut TcpStream) -> anyhow::Result<()> {
-    let (mut reader, mut writer) = stream.split();
+fn write_varint(value: i32, buf: &mut BytesMut) {
+    let mut value = value as u32;
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        buf.put_u8(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn varint_len(value: i32) -> usize {
+    let mut value = value as u32;
+    let mut len = 1;
+
+    while value >= 0x80 {
+        value >>= 7;
+        len += 1;
+    }
+
+    len
+}
+
+fn command_context(
+    config: &qexed_config::app::qexed::Qexed,
+    profile: &GameProfile,
+) -> qexed_command::CommandContext {
+    qexed_command::CommandContext {
+        locale: "zh_cn".to_string(),
+        online_players: vec![profile.username.clone()],
+        max_players: config.server.max_players,
+        version: version_message(),
+        plugins: plugin_summaries(),
+    }
+}
+
+fn version_message() -> String {
+    format!(
+        "qexed {} (Minecraft {}, protocol {})",
+        env!("CARGO_PKG_VERSION"),
+        qexed_config::MC_VERSION,
+        qexed_config::PROTOCOL_VERSION
+    )
+}
+
+fn plugin_summaries() -> Vec<String> {
+    qexed_plugin::try_plugin_manager()
+        .map(qexed_plugin::PluginManager::plugin_summaries)
+        .unwrap_or_default()
+}
+
+async fn sustain_play_connection(
+    connection: &mut ClientConnection,
+    command_context: qexed_command::CommandContext,
+) -> anyhow::Result<()> {
     let mut keep_alive = tokio::time::interval(std::time::Duration::from_secs(10));
     keep_alive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut keep_alive_id = 0_i64;
 
     loop {
         tokio::select! {
-            frame = read_frame(&mut reader) => {
+            frame = read_frame(&mut connection.reader) => {
                 let mut payload = frame?;
                 let packet_id = read_packet_id(&mut payload)?;
                 if packet_id == qexed_protocol::to_server::play::keep_alive::KeepAlive::ID {
@@ -440,32 +668,96 @@ async fn sustain_play_connection(stream: &mut TcpStream) -> anyhow::Result<()> {
                         decode_payload::<qexed_protocol::to_server::play::keep_alive::KeepAlive>(
                             &mut payload,
                         )?;
+                } else if packet_id == qexed_protocol::to_server::play::chat_command::ChatCommand::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::chat_command::ChatCommand>(
+                            &mut payload,
+                        )?;
+                    handle_chat_command(connection, &command_context, &packet.command).await?;
+                } else if packet_id == qexed_protocol::to_server::play::command_suggestion::CommandSuggestion::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::command_suggestion::CommandSuggestion>(
+                            &mut payload,
+                        )?;
+                    handle_command_suggestion(connection, &command_context, packet).await?;
                 }
             }
             _ = keep_alive.tick() => {
                 keep_alive_id = keep_alive_id.wrapping_add(1);
-                send_packet(
-                    &mut writer,
-                    &to_client::play::keep_alive::KeepAlive { keep_alive_id },
-                )
-                .await?;
-                writer.flush().await?;
+                connection
+                    .send_packet(&to_client::play::keep_alive::KeepAlive { keep_alive_id })
+                    .await?;
+                connection.flush().await?;
             }
         }
     }
 }
 
+async fn handle_chat_command(
+    connection: &mut ClientConnection,
+    context: &qexed_command::CommandContext,
+    command: &str,
+) -> anyhow::Result<()> {
+    match qexed_command::execute_builtin(command, context) {
+        qexed_command::CommandResponse::Message(message) => {
+            send_system_chat(connection, text_component(message)).await?;
+        }
+        qexed_command::CommandResponse::Unknown { command } => {
+            send_system_chat(connection, unknown_command_component(&command)).await?;
+        }
+    }
+    connection.flush().await
+}
+
+async fn handle_command_suggestion(
+    connection: &mut ClientConnection,
+    context: &qexed_command::CommandContext,
+    suggestion: qexed_protocol::to_server::play::command_suggestion::CommandSuggestion,
+) -> anyhow::Result<()> {
+    let matches = qexed_command::command_suggestion_matches_with_sources(
+        &suggestion.text,
+        &context.online_players,
+        &[],
+    );
+    connection
+        .send_packet(&to_client::play::command_suggestions::CommandSuggestions {
+            id: suggestion.id,
+            start: VarInt(matches.start as i32),
+            length: VarInt(matches.length as i32),
+            matches: matches
+                .values
+                .into_iter()
+                .map(|value| to_client::play::command_suggestions::Matches {
+                    r#match: value,
+                    tooltip: None,
+                })
+                .collect(),
+        })
+        .await?;
+    connection.flush().await
+}
+
+async fn send_system_chat(
+    connection: &mut ClientConnection,
+    content: qexed_protocol::types::TextComponent,
+) -> anyhow::Result<()> {
+    connection
+        .send_packet(&to_client::play::system_chat::SystemChat {
+            content,
+            overlay: false,
+        })
+        .await
+}
+
 async fn send_login_disconnect(
-    stream: &mut TcpStream,
+    connection: &mut ClientConnection,
     reason: impl Into<String>,
 ) -> anyhow::Result<()> {
-    send_packet(
-        stream,
-        &to_client::login::disconnect::Disconnect {
+    connection
+        .send_packet(&to_client::login::disconnect::Disconnect {
             reason: JsonValue(serde_json::json!({ "text": reason.into() })),
-        },
-    )
-    .await
+        })
+        .await
 }
 
 fn offline_profile(login_start: LoginStart) -> GameProfile {
@@ -489,9 +781,10 @@ fn server_session_id() -> uuid::Uuid {
     *SERVER_SESSION_ID.get_or_init(uuid::Uuid::new_v4)
 }
 
-async fn read_expected_packet<T>(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<T>
+async fn read_expected_packet<T, R>(stream: &mut PacketStream<R>) -> anyhow::Result<T>
 where
     T: Packet + Default,
+    R: AsyncRead + Unpin,
 {
     let mut payload = read_frame(stream).await?;
     let packet_id = read_packet_id(&mut payload)?;
@@ -503,6 +796,21 @@ where
         );
     }
     decode_payload::<T>(&mut payload)
+}
+
+async fn with_timeout<T, E, F>(
+    duration: Duration,
+    operation: &'static str,
+    future: F,
+) -> anyhow::Result<T>
+where
+    E: Into<anyhow::Error>,
+    F: std::future::Future<Output = Result<T, E>>,
+{
+    timeout(duration, future)
+        .await
+        .map_err(|_| anyhow::anyhow!("{operation} timed out after {:?}", duration))?
+        .map_err(Into::into)
 }
 
 fn decode_payload<T>(payload: &mut BytesMut) -> anyhow::Result<T>
@@ -522,14 +830,16 @@ fn read_packet_id(payload: &mut BytesMut) -> anyhow::Result<i32> {
     Ok(packet_id.0)
 }
 
-async fn send_packet<T>(stream: &mut (impl AsyncWrite + Unpin), packet: &T) -> anyhow::Result<()>
+async fn send_packet<T, W>(stream: &mut PacketSink<W>, packet: &T) -> anyhow::Result<()>
 where
     T: Packet,
+    W: AsyncWrite + Unpin,
 {
-    let payload = build_payload(T::ID, packet)?;
-    write_frame(stream, &payload).await
+    stream.send_ref(packet).await?;
+    Ok(())
 }
 
+#[cfg(test)]
 fn build_payload<T>(packet_id: i32, packet: &T) -> anyhow::Result<BytesMut>
 where
     T: Packet,
@@ -543,62 +853,23 @@ where
     Ok(payload)
 }
 
-async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<BytesMut> {
-    let length = read_varint_async(stream).await?;
-    if length < 0 {
-        anyhow::bail!("negative packet length: {length}");
-    }
-
-    let length = length as usize;
-    if length > MAX_PACKET_SIZE {
-        anyhow::bail!("packet length {length} exceeds max {MAX_PACKET_SIZE}");
-    }
-
-    let mut payload = BytesMut::zeroed(length);
-    stream.read_exact(&mut payload).await?;
-    Ok(payload)
+async fn read_frame<R>(stream: &mut PacketStream<R>) -> anyhow::Result<BytesMut>
+where
+    R: AsyncRead + Unpin,
+{
+    stream
+        .read_packet()
+        .await?
+        .ok_or_else(|| ConnectionClosed.into())
 }
 
-async fn write_frame(stream: &mut (impl AsyncWrite + Unpin), payload: &[u8]) -> anyhow::Result<()> {
-    if payload.len() > MAX_PACKET_SIZE {
-        anyhow::bail!(
-            "packet length {} exceeds max {MAX_PACKET_SIZE}",
-            payload.len()
-        );
-    }
-
-    let mut header = BytesMut::new();
-    write_varint(&mut header, payload.len() as i32);
-    stream.write_all(&header).await?;
-    stream.write_all(payload).await?;
+#[cfg(test)]
+async fn write_frame<W>(stream: &mut PacketSink<W>, payload: &[u8]) -> anyhow::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    stream.send_raw(payload).await?;
     Ok(())
-}
-
-async fn read_varint_async(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<i32> {
-    let mut value = 0_i32;
-    for position in 0..5 {
-        let byte = stream.read_u8().await?;
-        value |= ((byte & 0x7F) as i32) << (7 * position);
-        if (byte & 0x80) == 0 {
-            return Ok(value);
-        }
-    }
-    anyhow::bail!("VarInt is too large")
-}
-
-fn write_varint(buf: &mut BytesMut, value: i32) {
-    let mut value = value as u32;
-    loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        buf.put_u8(byte);
-        if value == 0 {
-            break;
-        }
-    }
 }
 
 fn string_payload(value: &str) -> anyhow::Result<Vec<u8>> {
@@ -617,13 +888,64 @@ fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextCompone
     qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
 }
 
+fn unknown_command_component(command: &str) -> qexed_protocol::types::TextComponent {
+    let mut message = std::collections::HashMap::new();
+    message.insert(
+        "translate".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from("command.unknown.command")),
+    );
+    message.insert(
+        "color".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from("red")),
+    );
+
+    let mut context_text = std::collections::HashMap::new();
+    context_text.insert(
+        "text".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from(format!("\n/{command}"))),
+    );
+    context_text.insert(
+        "color".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from("red")),
+    );
+
+    let mut context_here = std::collections::HashMap::new();
+    context_here.insert(
+        "translate".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from("command.context.here")),
+    );
+    context_here.insert(
+        "color".to_string(),
+        qexed_nbt::Tag::String(std::sync::Arc::from("red")),
+    );
+    context_here.insert("italic".to_string(), qexed_nbt::Tag::Byte(1));
+
+    message.insert(
+        "extra".to_string(),
+        qexed_nbt::Tag::List(
+            qexed_nbt::ListHeader {
+                tag_id: qexed_nbt::tag_id::COMPOUND,
+                length: 2,
+            },
+            std::sync::Arc::from(
+                vec![
+                    qexed_nbt::Tag::Compound(std::sync::Arc::new(context_text)),
+                    qexed_nbt::Tag::Compound(std::sync::Arc::new(context_here)),
+                ]
+                .into_boxed_slice(),
+            ),
+        ),
+    );
+
+    qexed_nbt::Tag::Compound(std::sync::Arc::new(message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_payload, decode_payload, offline_profile, read_frame, read_packet_id, write_frame,
-        write_varint,
+        ConnectionIo, build_payload, decode_payload, offline_profile, read_frame, read_packet_id,
+        write_frame,
     };
-    use bytes::BytesMut;
     use qexed_packet::{Packet, net_types::VarInt};
     use qexed_protocol::to_client;
     use qexed_protocol::to_client::status::ping::Ping;
@@ -648,10 +970,9 @@ mod tests {
 
     #[test]
     fn varint_writer_uses_minecraft_encoding() {
-        let mut buf = BytesMut::new();
-        write_varint(&mut buf, 300);
+        let payload = build_payload(300, &Ping { time: 42 }).unwrap();
 
-        assert_eq!(buf.as_ref(), &[0xac, 0x02]);
+        assert_eq!(&payload[..2], &[0xac, 0x02]);
     }
 
     #[test]
@@ -666,6 +987,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_timeout_reports_slow_operation() {
+        let err = super::with_timeout(
+            std::time::Duration::from_millis(1),
+            "test operation",
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                Ok::<_, anyhow::Error>(())
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("test operation timed out"));
+    }
+
+    #[tokio::test]
     async fn status_handshake_responds_over_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -676,9 +1013,9 @@ mod tests {
             super::handle(stream, config).await;
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = connect(addr).await;
         write_frame(
-            &mut client,
+            &mut client.writer,
             &build_payload(
                 SetProtocol::ID,
                 &SetProtocol {
@@ -693,13 +1030,13 @@ mod tests {
         .await
         .unwrap();
         write_frame(
-            &mut client,
+            &mut client.writer,
             &build_payload(PingStart::ID, &PingStart {}).unwrap(),
         )
         .await
         .unwrap();
 
-        let mut payload = read_frame(&mut client).await.unwrap();
+        let mut payload = read_frame(&mut client.reader).await.unwrap();
         assert_eq!(read_packet_id(&mut payload).unwrap(), ServerInfo::ID);
         let response = decode_payload::<ServerInfo>(&mut payload).unwrap();
 
@@ -724,7 +1061,7 @@ mod tests {
             super::handle(stream, config).await;
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client = connect(addr).await;
         write_packet(
             &mut client,
             &SetProtocol {
@@ -764,6 +1101,7 @@ mod tests {
         let mut saw_position = false;
         let mut saw_player_info = false;
         let mut saw_load_start = false;
+        let mut saw_commands = false;
         let mut saw_batch_start = false;
         let mut map_chunks = 0;
         let mut saw_batch_finished = false;
@@ -775,6 +1113,7 @@ mod tests {
                 to_client::play::position::Position::ID => saw_position = true,
                 to_client::play::player_info_update::PlayerInfoUpdate::ID => saw_player_info = true,
                 to_client::play::game_state_change::GameStateChange::ID => saw_load_start = true,
+                to_client::play::commands::Commands::ID => saw_commands = true,
                 to_client::play::chunk_batch_start::ChunkBatchStart::ID => saw_batch_start = true,
                 to_client::play::map_chunk::MapChunk::ID => map_chunks += 1,
                 to_client::play::chunk_batch_finished::ChunkBatchFinished::ID => {
@@ -792,6 +1131,7 @@ mod tests {
             saw_load_start,
             "level chunks load start packet was not sent"
         );
+        assert!(saw_commands, "command tree packet was not sent");
         assert!(saw_batch_start, "chunk batch start packet was not sent");
         assert!(map_chunks > 0, "initial map chunks were not sent");
         assert!(
@@ -803,32 +1143,208 @@ mod tests {
         server.await.unwrap();
     }
 
-    async fn write_packet<T>(stream: &mut TcpStream, packet: &T)
-    where
-        T: Packet,
-    {
-        write_frame(stream, &build_payload(T::ID, packet).unwrap())
-            .await
-            .unwrap();
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn play_chat_command_returns_system_chat() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = qexed_config::app::qexed::Qexed::default();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::chat_command::ChatCommand {
+                command: "help".to_string(),
+            },
+        )
+        .await;
+
+        wait_for_play_packet(&mut client, to_client::play::system_chat::SystemChat::ID).await;
+
+        drop(client);
+        server.await.unwrap();
     }
 
-    async fn read_next_packet_id(stream: &mut TcpStream) -> i32 {
-        let mut payload = read_frame(stream).await.unwrap();
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn play_command_suggestion_returns_matches() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = qexed_config::app::qexed::Qexed::default();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::command_suggestion::CommandSuggestion {
+                id: VarInt(42),
+                text: "/help v".to_string(),
+            },
+        )
+        .await;
+
+        let response = wait_for_play_packet_decoded::<
+            _,
+            _,
+            to_client::play::command_suggestions::CommandSuggestions,
+        >(&mut client)
+        .await;
+        assert_eq!(response.id.0, 42);
+        assert_eq!(response.start.0, 6);
+        assert_eq!(response.length.0, 1);
+        assert_eq!(response.matches.len(), 1);
+        assert_eq!(response.matches[0].r#match, "version");
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    async fn connect(
+        addr: std::net::SocketAddr,
+    ) -> ConnectionIo<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf> {
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let (reader, writer) = stream.into_split();
+        ConnectionIo::new(reader, writer)
+    }
+
+    async fn write_packet<T, R, W>(connection: &mut ConnectionIo<R, W>, packet: &T)
+    where
+        T: Packet,
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        write_frame(
+            &mut connection.writer,
+            &build_payload(T::ID, packet).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn read_next_packet_id<R, W>(connection: &mut ConnectionIo<R, W>) -> i32
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let mut payload = read_frame(&mut connection.reader).await.unwrap();
         read_packet_id(&mut payload).unwrap()
     }
 
-    async fn wait_for_clientbound_config_select_known_packs(stream: &mut TcpStream) {
+    async fn login_to_play<R, W>(connection: &mut ConnectionIo<R, W>)
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        write_packet(
+            connection,
+            &SetProtocol {
+                protocol_version: VarInt(qexed_config::PROTOCOL_VERSION),
+                server_host: "localhost".to_string(),
+                server_port: 25565,
+                next_state: VarInt(2),
+            },
+        )
+        .await;
+        write_packet(
+            connection,
+            &LoginStart {
+                username: "Steve".to_string(),
+                player_uuid: uuid::Uuid::from_u128(1),
+            },
+        )
+        .await;
+
+        assert_eq!(
+            read_next_packet_id(connection).await,
+            to_client::login::success::Success::ID
+        );
+        write_packet(connection, &LoginAcknowledged {}).await;
+        wait_for_clientbound_config_select_known_packs(connection).await;
+        write_packet(
+            connection,
+            &ServerboundSelectKnownPacks {
+                entries: qexed_registry::known_packs(),
+            },
+        )
+        .await;
+        wait_for_clientbound_finish_configuration(connection).await;
+        write_packet(connection, &ServerboundFinishConfiguration {}).await;
+    }
+
+    async fn wait_for_play_packet<R, W>(connection: &mut ConnectionIo<R, W>, expected_id: i32)
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        for _ in 0..128 {
+            if read_next_packet_id(connection).await == expected_id {
+                return;
+            }
+        }
+        panic!("did not receive play packet {expected_id}");
+    }
+
+    async fn wait_for_play_packet_decoded<R, W, T>(connection: &mut ConnectionIo<R, W>) -> T
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+        T: Packet + Default,
+    {
+        for _ in 0..128 {
+            let mut payload = read_frame(&mut connection.reader).await.unwrap();
+            if read_packet_id(&mut payload).unwrap() == T::ID {
+                return decode_payload::<T>(&mut payload).unwrap();
+            }
+        }
+        panic!("did not receive play packet {}", T::ID);
+    }
+
+    async fn wait_for_clientbound_config_select_known_packs<R, W>(
+        connection: &mut ConnectionIo<R, W>,
+    ) where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
         loop {
-            let packet_id = read_next_packet_id(stream).await;
+            let packet_id = read_next_packet_id(connection).await;
             if packet_id == to_client::configuration::select_known_packs::SelectKnownPacks::ID {
                 return;
             }
         }
     }
 
-    async fn wait_for_clientbound_finish_configuration(stream: &mut TcpStream) {
+    async fn wait_for_clientbound_finish_configuration<R, W>(connection: &mut ConnectionIo<R, W>)
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
         loop {
-            let packet_id = read_next_packet_id(stream).await;
+            let packet_id = read_next_packet_id(connection).await;
             if packet_id == to_client::configuration::finish_configuration::FinishConfiguration::ID
             {
                 return;

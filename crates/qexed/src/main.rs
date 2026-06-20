@@ -1,7 +1,6 @@
 mod bootstrap;
 mod connection;
 mod server;
-mod world;
 
 use clap::Parser;
 

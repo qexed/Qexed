@@ -1,0 +1,11 @@
+[package]
+name = "qexed_command"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
