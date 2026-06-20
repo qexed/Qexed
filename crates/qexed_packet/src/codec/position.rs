@@ -1,4 +1,5 @@
 use crate::{PacketCodec, net_types::Position};
+use bytes::BufMut as _;
 
 impl PacketCodec for Position {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
@@ -6,12 +7,12 @@ impl PacketCodec for Position {
         let z_part = (self.z as i64) & 0x3FFFFFF;
         let y_part = (self.y as i64) & 0xFFF;
         let encoded = (x_part << 38) | (z_part << 12) | y_part;
-        encoded.serialize(w)
+        w.buf.put_i64(encoded);
+        Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        let mut val: i64 = 0;
-        val.deserialize(r)?;
+        let val = r.buf.get_i64();
         self.x = (val >> 38) as i32;
         self.y = ((val << 52) >> 52) as i32;
         self.z = ((val << 26) >> 38) as i32;

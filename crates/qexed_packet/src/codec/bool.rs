@@ -1,15 +1,15 @@
 // bool 类型处理
 use crate::PacketCodec;
+use bytes::BufMut as _;
 // 1:True,0:False
 impl PacketCodec for bool {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        (*self as u8).serialize(w)
+        w.buf.put_u8(*self as u8);
+        Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        let mut v = 0u8;
-        v.deserialize(r)?;
-        *self = v != 0;
+        *self = r.buf.get_u8() != 0;
         Ok(())
     }
 }

@@ -26,6 +26,7 @@ pub struct Login {
     pub death_position: Option<Position>,
     pub portal_cooldown: VarInt,
     pub sea_level: VarInt,
+    pub online_mode: bool,
     pub enforces_secure_chat: bool,
 }
 
@@ -55,6 +56,7 @@ impl Packet for Login {
         }
         w.serialize(&self.portal_cooldown)?;
         w.serialize(&self.sea_level)?;
+        w.serialize(&self.online_mode)?;
         w.serialize(&self.enforces_secure_chat)?;
         Ok(())
     }
@@ -82,6 +84,7 @@ impl Packet for Login {
         }
         self.portal_cooldown.deserialize(r)?;
         self.sea_level.deserialize(r)?;
+        self.online_mode.deserialize(r)?;
         self.enforces_secure_chat.deserialize(r)?;
         Ok(())
     }

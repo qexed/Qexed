@@ -1,15 +1,10 @@
 use bytes::{Buf as _, BufMut as _};
 
-use crate::{PacketCodec, net_types::VarInt};
+use crate::{PacketCodec, net_types::VarInt, read_exact_vec, write_varint_len};
 
 impl PacketCodec for String {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        let len = self.len();
-        if len > i32::MAX as usize {
-            return Err(anyhow::anyhow!("string length {} exceeds VarInt max", len));
-        }
-
-        VarInt(len as i32).serialize(w)?;
+        write_varint_len(self.len(), "string", w)?;
         w.buf.put_slice(self.as_bytes());
         Ok(())
     }
@@ -30,8 +25,7 @@ impl PacketCodec for String {
             ));
         }
 
-        let bytes = r.buf.copy_to_bytes(len);
-        *self = String::from_utf8(bytes.to_vec())?;
+        *self = String::from_utf8(read_exact_vec(r.buf, len))?;
         Ok(())
     }
 }

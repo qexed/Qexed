@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+    id("org.spongepowered.gradle.vanilla") version "0.3.2"
+}
+
+group = 'cn.qexed'
+version = '1.0-SNAPSHOT'
+
+if (providers.gradleProperty("qexedSmokeBuildDir").isPresent()) {
+    layout.buildDirectory.set(file(providers.gradleProperty("qexedSmokeBuildDir").get()))
+}
+
+minecraft {
+    version("26.2")
+    runs {
+        client() {
+            args("--quickPlayMultiplayer", providers.gradleProperty("qexedQuickPlay").orElse("127.0.0.1:25565").get())
+        }
+    }
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
+}
+
+tasks.register("buildQexedForProtocolTest", Exec) {
+    workingDir = rootProject.projectDir.parentFile.parentFile
+    commandLine "cargo", "build", "-p", "qexed"
+}
+
+tasks.register("protocolIntegrationTest", Test) {
+    description = "Runs Qexed protocol tests against Minecraft 26.2 codecs."
+    group = "verification"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags "integration"
+    }
+    dependsOn tasks.named("buildQexedForProtocolTest")
+    systemProperty "qexed.repoRoot", rootProject.projectDir.parentFile.parentFile.absolutePath
+    if (providers.gradleProperty("qexedPort").isPresent()) {
+        systemProperty "qexed.port", providers.gradleProperty("qexedPort").get()
+    }
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
+}
+
+tasks.named("test") {
+    useJUnitPlatform {
+        excludeTags "integration"
+    }
+}

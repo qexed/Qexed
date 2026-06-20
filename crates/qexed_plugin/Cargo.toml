@@ -1,0 +1,13 @@
+[package]
+name = "qexed_plugin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_config.workspace = true
+qexed_plugin_api.path = "../qexed_plugin_api"
+libloading.workspace = true
+anyhow.workspace = true
+tklog.workspace = true
+tokio.workspace = true
+futures.workspace = true

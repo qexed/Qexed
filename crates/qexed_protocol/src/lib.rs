@@ -1,6 +1,6 @@
 pub mod error;
 mod nullpacket;
-pub mod protocol_26_1_2;
+pub mod protocol_26_2;
 pub mod raw_packet;
 pub mod to_client;
 pub mod to_server;

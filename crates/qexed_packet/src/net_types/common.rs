@@ -5,6 +5,7 @@ use bytes::{Buf as _, BufMut as _};
 use crate::{
     PacketCodec, PacketReader, PacketWriter,
     net_types::{RestBuffer, VarInt},
+    read_exact_vec_into, write_varint_len, write_varint_value,
 };
 
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -12,7 +13,7 @@ pub struct ByteArray(pub Vec<u8>);
 
 impl PacketCodec for ByteArray {
     fn serialize(&self, w: &mut PacketWriter) -> anyhow::Result<()> {
-        VarInt(self.0.len() as i32).serialize(w)?;
+        write_varint_len(self.0.len(), "byte array", w)?;
         w.buf.put_slice(&self.0);
         Ok(())
     }
@@ -21,7 +22,7 @@ impl PacketCodec for ByteArray {
         let mut len = VarInt::default();
         len.deserialize(r)?;
         let len = checked_len(len.0, r.buf.remaining(), "byte array")?;
-        self.0 = r.buf.copy_to_bytes(len).to_vec();
+        read_exact_vec_into(r.buf, len, &mut self.0)?;
         Ok(())
     }
 }
@@ -43,7 +44,8 @@ impl PacketCodec for OptionalVarInt {
                 .ok_or_else(|| anyhow::anyhow!("optional varint value overflows"))?,
             None => 0,
         };
-        VarInt(value).serialize(w)
+        write_varint_value(value, w);
+        Ok(())
     }
 
     fn deserialize(&mut self, r: &mut PacketReader) -> anyhow::Result<()> {
@@ -96,7 +98,7 @@ impl PacketCodec for GameProfile {
         self.username.deserialize(r)?;
         let count = read_bounded_count(16, r)?;
         self.properties.clear();
-        self.properties.reserve(count);
+        self.properties.try_reserve(count)?;
         for _ in 0..count {
             let mut property = ProfileProperty::default();
             property.deserialize(r)?;
@@ -150,20 +152,18 @@ where
     fn serialize(&self, w: &mut PacketWriter) -> anyhow::Result<()> {
         match self {
             Self::Left(value) => {
-                true.serialize(w)?;
+                w.buf.put_u8(1);
                 value.serialize(w)
             }
             Self::Right(value) => {
-                false.serialize(w)?;
+                w.buf.put_u8(0);
                 value.serialize(w)
             }
         }
     }
 
     fn deserialize(&mut self, r: &mut PacketReader) -> anyhow::Result<()> {
-        let mut is_left = false;
-        is_left.deserialize(r)?;
-        if is_left {
+        if r.buf.get_u8() != 0 {
             let mut value = L::default();
             value.deserialize(r)?;
             *self = Self::Left(value);
@@ -194,6 +194,7 @@ impl<const MAX_COUNT: usize> PacketCodec for BoundedStringMap<MAX_COUNT> {
     fn deserialize(&mut self, r: &mut PacketReader) -> anyhow::Result<()> {
         let count = read_bounded_count(MAX_COUNT, r)?;
         self.0.clear();
+        self.0.try_reserve(count)?;
         for _ in 0..count {
             let mut key = String::new();
             let mut value = String::new();
@@ -266,7 +267,7 @@ where
             ));
         }
 
-        VarInt(payload.len() as i32).serialize(w)?;
+        write_varint_len(payload.len(), "length-prefixed payload", w)?;
         w.buf.put_slice(&payload);
         Ok(())
     }
@@ -348,7 +349,7 @@ fn write_bounded_count(count: usize, max: usize, w: &mut PacketWriter) -> anyhow
         ));
     }
 
-    VarInt(count as i32).serialize(w)
+    write_varint_len(count, "collection", w)
 }
 
 fn checked_len(value: i32, remaining: usize, name: &str) -> anyhow::Result<usize> {

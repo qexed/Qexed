@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn container_click_decodes_26_1_2_hashed_item_payload() {
+    fn container_click_decodes_26_2_hashed_item_payload() {
         let packet = ContainerClick {
             window_id: qexed_packet::net_types::VarInt(2),
             state_id: qexed_packet::net_types::VarInt(0),

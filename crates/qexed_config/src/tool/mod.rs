@@ -14,9 +14,13 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
         Vec::new()
     }
 
-    fn load_or_create_default(
-        load_event: Option<fn() -> Pin<Box<dyn Future<Output = ()>>>>,
-    ) -> Result<Self> {
+    fn load_or_create_default<F, Fut>(
+        load_event: F,
+    ) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>>
+    where
+        F: FnOnce(Self) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + std::marker::Send + 'static,
+    {
         validate_config_name(Self::NAME)?;
 
         let base_dir = config_base_dir()?;
@@ -58,11 +62,7 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
                 .with_context(|| format!("config type mismatch for {}", path.display()))?
         };
 
-        if let Some(load_event) = load_event {
-            futures::executor::block_on(load_event());
-        }
-
-        Ok(config)
+        Ok(tokio::spawn(load_event(config)))
     }
 
     fn save_to_config(
@@ -218,7 +218,8 @@ fn migrate_sensitive_fields(
 ) -> Result<DocumentMut> {
     for path in sensitive_fields {
         if let Some(item) = take_item_by_dotted_path(doc, path)? {
-            if is_sensitive_display_item(&item) && get_item_by_dotted_path(&secrets_doc, path).is_some()
+            if is_sensitive_display_item(&item)
+                && get_item_by_dotted_path(&secrets_doc, path).is_some()
             {
                 continue;
             }

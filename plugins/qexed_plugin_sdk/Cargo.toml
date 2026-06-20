@@ -1,0 +1,12 @@
+[package]
+name = "qexed_plugin_sdk"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+qexed_plugin_api = { path = "../../crates/qexed_plugin_api" }
+async-trait = "0.1"

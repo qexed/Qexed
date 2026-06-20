@@ -5,18 +5,8 @@ use crate::{
 
 impl PacketCodec for VarInt {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        let mut val = self.0 as u32;
-        loop {
-            let mut temp = (val & 0x7F) as u8;
-            val >>= 7;
-            if val != 0 {
-                temp |= 0x80;
-            }
-            temp.serialize(w)?;
-            if val == 0 {
-                return Ok(());
-            }
-        }
+        crate::write_varint_value(self.0, w);
+        Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
@@ -38,18 +28,8 @@ impl PacketCodec for VarInt {
 
 impl PacketCodec for VarLong {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        let mut val = self.0 as u64;
-        loop {
-            let mut temp = (val & 0x7F) as u8;
-            val >>= 7;
-            if val != 0 {
-                temp |= 0x80;
-            }
-            temp.serialize(w)?;
-            if val == 0 {
-                return Ok(());
-            }
-        }
+        crate::write_varlong_value(self.0, w);
+        Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {

@@ -1,4 +1,8 @@
 mod bootstrap;
+mod connection;
+mod server;
+mod world;
+
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
@@ -11,8 +15,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main() -> anyhow::Result<()> {
     if let Err(err) = run().await {
-        eprintln!("{err:#}");
-        log::error!("{err}");
+        tklog::error!(err);
     }
     Ok(())
 }
@@ -27,10 +30,9 @@ fn runtime_worker_threads() -> usize {
 
 async fn run() -> anyhow::Result<()> {
     let args = qexed_config::app::qexed::args::ServerArgs::parse();
-    if !bootstrap::load(&args).await? {
+    let Some(config) = bootstrap::load(&args).await? else {
         return Ok(());
     };
-    Ok(())
-    // let context = connection::ServerContext::new(config).await?;
-    // server::run(context).await
+
+    server::run(config).await
 }

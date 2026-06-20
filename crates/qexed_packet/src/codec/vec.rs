@@ -1,18 +1,12 @@
-use crate::{PacketCodec, net_types::VarInt};
+use crate::{PacketCodec, net_types::VarInt, write_varint_len};
+use bytes::BufMut as _;
 
 impl<T> PacketCodec for Vec<T>
 where
     T: PacketCodec,
 {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        if self.len() > i32::MAX as usize {
-            return Err(anyhow::anyhow!(
-                "vec length {} exceeds VarInt max",
-                self.len()
-            ));
-        }
-
-        VarInt(self.len() as i32).serialize(w)?;
+        write_varint_len(self.len(), "vec", w)?;
         for prop in self {
             prop.serialize(w)?;
         }
@@ -27,8 +21,9 @@ where
         }
 
         self.clear();
-        self.reserve(len.0 as usize);
-        for _ in 0..len.0 {
+        let len = len.0 as usize;
+        self.try_reserve(len)?;
+        for _ in 0..len {
             let mut value = T::default();
             value.deserialize(r)?;
             self.push(value);
@@ -42,16 +37,12 @@ where
     [u8; N]: Default,
 {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
-        for value in self {
-            value.serialize(w)?
-        }
+        w.buf.put_slice(self);
         Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        for value in self {
-            value.deserialize(r)?;
-        }
+        r.buf.copy_to_slice(self);
         Ok(())
     }
 }

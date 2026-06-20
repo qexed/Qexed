@@ -4,11 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# 内部包
 qexed_config.workspace = true
-# 外部包
-anyhow.workspace = true # 错误处理
-clap.workspace = true # 启动参数
-tokio.workspace = true # 异步核心库
-log.workspace = true # 同步日志
-tklog.workspace = true # 异步日志
+qexed_log.workspace = true
+qexed_registry.workspace = true
+qexed_plugin.workspace = true
+qexed_plugin_api.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+qexed_nbt.workspace = true
+
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+log.workspace = true
+serde_json.workspace = true
+tklog.workspace = true
+tokio.workspace = true
+uuid.workspace = true

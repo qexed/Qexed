@@ -1,4 +1,5 @@
 use crate::PacketCodec;
+use bytes::BufMut as _;
 
 impl<T> PacketCodec for Option<T>
 where
@@ -6,18 +7,16 @@ where
 {
     fn serialize(&self, w: &mut crate::PacketWriter) -> anyhow::Result<()> {
         if let Some(t) = self {
-            true.serialize(w)?;
+            w.buf.put_u8(1);
             t.serialize(w)?;
         } else {
-            false.serialize(w)?;
+            w.buf.put_u8(0);
         }
         Ok(())
     }
 
     fn deserialize(&mut self, r: &mut crate::PacketReader) -> anyhow::Result<()> {
-        let mut is_present = false;
-        is_present.deserialize(r)?;
-        if is_present {
+        if r.buf.get_u8() != 0 {
             let mut value = T::default();
             value.deserialize(r)?;
             *self = Some(value);

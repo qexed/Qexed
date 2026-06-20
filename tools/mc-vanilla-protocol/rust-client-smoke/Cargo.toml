@@ -1,0 +1,13 @@
+[package]
+name = "qexed-rust-client-smoke"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+anyhow = "1.0"
+bytes = "1.11.1"
+qexed_packet = { path = "../../../crates/qexed_packet" }
+qexed_protocol = { path = "../../../crates/qexed_protocol" }
+uuid = { version = "1.17.0", features = ["v3", "v4", "serde"] }

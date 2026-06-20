@@ -53,9 +53,7 @@ fn write_tag_value(buf: &mut bytes::BytesMut, tag: &Tag) -> Result<()> {
         Tag::String(v) => write_string(buf, v.as_bytes()),
         Tag::ByteArray(v) => {
             write_len_i32(buf, v.len(), "NBT byte array")?;
-            for value in v.as_ref() {
-                buf.put_i8(*value);
-            }
+            buf.put_slice(&i8_slice_as_u8(v.as_ref()));
             Ok(())
         }
         Tag::IntArray(v) => {
@@ -115,14 +113,12 @@ fn read_tag_value(buf: &mut dyn Buf, id: u8) -> Result<Tag> {
         }
         tag_id::BYTE_ARRAY => {
             let len = read_len_i32(buf, "NBT byte array")?;
-            let mut values = Vec::with_capacity(len);
-            for _ in 0..len {
-                values.push(buf.get_i8());
-            }
-            Ok(Tag::ByteArray(Arc::from(values)))
+            ensure_remaining_bytes(buf, len, "NBT byte array")?;
+            Ok(Tag::ByteArray(Arc::from(read_i8_vec(buf, len))))
         }
         tag_id::INT_ARRAY => {
             let len = read_len_i32(buf, "NBT int array")?;
+            ensure_remaining_elements(buf, len, size_of::<i32>(), "NBT int array")?;
             let mut values = Vec::with_capacity(len);
             for _ in 0..len {
                 values.push(buf.get_i32());
@@ -131,6 +127,7 @@ fn read_tag_value(buf: &mut dyn Buf, id: u8) -> Result<Tag> {
         }
         tag_id::LONG_ARRAY => {
             let len = read_len_i32(buf, "NBT long array")?;
+            ensure_remaining_elements(buf, len, size_of::<i64>(), "NBT long array")?;
             let mut values = Vec::with_capacity(len);
             for _ in 0..len {
                 values.push(buf.get_i64());
@@ -182,15 +179,50 @@ fn write_string(buf: &mut bytes::BytesMut, bytes: &[u8]) -> Result<()> {
 
 fn read_string(buf: &mut dyn Buf) -> Result<Vec<u8>> {
     let len = buf.get_u16() as usize;
+    ensure_remaining_bytes(buf, len, "NBT string")?;
+
+    Ok(crate::read_exact_vec(buf, len))
+}
+
+fn read_i8_vec(buf: &mut dyn Buf, len: usize) -> Vec<i8> {
+    let mut values = vec![0; len];
+    buf.copy_to_slice(i8_slice_as_u8_mut(&mut values));
+    values
+}
+
+fn ensure_remaining_elements(
+    buf: &mut dyn Buf,
+    len: usize,
+    element_size: usize,
+    name: &str,
+) -> Result<()> {
+    let byte_len = len
+        .checked_mul(element_size)
+        .ok_or_else(|| anyhow::anyhow!("{} byte length overflows: {}", name, len))?;
+    ensure_remaining_bytes(buf, byte_len, name)
+}
+
+fn ensure_remaining_bytes(buf: &mut dyn Buf, len: usize, name: &str) -> Result<()> {
     if buf.remaining() < len {
         return Err(anyhow::anyhow!(
-            "NBT string length {} exceeds remaining {}",
+            "{} length {} exceeds remaining {}",
+            name,
             len,
             buf.remaining()
         ));
     }
 
-    Ok(buf.copy_to_bytes(len).to_vec())
+    Ok(())
+}
+
+fn i8_slice_as_u8(values: &[i8]) -> &[u8] {
+    // i8 and u8 have identical layout; only the signed interpretation changes.
+    unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), values.len()) }
+}
+
+fn i8_slice_as_u8_mut(values: &mut [i8]) -> &mut [u8] {
+    // i8 and u8 have identical layout; only the signed interpretation changes.
+    unsafe { std::slice::from_raw_parts_mut(values.as_mut_ptr().cast::<u8>(), values.len()) }
 }
 
 fn write_len_i32(buf: &mut bytes::BytesMut, len: usize, name: &str) -> Result<()> {

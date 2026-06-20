@@ -1,4 +1,3 @@
-// 自动生成
 pub mod add_resource_pack;
 pub mod clear_dialog;
 pub mod code_of_conduct;
@@ -13,9 +12,13 @@ pub mod ping;
 pub mod registry_data;
 pub mod remove_resource_pack;
 pub mod reset_chat;
+pub mod resource_pack_pop;
+pub mod resource_pack_push;
 pub mod select_known_packs;
 pub mod server_links;
 pub mod show_dialog;
 pub mod store_cookie;
 pub mod tags;
 pub mod transfer;
+pub mod update_enabled_features;
+pub mod update_tags;

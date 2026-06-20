@@ -1,7 +1,11 @@
-// 自动生成
 pub mod compress;
 pub mod cookie_request;
+pub mod custom_query;
 pub mod disconnect;
 pub mod encryption_begin;
+pub mod hello;
+pub mod login_compression;
+pub mod login_disconnect;
+pub mod login_finished;
 pub mod login_plugin_request;
 pub mod success;

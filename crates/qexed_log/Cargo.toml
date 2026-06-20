@@ -5,4 +5,6 @@ edition = "2024"
 
 [dependencies]
 qexed_config.workspace = true
+# 外部库
+anyhow.workspace = true
 tklog.workspace = true
