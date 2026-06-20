@@ -1,7 +1,7 @@
 use bytes::{BufMut as _, Bytes, BytesMut};
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
-    net_types::{GameProfile, JsonValue, RestBuffer, VarInt},
+    net_types::{ByteArray, GameProfile, JsonValue, RestBuffer, VarInt},
 };
 use qexed_protocol::{
     to_client,
@@ -12,7 +12,10 @@ use qexed_protocol::{
             settings::Settings as ServerboundSettings,
         },
         handshaking::set_protocol::SetProtocol,
-        login::{login_acknowledged::LoginAcknowledged, login_start::LoginStart},
+        login::{
+            encryption_begin::EncryptionBegin as ServerboundEncryptionBegin,
+            login_acknowledged::LoginAcknowledged, login_start::LoginStart,
+        },
         status::{ping::Ping as ServerboundPing, ping_start::PingStart},
     },
 };
@@ -35,6 +38,12 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 static SERVER_SESSION_ID: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
 
 type ClientConnection = ConnectionIo<OwnedReadHalf, OwnedWriteHalf>;
+
+#[derive(Debug, Clone)]
+struct LoginSession {
+    profile: GameProfile,
+    online_mode: bool,
+}
 
 #[derive(Debug)]
 struct ConnectionClosed;
@@ -136,6 +145,12 @@ where
         with_timeout(WRITE_TIMEOUT, "flush connection", self.writer.flush()).await?;
         Ok(())
     }
+
+    fn enable_encryption(&mut self, shared_secret: &[u8]) -> anyhow::Result<()> {
+        self.reader.enable_encryption(shared_secret)?;
+        self.writer.enable_encryption(shared_secret)?;
+        Ok(())
+    }
 }
 
 struct PacketBatch<'a, W> {
@@ -212,7 +227,7 @@ where
     }
 }
 
-pub async fn handle(stream: TcpStream, config: qexed_config::app::qexed::Qexed) {
+pub async fn handle(stream: TcpStream, config: crate::bootstrap::RuntimeConfig) {
     let peer = stream.peer_addr().ok();
     if let Err(err) = handle_inner(stream, &config).await {
         if is_expected_disconnect(&err) {
@@ -262,8 +277,9 @@ fn is_expected_io_error(err: &std::io::Error) -> bool {
 
 async fn handle_inner(
     stream: TcpStream,
-    config: &qexed_config::app::qexed::Qexed,
+    config: &crate::bootstrap::RuntimeConfig,
 ) -> anyhow::Result<()> {
+    let peer_ip = stream.peer_addr().ok().map(|addr| addr.ip());
     let (reader, writer) = stream.into_split();
     let mut connection = ClientConnection::new(reader, writer);
     let handshake = connection
@@ -273,8 +289,8 @@ async fn handle_inner(
         )
         .await?;
     match handshake.next_state.0 {
-        1 => handle_status(&mut connection, config).await,
-        2 | 3 => handle_login(&mut connection, config, handshake).await,
+        1 => handle_status(&mut connection, &config.qexed).await,
+        2 | 3 => handle_login(&mut connection, config, handshake, peer_ip).await,
         state => anyhow::bail!("unsupported handshake target state: {state}"),
     }
 }
@@ -325,8 +341,9 @@ async fn handle_status(
 
 async fn handle_login(
     connection: &mut ClientConnection,
-    config: &qexed_config::app::qexed::Qexed,
+    config: &crate::bootstrap::RuntimeConfig,
     handshake: SetProtocol,
+    peer_ip: Option<std::net::IpAddr>,
 ) -> anyhow::Result<()> {
     if handshake.protocol_version.0 != qexed_config::PROTOCOL_VERSION {
         send_login_disconnect(
@@ -345,11 +362,18 @@ async fn handle_login(
     let login_start = connection
         .read_expected_packet_with_timeout::<LoginStart>(LOGIN_TIMEOUT, "read login start packet")
         .await?;
-    let profile = offline_profile(login_start);
+    let session =
+        match authenticate_login(connection, &config.authenticator, login_start, peer_ip).await {
+            Ok(session) => session,
+            Err(err) => {
+                send_login_disconnect(connection, format!("正版验证失败: {err:#}")).await?;
+                return Ok(());
+            }
+        };
 
     connection
         .send_packet(&to_client::login::success::Success {
-            game_profile: profile.clone(),
+            game_profile: session.profile.clone(),
             session_id: server_session_id(),
         })
         .await?;
@@ -361,7 +385,49 @@ async fn handle_login(
         )
         .await?;
     handle_configuration(connection).await?;
-    enter_play(connection, config, &profile).await
+    enter_play(connection, &config.qexed, &session).await
+}
+
+async fn authenticate_login(
+    connection: &mut ClientConnection,
+    auth: &qexed_auth::Authenticator,
+    login_start: LoginStart,
+    peer_ip: Option<std::net::IpAddr>,
+) -> anyhow::Result<LoginSession> {
+    if !auth.is_online_mode() {
+        let session = auth.authenticate_offline(&login_start.username, login_start.player_uuid);
+        return Ok(LoginSession {
+            profile: session.into_profile(),
+            online_mode: false,
+        });
+    }
+
+    let verify_token = auth.new_verify_token();
+    connection
+        .send_packet(&to_client::login::encryption_begin::EncryptionBegin {
+            server_id: String::new(),
+            public_key: ByteArray(auth.public_key_der()?),
+            verify_token: ByteArray(verify_token.clone()),
+            should_authenticate: true,
+        })
+        .await?;
+
+    let key_packet = connection
+        .read_expected_packet_with_timeout::<ServerboundEncryptionBegin>(
+            LOGIN_TIMEOUT,
+            "read login encryption response packet",
+        )
+        .await?;
+    let shared_secret = auth.decrypt_login_key(&key_packet, &verify_token)?;
+    connection.enable_encryption(&shared_secret)?;
+
+    let session = auth
+        .authenticate_online(&login_start.username, &shared_secret, peer_ip)
+        .await?;
+    Ok(LoginSession {
+        profile: session.into_profile(),
+        online_mode: true,
+    })
 }
 
 async fn handle_configuration(connection: &mut ClientConnection) -> anyhow::Result<()> {
@@ -447,8 +513,9 @@ async fn wait_for_finish_configuration(connection: &mut ClientConnection) -> any
 async fn enter_play(
     connection: &mut ClientConnection,
     config: &qexed_config::app::qexed::Qexed,
-    profile: &GameProfile,
+    session: &LoginSession,
 ) -> anyhow::Result<()> {
+    let profile = &session.profile;
     let view_distance = config.server.view_distance.max(1);
     let simulation_distance = config.server.simulation_distance.max(1);
     let dimension_type = qexed_registry::dimension_type_holder_id("minecraft:overworld")?;
@@ -477,7 +544,7 @@ async fn enter_play(
                 death_position: None,
                 portal_cooldown: VarInt(0),
                 sea_level: VarInt(63),
-                online_mode: false,
+                online_mode: session.online_mode,
                 enforces_secure_chat: false,
             })?;
             batch.push(&to_client::play::position::Position {
@@ -760,23 +827,6 @@ async fn send_login_disconnect(
         .await
 }
 
-fn offline_profile(login_start: LoginStart) -> GameProfile {
-    let uuid = if login_start.player_uuid == uuid::Uuid::nil() {
-        uuid::Uuid::new_v3(
-            &uuid::Uuid::NAMESPACE_DNS,
-            format!("OfflinePlayer:{}", login_start.username).as_bytes(),
-        )
-    } else {
-        login_start.player_uuid
-    };
-
-    GameProfile {
-        uuid,
-        username: login_start.username,
-        properties: Vec::new(),
-    }
-}
-
 fn server_session_id() -> uuid::Uuid {
     *SERVER_SESSION_ID.get_or_init(uuid::Uuid::new_v4)
 }
@@ -943,8 +993,7 @@ fn unknown_command_component(command: &str) -> qexed_protocol::types::TextCompon
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectionIo, build_payload, decode_payload, offline_profile, read_frame, read_packet_id,
-        write_frame,
+        ConnectionIo, build_payload, decode_payload, read_frame, read_packet_id, write_frame,
     };
     use qexed_packet::{Packet, net_types::VarInt};
     use qexed_protocol::to_client;
@@ -978,10 +1027,7 @@ mod tests {
     #[test]
     fn offline_profile_uses_client_uuid_when_present() {
         let uuid = uuid::Uuid::from_u128(1);
-        let profile = offline_profile(LoginStart {
-            username: "Steve".to_string(),
-            player_uuid: uuid,
-        });
+        let profile = qexed_auth::offline_profile_with_client_uuid("Steve", uuid);
 
         assert_eq!(profile.uuid, uuid);
     }
@@ -1006,7 +1052,7 @@ mod tests {
     async fn status_handshake_responds_over_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let config = qexed_config::app::qexed::Qexed::default();
+        let config = runtime_config();
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -1054,7 +1100,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let config = qexed_config::app::qexed::Qexed::default();
+        let config = runtime_config();
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -1149,7 +1195,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let config = qexed_config::app::qexed::Qexed::default();
+        let config = runtime_config();
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -1184,7 +1230,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let config = qexed_config::app::qexed::Qexed::default();
+        let config = runtime_config();
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -1359,5 +1405,12 @@ mod tests {
             let _ = qexed_config::CONFIG_PATH.set(config_path);
             qexed_registry::init().expect("registry must initialize for connection tests");
         });
+    }
+
+    fn runtime_config() -> crate::bootstrap::RuntimeConfig {
+        crate::bootstrap::RuntimeConfig {
+            qexed: qexed_config::app::qexed::Qexed::default(),
+            authenticator: qexed_auth::Authenticator::new(Default::default()),
+        }
     }
 }

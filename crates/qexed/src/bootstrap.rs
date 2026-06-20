@@ -1,8 +1,17 @@
-use qexed_config::{app::qexed::Qexed, tool::AppConfigTrait};
+use qexed_config::{
+    app::{qexed::Qexed, qexed_auth::Auth},
+    tool::AppConfigTrait,
+};
+
+#[derive(Debug, Clone)]
+pub struct RuntimeConfig {
+    pub qexed: Qexed,
+    pub authenticator: qexed_auth::Authenticator,
+}
 
 pub async fn load(
     args: &qexed_config::app::qexed::args::ServerArgs,
-) -> anyhow::Result<Option<Qexed>> {
+) -> anyhow::Result<Option<RuntimeConfig>> {
     let config_path = args
         .config_path
         .clone()
@@ -19,7 +28,12 @@ pub async fn load(
         .set(plugin_path)
         .map_err(|_| anyhow::anyhow!("PLUGINS_PATH is already initialized"))?;
 
-    let config = load_qexed_config().await?;
+    let qexed = load_config::<Qexed>("qexed").await?;
+    let auth = load_config::<Auth>("auth").await?;
+    let config = RuntimeConfig {
+        qexed,
+        authenticator: qexed_auth::Authenticator::new(auth),
+    };
     qexed_log::init()?;
     qexed_registry::init()?;
     qexed_plugin::init().await?;
@@ -30,17 +44,20 @@ pub async fn load(
     Ok(Some(config))
 }
 
-async fn load_qexed_config() -> anyhow::Result<Qexed> {
+async fn load_config<T>(name: &'static str) -> anyhow::Result<T>
+where
+    T: AppConfigTrait + Send + 'static,
+{
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    let join_handle = Qexed::load_or_create_default(move |config| async move {
+    let join_handle = T::load_or_create_default(move |config| async move {
         sender
             .send(config)
-            .map_err(|_| anyhow::anyhow!("failed to return qexed config"))?;
+            .map_err(|_| anyhow::anyhow!("failed to return {name} config"))?;
         Ok(())
     })?;
 
     join_handle.await??;
     receiver
         .await
-        .map_err(|_| anyhow::anyhow!("qexed config loader dropped before returning config"))
+        .map_err(|_| anyhow::anyhow!("{name} config loader dropped before returning config"))
 }

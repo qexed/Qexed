@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use tokio::{net::TcpListener, sync::Semaphore};
 
-pub async fn run(config: qexed_config::app::qexed::Qexed) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(&config.server.bind).await?;
-    let max_connections = config.server.max_connections.max(1);
+pub async fn run(config: crate::bootstrap::RuntimeConfig) -> anyhow::Result<()> {
+    let listener = TcpListener::bind(&config.qexed.server.bind).await?;
+    let max_connections = config.qexed.server.max_connections.max(1);
     let limiter = Arc::new(Semaphore::new(max_connections));
 
     tklog::info!(format!(
         "qexed server listening on {}, max_connections={max_connections}",
-        config.server.bind
+        config.qexed.server.bind
     ));
 
     loop {
