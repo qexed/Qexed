@@ -426,7 +426,7 @@ async fn authenticate_login(
             "read login encryption response packet",
         )
         .await?;
-    let shared_secret = auth.decrypt_login_key(&key_packet, &verify_token)?;
+    let shared_secret = auth.decrypt_login_key(&key_packet, &verify_token).await?;
     connection.enable_encryption(&shared_secret)?;
 
     let session = auth
@@ -889,7 +889,7 @@ async fn handle_chat_message(
                     text_component(context.profile.username.clone()),
                 );
                 connection.send_packet(&packet).await?;
-                chat_session.add_pending_signature(&verified.signature);
+                chat_session.add_pending_signature(&verified.signature)?;
                 *next_chat_global_index = next_chat_global_index
                     .checked_add(1)
                     .ok_or_else(|| anyhow::anyhow!("chat global index overflow"))?;
@@ -1567,6 +1567,7 @@ mod tests {
             qexed_auth::Authenticator::new(qexed_config::app::qexed_auth::Auth {
                 enabled: true,
                 yggdrasil: Default::default(),
+                blocking_pool: Default::default(),
             });
 
         let server = tokio::spawn(async move {
@@ -1911,6 +1912,7 @@ mod tests {
             qexed_auth::Authenticator::new(qexed_config::app::qexed_auth::Auth {
                 enabled: true,
                 yggdrasil: Default::default(),
+                blocking_pool: Default::default(),
             });
         config
     }

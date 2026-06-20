@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct Auth {
     pub enabled: bool,
     pub yggdrasil: Yggdrasil,
+    pub blocking_pool: BlockingPool,
 }
 
 impl Default for Auth {
@@ -11,6 +12,7 @@ impl Default for Auth {
         Self {
             enabled: false,
             yggdrasil: Yggdrasil::default(),
+            blocking_pool: BlockingPool::default(),
         }
     }
 }
@@ -36,6 +38,21 @@ impl Default for Yggdrasil {
             services_public_keys_url: "https://api.minecraftservices.com/publickeys".to_string(),
             include_client_ip: false,
             http_timeout: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockingPool {
+    pub enabled: bool,
+    pub worker_threads: usize,
+}
+
+impl Default for BlockingPool {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            worker_threads: 2,
         }
     }
 }
@@ -74,10 +91,14 @@ mod tests {
             config.yggdrasil.services_public_keys_url,
             "https://api.minecraftservices.com/publickeys"
         );
+        assert!(config.blocking_pool.enabled);
+        assert_eq!(config.blocking_pool.worker_threads, 2);
         assert!(file.contains("enabled = false"));
         assert!(file.contains("[yggdrasil]"));
         assert!(file.contains(
             "services_public_keys_url = \"https://api.minecraftservices.com/publickeys\""
         ));
+        assert!(file.contains("[blocking_pool]"));
+        assert!(file.contains("worker_threads = 2"));
     }
 }

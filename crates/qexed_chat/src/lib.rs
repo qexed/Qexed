@@ -7,6 +7,10 @@ use openssl::{
     sign::Verifier,
 };
 
+const LAST_SEEN_WINDOW_LEN: usize = 20;
+const MAX_PENDING_LAST_SEEN_MESSAGES: usize = 1024;
+const MAX_TRACKED_LAST_SEEN_MESSAGES: usize = LAST_SEEN_WINDOW_LEN + MAX_PENDING_LAST_SEEN_MESSAGES;
+
 #[derive(Debug, Clone)]
 pub struct ChatService {
     inner: Arc<ChatServiceInner>,
@@ -143,8 +147,11 @@ impl SecureChatSession {
         self.last_seen.apply_offset(offset.0)
     }
 
-    pub fn add_pending_signature(&mut self, signature: &qexed_protocol::types::MessageSignature) {
-        self.last_seen.add_pending(signature.clone());
+    pub fn add_pending_signature(
+        &mut self,
+        signature: &qexed_protocol::types::MessageSignature,
+    ) -> anyhow::Result<()> {
+        self.last_seen.add_pending(signature.clone())
     }
 
     pub fn verify_message(
@@ -164,7 +171,9 @@ impl SecureChatSession {
 
         let last_seen = self.last_seen.apply_update(chat)?;
         let index = self.next_index;
-        let payload = signed_chat_payload(
+        let mut verifier = Verifier::new(MessageDigest::sha256(), &self.player_key)?;
+        write_signed_chat_payload(
+            |bytes| verifier.update(bytes).map_err(Into::into),
             profile_id,
             self.session_id,
             index,
@@ -172,9 +181,7 @@ impl SecureChatSession {
             chat.timestamp,
             &chat.message,
             &last_seen,
-        );
-        let mut verifier = Verifier::new(MessageDigest::sha256(), &self.player_key)?;
-        verifier.update(&payload)?;
+        )?;
         if !verifier.verify(&signature.0)? {
             anyhow::bail!("invalid signed chat message signature");
         }
@@ -209,20 +216,65 @@ pub fn signed_chat_payload(
     message: &str,
     last_seen_signatures: &[qexed_protocol::types::MessageSignature],
 ) -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&1_i32.to_be_bytes());
-    payload.extend_from_slice(profile_id.as_bytes());
-    payload.extend_from_slice(session_id.as_bytes());
-    payload.extend_from_slice(&index.to_be_bytes());
-    payload.extend_from_slice(&salt.to_be_bytes());
-    payload.extend_from_slice(&(timestamp_millis / 1000).to_be_bytes());
-    payload.extend_from_slice(&(message.len() as i32).to_be_bytes());
-    payload.extend_from_slice(message.as_bytes());
-    payload.extend_from_slice(&(last_seen_signatures.len() as i32).to_be_bytes());
-    for signature in last_seen_signatures {
-        payload.extend_from_slice(&signature.0);
-    }
+    let mut payload = Vec::with_capacity(signed_chat_payload_len(message, last_seen_signatures));
+    write_signed_chat_payload(
+        |bytes| {
+            payload.extend_from_slice(bytes);
+            Ok(())
+        },
+        profile_id,
+        session_id,
+        index,
+        salt,
+        timestamp_millis,
+        message,
+        last_seen_signatures,
+    )
+    .expect("writing signed chat payload to Vec should not fail");
     payload
+}
+
+fn write_signed_chat_payload(
+    mut write: impl FnMut(&[u8]) -> anyhow::Result<()>,
+    profile_id: uuid::Uuid,
+    session_id: uuid::Uuid,
+    index: i32,
+    salt: i64,
+    timestamp_millis: i64,
+    message: &str,
+    last_seen_signatures: &[qexed_protocol::types::MessageSignature],
+) -> anyhow::Result<()> {
+    write(&1_i32.to_be_bytes())?;
+    write(profile_id.as_bytes())?;
+    write(session_id.as_bytes())?;
+    write(&index.to_be_bytes())?;
+    write(&salt.to_be_bytes())?;
+    write(&(timestamp_millis / 1000).to_be_bytes())?;
+    write(&(message.len() as i32).to_be_bytes())?;
+    write(message.as_bytes())?;
+    write(&(last_seen_signatures.len() as i32).to_be_bytes())?;
+    for signature in last_seen_signatures {
+        write(&signature.0)?;
+    }
+    Ok(())
+}
+
+fn signed_chat_payload_len(
+    message: &str,
+    last_seen_signatures: &[qexed_protocol::types::MessageSignature],
+) -> usize {
+    4 + 16
+        + 16
+        + 4
+        + 8
+        + 8
+        + 4
+        + message.len()
+        + 4
+        + last_seen_signatures
+            .iter()
+            .map(|signature| signature.0.len())
+            .sum::<usize>()
 }
 
 fn validate_last_seen_update(
@@ -243,16 +295,28 @@ struct LastSeenValidator {
 impl Default for LastSeenValidator {
     fn default() -> Self {
         Self {
-            tracked_messages: vec![None; 20],
+            tracked_messages: vec![None; LAST_SEEN_WINDOW_LEN],
             last_pending_message: None,
         }
     }
 }
 
 impl LastSeenValidator {
-    fn add_pending(&mut self, signature: qexed_protocol::types::MessageSignature) {
+    fn add_pending(
+        &mut self,
+        signature: qexed_protocol::types::MessageSignature,
+    ) -> anyhow::Result<()> {
         if self.last_pending_message.as_ref() == Some(&signature) {
-            return;
+            return Ok(());
+        }
+
+        if self.tracked_messages.len() >= MAX_TRACKED_LAST_SEEN_MESSAGES {
+            anyhow::bail!(
+                "too many pending signed chat messages: {}",
+                self.tracked_messages
+                    .len()
+                    .saturating_sub(LAST_SEEN_WINDOW_LEN)
+            );
         }
 
         self.last_pending_message = Some(signature.clone());
@@ -260,6 +324,7 @@ impl LastSeenValidator {
             signature,
             pending: true,
         }));
+        Ok(())
     }
 
     fn apply_update(
@@ -269,8 +334,8 @@ impl LastSeenValidator {
         validate_last_seen_update(chat)?;
         self.apply_offset(chat.offset.0)?;
 
-        let mut last_seen = Vec::new();
-        for i in 0..20 {
+        let mut last_seen = Vec::with_capacity(LAST_SEEN_WINDOW_LEN);
+        for i in 0..LAST_SEEN_WINDOW_LEN {
             let acknowledged = acknowledged_bit(chat.acknowledged, i);
             let message = self
                 .tracked_messages
@@ -310,7 +375,10 @@ impl LastSeenValidator {
         }
 
         let offset = offset as usize;
-        let max_offset = self.tracked_messages.len().saturating_sub(20);
+        let max_offset = self
+            .tracked_messages
+            .len()
+            .saturating_sub(LAST_SEEN_WINDOW_LEN);
         if offset > max_offset {
             anyhow::bail!("last-seen offset {offset} exceeds max {max_offset}");
         }
@@ -354,7 +422,10 @@ fn java_byte_array_hash(bytes: &[u8]) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatMessage, ChatResult, ChatService, signed_chat_payload};
+    use super::{
+        ChatMessage, ChatResult, ChatService, LastSeenValidator, MAX_PENDING_LAST_SEEN_MESSAGES,
+        signed_chat_payload,
+    };
 
     #[tokio::test]
     async fn allows_chat_when_chat_is_enabled() {
@@ -461,6 +532,46 @@ mod tests {
             payload
                 .windows(8)
                 .any(|window| window == 5_i64.to_be_bytes())
+        );
+    }
+
+    #[test]
+    fn signed_chat_payload_preallocates_exact_capacity() {
+        let signatures = vec![
+            qexed_protocol::types::MessageSignature(vec![1; 256]),
+            qexed_protocol::types::MessageSignature(vec![2; 256]),
+        ];
+
+        let payload = signed_chat_payload(
+            uuid::Uuid::from_u128(1),
+            uuid::Uuid::from_u128(2),
+            3,
+            4,
+            5_678,
+            "hello",
+            &signatures,
+        );
+
+        assert_eq!(payload.len(), payload.capacity());
+    }
+
+    #[test]
+    fn last_seen_pending_messages_are_bounded() {
+        let mut validator = LastSeenValidator::default();
+
+        for i in 0..MAX_PENDING_LAST_SEEN_MESSAGES {
+            validator
+                .add_pending(qexed_protocol::types::MessageSignature(vec![i as u8; 256]))
+                .unwrap();
+        }
+
+        let err = validator
+            .add_pending(qexed_protocol::types::MessageSignature(vec![42; 256]))
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("too many pending signed chat messages")
         );
     }
 }

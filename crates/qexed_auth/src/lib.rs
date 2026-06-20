@@ -23,9 +23,15 @@ pub struct Authenticator {
 #[derive(Debug)]
 struct AuthenticatorInner {
     public_key_der: Vec<u8>,
-    private_key: Rsa<openssl::pkey::Private>,
+    private_key_der: Vec<u8>,
     http: reqwest::Client,
     service_public_keys: tokio::sync::RwLock<Option<Vec<PKey<Public>>>>,
+    blocking_runtime: Option<DedicatedBlockingRuntime>,
+}
+
+#[derive(Debug)]
+struct DedicatedBlockingRuntime {
+    runtime: Option<tokio::runtime::Runtime>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,14 +85,25 @@ impl Authenticator {
         Ok(self.inner()?.public_key_der.clone())
     }
 
-    pub fn decrypt_login_key(
+    pub async fn decrypt_login_key(
         &self,
         key_packet: &qexed_protocol::to_server::login::encryption_begin::EncryptionBegin,
         expected_verify_token: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
         let inner = self.inner()?;
-        let shared_secret = inner.decrypt_rsa(&key_packet.shared_secret.0)?;
-        let verify_token = inner.decrypt_rsa(&key_packet.verify_token.0)?;
+        let private_key_der = inner.private_key_der.clone();
+        let shared_secret_ciphertext = key_packet.shared_secret.0.clone();
+        let verify_token_ciphertext = key_packet.verify_token.0.clone();
+        let expected_verify_token = expected_verify_token.to_vec();
+
+        let (shared_secret, verify_token) = inner
+            .run_blocking(move || {
+                let private_key = Rsa::private_key_from_der(&private_key_der)?;
+                let shared_secret = decrypt_rsa(&private_key, &shared_secret_ciphertext)?;
+                let verify_token = decrypt_rsa(&private_key, &verify_token_ciphertext)?;
+                Ok::<_, anyhow::Error>((shared_secret, verify_token))
+            })
+            .await?;
 
         if verify_token != expected_verify_token {
             anyhow::bail!("登录验证 token 不匹配");
@@ -232,6 +249,7 @@ impl Authenticator {
 
         let inner = Arc::new(AuthenticatorInner::new(
             self.config.yggdrasil.http_timeout.max(1),
+            &self.config.blocking_pool,
         )?);
         *guard = Some(inner.clone());
         Ok(inner)
@@ -239,30 +257,91 @@ impl Authenticator {
 }
 
 impl AuthenticatorInner {
-    fn new(http_timeout_secs: u64) -> anyhow::Result<Self> {
+    fn new(
+        http_timeout_secs: u64,
+        blocking_pool: &qexed_config::app::qexed_auth::BlockingPool,
+    ) -> anyhow::Result<Self> {
         let private_key = Rsa::generate(1024)?;
         let public_key_der = private_key.public_key_to_der()?;
+        let private_key_der = private_key.private_key_to_der()?;
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(http_timeout_secs))
             .user_agent(concat!("qexed/", env!("CARGO_PKG_VERSION")))
             .build()?;
+        let blocking_runtime = build_blocking_runtime(blocking_pool)?;
 
         Ok(Self {
             public_key_der,
-            private_key,
+            private_key_der,
             http,
             service_public_keys: tokio::sync::RwLock::new(None),
+            blocking_runtime,
         })
     }
 
-    fn decrypt_rsa(&self, data: &[u8]) -> anyhow::Result<Vec<u8>> {
-        let mut output = vec![0_u8; self.private_key.size() as usize];
-        let len = self
-            .private_key
-            .private_decrypt(data, &mut output, Padding::PKCS1)?;
-        output.truncate(len);
-        Ok(output)
+    async fn run_blocking<F, T>(&self, task: F) -> anyhow::Result<T>
+    where
+        F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        if let Some(runtime) = &self.blocking_runtime {
+            return runtime.spawn_blocking(task).await?;
+        }
+
+        task()
     }
+}
+
+impl DedicatedBlockingRuntime {
+    fn new(runtime: tokio::runtime::Runtime) -> Self {
+        Self {
+            runtime: Some(runtime),
+        }
+    }
+
+    fn spawn_blocking<F, T>(&self, task: F) -> tokio::task::JoinHandle<anyhow::Result<T>>
+    where
+        F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.runtime
+            .as_ref()
+            .expect("dedicated blocking runtime must exist before drop")
+            .spawn_blocking(task)
+    }
+}
+
+impl Drop for DedicatedBlockingRuntime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
+fn build_blocking_runtime(
+    config: &qexed_config::app::qexed_auth::BlockingPool,
+) -> anyhow::Result<Option<DedicatedBlockingRuntime>> {
+    if !config.enabled {
+        return Ok(None);
+    }
+
+    let worker_threads = config.worker_threads.max(1);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .max_blocking_threads(worker_threads)
+        .thread_name("qexed-auth-blocking")
+        .enable_all()
+        .build()?;
+
+    Ok(Some(DedicatedBlockingRuntime::new(runtime)))
+}
+
+fn decrypt_rsa(private_key: &Rsa<openssl::pkey::Private>, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let mut output = vec![0_u8; private_key.size() as usize];
+    let len = private_key.private_decrypt(data, &mut output, Padding::PKCS1)?;
+    output.truncate(len);
+    Ok(output)
 }
 
 pub fn profile_key_payload(
@@ -430,7 +509,7 @@ mod tests {
         profile_key_payload,
     };
     use base64::Engine as _;
-    use openssl::rsa::Rsa;
+    use openssl::{pkey::Public, rsa::Rsa};
 
     #[test]
     fn parses_compact_mojang_uuid() {
@@ -459,6 +538,38 @@ mod tests {
         let auth = Authenticator::new(Default::default());
 
         assert_eq!(auth.new_verify_token().len(), 16);
+    }
+
+    #[tokio::test]
+    async fn decrypts_login_key_on_configured_blocking_pool() {
+        let auth = Authenticator::new(Default::default());
+        let shared_secret = [7_u8; 16];
+        let verify_token = auth.new_verify_token();
+        let packet = encrypted_login_key_packet(&auth, &shared_secret, &verify_token);
+
+        let decrypted = auth
+            .decrypt_login_key(&packet, &verify_token)
+            .await
+            .unwrap();
+
+        assert_eq!(decrypted, shared_secret);
+    }
+
+    #[tokio::test]
+    async fn decrypts_login_key_when_blocking_pool_is_disabled() {
+        let mut config = qexed_config::app::qexed_auth::Auth::default();
+        config.blocking_pool.enabled = false;
+        let auth = Authenticator::new(config);
+        let shared_secret = [9_u8; 16];
+        let verify_token = auth.new_verify_token();
+        let packet = encrypted_login_key_packet(&auth, &shared_secret, &verify_token);
+
+        let decrypted = auth
+            .decrypt_login_key(&packet, &verify_token)
+            .await
+            .unwrap();
+
+        assert_eq!(decrypted, shared_secret);
     }
 
     #[test]
@@ -540,5 +651,34 @@ mod tests {
 
         assert_eq!(keys.len(), 1);
         mock.assert_async().await;
+    }
+
+    fn encrypted_login_key_packet(
+        auth: &Authenticator,
+        shared_secret: &[u8; 16],
+        verify_token: &[u8],
+    ) -> qexed_protocol::to_server::login::encryption_begin::EncryptionBegin {
+        let public_key =
+            Rsa::<Public>::public_key_from_der(&auth.public_key_der().unwrap()).unwrap();
+
+        qexed_protocol::to_server::login::encryption_begin::EncryptionBegin {
+            shared_secret: qexed_packet::net_types::ByteArray(encrypt_rsa(
+                &public_key,
+                shared_secret,
+            )),
+            verify_token: qexed_packet::net_types::ByteArray(encrypt_rsa(
+                &public_key,
+                verify_token,
+            )),
+        }
+    }
+
+    fn encrypt_rsa(public_key: &Rsa<Public>, data: &[u8]) -> Vec<u8> {
+        let mut output = vec![0_u8; public_key.size() as usize];
+        let len = public_key
+            .public_encrypt(data, &mut output, openssl::rsa::Padding::PKCS1)
+            .unwrap();
+        output.truncate(len);
+        output
     }
 }
