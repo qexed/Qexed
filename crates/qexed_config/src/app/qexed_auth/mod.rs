@@ -23,6 +23,7 @@ impl qexed_config::tool::AppConfigTrait for Auth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Yggdrasil {
     pub session_server_url: String,
+    pub services_public_keys_url: String,
     pub include_client_ip: bool,
     pub http_timeout: u64,
 }
@@ -32,6 +33,7 @@ impl Default for Yggdrasil {
         Self {
             session_server_url: "https://sessionserver.mojang.com/session/minecraft/hasJoined"
                 .to_string(),
+            services_public_keys_url: "https://api.minecraftservices.com/publickeys".to_string(),
             include_client_ip: false,
             http_timeout: 10,
         }
@@ -48,6 +50,7 @@ mod tests {
         let config_dir =
             std::env::temp_dir().join(format!("qexed-auth-config-test-{}", std::process::id()));
         let _ = qexed_config::CONFIG_PATH.set(config_dir.clone());
+        let config_dir = qexed_config::CONFIG_PATH.get().unwrap().clone();
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let join_handle = Auth::load_or_create_default(move |config| async move {
@@ -67,7 +70,14 @@ mod tests {
             config.yggdrasil.session_server_url,
             "https://sessionserver.mojang.com/session/minecraft/hasJoined"
         );
+        assert_eq!(
+            config.yggdrasil.services_public_keys_url,
+            "https://api.minecraftservices.com/publickeys"
+        );
         assert!(file.contains("enabled = false"));
         assert!(file.contains("[yggdrasil]"));
+        assert!(file.contains(
+            "services_public_keys_url = \"https://api.minecraftservices.com/publickeys\""
+        ));
     }
 }

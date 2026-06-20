@@ -289,7 +289,7 @@ async fn handle_inner(
         )
         .await?;
     match handshake.next_state.0 {
-        1 => handle_status(&mut connection, &config.qexed).await,
+        1 => handle_status(&mut connection, config).await,
         2 | 3 => handle_login(&mut connection, config, handshake, peer_ip).await,
         state => anyhow::bail!("unsupported handshake target state: {state}"),
     }
@@ -297,7 +297,7 @@ async fn handle_inner(
 
 async fn handle_status(
     connection: &mut ClientConnection,
-    config: &qexed_config::app::qexed::Qexed,
+    config: &crate::bootstrap::RuntimeConfig,
 ) -> anyhow::Result<()> {
     connection
         .read_expected_packet_with_timeout::<PingStart>(
@@ -314,12 +314,13 @@ async fn handle_status(
                     "protocol": qexed_config::PROTOCOL_VERSION,
                 },
                 "players": {
-                    "max": config.server.max_players,
+                    "max": config.qexed.server.max_players,
                     "online": 0,
                 },
                 "description": {
-                    "text": config.server.motd,
+                    "text": config.qexed.server.motd,
                 },
+                "enforcesSecureChat": config.authenticator.is_online_mode(),
             })),
         })
         .await?;
@@ -385,7 +386,14 @@ async fn handle_login(
         )
         .await?;
     handle_configuration(connection).await?;
-    enter_play(connection, &config.qexed, &session).await
+    enter_play(
+        connection,
+        &config.qexed,
+        config.authenticator.clone(),
+        config.chat.clone(),
+        &session,
+    )
+    .await
 }
 
 async fn authenticate_login(
@@ -513,6 +521,8 @@ async fn wait_for_finish_configuration(connection: &mut ClientConnection) -> any
 async fn enter_play(
     connection: &mut ClientConnection,
     config: &qexed_config::app::qexed::Qexed,
+    authenticator: qexed_auth::Authenticator,
+    chat_service: qexed_chat::ChatService,
     session: &LoginSession,
 ) -> anyhow::Result<()> {
     let profile = &session.profile;
@@ -545,7 +555,7 @@ async fn enter_play(
                 portal_cooldown: VarInt(0),
                 sea_level: VarInt(63),
                 online_mode: session.online_mode,
-                enforces_secure_chat: false,
+                enforces_secure_chat: session.online_mode,
             })?;
             batch.push(&to_client::play::position::Position {
                 teleport_id: VarInt(1),
@@ -633,7 +643,13 @@ async fn enter_play(
 
     connection.flush().await?;
     let command_context = command_context(config, profile);
-    sustain_play_connection(connection, command_context).await
+    let chat_context = ChatContext {
+        profile: profile.clone(),
+        online_mode: session.online_mode,
+        authenticator,
+        service: chat_service,
+    };
+    sustain_play_connection(connection, command_context, chat_context).await
 }
 
 fn initial_play_batch_capacity(view_distance: i32) -> usize {
@@ -720,10 +736,13 @@ fn plugin_summaries() -> Vec<String> {
 async fn sustain_play_connection(
     connection: &mut ClientConnection,
     command_context: qexed_command::CommandContext,
+    chat_context: ChatContext,
 ) -> anyhow::Result<()> {
     let mut keep_alive = tokio::time::interval(std::time::Duration::from_secs(10));
     keep_alive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut keep_alive_id = 0_i64;
+    let mut chat_session: Option<qexed_chat::SecureChatSession> = None;
+    let mut next_chat_global_index = 0_i32;
 
     loop {
         tokio::select! {
@@ -735,12 +754,38 @@ async fn sustain_play_connection(
                         decode_payload::<qexed_protocol::to_server::play::keep_alive::KeepAlive>(
                             &mut payload,
                         )?;
+                } else if packet_id == qexed_protocol::to_server::play::chat_ack::ChatAck::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::chat_ack::ChatAck>(
+                            &mut payload,
+                        )?;
+                    if let Some(chat_session) = chat_session.as_mut() {
+                        chat_session.apply_offset(packet.offset)?;
+                    }
+                } else if packet_id == qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate>(
+                            &mut payload,
+                        )?;
+                    handle_chat_session_update(connection, &chat_context, &mut chat_session, packet).await?;
                 } else if packet_id == qexed_protocol::to_server::play::chat_command::ChatCommand::ID {
                     let packet =
                         decode_payload::<qexed_protocol::to_server::play::chat_command::ChatCommand>(
                             &mut payload,
                         )?;
                     handle_chat_command(connection, &command_context, &packet.command).await?;
+                } else if packet_id == qexed_protocol::to_server::play::chat_message::ChatMessage::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::chat_message::ChatMessage>(
+                            &mut payload,
+                        )?;
+                    handle_chat_message(
+                        connection,
+                        &chat_context,
+                        &mut chat_session,
+                        &mut next_chat_global_index,
+                        packet,
+                    ).await?;
                 } else if packet_id == qexed_protocol::to_server::play::command_suggestion::CommandSuggestion::ID {
                     let packet =
                         decode_payload::<qexed_protocol::to_server::play::command_suggestion::CommandSuggestion>(
@@ -758,6 +803,124 @@ async fn sustain_play_connection(
             }
         }
     }
+}
+
+#[derive(Clone)]
+struct ChatContext {
+    profile: GameProfile,
+    online_mode: bool,
+    authenticator: qexed_auth::Authenticator,
+    service: qexed_chat::ChatService,
+}
+
+async fn handle_chat_session_update(
+    connection: &mut ClientConnection,
+    context: &ChatContext,
+    chat_session: &mut Option<qexed_chat::SecureChatSession>,
+    packet: qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate,
+) -> anyhow::Result<()> {
+    if context.online_mode {
+        context
+            .authenticator
+            .verify_chat_session(context.profile.uuid, &packet.chat_session)
+            .await?;
+    }
+
+    *chat_session = Some(qexed_chat::SecureChatSession::new(&packet.chat_session)?);
+    connection
+        .send_packet(&to_client::play::player_info_update::PlayerInfoUpdate {
+            actions: to_client::play::player_info_update::PlayerInfoActions(
+                to_client::play::player_info_update::PlayerInfoActions::INITIALIZE_CHAT,
+            ),
+            entries: vec![to_client::play::player_info_update::PlayerInfoEntry {
+                profile_id: context.profile.uuid,
+                chat_session: Some(packet.chat_session),
+                ..Default::default()
+            }],
+        })
+        .await?;
+    connection.flush().await
+}
+
+async fn handle_chat_message(
+    connection: &mut ClientConnection,
+    context: &ChatContext,
+    chat_session: &mut Option<qexed_chat::SecureChatSession>,
+    next_chat_global_index: &mut i32,
+    packet: qexed_protocol::to_server::play::chat_message::ChatMessage,
+) -> anyhow::Result<()> {
+    let decision = context
+        .service
+        .process(qexed_chat::ChatMessage {
+            sender: context.profile.username.clone(),
+            content: packet.message.clone(),
+        })
+        .await?;
+
+    match decision {
+        qexed_chat::ChatResult::Enabled {
+            message,
+            system_chat_only,
+        } => {
+            if system_chat_only {
+                send_system_chat(
+                    connection,
+                    text_component(format!(
+                        "<{}> {}",
+                        context.profile.username, message.content
+                    )),
+                )
+                .await?;
+            } else if let Some(chat_session) = chat_session.as_mut() {
+                let verified = chat_session.verify_message(context.profile.uuid, &packet)?;
+                let packet = to_client::play::player_chat::PlayerChat::pass_through(
+                    *next_chat_global_index,
+                    context.profile.uuid,
+                    verified.index,
+                    verified.signature.clone(),
+                    verified
+                        .last_seen
+                        .into_iter()
+                        .map(to_client::play::player_chat::PackedMessageSignature::full)
+                        .collect(),
+                    message.content,
+                    packet.timestamp,
+                    packet.salt,
+                    text_component(context.profile.username.clone()),
+                );
+                connection.send_packet(&packet).await?;
+                chat_session.add_pending_signature(&verified.signature);
+                *next_chat_global_index = next_chat_global_index
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("chat global index overflow"))?;
+            } else if context.online_mode {
+                anyhow::bail!("client did not initialize Mojang secure chat session");
+            } else {
+                connection
+                    .send_packet(&to_client::play::player_chat::PlayerChat {
+                        global_index: VarInt(0),
+                        sender: context.profile.uuid,
+                        index: packet.offset,
+                        signature: packet.signature,
+                        plain_message: message.content,
+                        timestamp: packet.timestamp,
+                        salt: packet.salt,
+                        previous_messages: Vec::new(),
+                        unsigned_chat_content: None,
+                        filter_type: VarInt(0),
+                        chat_type: to_client::play::player_chat::ChatTypeHolder::default(),
+                        network_name: text_component(context.profile.username.clone()),
+                        network_target_name: None,
+                    })
+                    .await?;
+            }
+        }
+        qexed_chat::ChatResult::Disabled => {
+            send_system_chat(connection, text_component("聊天功能未启用")).await?;
+        }
+    }
+
+    connection.flush().await
 }
 
 async fn handle_chat_command(
@@ -1090,6 +1253,50 @@ mod tests {
             response.response.0["version"]["protocol"],
             qexed_config::PROTOCOL_VERSION
         );
+        assert_eq!(response.response.0["enforcesSecureChat"], false);
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn online_status_reports_secure_chat_enforced() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = online_runtime_config();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        write_frame(
+            &mut client.writer,
+            &build_payload(
+                SetProtocol::ID,
+                &SetProtocol {
+                    protocol_version: VarInt(qexed_config::PROTOCOL_VERSION),
+                    server_host: "localhost".to_string(),
+                    server_port: 25565,
+                    next_state: VarInt(1),
+                },
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        write_frame(
+            &mut client.writer,
+            &build_payload(PingStart::ID, &PingStart {}).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let mut payload = read_frame(&mut client.reader).await.unwrap();
+        assert_eq!(read_packet_id(&mut payload).unwrap(), ServerInfo::ID);
+        let response = decode_payload::<ServerInfo>(&mut payload).unwrap();
+
+        assert_eq!(response.response.0["enforcesSecureChat"], true);
         drop(client);
         server.await.unwrap();
     }
@@ -1219,6 +1426,289 @@ mod tests {
         .await;
 
         wait_for_play_packet(&mut client, to_client::play::system_chat::SystemChat::ID).await;
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn play_chat_message_returns_player_chat_when_enabled() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = runtime_config();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::chat_message::ChatMessage {
+                message: "你好".to_string(),
+                timestamp: 0,
+                salt: 0,
+                signature: None,
+                offset: VarInt(0),
+                acknowledged: [0; 3],
+                checksum: 0,
+            },
+        )
+        .await;
+
+        wait_for_play_packet(&mut client, to_client::play::player_chat::PlayerChat::ID).await;
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn play_chat_message_returns_system_chat_when_disabled() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut config = runtime_config();
+        config.chat = disabled_chat_service();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::chat_message::ChatMessage {
+                message: "hello".to_string(),
+                timestamp: 0,
+                salt: 0,
+                signature: None,
+                offset: VarInt(0),
+                acknowledged: [0; 3],
+                checksum: 0,
+            },
+        )
+        .await;
+
+        wait_for_play_packet(&mut client, to_client::play::system_chat::SystemChat::ID).await;
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn play_chat_message_returns_system_chat_when_forced() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut config = runtime_config();
+        config.chat = system_chat_only_service();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::chat_message::ChatMessage {
+                message: "hello".to_string(),
+                timestamp: 0,
+                salt: 0,
+                signature: None,
+                offset: VarInt(0),
+                acknowledged: [0; 3],
+                checksum: 0,
+            },
+        )
+        .await;
+
+        wait_for_play_packet(&mut client, to_client::play::system_chat::SystemChat::ID).await;
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn online_mode_chat_message_without_session_closes_connection() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut config = runtime_config();
+        config.authenticator =
+            qexed_auth::Authenticator::new(qexed_config::app::qexed_auth::Auth {
+                enabled: true,
+                yggdrasil: Default::default(),
+            });
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let stream = stream.into_split();
+            let mut connection = ConnectionIo::new(stream.0, stream.1);
+
+            let session = super::LoginSession {
+                profile: qexed_auth::offline_profile_with_client_uuid(
+                    "Steve",
+                    uuid::Uuid::from_u128(1),
+                ),
+                online_mode: true,
+            };
+            if let Err(err) = super::enter_play(
+                &mut connection,
+                &config.qexed,
+                config.authenticator,
+                config.chat,
+                &session,
+            )
+            .await
+            {
+                assert!(err.to_string().contains("secure chat session"), "{err:#}");
+            }
+        });
+
+        let mut client = connect(addr).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::chat_message::ChatMessage {
+                message: "hello".to_string(),
+                timestamp: 0,
+                salt: 0,
+                signature: None,
+                offset: VarInt(0),
+                acknowledged: [0; 3],
+                checksum: 0,
+            },
+        )
+        .await;
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn chat_session_update_initializes_player_chat() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = runtime_config();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::chat_session_update::ChatSessionUpdate {
+                chat_session: qexed_protocol::types::ChatSessionData {
+                    session_id: uuid::Uuid::from_u128(2),
+                    expires_at_epoch_millis: i64::MAX,
+                    public_key_der: test_public_key_der(),
+                    key_signature: vec![1, 2, 3],
+                },
+            },
+        )
+        .await;
+
+        let packet = wait_for_play_packet_decoded::<
+            _,
+            _,
+            to_client::play::player_info_update::PlayerInfoUpdate,
+        >(&mut client)
+        .await;
+
+        assert_eq!(
+            packet.actions.0,
+            to_client::play::player_info_update::PlayerInfoActions::INITIALIZE_CHAT
+        );
+        assert!(packet.entries[0].chat_session.is_some());
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn online_play_login_enforces_secure_chat() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = online_runtime_config();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let stream = stream.into_split();
+            let mut connection = ConnectionIo::new(stream.0, stream.1);
+
+            let session = super::LoginSession {
+                profile: qexed_auth::offline_profile_with_client_uuid(
+                    "Steve",
+                    uuid::Uuid::from_u128(1),
+                ),
+                online_mode: true,
+            };
+            if let Err(err) = super::enter_play(
+                &mut connection,
+                &config.qexed,
+                config.authenticator,
+                config.chat,
+                &session,
+            )
+            .await
+            {
+                assert!(super::is_expected_disconnect(&err), "{err:#}");
+            }
+        });
+
+        let mut client = connect(addr).await;
+        let login =
+            wait_for_play_packet_decoded::<_, _, to_client::play::login::Login>(&mut client).await;
+
+        assert!(login.online_mode);
+        assert!(login.enforces_secure_chat);
 
         drop(client);
         server.await.unwrap();
@@ -1411,6 +1901,35 @@ mod tests {
         crate::bootstrap::RuntimeConfig {
             qexed: qexed_config::app::qexed::Qexed::default(),
             authenticator: qexed_auth::Authenticator::new(Default::default()),
+            chat: qexed_chat::ChatService::new(Default::default()).unwrap(),
         }
+    }
+
+    fn online_runtime_config() -> crate::bootstrap::RuntimeConfig {
+        let mut config = runtime_config();
+        config.authenticator =
+            qexed_auth::Authenticator::new(qexed_config::app::qexed_auth::Auth {
+                enabled: true,
+                yggdrasil: Default::default(),
+            });
+        config
+    }
+
+    fn disabled_chat_service() -> qexed_chat::ChatService {
+        let mut config = qexed_config::app::qexed_chat::Chat::default();
+        config.enabled = false;
+        qexed_chat::ChatService::new(config).unwrap()
+    }
+
+    fn system_chat_only_service() -> qexed_chat::ChatService {
+        let mut config = qexed_config::app::qexed_chat::Chat::default();
+        config.system_chat_only = true;
+        qexed_chat::ChatService::new(config).unwrap()
+    }
+
+    fn test_public_key_der() -> Vec<u8> {
+        qexed_auth::Authenticator::new(Default::default())
+            .public_key_der()
+            .unwrap()
     }
 }

@@ -1,4 +1,10 @@
-use openssl::rsa::{Padding, Rsa};
+use base64::Engine as _;
+use openssl::{
+    hash::MessageDigest,
+    pkey::{PKey, Public},
+    rsa::{Padding, Rsa},
+    sign::Verifier,
+};
 use qexed_packet::net_types::{GameProfile, ProfileProperty};
 use rand::RngCore as _;
 use serde::Deserialize;
@@ -19,6 +25,7 @@ struct AuthenticatorInner {
     public_key_der: Vec<u8>,
     private_key: Rsa<openssl::pkey::Private>,
     http: reqwest::Client,
+    service_public_keys: tokio::sync::RwLock<Option<Vec<PKey<Public>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +122,32 @@ impl Authenticator {
         }
     }
 
+    pub async fn verify_chat_session(
+        &self,
+        profile_id: uuid::Uuid,
+        chat_session: &qexed_protocol::types::ChatSessionData,
+    ) -> anyhow::Result<()> {
+        if chat_session.expires_at_epoch_millis < current_epoch_millis() {
+            anyhow::bail!("Mojang 聊天公钥已过期");
+        }
+
+        PKey::public_key_from_der(&chat_session.public_key_der)
+            .map(|_| ())
+            .map_err(|err| anyhow::anyhow!("Mojang 聊天公钥格式无效: {err}"))?;
+
+        let keys = self.service_public_keys().await?;
+        let payload = profile_key_payload(profile_id, chat_session);
+        for key in &keys {
+            let mut verifier = Verifier::new(MessageDigest::sha1(), key)?;
+            verifier.update(&payload)?;
+            if verifier.verify(&chat_session.key_signature)? {
+                return Ok(());
+            }
+        }
+
+        anyhow::bail!("Mojang 聊天公钥签名无效");
+    }
+
     async fn verify_session(
         &self,
         username: &str,
@@ -147,6 +180,47 @@ impl Authenticator {
         response.json::<SessionProfile>().await?.try_into()
     }
 
+    async fn service_public_keys(&self) -> anyhow::Result<Vec<PKey<Public>>> {
+        let inner = self.inner()?;
+        if let Some(keys) = inner.service_public_keys.read().await.as_ref() {
+            return Ok(keys.clone());
+        }
+
+        let mut guard = inner.service_public_keys.write().await;
+        if let Some(keys) = guard.as_ref() {
+            return Ok(keys.clone());
+        }
+
+        let response = inner
+            .http
+            .get(&self.config.yggdrasil.services_public_keys_url)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            anyhow::bail!("Mojang publickeys 服务返回异常状态: {}", response.status());
+        }
+
+        let key_set = response.json::<ServicesPublicKeys>().await?;
+        let keys = key_set
+            .player_certificate_keys
+            .into_iter()
+            .map(|key| {
+                let der = base64::engine::general_purpose::STANDARD
+                    .decode(key.public_key)
+                    .map_err(|err| anyhow::anyhow!("Mojang public key base64 无效: {err}"))?;
+                PKey::public_key_from_der(&der)
+                    .map_err(|err| anyhow::anyhow!("Mojang public key DER 无效: {err}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        if keys.is_empty() {
+            anyhow::bail!("Mojang publickeys 服务未返回 playerCertificateKeys");
+        }
+
+        *guard = Some(keys.clone());
+        Ok(keys)
+    }
+
     fn inner(&self) -> anyhow::Result<Arc<AuthenticatorInner>> {
         let mut guard = self
             .inner
@@ -177,6 +251,7 @@ impl AuthenticatorInner {
             public_key_der,
             private_key,
             http,
+            service_public_keys: tokio::sync::RwLock::new(None),
         })
     }
 
@@ -188,6 +263,17 @@ impl AuthenticatorInner {
         output.truncate(len);
         Ok(output)
     }
+}
+
+pub fn profile_key_payload(
+    profile_id: uuid::Uuid,
+    chat_session: &qexed_protocol::types::ChatSessionData,
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(24 + chat_session.public_key_der.len());
+    payload.extend_from_slice(profile_id.as_bytes());
+    payload.extend_from_slice(&chat_session.expires_at_epoch_millis.to_be_bytes());
+    payload.extend_from_slice(&chat_session.public_key_der);
+    payload
 }
 
 pub fn offline_profile(username: &str) -> GameProfile {
@@ -298,6 +384,25 @@ struct SessionProperty {
     signature: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ServicesPublicKeys {
+    #[serde(rename = "playerCertificateKeys", default)]
+    player_certificate_keys: Vec<ServicesPublicKey>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServicesPublicKey {
+    #[serde(rename = "publicKey")]
+    public_key: String,
+}
+
+fn current_epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
+}
+
 impl TryFrom<SessionProfile> for GameProfile {
     type Error = anyhow::Error;
 
@@ -322,7 +427,10 @@ impl TryFrom<SessionProfile> for GameProfile {
 mod tests {
     use super::{
         Authenticator, java_signed_hex, minecraft_server_hash, offline_uuid, parse_mojang_uuid,
+        profile_key_payload,
     };
+    use base64::Engine as _;
+    use openssl::rsa::Rsa;
 
     #[test]
     fn parses_compact_mojang_uuid() {
@@ -351,6 +459,25 @@ mod tests {
         let auth = Authenticator::new(Default::default());
 
         assert_eq!(auth.new_verify_token().len(), 16);
+    }
+
+    #[test]
+    fn profile_key_payload_matches_minecraft_layout() {
+        let profile_id = uuid::Uuid::from_u128(0x00112233445566778899aabbccddeeff);
+        let chat_session = qexed_protocol::types::ChatSessionData {
+            expires_at_epoch_millis: 0x0102030405060708,
+            public_key_der: vec![9, 10, 11],
+            ..Default::default()
+        };
+
+        let payload = profile_key_payload(profile_id, &chat_session);
+        assert_eq!(
+            payload,
+            [
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+            ]
+        );
     }
 
     #[tokio::test]
@@ -385,6 +512,33 @@ mod tests {
         );
         assert_eq!(profile.username, "Steve");
         assert_eq!(profile.properties.len(), 1);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn loads_services_public_keys_from_configured_url() {
+        let mut server = mockito::Server::new_async().await;
+        let private_key = Rsa::generate(1024).unwrap();
+        let public_key_der = private_key.public_key_to_der().unwrap();
+        let public_key = base64::engine::general_purpose::STANDARD.encode(public_key_der);
+
+        let mut config = qexed_config::app::qexed_auth::Auth::default();
+        config.yggdrasil.services_public_keys_url = format!("{}/publickeys", server.url());
+        let auth = Authenticator::new(config);
+
+        let mock = server
+            .mock("GET", "/publickeys")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(format!(
+                r#"{{"playerCertificateKeys":[{{"publicKey":"{public_key}"}}]}}"#
+            ))
+            .create_async()
+            .await;
+
+        let keys = auth.service_public_keys().await.unwrap();
+
+        assert_eq!(keys.len(), 1);
         mock.assert_async().await;
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "qexed_auth"
+name = "qexed_chat"
 version = "0.1.0"
 edition = "2024"
 
@@ -9,15 +9,6 @@ qexed_packet.workspace = true
 qexed_protocol.workspace = true
 
 anyhow.workspace = true
-base64.workspace = true
 openssl.workspace = true
-rand.workspace = true
-reqwest.workspace = true
-serde.workspace = true
-sha1.workspace = true
-hex.workspace = true
-uuid.workspace = true
 tokio.workspace = true
-
-[dev-dependencies]
-mockito.workspace = true
+uuid.workspace = true

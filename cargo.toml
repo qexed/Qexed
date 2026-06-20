@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/qexed",
     "crates/qexed_auth",
+    "crates/qexed_chat",
     "crates/qexed_command",
     "crates/qexed_tcp_connect",
     "crates/qexed_config",
@@ -21,6 +22,7 @@ members = [
 [workspace.dependencies]
 qexed.path = "crates/qexed"
 qexed_auth.path = "crates/qexed_auth"
+qexed_chat.path = "crates/qexed_chat"
 qexed_command.path = "crates/qexed_command"
 qexed_tcp_connect.path = "crates/qexed_tcp_connect"
 # 内部包

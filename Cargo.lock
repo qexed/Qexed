@@ -1376,6 +1376,7 @@ dependencies = [
  "clap",
  "log",
  "qexed_auth",
+ "qexed_chat",
  "qexed_command",
  "qexed_config",
  "qexed_log",
@@ -1398,6 +1399,7 @@ name = "qexed_auth"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "hex",
  "mockito",
  "openssl",
@@ -1408,6 +1410,19 @@ dependencies = [
  "reqwest",
  "serde",
  "sha1",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "qexed_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "openssl",
+ "qexed_config",
+ "qexed_packet",
+ "qexed_protocol",
  "tokio",
  "uuid",
 ]

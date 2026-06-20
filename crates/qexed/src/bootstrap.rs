@@ -1,5 +1,5 @@
 use qexed_config::{
-    app::{qexed::Qexed, qexed_auth::Auth},
+    app::{qexed::Qexed, qexed_auth::Auth, qexed_chat::Chat},
     tool::AppConfigTrait,
 };
 
@@ -7,6 +7,7 @@ use qexed_config::{
 pub struct RuntimeConfig {
     pub qexed: Qexed,
     pub authenticator: qexed_auth::Authenticator,
+    pub chat: qexed_chat::ChatService,
 }
 
 pub async fn load(
@@ -30,9 +31,11 @@ pub async fn load(
 
     let qexed = load_config::<Qexed>("qexed").await?;
     let auth = load_config::<Auth>("auth").await?;
+    let chat = load_config::<Chat>("chat").await?;
     let config = RuntimeConfig {
         qexed,
         authenticator: qexed_auth::Authenticator::new(auth),
+        chat: qexed_chat::ChatService::new(chat)?,
     };
     qexed_log::init()?;
     qexed_registry::init()?;
