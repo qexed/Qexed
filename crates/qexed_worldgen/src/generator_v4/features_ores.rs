@@ -50,6 +50,12 @@ impl PlacedOreFeature {
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
+            if !self
+                .ore
+                .precheck_passes(settings, origin_x, origin_z, chunk, None, x, y, z)
+            {
+                continue;
+            }
             self.ore
                 .place(settings, origin_x, origin_z, chunk, random, x, y, z);
         }
@@ -72,6 +78,18 @@ impl PlacedOreFeature {
             let z = source_origin_z + random.next_int(16);
             let y = self.height.sample(settings, random);
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
+            if !self.ore.precheck_passes(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                Some((target_origin_x, target_origin_z, &*target_chunk)),
+                x,
+                y,
+                z,
+            ) {
                 continue;
             }
 
@@ -1752,9 +1770,74 @@ impl OreFeatureConfig {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn precheck_passes(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let spread_xy = self.size as f32 / 8.0;
+        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
+        let precheck_radius = precheck_radius.ceil() as i32;
+        let spread_xy = spread_xy.ceil() as i32;
+        let min_x = origin_x - spread_xy - precheck_radius;
+        let min_y = origin_y - 2 - precheck_radius;
+        let min_z = origin_z - spread_xy - precheck_radius;
+        let horizontal_size = 2 * (spread_xy + precheck_radius);
+
+        for world_x in min_x..=min_x + horizontal_size {
+            for world_z in min_z..=min_z + horizontal_size {
+                if min_y
+                    <= ocean_floor_wg_height_at(
+                        settings,
+                        chunk_min_x,
+                        chunk_min_z,
+                        chunk,
+                        neighbor,
+                        world_x,
+                        world_z,
+                    )
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     fn max_horizontal_spillover(&self) -> i32 {
         (self.size / 8 + self.size / 16 + 2).max(2)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ocean_floor_wg_height_at(
+    settings: &NoiseSettings,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    chunk: &NoiseChunkBlocks,
+    neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+    world_x: i32,
+    world_z: i32,
+) -> i32 {
+    if let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) {
+        return chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+    }
+    if let Some((neighbor_min_x, neighbor_min_z, neighbor_chunk)) = neighbor
+        && let Some((local_x, local_z)) =
+            local_coords(world_x, world_z, neighbor_min_x, neighbor_min_z)
+    {
+        return neighbor_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+    }
+
+    settings.terrain_ocean_floor_wg_height(world_x, world_z)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1957,7 +2040,7 @@ impl FeatureRandom {
     }
 
     fn next_bits(&mut self, bits: i32) -> i32 {
-        (self.source.next_long() >> (64 - bits)) as i32
+        ((self.source.next_long() as u64) >> (64 - bits)) as i32
     }
 
     fn next_int(&mut self, bound: i32) -> i32 {

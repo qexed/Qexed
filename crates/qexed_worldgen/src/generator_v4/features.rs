@@ -289,7 +289,7 @@ impl OverworldOreFeatures {
                     lapis_buried,
                 ),
                 PlacedOreFeature::new(
-                    24,
+                    25,
                     OrePlacementCount::Constant(16),
                     OreHeight::Trapezoid(HeightAnchor::Absolute(-16), HeightAnchor::Absolute(112)),
                     copper,
@@ -303,7 +303,7 @@ impl OverworldOreFeatures {
                 )
                 .with_biome_filter(FeatureBiomeFilter::Include(DRIPSTONE_CAVES_ORE_BIOMES)),
                 PlacedOreFeature::new(
-                    26,
+                    29,
                     OrePlacementCount::Constant(50),
                     OreHeight::Uniform(HeightAnchor::Absolute(32), HeightAnchor::Absolute(256)),
                     gold,
@@ -325,28 +325,28 @@ impl OverworldOreFeatures {
                 .with_step_index(7)
                 .with_biome_filter(FeatureBiomeFilter::Include(EMERALD_ORE_BIOMES)),
             ],
-            underwater_magma: PlacedUnderwaterMagmaFeature::new(25),
+            underwater_magma: PlacedUnderwaterMagmaFeature::new(26),
             lush_clay_ore: PlacedOreFeature::new(
-                26,
+                28,
                 OrePlacementCount::Constant(46),
                 OreHeight::Uniform(HeightAnchor::AboveBottom(0), HeightAnchor::Absolute(256)),
                 clay_ore,
             )
             .with_biome_filter(FeatureBiomeFilter::Include(LUSH_CAVES_ORE_BIOMES)),
             disks: vec![
-                PlacedDiskFeature::sand(26)
+                PlacedDiskFeature::sand(30)
                     .with_biome_filter(FeatureBiomeFilter::Exclude(BADLANDS_OR_LUSH_ORE_BIOMES)),
-                PlacedDiskFeature::sand(27)
+                PlacedDiskFeature::sand(30)
                     .with_biome_filter(FeatureBiomeFilter::Include(BADLANDS_OR_LUSH_ORE_BIOMES)),
-                PlacedDiskFeature::clay(27)
+                PlacedDiskFeature::clay(31)
                     .with_biome_filter(FeatureBiomeFilter::Exclude(BADLANDS_OR_LUSH_ORE_BIOMES)),
-                PlacedDiskFeature::clay(28)
+                PlacedDiskFeature::clay(31)
                     .with_biome_filter(FeatureBiomeFilter::Include(BADLANDS_OR_LUSH_ORE_BIOMES)),
-                PlacedDiskFeature::gravel(28)
+                PlacedDiskFeature::gravel(32)
                     .with_biome_filter(FeatureBiomeFilter::Exclude(BADLANDS_OR_LUSH_ORE_BIOMES)),
-                PlacedDiskFeature::gravel(29)
+                PlacedDiskFeature::gravel(32)
                     .with_biome_filter(FeatureBiomeFilter::Include(BADLANDS_OR_LUSH_ORE_BIOMES)),
-                PlacedDiskFeature::grass(30)
+                PlacedDiskFeature::grass(27)
                     .with_surface_anchor("minecraft:mud", -1)
                     .with_biome_filter(FeatureBiomeFilter::Include(MANGROVE_TREE_BIOMES)),
             ],

@@ -410,6 +410,11 @@ impl NoiseSettings {
             .clamp(self.min_y + 1, self.min_y + self.height - 1)
     }
 
+    fn terrain_ocean_floor_wg_height(&self, x: i32, z: i32) -> i32 {
+        let profile = self.density.profile(x, z);
+        self.surface_height_with_profile(x, z, &profile) + 1
+    }
+
     fn preliminary_surface_with_profile(
         &self,
         x: i32,
