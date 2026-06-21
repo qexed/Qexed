@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use tokio::{net::TcpListener, sync::Semaphore};
 
@@ -15,6 +15,7 @@ pub async fn run(config: crate::bootstrap::RuntimeConfig) -> anyhow::Result<()> 
         "qexed save root initialized at {}",
         config.save.root().path().display()
     ));
+    write_startup_log(&config, max_connections);
 
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -32,4 +33,32 @@ pub async fn run(config: crate::bootstrap::RuntimeConfig) -> anyhow::Result<()> 
             crate::connection::handle(stream, config).await;
         });
     }
+}
+
+fn write_startup_log(config: &crate::bootstrap::RuntimeConfig, max_connections: usize) {
+    if let Err(err) = write_startup_log_inner(config, max_connections) {
+        eprintln!("failed to write qexed startup log: {err}");
+    }
+}
+
+fn write_startup_log_inner(
+    config: &crate::bootstrap::RuntimeConfig,
+    max_connections: usize,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all("logs")?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("logs/qexed.log")?;
+    writeln!(
+        file,
+        "qexed server listening on {}, max_connections={max_connections}",
+        config.qexed.server.bind
+    )?;
+    writeln!(
+        file,
+        "qexed save root initialized at {}",
+        config.save.root().path().display()
+    )?;
+    Ok(())
 }
