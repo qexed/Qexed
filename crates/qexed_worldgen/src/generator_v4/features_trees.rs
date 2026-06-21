@@ -2588,14 +2588,12 @@ impl OakTreeConfig {
         if logs.is_empty() || random.next_float() >= self.beehive_probability {
             return;
         }
-        let lowest_log_y = logs.iter().map(|log| log.1).min().unwrap_or(logs[0].1);
-        let highest_log_y = logs.iter().map(|log| log.1).max().unwrap_or(logs[0].1);
+        let first_log_y = logs[0].1;
+        let last_log_y = logs.last().map(|log| log.1).unwrap_or(first_log_y);
         let hive_y = leaves
-            .iter()
-            .map(|leaf| leaf.1)
-            .min()
-            .map(|leaf_y| (leaf_y - 1).max(lowest_log_y + 1))
-            .unwrap_or_else(|| (lowest_log_y + 1 + random.next_int(3)).min(highest_log_y));
+            .first()
+            .map(|leaf| (leaf.1 - 1).max(first_log_y + 1))
+            .unwrap_or_else(|| (first_log_y + 1 + random.next_int(3)).min(last_log_y));
         let mut candidates = Vec::new();
         for &(log_x, log_y, log_z) in logs {
             if log_y != hive_y {

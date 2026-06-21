@@ -7005,6 +7005,32 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_beehive_uses_tree_decorator_log_order_for_height() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let mut tree = OakTreeConfig::oak_bees_005();
+        tree.beehive_probability = 1.0;
+        let mut random = FeatureRandom::new(1);
+
+        tree.try_place_beehive(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            &[(8, 70, 8), (8, 65, 8), (8, 66, 8)],
+            &[(8, 68, 8)],
+        );
+
+        assert!(layer_at_world(&chunk, 0, 0, 8, 71, 9, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:bee_nest")));
+        assert!(chunk.block_entities.iter().any(|entity| {
+            entity.position == (8, 71, 9)
+                && entity.entity_type == BEEHIVE_BLOCK_ENTITY_TYPE_ID
+        }));
+    }
+
+    #[test]
     fn vanilla_noise_block_entities_are_written_to_chunk_packet() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = settings.generate_chunk(0, 0);
