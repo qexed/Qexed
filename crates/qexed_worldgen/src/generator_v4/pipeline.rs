@@ -136,4 +136,43 @@ mod tests {
             duration_ms(second_elapsed)
         );
     }
+
+    #[test]
+    #[ignore = "manual worldgen perf smoke"]
+    fn worldgen_v4_perf_smoke_reports_stage_timings() {
+        let settings = cached_noise_settings(DEFAULT_NOISE_PRESET, 0);
+        let mut total = Duration::ZERO;
+        let mut timings = NoiseChunkTimings {
+            base: Duration::ZERO,
+            carvers: Duration::ZERO,
+            features: Duration::ZERO,
+            heightmap: Duration::ZERO,
+        };
+        let mut chunks = 0u32;
+
+        for chunk_x in -1..=1 {
+            for chunk_z in -1..=1 {
+                let start = Instant::now();
+                let (chunk, chunk_timings) = settings.generate_chunk_profiled(chunk_x, chunk_z);
+                total += start.elapsed();
+                timings.base += chunk_timings.base;
+                timings.carvers += chunk_timings.carvers;
+                timings.features += chunk_timings.features;
+                timings.heightmap += chunk_timings.heightmap;
+                chunks += 1;
+                assert_eq!(chunk.columns.len(), HEIGHTMAP_ENTRY_COUNT);
+            }
+        }
+
+        let chunks = chunks as f64;
+        eprintln!(
+            "worldgen v4 perf smoke: chunks={}, avg_total_ms={:.2}, avg_base_ms={:.2}, avg_carvers_ms={:.2}, avg_features_ms={:.2}, avg_heightmap_ms={:.2}",
+            chunks as u32,
+            duration_ms(total) / chunks,
+            duration_ms(timings.base) / chunks,
+            duration_ms(timings.carvers) / chunks,
+            duration_ms(timings.features) / chunks,
+            duration_ms(timings.heightmap) / chunks,
+        );
+    }
 }

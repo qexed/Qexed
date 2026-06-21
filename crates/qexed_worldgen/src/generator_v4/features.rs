@@ -1156,7 +1156,7 @@ impl FeatureSourceCache {
     fn insert_generated(&self, chunk_x: i32, chunk_z: i32, chunk: NoiseChunkBlocks) {
         let key = (chunk_x, chunk_z);
         let mut inner = self.inner.lock().expect("feature source cache poisoned");
-        inner.insert(key, chunk);
+        inner.insert(key, Arc::new(chunk));
     }
 
     fn get_or_insert_with(
@@ -1164,7 +1164,7 @@ impl FeatureSourceCache {
         chunk_x: i32,
         chunk_z: i32,
         build: impl FnOnce() -> NoiseChunkBlocks,
-    ) -> NoiseChunkBlocks {
+    ) -> Arc<NoiseChunkBlocks> {
         let key = (chunk_x, chunk_z);
         {
             let mut inner = self.inner.lock().expect("feature source cache poisoned");
@@ -1185,7 +1185,7 @@ impl FeatureSourceCache {
             }
         }
 
-        let chunk = build();
+        let chunk = Arc::new(build());
         let mut inner = self.inner.lock().expect("feature source cache poisoned");
         inner.insert(key, chunk.clone());
         inner.in_progress.remove(&key);
@@ -1196,7 +1196,7 @@ impl FeatureSourceCache {
 
 #[derive(Debug, Default)]
 struct FeatureSourceCacheInner {
-    chunks: HashMap<(i32, i32), NoiseChunkBlocks>,
+    chunks: HashMap<(i32, i32), Arc<NoiseChunkBlocks>>,
     in_progress: HashSet<(i32, i32)>,
     order: VecDeque<(i32, i32)>,
 }
@@ -1235,7 +1235,7 @@ impl FeatureSourceCacheInner {
         self.order.push_back(key);
     }
 
-    fn insert(&mut self, key: (i32, i32), chunk: NoiseChunkBlocks) {
+    fn insert(&mut self, key: (i32, i32), chunk: Arc<NoiseChunkBlocks>) {
         self.chunks.insert(key, chunk);
         self.touch(key);
         while self.chunks.len() > FEATURE_SOURCE_CACHE_LIMIT {
@@ -1384,7 +1384,7 @@ impl NeighborFeatureSources {
                 source
                     .chunk
                     .as_ref()
-                    .map(|chunk| (source.origin_x, source.origin_z, chunk))
+                    .map(|chunk| (source.origin_x, source.origin_z, chunk.as_ref()))
             })
             .collect()
     }
@@ -1533,7 +1533,7 @@ struct NeighborFeatureSource {
     origin_z: i32,
     decoration_seed: i64,
     biome_sample: Option<Vec<&'static str>>,
-    chunk: Option<NoiseChunkBlocks>,
+    chunk: Option<Arc<NoiseChunkBlocks>>,
 }
 
 impl NeighborFeatureSource {
@@ -1556,9 +1556,11 @@ impl NeighborFeatureSource {
     }
 
     fn chunk_mut(&mut self) -> &mut NoiseChunkBlocks {
-        self.chunk
-            .as_mut()
-            .expect("neighbor feature source was loaded")
+        Arc::make_mut(
+            self.chunk
+                .as_mut()
+                .expect("neighbor feature source was loaded"),
+        )
     }
 }
 
