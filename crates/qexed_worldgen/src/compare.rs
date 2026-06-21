@@ -444,11 +444,13 @@ mod oracle_diagnostics {
 
     #[test]
     #[ignore = "manual oracle extraction diagnostic"]
-    fn dump_seed0_chunk00_gravel_and_biomes() {
-        let oracle_path = oracle_region_path();
-        let expected = read_region_chunk(oracle_path, 0, 0).expect("read oracle chunk");
-        let actual =
-            crate::generator_v4::generate_overworld_chunk_nbt(0, 0, 0).expect("generate chunk");
+    fn dump_first_oracle_chunk_diff() {
+        let Some(case) = first_oracle_diff().expect("scan oracle chunks") else {
+            println!("no oracle block diff found");
+            return;
+        };
+        let expected = case.expected;
+        let actual = case.actual;
 
         println!("== NBT structural comparison ==");
         let comparison = compare_chunk_nbt(&expected, &actual);
@@ -477,6 +479,49 @@ mod oracle_diagnostics {
         print_biome_summary("rust", &actual);
         print_biome_diffs(&expected, &actual);
     }
+
+    fn first_oracle_diff() -> anyhow::Result<Option<OracleDiffCase>> {
+        for seed in available_oracle_seeds()? {
+            for &(chunk_x, chunk_z) in ORACLE_SCAN_CHUNKS {
+                let region_path = oracle_region_path(seed, chunk_x, chunk_z);
+                if !region_path.exists() {
+                    continue;
+                }
+                let expected = read_region_chunk(&region_path, chunk_x, chunk_z)?;
+                let actual =
+                    crate::generator_v4::generate_overworld_chunk_nbt(seed, chunk_x, chunk_z)?;
+                if let Some((x, y, z, expected_name, actual_name)) =
+                    first_block_diff(&expected, &actual)
+                {
+                    println!(
+                        "first_oracle_diff seed={seed} chunk=({chunk_x},{chunk_z}) local=({x},{y},{z}) oracle={expected_name} rust={actual_name}"
+                    );
+                    return Ok(Some(OracleDiffCase { expected, actual }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    struct OracleDiffCase {
+        expected: Tag,
+        actual: Tag,
+    }
+
+    const ORACLE_SCAN_CHUNKS: &[(i32, i32)] = &[
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (2, 0),
+        (0, 2),
+        (3, 3),
+        (8, 8),
+        (15, 15),
+        (16, 0),
+        (0, 16),
+        (31, 31),
+    ];
 
     fn read_region_chunk(path: &Path, chunk_x: i32, chunk_z: i32) -> anyhow::Result<Tag> {
         let local_x = chunk_x.rem_euclid(32) as usize;
@@ -528,10 +573,35 @@ mod oracle_diagnostics {
         Ok(tag)
     }
 
-    fn oracle_region_path() -> &'static Path {
+    fn available_oracle_seeds() -> anyhow::Result<Vec<i64>> {
+        let root = oracle_root();
+        let mut seeds = if root.exists() {
+            std::fs::read_dir(root)?
+                .filter_map(|entry| {
+                    let name = entry.ok()?.file_name().into_string().ok()?;
+                    name.strip_prefix("seed-")?.parse().ok()
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        seeds.sort_unstable();
+        Ok(seeds)
+    }
+
+    fn oracle_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
+        let region_x = chunk_x.div_euclid(32);
+        let region_z = chunk_z.div_euclid(32);
+        oracle_root()
+            .join(format!("seed-{seed}"))
+            .join("minecraft/overworld/region")
+            .join(format!("r.{region_x}.{region_z}.mca"))
+    }
+
+    fn oracle_root() -> &'static Path {
         Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../target/worldgen-oracle/26.2/seed-0/minecraft/overworld/region/r.0.0.mca"
+            "/../../target/worldgen-oracle/26.2"
         ))
     }
 
