@@ -1,6 +1,7 @@
 mod bootstrap;
 mod connection;
 mod server;
+#[cfg(test)]
 mod worldgen_process;
 
 use clap::Parser;

@@ -9,7 +9,10 @@ mod light;
 mod manager;
 pub mod region;
 pub use light::{WorldLightAlgorithm, WorldLightMode};
-pub use manager::{PrecompiledChunkSettings, WorldManager};
+pub use manager::{
+    ChunkLoadEvent, ChunkSyncCause, ChunkSyncEvent, ChunkUnloadEvent, NetworkChunkLoad,
+    NetworkChunkLoadSource, NetworkChunkSourceCounts, PrecompiledChunkSettings, WorldManager,
+};
 
 const OVERWORLD_HEIGHT: i32 = 384;
 const SECTION_HEIGHT: i32 = 16;
@@ -201,7 +204,7 @@ impl WorldStorage {
         self.load_region_chunk(dimension, chunk_x, chunk_z)
     }
 
-    fn region_path(
+    pub fn region_path(
         &self,
         dimension: &DimensionId,
         chunk_x: i32,

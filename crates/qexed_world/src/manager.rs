@@ -21,6 +21,112 @@ pub struct PrecompiledChunkSettings {
     pub block_state_cache_limit: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkChunkLoadSource {
+    Saved,
+    LocalGenerated,
+    VanillaGenerated,
+    EmptyFallback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChunkSyncCause {
+    InitialLogin,
+    PlayerMove,
+    CompletionTick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkLoadEvent {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+    pub source: NetworkChunkLoadSource,
+}
+
+impl ChunkLoadEvent {
+    pub fn new(chunk_x: i32, chunk_z: i32, source: NetworkChunkLoadSource) -> Self {
+        Self {
+            chunk_x,
+            chunk_z,
+            source,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkUnloadEvent {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+}
+
+impl ChunkUnloadEvent {
+    pub fn new(chunk_x: i32, chunk_z: i32) -> Self {
+        Self { chunk_x, chunk_z }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NetworkChunkSourceCounts {
+    pub saved: usize,
+    pub local_generated: usize,
+    pub vanilla_generated: usize,
+    pub empty_fallback: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkSyncEvent {
+    pub cause: ChunkSyncCause,
+    pub center_chunk_x: i32,
+    pub center_chunk_z: i32,
+    pub loaded: Vec<ChunkLoadEvent>,
+    pub unloaded: Vec<ChunkUnloadEvent>,
+}
+
+impl ChunkSyncEvent {
+    pub fn new(
+        cause: ChunkSyncCause,
+        center_chunk_x: i32,
+        center_chunk_z: i32,
+        loaded: Vec<ChunkLoadEvent>,
+        unloaded: Vec<ChunkUnloadEvent>,
+    ) -> Self {
+        Self {
+            cause,
+            center_chunk_x,
+            center_chunk_z,
+            loaded,
+            unloaded,
+        }
+    }
+
+    pub fn loaded_count(&self) -> usize {
+        self.loaded.len()
+    }
+
+    pub fn unloaded_count(&self) -> usize {
+        self.unloaded.len()
+    }
+
+    pub fn source_counts(&self) -> NetworkChunkSourceCounts {
+        let mut counts = NetworkChunkSourceCounts::default();
+        for load in &self.loaded {
+            match load.source {
+                NetworkChunkLoadSource::Saved => counts.saved += 1,
+                NetworkChunkLoadSource::LocalGenerated => counts.local_generated += 1,
+                NetworkChunkLoadSource::VanillaGenerated => counts.vanilla_generated += 1,
+                NetworkChunkLoadSource::EmptyFallback => counts.empty_fallback += 1,
+            }
+        }
+        counts
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct NetworkChunkLoad {
+    pub chunk: qexed_protocol::to_client::play::map_chunk::MapChunk,
+    pub source: NetworkChunkLoadSource,
+}
+
 #[derive(Clone)]
 struct WorldWriteQueue {
     sender: Arc<Mutex<Option<mpsc::Sender<WorldWriteTask>>>>,
@@ -253,6 +359,20 @@ impl WorldManager {
         chunk_x: i32,
         chunk_z: i32,
     ) -> anyhow::Result<qexed_protocol::to_client::play::map_chunk::MapChunk> {
+        Ok(self
+            .ensure_network_chunk_with_event(local_generator, client, dimension, chunk_x, chunk_z)
+            .await?
+            .chunk)
+    }
+
+    pub async fn ensure_network_chunk_with_event(
+        &self,
+        local_generator: Option<&qexed_worldgen::WorldGenerator>,
+        client: Option<&generator_rpc::VanillaWorldgenClient>,
+        dimension: &DimensionId,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> anyhow::Result<NetworkChunkLoad> {
         if let Some(chunk) = self.network_chunk(dimension, chunk_x, chunk_z)? {
             log::debug!(
                 "loaded saved world chunk: dimension={}:{} chunk=({}, {})",
@@ -261,7 +381,10 @@ impl WorldManager {
                 chunk_x,
                 chunk_z
             );
-            return Ok(chunk);
+            return Ok(NetworkChunkLoad {
+                chunk,
+                source: NetworkChunkLoadSource::Saved,
+            });
         }
 
         if let Some(generator) = local_generator {
@@ -274,13 +397,16 @@ impl WorldManager {
             );
             self.request_local_generated_chunk(generator, dimension, chunk_x, chunk_z)?;
             if let Some(chunk) = self.network_chunk(dimension, chunk_x, chunk_z)? {
-                return Ok(chunk);
+                return Ok(NetworkChunkLoad {
+                    chunk,
+                    source: NetworkChunkLoadSource::LocalGenerated,
+                });
             }
         }
 
         if let Some(client) = client {
             log::info!(
-                "generating world chunk through Java worldgen: dimension={}:{} chunk=({}, {})",
+                "generating world chunk through Java worldgen test oracle: dimension={}:{} chunk=({}, {})",
                 dimension.namespace(),
                 dimension.value(),
                 chunk_x,
@@ -288,12 +414,83 @@ impl WorldManager {
             );
             self.request_vanilla_generated_chunk(client, dimension, chunk_x, chunk_z)
                 .await?;
+            if let Some(generator) = local_generator
+                && let Err(err) =
+                    self.compare_local_worldgen_with_saved(generator, dimension, chunk_x, chunk_z)
+            {
+                log::warn!(
+                    "local worldgen comparison failed after Java generation: dimension={}:{} chunk=({}, {}) error={err:#}",
+                    dimension.namespace(),
+                    dimension.value(),
+                    chunk_x,
+                    chunk_z
+                );
+            }
             if let Some(chunk) = self.network_chunk(dimension, chunk_x, chunk_z)? {
-                return Ok(chunk);
+                return Ok(NetworkChunkLoad {
+                    chunk,
+                    source: NetworkChunkLoadSource::VanillaGenerated,
+                });
             }
         }
 
-        crate::empty_chunk_packet(chunk_x, chunk_z)
+        Ok(NetworkChunkLoad {
+            chunk: crate::empty_chunk_packet(chunk_x, chunk_z)?,
+            source: NetworkChunkLoadSource::EmptyFallback,
+        })
+    }
+
+    fn compare_local_worldgen_with_saved(
+        &self,
+        generator: &qexed_worldgen::WorldGenerator,
+        dimension: &DimensionId,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> anyhow::Result<()> {
+        let comparison =
+            self.compare_local_worldgen_with_region_chunk(generator, dimension, chunk_x, chunk_z)?;
+        if comparison.equal {
+            log::debug!(
+                "local worldgen matches Java chunk: dimension={}:{} chunk=({}, {})",
+                dimension.namespace(),
+                dimension.value(),
+                chunk_x,
+                chunk_z
+            );
+        } else {
+            log::warn!(
+                "local worldgen differs from Java chunk: dimension={}:{} chunk=({}, {}) first_differences={}",
+                dimension.namespace(),
+                dimension.value(),
+                chunk_x,
+                chunk_z,
+                comparison.differences.join(" | ")
+            );
+        }
+        Ok(())
+    }
+
+    pub fn compare_local_worldgen_with_region_chunk(
+        &self,
+        generator: &qexed_worldgen::WorldGenerator,
+        dimension: &DimensionId,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> anyhow::Result<qexed_worldgen::ChunkComparison> {
+        let Some(saved) = self.load_region_chunk(dimension, chunk_x, chunk_z)? else {
+            anyhow::bail!("region chunk is missing");
+        };
+        let raw = saved.decompress()?;
+        let (_, expected_root) = qexed_nbt::from_slice(&raw)?;
+        let actual_root = generator.generate_chunk_nbt(qexed_worldgen::ChunkRequest {
+            dimension: &format!("{}:{}", dimension.namespace(), dimension.value()),
+            chunk_x,
+            chunk_z,
+        })?;
+        Ok(qexed_worldgen::compare_chunk_nbt(
+            &expected_root,
+            &actual_root,
+        ))
     }
 }
 
@@ -393,7 +590,10 @@ impl RegionChunkCache {
 
 #[cfg(test)]
 mod tests {
-    use super::WorldManager;
+    use super::{
+        ChunkLoadEvent, ChunkSyncCause, ChunkSyncEvent, ChunkUnloadEvent, NetworkChunkLoadSource,
+        WorldManager,
+    };
 
     #[test]
     fn manager_caches_loaded_region_chunks_and_flushes_queued_writes() {
@@ -414,5 +614,31 @@ mod tests {
             .unwrap();
         assert_eq!(loaded.decompress().unwrap(), b"queued");
         assert_eq!(manager.clear_cache(), 1);
+    }
+
+    #[test]
+    fn chunk_sync_event_counts_load_sources_and_unloads() {
+        let event = ChunkSyncEvent::new(
+            ChunkSyncCause::PlayerMove,
+            2,
+            -1,
+            vec![
+                ChunkLoadEvent::new(2, -1, NetworkChunkLoadSource::Saved),
+                ChunkLoadEvent::new(3, -1, NetworkChunkLoadSource::LocalGenerated),
+                ChunkLoadEvent::new(2, 0, NetworkChunkLoadSource::VanillaGenerated),
+                ChunkLoadEvent::new(3, 0, NetworkChunkLoadSource::EmptyFallback),
+            ],
+            vec![ChunkUnloadEvent::new(0, -1)],
+        );
+
+        let counts = event.source_counts();
+
+        assert_eq!(event.cause, ChunkSyncCause::PlayerMove);
+        assert_eq!(event.loaded_count(), 4);
+        assert_eq!(event.unloaded_count(), 1);
+        assert_eq!(counts.saved, 1);
+        assert_eq!(counts.local_generated, 1);
+        assert_eq!(counts.vanilla_generated, 1);
+        assert_eq!(counts.empty_fallback, 1);
     }
 }

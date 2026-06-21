@@ -665,7 +665,7 @@ async fn enter_play(
         0,
         INITIAL_CHUNK_RADIUS,
         None,
-        false,
+        qexed_world::ChunkSyncCause::InitialLogin,
     )
     .await?;
     connection.flush().await?;
@@ -752,7 +752,7 @@ async fn sync_player_chunk_position(
         chunk_z,
         chunk_view.radius,
         Some(CHUNK_SYNC_BATCH_LIMIT),
-        true,
+        qexed_world::ChunkSyncCause::PlayerMove,
     )
     .await
 }
@@ -765,7 +765,7 @@ async fn send_chunk_window(
     center_chunk_z: i32,
     radius: i32,
     max_new_chunks: Option<usize>,
-    allow_worldgen: bool,
+    cause: qexed_world::ChunkSyncCause,
 ) -> anyhow::Result<()> {
     let mut count = 0;
     let dimension = qexed_save::DimensionId::overworld();
@@ -773,6 +773,7 @@ async fn send_chunk_window(
     let mut target_chunks = chunk_window_positions(center_chunk_x, center_chunk_z, radius);
     let full_window = chunk_window_positions(center_chunk_x, center_chunk_z, chunk_view.radius);
     let mut chunks = Vec::new();
+    let mut loaded = Vec::new();
 
     if radius == chunk_view.radius {
         target_chunks.extend(
@@ -800,17 +801,10 @@ async fn send_chunk_window(
             target_chunks.remove(&(chunk_x, chunk_z));
             continue;
         }
-        let worldgen_client = allow_worldgen
-            .then(|| {
-                runtime
-                    .worldgen_process
-                    .as_ref()
-                    .map(|_| &runtime.worldgen_client)
-            })
-            .flatten();
-        let chunk = runtime
+        let worldgen_client = None;
+        let load = runtime
             .world
-            .ensure_network_chunk(
+            .ensure_network_chunk_with_event(
                 runtime.local_worldgen.as_deref(),
                 worldgen_client,
                 &dimension,
@@ -818,7 +812,12 @@ async fn send_chunk_window(
                 chunk_z,
             )
             .await?;
-        chunks.push(chunk);
+        loaded.push(qexed_world::ChunkLoadEvent::new(
+            chunk_x,
+            chunk_z,
+            load.source,
+        ));
+        chunks.push(load.chunk);
         count += 1;
     }
     let leaving_chunks = chunk_view
@@ -826,6 +825,12 @@ async fn send_chunk_window(
         .difference(&full_window)
         .copied()
         .collect::<Vec<_>>();
+    let unloaded = leaving_chunks
+        .iter()
+        .map(|(chunk_x, chunk_z)| qexed_world::ChunkUnloadEvent::new(*chunk_x, *chunk_z))
+        .collect::<Vec<_>>();
+    let sync_event =
+        qexed_world::ChunkSyncEvent::new(cause, center_chunk_x, center_chunk_z, loaded, unloaded);
 
     chunk_view.center_chunk_x = center_chunk_x;
     chunk_view.center_chunk_z = center_chunk_z;
@@ -855,12 +860,46 @@ async fn send_chunk_window(
             Ok(())
         })
         .await?;
-    tklog::debug!(format!(
-        "synced player chunks: center=({center_chunk_x}, {center_chunk_z}), sent_new={count}, unloaded={}, radius={}",
-        leaving_chunks.len(),
-        chunk_view.radius
-    ));
+    log_chunk_sync_event(&sync_event);
     Ok(())
+}
+
+fn log_chunk_sync_event(event: &qexed_world::ChunkSyncEvent) {
+    tklog::debug!(format!(
+        "synced player chunks: cause={:?}, center=({}, {}), sent_new={}, unloaded={}, first_loaded={}, first_unloaded={}, sources={}",
+        event.cause,
+        event.center_chunk_x,
+        event.center_chunk_z,
+        event.loaded_count(),
+        event.unloaded_count(),
+        first_loaded_chunk(event),
+        first_unloaded_chunk(event),
+        chunk_source_summary(event)
+    ));
+}
+
+fn first_loaded_chunk(event: &qexed_world::ChunkSyncEvent) -> String {
+    event
+        .loaded
+        .first()
+        .map(|load| format!("({}, {})", load.chunk_x, load.chunk_z))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn first_unloaded_chunk(event: &qexed_world::ChunkSyncEvent) -> String {
+    event
+        .unloaded
+        .first()
+        .map(|unload| format!("({}, {})", unload.chunk_x, unload.chunk_z))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn chunk_source_summary(event: &qexed_world::ChunkSyncEvent) -> String {
+    let counts = event.source_counts();
+    format!(
+        "saved={}, local_generated={}, vanilla_generated={}, empty_fallback={}",
+        counts.saved, counts.local_generated, counts.vanilla_generated, counts.empty_fallback
+    )
 }
 
 fn chunk_window_positions(
@@ -1016,7 +1055,7 @@ async fn sustain_play_connection(
                     center_chunk_z,
                     radius,
                     Some(CHUNK_SYNC_BATCH_LIMIT),
-                    true,
+                    qexed_world::ChunkSyncCause::CompletionTick,
                 )
                 .await?;
             }
@@ -1375,7 +1414,8 @@ fn unknown_command_component(command: &str) -> qexed_protocol::types::TextCompon
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectionIo, build_payload, decode_payload, read_frame, read_packet_id, write_frame,
+        ConnectionIo, build_payload, chunk_source_summary, decode_payload, first_loaded_chunk,
+        first_unloaded_chunk, read_frame, read_packet_id, write_frame,
     };
     use qexed_packet::{Packet, net_types::VarInt};
     use qexed_protocol::to_client;
@@ -1390,6 +1430,7 @@ mod tests {
         login_acknowledged::LoginAcknowledged, login_start::LoginStart,
     };
     use qexed_protocol::to_server::status::ping_start::PingStart;
+    use std::path::{Path, PathBuf};
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -1412,6 +1453,47 @@ mod tests {
         let profile = qexed_auth::offline_profile_with_client_uuid("Steve", uuid);
 
         assert_eq!(profile.uuid, uuid);
+    }
+
+    #[test]
+    fn chunk_source_summary_reports_structured_load_sources() {
+        let event = qexed_world::ChunkSyncEvent::new(
+            qexed_world::ChunkSyncCause::PlayerMove,
+            2,
+            0,
+            vec![
+                qexed_world::ChunkLoadEvent::new(2, 0, qexed_world::NetworkChunkLoadSource::Saved),
+                qexed_world::ChunkLoadEvent::new(
+                    3,
+                    0,
+                    qexed_world::NetworkChunkLoadSource::EmptyFallback,
+                ),
+            ],
+            vec![qexed_world::ChunkUnloadEvent::new(0, 0)],
+        );
+
+        assert_eq!(first_loaded_chunk(&event), "(2, 0)");
+        assert_eq!(first_unloaded_chunk(&event), "(0, 0)");
+        assert_eq!(
+            chunk_source_summary(&event),
+            "saved=1, local_generated=0, vanilla_generated=0, empty_fallback=1"
+        );
+    }
+
+    #[test]
+    fn moved_chunk_window_identifies_chunks_to_unload() {
+        let old_window = super::chunk_window_positions(0, 0, 1);
+        let new_window = super::chunk_window_positions(2, 0, 1);
+        let mut leaving_chunks = old_window
+            .difference(&new_window)
+            .copied()
+            .collect::<Vec<_>>();
+        leaving_chunks.sort();
+
+        assert_eq!(
+            leaving_chunks,
+            vec![(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1)]
+        );
     }
 
     #[tokio::test]
@@ -1628,13 +1710,9 @@ mod tests {
         let save = qexed_save::SaveService::new(save_config).unwrap();
         config.save = save.clone();
         config.world = qexed_world::WorldManager::new(save);
-        let process = std::sync::Arc::new(
-            crate::worldgen_process::WorldgenProcess::spawn()
-                .expect("worldgen process should start"),
-        );
-        config.worldgen_client =
-            qexed_world::generator_rpc::VanillaWorldgenClient::new(process.endpoint().to_string());
-        config.worldgen_process = Some(process);
+        config.local_worldgen = Some(std::sync::Arc::new(
+            qexed_worldgen::WorldGenerator::default_cache(0).expect("local worldgen should start"),
+        ));
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -1663,6 +1741,92 @@ mod tests {
 
         drop(client);
         server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_worldgen_can_be_compared_with_java_oracle_when_enabled() {
+        if std::env::var_os("QEXED_WORLDGEN_COMPARE_JAVA").is_none() {
+            return;
+        }
+        init_registry_for_connection_test();
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut save_config = qexed_config::app::qexed_save::Save::default();
+        save_config.root.universe = temp.path().to_string_lossy().to_string();
+        let save = qexed_save::SaveService::new(save_config).unwrap();
+        save.initialize_directories().unwrap();
+        let manager = qexed_world::WorldManager::new(save);
+        let dimension = qexed_save::DimensionId::overworld();
+        ensure_java_oracle_region_cached(&manager, &dimension, 0, 0, 0).await;
+
+        let generator =
+            qexed_worldgen::WorldGenerator::default_cache(0).expect("local worldgen should start");
+        let comparison = manager
+            .compare_local_worldgen_with_region_chunk(&generator, &dimension, 0, 0)
+            .expect("worldgen comparison should run");
+
+        assert!(
+            comparison.equal,
+            "local worldgen differs from Java oracle: {}",
+            comparison.differences.join(" | ")
+        );
+    }
+
+    async fn ensure_java_oracle_region_cached(
+        manager: &qexed_world::WorldManager,
+        dimension: &qexed_save::DimensionId,
+        seed: i64,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) {
+        let target_region = manager.storage().region_path(dimension, chunk_x, chunk_z);
+        let cache_region = java_oracle_region_cache_path(dimension, seed, chunk_x, chunk_z);
+        if cache_region.exists() {
+            copy_region_file(&cache_region, &target_region)
+                .expect("cached Java oracle region should copy into test save");
+            return;
+        }
+
+        let process = crate::worldgen_process::WorldgenProcess::spawn()
+            .expect("Java worldgen oracle should start");
+        let client =
+            qexed_world::generator_rpc::VanillaWorldgenClient::new(process.endpoint().to_string());
+        manager
+            .request_vanilla_generated_chunk(&client, dimension, chunk_x, chunk_z)
+            .await
+            .expect("Java oracle should generate chunk");
+        copy_region_file(&target_region, &cache_region)
+            .expect("Java oracle region should be saved into cache");
+    }
+
+    fn java_oracle_region_cache_path(
+        dimension: &qexed_save::DimensionId,
+        seed: i64,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> PathBuf {
+        let region_x = chunk_x.div_euclid(32);
+        let region_z = chunk_z.div_euclid(32);
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root should resolve")
+            .join("target")
+            .join("worldgen-oracle")
+            .join("26.2")
+            .join(format!("seed-{seed}"))
+            .join(dimension.namespace())
+            .join(dimension.value())
+            .join("region")
+            .join(format!("r.{region_x}.{region_z}.mca"))
+    }
+
+    fn copy_region_file(from: &Path, to: &Path) -> std::io::Result<()> {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(from, to)?;
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1714,6 +1878,7 @@ mod tests {
                         saw_view_position = true;
                     }
                 }
+                to_client::play::chunk_batch_start::ChunkBatchStart::ID => map_chunks = 0,
                 to_client::play::map_chunk::MapChunk::ID => map_chunks += 1,
                 to_client::play::forget_level_chunk::ForgetLevelChunk::ID => saw_unload = true,
                 to_client::play::chunk_batch_finished::ChunkBatchFinished::ID => {
@@ -2259,10 +2424,6 @@ mod tests {
             save: save.clone(),
             world: qexed_world::WorldManager::new(save),
             local_worldgen: None,
-            worldgen_process: None,
-            worldgen_client: qexed_world::generator_rpc::VanillaWorldgenClient::new(
-                "http://127.0.0.1:1/",
-            ),
         }
     }
 

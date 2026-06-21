@@ -11,8 +11,6 @@ pub struct RuntimeConfig {
     pub save: qexed_save::SaveService,
     pub world: qexed_world::WorldManager,
     pub local_worldgen: Option<std::sync::Arc<qexed_worldgen::WorldGenerator>>,
-    pub worldgen_process: Option<std::sync::Arc<crate::worldgen_process::WorldgenProcess>>,
-    pub worldgen_client: qexed_world::generator_rpc::VanillaWorldgenClient,
 }
 
 pub async fn load(
@@ -50,25 +48,10 @@ pub async fn load(
         }
         Err(err) => {
             tklog::warn!(format!(
-                "local worldgen unavailable, Java fallback remains enabled: {err:#}"
+                "local worldgen unavailable; missing chunks will fall back to empty chunks: {err:#}"
             ));
             None
         }
-    };
-    let (worldgen_process, worldgen_client) = if local_worldgen.is_some() {
-        (
-            None,
-            qexed_world::generator_rpc::VanillaWorldgenClient::new("http://127.0.0.1:1/"),
-        )
-    } else {
-        let worldgen = std::sync::Arc::new(crate::worldgen_process::WorldgenProcess::spawn()?);
-        let worldgen_client =
-            qexed_world::generator_rpc::VanillaWorldgenClient::new(worldgen.endpoint().to_string());
-        tklog::info!(format!(
-            "qexed Java worldgen service listening at {}",
-            worldgen.endpoint()
-        ));
-        (Some(worldgen), worldgen_client)
     };
     let config = RuntimeConfig {
         qexed,
@@ -77,8 +60,6 @@ pub async fn load(
         save,
         world,
         local_worldgen,
-        worldgen_process,
-        worldgen_client,
     };
     qexed_plugin::init().await?;
     qexed_plugin::plugin_manager()

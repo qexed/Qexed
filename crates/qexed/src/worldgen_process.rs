@@ -21,8 +21,8 @@ impl WorldgenProcess {
             .arg("dev.qexed.worldgen.WorldgenServer")
             .arg(port.to_string())
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
 
         let mut process = Self {
             child: command.spawn().map_err(|err| {
@@ -91,22 +91,25 @@ fn gradle_command(project_dir: &Path) -> Command {
 }
 
 fn compile_worldgen(project_dir: &Path) -> anyhow::Result<()> {
-    let status = gradle_command(project_dir)
+    let output = gradle_command(project_dir)
         .arg("compileJava")
         .arg("runtimeClasspathCopy")
         .current_dir(project_dir)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .map_err(|err| {
             anyhow::anyhow!(
                 "failed to compile Java worldgen service in {}: {err}",
                 project_dir.display()
             )
         })?;
-    if !status.success() {
-        anyhow::bail!("Java worldgen service compile failed: {status}");
+    if !output.status.success() {
+        anyhow::bail!(
+            "Java worldgen service compile failed: {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
