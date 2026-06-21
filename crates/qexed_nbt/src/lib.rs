@@ -200,6 +200,13 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 /// NBT 读写器，封装了所有二进制格式操作
 pub struct NbtIo;
 
+const MAX_DEPTH: usize = 64;
+const MAX_LIST_ITEMS: usize = 1_000_000;
+const MAX_COMPOUND_ENTRIES: usize = 65_536;
+const MAX_BYTE_ARRAY_LEN: usize = 16 * 1024 * 1024;
+const MAX_INT_ARRAY_LEN: usize = 4 * 1024 * 1024;
+const MAX_LONG_ARRAY_LEN: usize = 2 * 1024 * 1024;
+
 impl NbtIo {
     /// 从字节流读取一个完整的 NBT 结构（含根标签名）
     pub fn from_reader<R: Read>(mut reader: R) -> Result<(String, Tag), NbtError> {
@@ -213,7 +220,7 @@ impl NbtIo {
         }
 
         let name = Self::read_string(&mut reader)?;
-        let compound = Self::read_compound(&mut reader)?;
+        let compound = Self::read_compound(&mut reader, 0)?;
 
         Ok((name, Tag::Compound(Arc::new(compound))))
     }
@@ -232,7 +239,16 @@ impl NbtIo {
     }
 
     /// 读取单个标签（不包含标签ID）
-    fn read_tag<R: Read>(reader: &mut R, tag_id: u8) -> Result<Tag, NbtError> {
+    pub(crate) fn read_tag<R: Read>(reader: &mut R, tag_id: u8) -> Result<Tag, NbtError> {
+        Self::read_tag_with_depth(reader, tag_id, 0)
+    }
+
+    fn read_tag_with_depth<R: Read>(
+        reader: &mut R,
+        tag_id: u8,
+        depth: usize,
+    ) -> Result<Tag, NbtError> {
+        Self::ensure_depth(depth)?;
         match tag_id {
             tag_id::END => Ok(Tag::End),
             tag_id::BYTE => Ok(Tag::Byte(reader.read_i8()?)),
@@ -243,8 +259,11 @@ impl NbtIo {
             tag_id::DOUBLE => Ok(Tag::Double(reader.read_f64::<BigEndian>()?)),
             tag_id::BYTE_ARRAY => Ok(Tag::ByteArray(Arc::from(Self::read_byte_array(reader)?))),
             tag_id::STRING => Ok(Tag::String(Arc::from(Self::read_string(reader)?))),
-            tag_id::LIST => Self::read_list(reader),
-            tag_id::COMPOUND => Ok(Tag::Compound(Arc::new(Self::read_compound(reader)?))),
+            tag_id::LIST => Self::read_list(reader, depth + 1),
+            tag_id::COMPOUND => Ok(Tag::Compound(Arc::new(Self::read_compound(
+                reader,
+                depth + 1,
+            )?))),
             tag_id::INT_ARRAY => Ok(Tag::IntArray(Arc::from(Self::read_int_array(reader)?))),
             tag_id::LONG_ARRAY => Ok(Tag::LongArray(Arc::from(Self::read_long_array(reader)?))),
             id => Err(NbtError::Deserialize(format!("未知的标签ID: 0x{:02X}", id))),
@@ -310,16 +329,10 @@ impl NbtIo {
     }
 
     fn read_byte_array<R: Read>(reader: &mut R) -> Result<Vec<i8>, NbtError> {
-        let length = reader.read_i32::<BigEndian>()?;
-        if length < 0 {
-            return Err(NbtError::Deserialize(format!(
-                "ByteArray 长度不能为负数: {}",
-                length
-            )));
-        }
+        let length = Self::read_len_i32(reader, "ByteArray", MAX_BYTE_ARRAY_LEN)?;
 
-        let mut array = vec![0i8; length as usize];
-        let mut byte_buf = vec![0u8; length as usize];
+        let mut array = vec![0i8; length];
+        let mut byte_buf = vec![0u8; length];
         reader.read_exact(&mut byte_buf)?;
 
         for (i, &byte) in byte_buf.iter().enumerate() {
@@ -338,16 +351,10 @@ impl NbtIo {
     }
 
     fn read_int_array<R: Read>(reader: &mut R) -> Result<Vec<i32>, NbtError> {
-        let length = reader.read_i32::<BigEndian>()?;
-        if length < 0 {
-            return Err(NbtError::Deserialize(format!(
-                "IntArray 长度不能为负数: {}",
-                length
-            )));
-        }
+        let length = Self::read_len_i32(reader, "IntArray", MAX_INT_ARRAY_LEN)?;
 
-        let mut array = vec![0i32; length as usize];
-        for i in 0..length as usize {
+        let mut array = vec![0i32; length];
+        for i in 0..length {
             array[i] = reader.read_i32::<BigEndian>()?;
         }
         Ok(array)
@@ -362,16 +369,10 @@ impl NbtIo {
     }
 
     fn read_long_array<R: Read>(reader: &mut R) -> Result<Vec<i64>, NbtError> {
-        let length = reader.read_i32::<BigEndian>()?;
-        if length < 0 {
-            return Err(NbtError::Deserialize(format!(
-                "LongArray 长度不能为负数: {}",
-                length
-            )));
-        }
+        let length = Self::read_len_i32(reader, "LongArray", MAX_LONG_ARRAY_LEN)?;
 
-        let mut array = vec![0i64; length as usize];
-        for i in 0..length as usize {
+        let mut array = vec![0i64; length];
+        for i in 0..length {
             array[i] = reader.read_i64::<BigEndian>()?;
         }
         Ok(array)
@@ -385,17 +386,18 @@ impl NbtIo {
         Ok(())
     }
 
-    fn read_list<R: Read>(reader: &mut R) -> Result<Tag, NbtError> {
+    fn read_list<R: Read>(reader: &mut R, depth: usize) -> Result<Tag, NbtError> {
+        Self::ensure_depth(depth)?;
         let tag_id = reader.read_u8()?;
-        let length = reader.read_i32::<BigEndian>()?;
+        let length = Self::read_len_i32(reader, "List", MAX_LIST_ITEMS)?;
 
         if length == 0 {
             return Ok(Tag::List(ListHeader { tag_id, length: 0 }, Arc::new([])));
         }
 
-        let mut items = Vec::with_capacity(length as usize);
+        let mut items = Vec::with_capacity(length);
         for _ in 0..length {
-            let item = Self::read_tag(reader, tag_id)?;
+            let item = Self::read_tag_with_depth(reader, tag_id, depth + 1)?;
 
             if item.tag_id() != tag_id {
                 return Err(NbtError::ListTypeMismatch {
@@ -407,7 +409,13 @@ impl NbtIo {
             items.push(item);
         }
 
-        Ok(Tag::List(ListHeader { tag_id, length }, Arc::from(items)))
+        Ok(Tag::List(
+            ListHeader {
+                tag_id,
+                length: length as i32,
+            },
+            Arc::from(items),
+        ))
     }
 
     /// 写入List内容（包含头部）
@@ -425,21 +433,61 @@ impl NbtIo {
         Ok(())
     }
 
-    fn read_compound<R: Read>(reader: &mut R) -> Result<HashMap<String, Tag>, NbtError> {
+    fn read_compound<R: Read>(
+        reader: &mut R,
+        depth: usize,
+    ) -> Result<HashMap<String, Tag>, NbtError> {
+        Self::ensure_depth(depth)?;
         let mut map = HashMap::new();
 
         loop {
+            if map.len() >= MAX_COMPOUND_ENTRIES {
+                return Err(NbtError::Deserialize(format!(
+                    "Compound entry count exceeds limit {}",
+                    MAX_COMPOUND_ENTRIES
+                )));
+            }
             let tag_id = reader.read_u8()?;
             if tag_id == tag_id::END {
                 break;
             }
 
             let name = Self::read_string(reader)?;
-            let tag = Self::read_tag(reader, tag_id)?;
+            let tag = Self::read_tag_with_depth(reader, tag_id, depth + 1)?;
             map.insert(name, tag);
         }
 
         Ok(map)
+    }
+
+    fn ensure_depth(depth: usize) -> Result<(), NbtError> {
+        if depth > MAX_DEPTH {
+            return Err(NbtError::Deserialize(format!(
+                "NBT nesting depth exceeds limit {}",
+                MAX_DEPTH
+            )));
+        }
+        Ok(())
+    }
+
+    fn read_len_i32<R: Read>(reader: &mut R, name: &str, max: usize) -> Result<usize, NbtError> {
+        let length = reader.read_i32::<BigEndian>()?;
+        if length < 0 {
+            return Err(NbtError::Deserialize(format!(
+                "{} length cannot be negative: {}",
+                name, length
+            )));
+        }
+
+        let length = length as usize;
+        if length > max {
+            return Err(NbtError::Deserialize(format!(
+                "{} length {} exceeds limit {}",
+                name, length, max
+            )));
+        }
+
+        Ok(length)
     }
 
     /// 写入Compound内容（不包含标签ID和名字）

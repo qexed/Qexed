@@ -7,6 +7,13 @@ use std::sync::Arc;
 
 use crate::{ListHeader, Tag, tag_id};
 
+const MAX_DEPTH: usize = 64;
+const MAX_LIST_ITEMS: usize = 1_000_000;
+const MAX_COMPOUND_ENTRIES: usize = 65_536;
+const MAX_BYTE_ARRAY_LEN: usize = 16 * 1024 * 1024;
+const MAX_INT_ARRAY_LEN: usize = 4 * 1024 * 1024;
+const MAX_LONG_ARRAY_LEN: usize = 2 * 1024 * 1024;
+
 /// Java版网络格式序列化：将Tag写入writer
 pub fn serialize_java<W: Write>(w: &mut W, tag: &Tag) -> Result<()> {
     match tag {
@@ -31,7 +38,7 @@ pub fn deserialize_java<R: Read>(r: &mut R) -> Result<Tag> {
     match tag_id {
         tag_id::END => Ok(Tag::End),
         tag_id::COMPOUND => {
-            let map = read_compound_content_java(r)?;
+            let map = read_compound_content_java(r, 0)?;
             Ok(Tag::Compound(Arc::new(map)))
         }
         _ => Err(anyhow!(
@@ -39,6 +46,27 @@ pub fn deserialize_java<R: Read>(r: &mut R) -> Result<Tag> {
             tag_id
         )),
     }
+}
+
+fn ensure_depth(depth: usize) -> Result<()> {
+    if depth > MAX_DEPTH {
+        return Err(anyhow!("NBT nesting depth exceeds limit {}", MAX_DEPTH));
+    }
+    Ok(())
+}
+
+fn read_len_i32<R: Read>(r: &mut R, name: &str, max: usize) -> Result<usize> {
+    let len = r.read_i32::<BigEndian>()?;
+    if len < 0 {
+        return Err(anyhow!("negative {} length: {}", name, len));
+    }
+
+    let len = len as usize;
+    if len > max {
+        return Err(anyhow!("{} length {} exceeds limit {}", name, len, max));
+    }
+
+    Ok(len)
 }
 
 // --- 以下是具体的读写辅助函数 ---
@@ -109,9 +137,16 @@ fn write_tag_value_java<W: Write>(w: &mut W, tag: &Tag) -> Result<()> {
     Ok(())
 }
 
-fn read_compound_content_java<R: Read>(r: &mut R) -> Result<HashMap<String, Tag>> {
+fn read_compound_content_java<R: Read>(r: &mut R, depth: usize) -> Result<HashMap<String, Tag>> {
+    ensure_depth(depth)?;
     let mut map = HashMap::new();
     loop {
+        if map.len() >= MAX_COMPOUND_ENTRIES {
+            return Err(anyhow!(
+                "NBT compound entry count exceeds limit {}",
+                MAX_COMPOUND_ENTRIES
+            ));
+        }
         let tag_id = r.read_u8()?;
         if tag_id == tag_id::END {
             break;
@@ -122,13 +157,14 @@ fn read_compound_content_java<R: Read>(r: &mut R) -> Result<HashMap<String, Tag>
         r.read_exact(&mut name_bytes)?;
         let name = String::from_utf8(name_bytes).map_err(|e| anyhow!("标签名UTF-8错误: {}", e))?;
         // 读取标签值
-        let tag = read_tag_value_java(r, tag_id)?;
+        let tag = read_tag_value_java(r, tag_id, depth + 1)?;
         map.insert(name, tag);
     }
     Ok(map)
 }
 
-fn read_tag_value_java<R: Read>(r: &mut R, tag_id: u8) -> Result<Tag> {
+fn read_tag_value_java<R: Read>(r: &mut R, tag_id: u8, depth: usize) -> Result<Tag> {
+    ensure_depth(depth)?;
     match tag_id {
         tag_id::BYTE => Ok(Tag::Byte(r.read_i8()?)),
         tag_id::SHORT => Ok(Tag::Short(r.read_i16::<BigEndian>()?)),
@@ -144,24 +180,24 @@ fn read_tag_value_java<R: Read>(r: &mut R, tag_id: u8) -> Result<Tag> {
             Ok(Tag::String(Arc::from(s)))
         }
         tag_id::BYTE_ARRAY => {
-            let len = r.read_i32::<BigEndian>()?;
-            let mut vec = Vec::with_capacity(len as usize);
+            let len = read_len_i32(r, "NBT byte array", MAX_BYTE_ARRAY_LEN)?;
+            let mut vec = Vec::with_capacity(len);
             for _ in 0..len {
                 vec.push(r.read_i8()?);
             }
             Ok(Tag::ByteArray(Arc::from(vec)))
         }
         tag_id::INT_ARRAY => {
-            let len = r.read_i32::<BigEndian>()?;
-            let mut vec = Vec::with_capacity(len as usize);
+            let len = read_len_i32(r, "NBT int array", MAX_INT_ARRAY_LEN)?;
+            let mut vec = Vec::with_capacity(len);
             for _ in 0..len {
                 vec.push(r.read_i32::<BigEndian>()?);
             }
             Ok(Tag::IntArray(Arc::from(vec)))
         }
         tag_id::LONG_ARRAY => {
-            let len = r.read_i32::<BigEndian>()?;
-            let mut vec = Vec::with_capacity(len as usize);
+            let len = read_len_i32(r, "NBT long array", MAX_LONG_ARRAY_LEN)?;
+            let mut vec = Vec::with_capacity(len);
             for _ in 0..len {
                 vec.push(r.read_i64::<BigEndian>()?);
             }
@@ -169,21 +205,21 @@ fn read_tag_value_java<R: Read>(r: &mut R, tag_id: u8) -> Result<Tag> {
         }
         tag_id::LIST => {
             let elem_type = r.read_u8()?;
-            let length = r.read_i32::<BigEndian>()?;
-            let mut items = Vec::with_capacity(length as usize);
+            let length = read_len_i32(r, "NBT list", MAX_LIST_ITEMS)?;
+            let mut items = Vec::with_capacity(length);
             for _ in 0..length {
-                items.push(read_tag_value_java(r, elem_type)?);
+                items.push(read_tag_value_java(r, elem_type, depth + 1)?);
             }
             Ok(Tag::List(
                 ListHeader {
                     tag_id: elem_type,
-                    length,
+                    length: length as i32,
                 },
                 Arc::from(items),
             ))
         }
         tag_id::COMPOUND => {
-            let map = read_compound_content_java(r)?;
+            let map = read_compound_content_java(r, depth + 1)?;
             Ok(Tag::Compound(Arc::new(map)))
         }
         _ => Err(anyhow!("未知的标签ID: 0x{:02X}", tag_id)),
