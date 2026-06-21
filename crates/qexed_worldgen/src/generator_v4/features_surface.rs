@@ -2823,7 +2823,7 @@ fn set_surface_block_at_world(
     world_y: i32,
     world_z: i32,
     min_y: i32,
-        block: BlockLayer,
+    block: BlockLayer,
 ) -> bool {
     let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z) else {
         return false;
