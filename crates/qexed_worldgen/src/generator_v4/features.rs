@@ -1754,7 +1754,11 @@ impl PlacedUndergroundFeature<'_> {
     fn can_precheck_spillover_without_source(self) -> bool {
         !matches!(
             self,
-            Self::Structure(_) | Self::Surface(_) | Self::HugeMushroom(_) | Self::BlockColumn(_)
+            Self::Structure(_)
+                | Self::Surface(_)
+                | Self::Ore(_)
+                | Self::HugeMushroom(_)
+                | Self::BlockColumn(_)
         )
     }
 
