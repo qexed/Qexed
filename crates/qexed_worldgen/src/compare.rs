@@ -480,6 +480,38 @@ mod oracle_diagnostics {
         print_biome_diffs(&expected, &actual);
     }
 
+    #[test]
+    #[ignore = "manual oracle cache diagnostic"]
+    fn dump_oracle_cache_entry_delta() {
+        let seed = 0;
+        let chunk_x = 0;
+        let chunk_z = 0;
+        let legacy_path = oracle_root()
+            .join(format!("seed-{seed}"))
+            .join("minecraft/overworld/region/r.0.0.mca");
+        let chunk_path = oracle_root()
+            .join(format!("seed-{seed}"))
+            .join("minecraft/overworld/chunks/x.0.z.0/r.0.0.mca");
+        let legacy = read_region_chunk(&legacy_path, chunk_x, chunk_z).expect("read legacy cache");
+        let chunk = read_region_chunk(&chunk_path, chunk_x, chunk_z).expect("read chunk cache");
+
+        println!("legacy_path={}", legacy_path.display());
+        println!("chunk_path={}", chunk_path.display());
+        for &(x, y, z) in &[(1, -30, 0), (8, 64, 9), (4, 64, 12)] {
+            println!(
+                "block=({x},{y},{z}) legacy={:?} chunk={:?}",
+                block_at(&legacy, x, y, z),
+                block_at(&chunk, x, y, z)
+            );
+        }
+
+        let comparison = compare_chunk_nbt(&legacy, &chunk);
+        println!("equal={}", comparison.equal);
+        for difference in comparison.differences.iter().take(32) {
+            println!("{difference}");
+        }
+    }
+
     fn first_oracle_diff() -> anyhow::Result<Option<OracleDiffCase>> {
         for seed in available_oracle_seeds()? {
             for &(chunk_x, chunk_z) in ORACLE_SCAN_CHUNKS {
