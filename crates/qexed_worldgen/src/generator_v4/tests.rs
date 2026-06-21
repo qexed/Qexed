@@ -2,6 +2,44 @@
 mod tests {
     use super::*;
 
+    #[test]
+    fn v4_pipeline_base_and_carvers_smoke_is_bounded() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let (mut chunk, preliminary_surfaces) = settings.generate_base_chunk(0, 0);
+
+        assert_eq!(chunk.columns.len(), HEIGHTMAP_ENTRY_COUNT);
+        assert_eq!(preliminary_surfaces.len(), HEIGHTMAP_ENTRY_COUNT);
+
+        settings
+            .carvers
+            .carve_chunk(&settings, 0, 0, &preliminary_surfaces, &mut chunk);
+        chunk.recompute_first_available_heights(settings.min_y, settings.height);
+
+        assert_eq!(chunk.columns.len(), HEIGHTMAP_ENTRY_COUNT);
+        assert!(chunk
+            .columns
+            .iter()
+            .all(|column| column.blocks.len() == settings.height as usize));
+    }
+
+    #[test]
+    #[ignore = "manual Windows diagnostic: full v4 feature placement can exit the test process without panic output"]
+    fn v4_pipeline_full_chunk_manual_diagnostic() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let start = Instant::now();
+        let (chunk, timings) = settings.generate_chunk_profiled(0, 0);
+
+        eprintln!(
+            "worldgen v4 full diagnostic: total_ms={:.2}, base_ms={:.2}, carvers_ms={:.2}, features_ms={:.2}, heightmap_ms={:.2}",
+            duration_ms(start.elapsed()),
+            duration_ms(timings.base),
+            duration_ms(timings.carvers),
+            duration_ms(timings.features),
+            duration_ms(timings.heightmap),
+        );
+        assert_eq!(chunk.columns.len(), HEIGHTMAP_ENTRY_COUNT);
+    }
+
     fn grass_surface_test_chunk(settings: &NoiseSettings, surface_y: i32) -> NoiseChunkBlocks {
         surface_test_chunk(settings, surface_y, "minecraft:grass_block")
     }
