@@ -27,7 +27,7 @@ const CHUNK_DAMPENING_LEN: usize = (WORLD_SECTION_COUNT + 2) * 16 * 16;
 #[derive(Debug, Clone)]
 struct OptionalNbt(Option<Tag>);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct VarInt(i32);
 
 #[derive(Debug, Clone)]

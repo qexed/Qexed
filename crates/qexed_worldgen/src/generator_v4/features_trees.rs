@@ -1795,6 +1795,7 @@ impl OakTreeConfig {
             chunk_min_x,
             chunk_min_z,
             chunk,
+            neighbors,
             random,
             &logs,
             &leaves,
@@ -2581,6 +2582,7 @@ impl OakTreeConfig {
         chunk_min_x: i32,
         chunk_min_z: i32,
         chunk: &mut NoiseChunkBlocks,
+        neighbors: &[(i32, i32, &NoiseChunkBlocks)],
         random: &mut FeatureRandom,
         logs: &[(i32, i32, i32)],
         leaves: &[(i32, i32, i32)],
@@ -2605,23 +2607,29 @@ impl OakTreeConfig {
         }
         shuffle_positions(&mut candidates, random);
         for (hive_x, hive_y, hive_z) in candidates {
-            if !is_air_at_world(
+            if !context_layer_at_world(
                 chunk,
                 chunk_min_x,
                 chunk_min_z,
+                neighbors,
                 hive_x,
                 hive_y,
                 hive_z,
                 settings.min_y,
-            ) || !is_air_at_world(
-                chunk,
-                chunk_min_x,
-                chunk_min_z,
-                hive_x,
-                hive_y,
-                hive_z + 1,
-                settings.min_y,
-            ) {
+            )
+            .is_some_and(|layer| layer.is_air)
+                || !context_layer_at_world(
+                    chunk,
+                    chunk_min_x,
+                    chunk_min_z,
+                    neighbors,
+                    hive_x,
+                    hive_y,
+                    hive_z + 1,
+                    settings.min_y,
+                )
+                .is_some_and(|layer| layer.is_air)
+            {
                 continue;
             }
             let Some((local_x, local_z)) = local_coords(hive_x, hive_z, chunk_min_x, chunk_min_z)

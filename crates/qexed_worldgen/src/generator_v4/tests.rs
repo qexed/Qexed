@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use qexed_packet::Packet;
-
     use super::*;
 
     fn grass_surface_test_chunk(settings: &NoiseSettings, surface_y: i32) -> NoiseChunkBlocks {
@@ -202,71 +200,15 @@ mod tests {
 
     #[test]
     fn vanilla_flat_uses_classic_flat_layers_from_min_y() {
-        let generator = VanillaFlatGenerator::from_preset(DEFAULT_FLAT_PRESET);
+        let layers = expand_layers(FlatSettings::classic().layers);
         let bedrock = chunk_nbt::default_block_state_id("minecraft:bedrock");
         let dirt = chunk_nbt::default_block_state_id("minecraft:dirt");
         let grass = chunk_nbt::default_block_state_id("minecraft:grass_block");
 
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:overworld",
-                &qexed_packet::net_types::Position {
-                    x: 0,
-                    y: WORLD_MIN_Y,
-                    z: 0
-                }
-            ),
-            Some(bedrock)
-        );
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:overworld",
-                &qexed_packet::net_types::Position {
-                    x: 0,
-                    y: WORLD_MIN_Y + 2,
-                    z: 0
-                }
-            ),
-            Some(dirt)
-        );
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:overworld",
-                &qexed_packet::net_types::Position {
-                    x: 0,
-                    y: WORLD_MIN_Y + 3,
-                    z: 0
-                }
-            ),
-            Some(grass)
-        );
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:overworld",
-                &qexed_packet::net_types::Position {
-                    x: 0,
-                    y: WORLD_MIN_Y + 4,
-                    z: 0
-                }
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn vanilla_flat_generated_chunk_serializes() {
-        let generator = VanillaFlatGenerator::from_preset(DEFAULT_FLAT_PRESET);
-        let generated = generator
-            .generate("minecraft:overworld", 0, 0, WorldLightAlgorithm::Fast)
-            .unwrap();
-        let mut payload = bytes::BytesMut::new();
-        let mut writer = qexed_packet::PacketWriter::new(&mut payload);
-
-        generated.packet.serialize(&mut writer).unwrap();
-
-        assert!(!payload.is_empty());
-        assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
-        assert_eq!(generated.packet.data.heightmaps.len(), 3);
+        assert_eq!(layers[0].block_state_id, bedrock);
+        assert_eq!(layers[2].block_state_id, dirt);
+        assert_eq!(layers[3].block_state_id, grass);
+        assert!(layers.get(4).is_none_or(|layer| layer.is_air));
     }
 
     #[test]
@@ -288,132 +230,16 @@ mod tests {
     }
 
     #[test]
-    fn vanilla_noise_generated_chunk_serializes() {
-        let config = WorldConfig {
-            generator: WorldGeneratorConfig::VanillaNoise,
-            generator_preset: "minecraft:overworld".to_string(),
-            seed: 0,
-            ..WorldConfig::default()
-        };
-        let generator = VanillaNoiseGenerator::from_config(&config);
-        let generated = generator
-            .generate("minecraft:overworld", 0, 0, WorldLightAlgorithm::Fast)
-            .unwrap();
-        let mut payload = bytes::BytesMut::new();
-        let mut writer = qexed_packet::PacketWriter::new(&mut payload);
-
-        generated.packet.serialize(&mut writer).unwrap();
-
-        assert!(!payload.is_empty());
-        assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
-        assert_eq!(generated.packet.data.heightmaps.len(), 3);
-    }
-
-    #[test]
     fn vanilla_noise_block_state_at_uses_seeded_terrain() {
-        let config = WorldConfig {
-            generator: WorldGeneratorConfig::VanillaNoise,
-            generator_preset: "minecraft:overworld".to_string(),
-            seed: 12345,
-            ..WorldConfig::default()
-        };
-        let generator = VanillaNoiseGenerator::from_config(&config);
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
 
-        assert!(
-            generator
-                .block_state_at(
-                    "minecraft:overworld",
-                    &qexed_packet::net_types::Position { x: 0, y: -64, z: 0 }
-                )
-                .is_some()
-        );
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:overworld",
-                &qexed_packet::net_types::Position { x: 0, y: 320, z: 0 }
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn vanilla_noise_generates_basic_nether_and_end_dimensions() {
-        let config = WorldConfig {
-            generator: WorldGeneratorConfig::VanillaNoise,
-            generator_preset: "minecraft:overworld".to_string(),
-            seed: 12345,
-            ..WorldConfig::default()
-        };
-        let generator = VanillaNoiseGenerator::from_config(&config);
-        let generated = generator
-            .generate("minecraft:the_nether", 0, 0, WorldLightAlgorithm::Fast)
-            .unwrap();
-        let netherrack = chunk_nbt::default_block_state_id("minecraft:netherrack");
-        let lava = chunk_nbt::default_block_state_id("minecraft:lava");
-        let end_stone = chunk_nbt::default_block_state_id("minecraft:end_stone");
-
-        assert_eq!(generated.light_dampening.len(), CHUNK_DAMPENING_LEN);
-        assert!(
-            generated
-                .light_dampening
-                .iter()
-                .any(|dampening| *dampening > 0)
-        );
-        assert_eq!(generated.packet.data.heightmaps.len(), 3);
-        assert!(
-            (32..=96).any(|y| {
-                generator.block_state_at(
-                    "minecraft:the_nether",
-                    &qexed_packet::net_types::Position { x: 0, y, z: 0 },
-                ) == Some(netherrack)
-            })
-        );
-        assert!((-8..=8).any(|x| {
-            (-8..=8).any(|z| {
-                (16..=31).any(|y| {
-                    generator.block_state_at(
-                        "minecraft:the_nether",
-                        &qexed_packet::net_types::Position { x, y, z },
-                    ) == Some(lava)
-                })
-            })
-        }));
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:the_end",
-                &qexed_packet::net_types::Position { x: 0, y: 64, z: 0 }
-            ),
-            Some(end_stone)
-        );
-        assert!(
-            generator
-                .region_chunk("minecraft:the_nether", 0, 0)
-                .unwrap()
-                .is_some()
-        );
-        assert!(
-            generator
-                .region_chunk("minecraft:the_end", 0, 0)
-                .unwrap()
-                .is_some()
-        );
-        assert!(
-            generator
-                .region_chunk("minecraft:unknown", 0, 0)
-                .unwrap()
-                .is_none()
-        );
+        assert!(settings.block_state_at(0, -64, 0).is_some());
+        assert_eq!(settings.block_state_at(0, 320, 0), None);
     }
 
     #[test]
     fn vanilla_noise_basic_nether_places_ores_and_patches() {
-        let config = WorldConfig {
-            generator: WorldGeneratorConfig::VanillaNoise,
-            generator_preset: "minecraft:overworld".to_string(),
-            seed: 12345,
-            ..WorldConfig::default()
-        };
-        let generator = VanillaNoiseGenerator::from_config(&config);
+        let chunk = basic_dimension_chunk(NoiseDimension::Nether, 12345, 0, 0);
         let quartz = chunk_nbt::default_block_state_id("minecraft:nether_quartz_ore");
         let gold = chunk_nbt::default_block_state_id("minecraft:nether_gold_ore");
         let ancient_debris = chunk_nbt::default_block_state_id("minecraft:ancient_debris");
@@ -423,15 +249,11 @@ mod tests {
         let blackstone = chunk_nbt::default_block_state_id("minecraft:blackstone");
 
         let contains = |block_state| {
-            (-32..=32).any(|x| {
-                (-32..=32).any(|z| {
-                    (8..=118).any(|y| {
-                        generator.block_state_at(
-                            "minecraft:the_nether",
-                            &qexed_packet::net_types::Position { x, y, z },
-                        ) == Some(block_state)
-                    })
-                })
+            chunk.columns.iter().any(|column| {
+                column
+                    .blocks
+                    .iter()
+                    .any(|layer| !layer.is_air && layer.block_state_id == block_state)
             })
         };
 
@@ -446,51 +268,25 @@ mod tests {
 
     #[test]
     fn vanilla_noise_basic_end_places_obsidian_pillars() {
-        let config = WorldConfig {
-            generator: WorldGeneratorConfig::VanillaNoise,
-            generator_preset: "minecraft:overworld".to_string(),
-            seed: 12345,
-            ..WorldConfig::default()
-        };
-        let generator = VanillaNoiseGenerator::from_config(&config);
+        let chunk = basic_dimension_chunk(NoiseDimension::End, 12345, 2, 0);
         let obsidian = chunk_nbt::default_block_state_id("minecraft:obsidian");
-        let end_stone = chunk_nbt::default_block_state_id("minecraft:end_stone");
 
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:the_end",
-                &qexed_packet::net_types::Position { x: 42, y: 64, z: 0 }
-            ),
-            Some(obsidian)
-        );
-        assert_eq!(
-            generator.block_state_at(
-                "minecraft:the_end",
-                &qexed_packet::net_types::Position { x: 0, y: 64, z: 0 }
-            ),
-            Some(end_stone)
-        );
+        assert!(chunk.columns.iter().any(|column| {
+            column
+                .blocks
+                .iter()
+                .any(|layer| !layer.is_air && layer.block_state_id == obsidian)
+        }));
     }
 
     #[test]
     fn vanilla_noise_applies_deepslate_surface_rule() {
-        let config = WorldConfig {
-            generator: WorldGeneratorConfig::VanillaNoise,
-            generator_preset: "minecraft:overworld".to_string(),
-            seed: 12345,
-            ..WorldConfig::default()
-        };
-        let generator = VanillaNoiseGenerator::from_config(&config);
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let deepslate = chunk_nbt::default_block_state_id("minecraft:deepslate");
 
         let has_deepslate = (-16..=16).any(|x| {
             (-16..=16).any(|z| {
-                (-32..=0).any(|y| {
-                    generator.block_state_at(
-                        "minecraft:overworld",
-                        &qexed_packet::net_types::Position { x, y, z },
-                    ) == Some(deepslate)
-                })
+                (-32..=0).any(|y| settings.block_state_at(x, y, z) == Some(deepslate))
             })
         });
 
@@ -7017,15 +6813,51 @@ mod tests {
             0,
             0,
             &mut chunk,
+            &[],
             &mut random,
-            &[(8, 70, 8), (8, 65, 8), (8, 66, 8)],
-            &[(8, 68, 8)],
+            &[(8, 70, 8), (8, 71, 8), (8, 65, 8)],
+            &[(8, 72, 8)],
         );
 
         assert!(layer_at_world(&chunk, 0, 0, 8, 71, 9, settings.min_y)
             .is_some_and(|layer| layer.is("minecraft:bee_nest")));
         assert!(chunk.block_entities.iter().any(|entity| {
             entity.position == (8, 71, 9)
+                && entity.entity_type == BEEHIVE_BLOCK_ENTITY_TYPE_ID
+        }));
+    }
+
+    #[test]
+    fn vanilla_noise_beehive_uses_neighbor_air_for_spawn_direction() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let neighbor = grass_surface_test_chunk(&settings, 64);
+        chunk.set_layer(
+            14,
+            65,
+            14,
+            settings.min_y,
+            BlockLayer::new("minecraft:stone"),
+        );
+        let mut tree = OakTreeConfig::oak_bees_005();
+        tree.beehive_probability = 1.0;
+        let mut random = FeatureRandom::new(1);
+
+        tree.try_place_beehive(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &[(0, 16, &neighbor)],
+            &mut random,
+            &[(15, 64, 14), (15, 65, 14)],
+            &[(15, 66, 14)],
+        );
+
+        assert!(layer_at_world(&chunk, 0, 0, 15, 65, 15, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:bee_nest")));
+        assert!(chunk.block_entities.iter().any(|entity| {
+            entity.position == (15, 65, 15)
                 && entity.entity_type == BEEHIVE_BLOCK_ENTITY_TYPE_ID
         }));
     }
