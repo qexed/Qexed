@@ -2418,6 +2418,34 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_configures_forest_trees_with_leaf_litter_decorators() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = settings
+            .ore_features
+            .trees
+            .iter()
+            .find(|feature| feature.feature_index == 59)
+            .unwrap();
+
+        assert_eq!(feature.step_index, 9);
+        assert_eq!(feature.count.entries, vec![(10, 9), (11, 1)]);
+        assert_eq!(feature.config.variants.len(), 4);
+        assert_eq!(feature.config.default_tree.ground_decorators.len(), 2);
+        assert_eq!(feature.config.default_tree.ground_decorators[0].tries, 96);
+        assert_eq!(feature.config.default_tree.ground_decorators[0].radius, 4);
+        assert_eq!(feature.config.default_tree.ground_decorators[1].tries, 150);
+        assert_eq!(feature.config.default_tree.ground_decorators[1].radius, 0);
+        assert_eq!(feature.config.variants[1].tree.ground_decorators.len(), 2);
+        assert_eq!(feature.config.variants[2].tree.ground_decorators.len(), 2);
+        assert!(feature.config.variants[0].tree.ground_decorators.is_empty());
+        assert!(feature.config.variants[3].tree.ground_decorators.is_empty());
+        assert!(matches!(
+            feature.biome_filter,
+            FeatureBiomeFilter::Include(biomes) if biomes == BIRCH_AND_OAK_LEAF_LITTER_TREE_BIOMES
+        ));
+    }
+
+    #[test]
     fn vanilla_noise_configures_spruce_trees() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let taiga = settings
@@ -6511,6 +6539,28 @@ mod tests {
                 .map(|layer| layer.block.as_ref()),
             Some("minecraft:dirt")
         );
+    }
+
+    #[test]
+    fn vanilla_noise_forest_oak_leaf_litter_places_logs_leaves_and_leaf_litter() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let mut random = FeatureRandom::new(12345);
+
+        assert!(OakTreeConfig::oak_bees_0002_leaf_litter().place(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            8,
+            65,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&chunk, "minecraft:oak_log"));
+        assert!(chunk_contains_block(&chunk, "minecraft:oak_leaves"));
+        assert!(chunk_contains_block(&chunk, "minecraft:leaf_litter"));
     }
 
     #[test]

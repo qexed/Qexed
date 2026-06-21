@@ -699,12 +699,15 @@ impl TreeFeatureConfig {
 
     fn birch_and_oak_leaf_litter_trees() -> Self {
         Self {
-            default_tree: OakTreeConfig::oak_bees_0002(),
+            default_tree: OakTreeConfig::oak_bees_0002_leaf_litter(),
             mushroom_variants: Vec::new(),
             variants: vec![
                 TreeFeatureVariant::fallen(0.0025, OakTreeConfig::birch_bees_0002()),
-                TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_0002()),
-                TreeFeatureVariant::standing(0.1, OakTreeConfig::fancy_oak_bees_0002()),
+                TreeFeatureVariant::standing(0.2, OakTreeConfig::birch_bees_0002_leaf_litter()),
+                TreeFeatureVariant::standing(
+                    0.1,
+                    OakTreeConfig::fancy_oak_bees_0002_leaf_litter(),
+                ),
                 TreeFeatureVariant::fallen(0.0125, OakTreeConfig::oak()),
             ],
         }
@@ -1195,6 +1198,93 @@ struct FoliageOrigin {
 }
 
 #[derive(Debug, Clone)]
+struct TreeGroundDecoratorConfig {
+    tries: i32,
+    radius: i32,
+    height: i32,
+    entries: Vec<BlockLayer>,
+}
+
+impl TreeGroundDecoratorConfig {
+    fn leaf_litter(tries: i32, radius: i32, height: i32) -> Self {
+        let max_segments = if radius > 0 { 3 } else { 4 };
+        let mut entries = Vec::with_capacity((max_segments * 4) as usize);
+        for segment_amount in 1..=max_segments {
+            for facing in ["north", "east", "south", "west"] {
+                entries.push(BlockLayer::with_properties(
+                    "minecraft:leaf_litter",
+                    &[
+                        ("facing", facing),
+                        ("segment_amount", &segment_amount.to_string()),
+                    ],
+                ));
+            }
+        }
+
+        Self {
+            tries,
+            radius,
+            height,
+            entries,
+        }
+    }
+
+    fn place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        logs: &[(i32, i32, i32)],
+    ) {
+        if logs.is_empty() {
+            return;
+        }
+
+        for _ in 0..self.tries {
+            let &(origin_x, origin_y, origin_z) = &logs[random.next_int(logs.len() as i32) as usize];
+            let x = origin_x + random.next_int(self.radius * 2 + 1) - self.radius;
+            let y = origin_y + random.next_int(self.height * 2 + 1) - self.height;
+            let z = origin_z + random.next_int(self.radius * 2 + 1) - self.radius;
+            let block = self.entries[random.next_int(self.entries.len() as i32) as usize].clone();
+            self.place_at(settings, chunk_min_x, chunk_min_z, chunk, block, x, y, z);
+        }
+    }
+
+    fn place_at(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        block: BlockLayer,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) -> bool {
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return false;
+        };
+        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+            return false;
+        };
+        if !current.is_air {
+            return false;
+        }
+        let Some(support) = chunk.layer(local_x, world_y - 1, local_z, settings.min_y) else {
+            return false;
+        };
+        if !supports_vegetation_layer(support) {
+            return false;
+        }
+        chunk.set_layer(local_x, world_y, local_z, settings.min_y, block);
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
 struct OakTreeConfig {
     trunk: BlockLayer,
     leaves: BlockLayer,
@@ -1210,6 +1300,7 @@ struct OakTreeConfig {
     beehive_probability: f32,
     fallen_min_length: i32,
     fallen_max_length: i32,
+    ground_decorators: Vec<TreeGroundDecoratorConfig>,
 }
 
 impl OakTreeConfig {
@@ -1230,6 +1321,14 @@ impl OakTreeConfig {
 
     fn with_beehive_probability(mut self, beehive_probability: f32) -> Self {
         self.beehive_probability = beehive_probability;
+        self
+    }
+
+    fn with_leaf_litter_decorators(mut self) -> Self {
+        self.ground_decorators = vec![
+            TreeGroundDecoratorConfig::leaf_litter(96, 4, 2),
+            TreeGroundDecoratorConfig::leaf_litter(150, 0, 2),
+        ];
         self
     }
 
@@ -1259,11 +1358,16 @@ impl OakTreeConfig {
             beehive_probability: 0.05,
             fallen_min_length: 4,
             fallen_max_length: 7,
+            ground_decorators: Vec::new(),
         }
     }
 
     fn oak_bees_0002() -> Self {
         Self::oak_bees_005().with_beehive_probability(0.002)
+    }
+
+    fn oak_bees_0002_leaf_litter() -> Self {
+        Self::oak_bees_0002().with_leaf_litter_decorators()
     }
 
     fn oak_bees_002() -> Self {
@@ -1303,7 +1407,12 @@ impl OakTreeConfig {
             beehive_probability: 0.002,
             fallen_min_length: 5,
             fallen_max_length: 8,
+            ground_decorators: Vec::new(),
         }
+    }
+
+    fn birch_bees_0002_leaf_litter() -> Self {
+        Self::birch_bees_0002().with_leaf_litter_decorators()
     }
 
     fn birch_bees_002() -> Self {
@@ -1352,6 +1461,7 @@ impl OakTreeConfig {
             beehive_probability: 0.0,
             fallen_min_length: 6,
             fallen_max_length: 10,
+            ground_decorators: Vec::new(),
         }
     }
 
@@ -1384,6 +1494,7 @@ impl OakTreeConfig {
             beehive_probability: 0.0,
             fallen_min_length: 4,
             fallen_max_length: 7,
+            ground_decorators: Vec::new(),
         }
     }
 
@@ -1426,6 +1537,10 @@ impl OakTreeConfig {
 
     fn fancy_oak_bees_0002() -> Self {
         Self::fancy_oak().with_beehive_probability(0.002)
+    }
+
+    fn fancy_oak_bees_0002_leaf_litter() -> Self {
+        Self::fancy_oak_bees_0002().with_leaf_litter_decorators()
     }
 
     fn fancy_oak_bees_002() -> Self {
@@ -1800,8 +1915,30 @@ impl OakTreeConfig {
             &logs,
             &leaves,
         );
+        self.place_ground_decorators(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            random,
+            &logs,
+        );
 
         true
+    }
+
+    fn place_ground_decorators(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        logs: &[(i32, i32, i32)],
+    ) {
+        for decorator in &self.ground_decorators {
+            decorator.place(settings, chunk_min_x, chunk_min_z, chunk, random, logs);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
