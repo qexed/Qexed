@@ -1,0 +1,25 @@
+plugins {
+    id "application"
+    id("org.spongepowered.gradle.vanilla") version "0.3.2"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+}
+
+application {
+    mainClass = "dev.qexed.worldgen.WorldgenServer"
+}
+
+minecraft {
+    version("26.2")
+}
+
+dependencies {
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.18.2"
+}
+
+tasks.register("runtimeClasspathCopy", Copy) {
+    from configurations.runtimeClasspath
+    into layout.buildDirectory.dir("runtime-libs")
+}

@@ -11,6 +11,10 @@ pub async fn run(config: crate::bootstrap::RuntimeConfig) -> anyhow::Result<()> 
         "qexed server listening on {}, max_connections={max_connections}",
         config.qexed.server.bind
     ));
+    tklog::info!(format!(
+        "qexed save root initialized at {}",
+        config.save.root().path().display()
+    ));
 
     loop {
         let (stream, peer) = listener.accept().await?;

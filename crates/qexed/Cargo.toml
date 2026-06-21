@@ -10,6 +10,7 @@ qexed_chat.workspace = true
 qexed_command.workspace = true
 qexed_log.workspace = true
 qexed_registry.workspace = true
+qexed_save.workspace = true
 qexed_plugin.workspace = true
 qexed_plugin_api.workspace = true
 qexed_packet.workspace = true
@@ -17,6 +18,7 @@ qexed_protocol.workspace = true
 qexed_nbt.workspace = true
 qexed_tcp_connect.workspace = true
 qexed_world.workspace = true
+qexed_worldgen.workspace = true
 
 anyhow.workspace = true
 bytes.workspace = true
@@ -26,3 +28,6 @@ serde_json.workspace = true
 tklog.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

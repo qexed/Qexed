@@ -6,7 +6,10 @@ mod registry_sync;
 mod tags;
 mod util;
 
-pub use registries::{dimension_type_holder_id, dynamic_registry_entry_id, load_registry_packets};
+pub use registries::{
+    dimension_type_holder_id, dynamic_registry_entry_id, load_blocks_report,
+    load_dynamic_registry_id_map, load_registry_id_map, load_registry_packets,
+};
 pub use registry_sync::{
     STATIC_TAG_REGISTRIES, VANILLA_FEATURE, accepts_vanilla_core_pack, known_packs,
 };

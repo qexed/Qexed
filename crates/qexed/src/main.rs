@@ -1,6 +1,7 @@
 mod bootstrap;
 mod connection;
 mod server;
+mod worldgen_process;
 
 use clap::Parser;
 

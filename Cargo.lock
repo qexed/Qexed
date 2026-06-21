@@ -1386,9 +1386,12 @@ dependencies = [
  "qexed_plugin_api",
  "qexed_protocol",
  "qexed_registry",
+ "qexed_save",
  "qexed_tcp_connect",
  "qexed_world",
+ "qexed_worldgen",
  "serde_json",
+ "tempfile",
  "tklog",
  "tokio",
  "uuid",
@@ -1522,6 +1525,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_permission"
+version = "0.1.0"
+
+[[package]]
+name = "qexed_player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qexed_packet",
+ "qexed_save",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "qexed_plugin"
 version = "0.1.0"
 dependencies = [
@@ -1578,6 +1597,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_save"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qexed_config",
+ "uuid",
+]
+
+[[package]]
 name = "qexed_tcp_connect"
 version = "0.1.0"
 dependencies = [
@@ -1602,9 +1630,33 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "flate2",
+ "log",
+ "qexed_config",
+ "qexed_nbt",
  "qexed_packet",
  "qexed_protocol",
  "qexed_registry",
+ "qexed_save",
+ "qexed_worldgen",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "qexed_worldgen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "qexed_config",
+ "qexed_nbt",
+ "qexed_registry",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

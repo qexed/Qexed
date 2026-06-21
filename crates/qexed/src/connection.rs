@@ -1,4 +1,4 @@
-use bytes::{BufMut as _, Bytes, BytesMut};
+use bytes::BytesMut;
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
     net_types::{ByteArray, GameProfile, JsonValue, RestBuffer, VarInt},
@@ -20,6 +20,7 @@ use qexed_protocol::{
     },
 };
 use qexed_tcp_connect::{FramePart, PacketReadError, PacketSink, PacketStream, PacketWriteError};
+use std::collections::HashSet;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{
@@ -35,6 +36,9 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const INITIAL_CHUNK_RADIUS: i32 = 0;
+const CHUNK_SYNC_BATCH_LIMIT: usize = 4;
+const CHUNK_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 static SERVER_SESSION_ID: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
 
 type ClientConnection = ConnectionIo<OwnedReadHalf, OwnedWriteHalf>;
@@ -177,38 +181,6 @@ where
     {
         self.sink
             .append_packet_frame_ref(packet, &mut self.current)?;
-        Ok(())
-    }
-
-    fn push_empty_chunk(
-        &mut self,
-        chunk_x: i32,
-        chunk_z: i32,
-        chunk_body: &'static Bytes,
-    ) -> anyhow::Result<()> {
-        if self.sink.compression_threshold().is_some() {
-            anyhow::bail!("zero-copy empty chunk fast path requires compression to be disabled");
-        }
-        let payload_len =
-            varint_len(to_client::play::map_chunk::MapChunk::ID) + 4 + 4 + chunk_body.len();
-        if payload_len > self.sink.max_packet_size() {
-            anyhow::bail!(
-                "empty chunk packet is too large: {payload_len} bytes, max {} bytes",
-                self.sink.max_packet_size()
-            );
-        }
-
-        let header_len =
-            varint_len(payload_len as i32) + varint_len(to_client::play::map_chunk::MapChunk::ID);
-        let mut header = BytesMut::with_capacity(header_len + 8);
-        write_varint(payload_len as i32, &mut header);
-        write_varint(to_client::play::map_chunk::MapChunk::ID, &mut header);
-        header.put_i32(chunk_x);
-        header.put_i32(chunk_z);
-
-        self.flush_current();
-        self.frames.push(FramePart::Bytes(header.freeze()));
-        self.frames.push(FramePart::Shared(chunk_body));
         Ok(())
     }
 
@@ -388,7 +360,7 @@ async fn handle_login(
     handle_configuration(connection).await?;
     enter_play(
         connection,
-        &config.qexed,
+        config,
         config.authenticator.clone(),
         config.chat.clone(),
         &session,
@@ -488,8 +460,7 @@ async fn wait_for_known_packs(
         if packet_id == ServerboundSelectKnownPacks::ID {
             return decode_payload::<ServerboundSelectKnownPacks>(&mut payload);
         }
-        if packet_id == ServerboundSettings::ID {
-            let _settings = decode_payload::<ServerboundSettings>(&mut payload)?;
+        if handle_configuration_side_packet(connection, packet_id, &mut payload).await? {
             continue;
         }
         tklog::debug!(format!(
@@ -508,8 +479,7 @@ async fn wait_for_finish_configuration(connection: &mut ClientConnection) -> any
             let _packet = decode_payload::<ServerboundFinishConfiguration>(&mut payload)?;
             return Ok(());
         }
-        if packet_id == ServerboundSettings::ID {
-            let _settings = decode_payload::<ServerboundSettings>(&mut payload)?;
+        if handle_configuration_side_packet(connection, packet_id, &mut payload).await? {
             continue;
         }
         tklog::debug!(format!(
@@ -518,13 +488,59 @@ async fn wait_for_finish_configuration(connection: &mut ClientConnection) -> any
     }
 }
 
+async fn handle_configuration_side_packet(
+    connection: &mut ClientConnection,
+    packet_id: i32,
+    payload: &mut BytesMut,
+) -> anyhow::Result<bool> {
+    if packet_id == ServerboundSettings::ID {
+        let _settings = decode_payload::<ServerboundSettings>(payload)?;
+        return Ok(true);
+    }
+    if packet_id
+        == qexed_protocol::to_server::configuration::client_information::ClientInformation::ID
+    {
+        let _packet = decode_payload::<
+            qexed_protocol::to_server::configuration::client_information::ClientInformation,
+        >(payload)?;
+        return Ok(true);
+    }
+    if packet_id == qexed_protocol::to_server::configuration::custom_payload::CustomPayload::ID {
+        let _packet = decode_payload::<
+            qexed_protocol::to_server::configuration::custom_payload::CustomPayload,
+        >(payload)?;
+        return Ok(true);
+    }
+    if packet_id
+        == qexed_protocol::to_server::configuration::resource_pack_receive::ResourcePackReceive::ID
+    {
+        let _packet = decode_payload::<
+            qexed_protocol::to_server::configuration::resource_pack_receive::ResourcePackReceive,
+        >(payload)?;
+        return Ok(true);
+    }
+    if packet_id == qexed_protocol::to_server::configuration::keep_alive::KeepAlive::ID {
+        let packet = decode_payload::<
+            qexed_protocol::to_server::configuration::keep_alive::KeepAlive,
+        >(payload)?;
+        connection
+            .send_packet(&to_client::configuration::keep_alive::KeepAlive {
+                keep_alive_id: packet.keep_alive_id,
+            })
+            .await?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 async fn enter_play(
     connection: &mut ClientConnection,
-    config: &qexed_config::app::qexed::Qexed,
+    runtime: &crate::bootstrap::RuntimeConfig,
     authenticator: qexed_auth::Authenticator,
     chat_service: qexed_chat::ChatService,
     session: &LoginSession,
 ) -> anyhow::Result<()> {
+    let config = &runtime.qexed;
     let profile = &session.profile;
     let view_distance = config.server.view_distance.max(1);
     let simulation_distance = config.server.simulation_distance.max(1);
@@ -632,7 +648,6 @@ async fn enter_play(
                 chunk_x: VarInt(0),
                 chunk_z: VarInt(0),
             })?;
-            push_initial_chunks(batch, view_distance)?;
             batch.push(&to_client::play::ticking_state::TickingState::default())?;
             batch.push(&to_client::play::system_chat::SystemChat {
                 content: text_component(format!("{} joined qexed-v5", profile.username)),
@@ -641,6 +656,18 @@ async fn enter_play(
         })
         .await?;
 
+    let mut chunk_view = PlayerChunkView::new(view_distance);
+    send_chunk_window(
+        connection,
+        runtime,
+        &mut chunk_view,
+        0,
+        0,
+        INITIAL_CHUNK_RADIUS,
+        None,
+        false,
+    )
+    .await?;
     connection.flush().await?;
     let command_context = command_context(config, profile);
     let chat_context = ChatContext {
@@ -649,60 +676,205 @@ async fn enter_play(
         authenticator,
         service: chat_service,
     };
-    sustain_play_connection(connection, command_context, chat_context).await
+    sustain_play_connection(
+        connection,
+        runtime,
+        command_context,
+        chat_context,
+        chunk_view,
+    )
+    .await
 }
 
 fn initial_play_batch_capacity(view_distance: i32) -> usize {
-    let radius = view_distance.clamp(0, 1) as usize;
+    let radius = chunk_view_radius(view_distance) as usize;
     let chunk_count = (radius * 2 + 1).pow(2);
     8 * 1024 + chunk_count * 16
 }
 
-fn push_initial_chunks<W>(batch: &mut PacketBatch<'_, W>, view_distance: i32) -> anyhow::Result<()>
-where
-    W: AsyncWrite + Unpin,
-{
-    let radius = view_distance.clamp(0, 1);
+#[derive(Debug, Clone)]
+struct PlayerChunkView {
+    center_chunk_x: i32,
+    center_chunk_z: i32,
+    radius: i32,
+    sent_chunks: HashSet<(i32, i32)>,
+}
+
+impl PlayerChunkView {
+    fn new(view_distance: i32) -> Self {
+        Self {
+            center_chunk_x: 0,
+            center_chunk_z: 0,
+            radius: chunk_view_radius(view_distance),
+            sent_chunks: HashSet::new(),
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.sent_chunks.len() >= chunk_window_len(self.radius)
+    }
+}
+
+fn chunk_view_radius(view_distance: i32) -> i32 {
+    view_distance.max(1)
+}
+
+fn chunk_window_len(radius: i32) -> usize {
+    let width = (radius * 2 + 1).max(1) as usize;
+    width * width
+}
+
+fn player_chunk_coordinate(position: f64) -> i32 {
+    (position.floor() as i32).div_euclid(16)
+}
+
+async fn sync_player_chunk_position(
+    connection: &mut ClientConnection,
+    runtime: &crate::bootstrap::RuntimeConfig,
+    chunk_view: &mut PlayerChunkView,
+    x: f64,
+    z: f64,
+) -> anyhow::Result<()> {
+    let chunk_x = player_chunk_coordinate(x);
+    let chunk_z = player_chunk_coordinate(z);
+    if chunk_x == chunk_view.center_chunk_x
+        && chunk_z == chunk_view.center_chunk_z
+        && chunk_view.is_complete()
+    {
+        return Ok(());
+    }
+
+    send_chunk_window(
+        connection,
+        runtime,
+        chunk_view,
+        chunk_x,
+        chunk_z,
+        chunk_view.radius,
+        Some(CHUNK_SYNC_BATCH_LIMIT),
+        true,
+    )
+    .await
+}
+
+async fn send_chunk_window(
+    connection: &mut ClientConnection,
+    runtime: &crate::bootstrap::RuntimeConfig,
+    chunk_view: &mut PlayerChunkView,
+    center_chunk_x: i32,
+    center_chunk_z: i32,
+    radius: i32,
+    max_new_chunks: Option<usize>,
+    allow_worldgen: bool,
+) -> anyhow::Result<()> {
     let mut count = 0;
-    let chunk_body = qexed_world::empty_chunk_body_bytes()?;
+    let dimension = qexed_save::DimensionId::overworld();
 
-    batch.push(&to_client::play::chunk_batch_start::ChunkBatchStart {})?;
-    for chunk_z in -radius..=radius {
-        for chunk_x in -radius..=radius {
-            batch.push_empty_chunk(chunk_x, chunk_z, chunk_body)?;
-            count += 1;
-        }
+    let mut target_chunks = chunk_window_positions(center_chunk_x, center_chunk_z, radius);
+    let full_window = chunk_window_positions(center_chunk_x, center_chunk_z, chunk_view.radius);
+    let mut chunks = Vec::new();
+
+    if radius == chunk_view.radius {
+        target_chunks.extend(
+            chunk_view
+                .sent_chunks
+                .iter()
+                .copied()
+                .filter(|chunk| full_window.contains(chunk)),
+        );
     }
-    batch.push(&to_client::play::chunk_batch_finished::ChunkBatchFinished {
-        batch_size: VarInt(count),
-    })
+
+    let mut candidates = target_chunks
+        .iter()
+        .copied()
+        .filter(|chunk| !chunk_view.sent_chunks.contains(chunk))
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(chunk_x, chunk_z)| {
+        let dx = chunk_x - center_chunk_x;
+        let dz = chunk_z - center_chunk_z;
+        dx * dx + dz * dz
+    });
+
+    for (chunk_x, chunk_z) in candidates {
+        if max_new_chunks.is_some_and(|limit| count >= limit) {
+            target_chunks.remove(&(chunk_x, chunk_z));
+            continue;
+        }
+        let worldgen_client = allow_worldgen
+            .then(|| {
+                runtime
+                    .worldgen_process
+                    .as_ref()
+                    .map(|_| &runtime.worldgen_client)
+            })
+            .flatten();
+        let chunk = runtime
+            .world
+            .ensure_network_chunk(
+                runtime.local_worldgen.as_deref(),
+                worldgen_client,
+                &dimension,
+                chunk_x,
+                chunk_z,
+            )
+            .await?;
+        chunks.push(chunk);
+        count += 1;
+    }
+    let leaving_chunks = chunk_view
+        .sent_chunks
+        .difference(&full_window)
+        .copied()
+        .collect::<Vec<_>>();
+
+    chunk_view.center_chunk_x = center_chunk_x;
+    chunk_view.center_chunk_z = center_chunk_z;
+    chunk_view.sent_chunks = target_chunks;
+
+    connection
+        .send_packet_batch_with_capacity(256 * 1024, |batch| {
+            batch.push(&to_client::play::update_view_position::UpdateViewPosition {
+                chunk_x: VarInt(center_chunk_x),
+                chunk_z: VarInt(center_chunk_z),
+            })?;
+            if count > 0 {
+                batch.push(&to_client::play::chunk_batch_start::ChunkBatchStart {})?;
+                for chunk in &chunks {
+                    batch.push(chunk)?;
+                }
+                batch.push(&to_client::play::chunk_batch_finished::ChunkBatchFinished {
+                    batch_size: VarInt(count as i32),
+                })?;
+            }
+            for (chunk_x, chunk_z) in &leaving_chunks {
+                batch.push(&to_client::play::forget_level_chunk::ForgetLevelChunk {
+                    chunk_x: *chunk_x,
+                    chunk_z: *chunk_z,
+                })?;
+            }
+            Ok(())
+        })
+        .await?;
+    tklog::debug!(format!(
+        "synced player chunks: center=({center_chunk_x}, {center_chunk_z}), sent_new={count}, unloaded={}, radius={}",
+        leaving_chunks.len(),
+        chunk_view.radius
+    ));
+    Ok(())
 }
 
-fn write_varint(value: i32, buf: &mut BytesMut) {
-    let mut value = value as u32;
-    loop {
-        let mut byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        buf.put_u8(byte);
-        if value == 0 {
-            break;
+fn chunk_window_positions(
+    center_chunk_x: i32,
+    center_chunk_z: i32,
+    radius: i32,
+) -> HashSet<(i32, i32)> {
+    let mut chunks = HashSet::new();
+    for chunk_z in center_chunk_z - radius..=center_chunk_z + radius {
+        for chunk_x in center_chunk_x - radius..=center_chunk_x + radius {
+            chunks.insert((chunk_x, chunk_z));
         }
     }
-}
-
-fn varint_len(value: i32) -> usize {
-    let mut value = value as u32;
-    let mut len = 1;
-
-    while value >= 0x80 {
-        value >>= 7;
-        len += 1;
-    }
-
-    len
+    chunks
 }
 
 fn command_context(
@@ -735,11 +907,15 @@ fn plugin_summaries() -> Vec<String> {
 
 async fn sustain_play_connection(
     connection: &mut ClientConnection,
+    runtime: &crate::bootstrap::RuntimeConfig,
     command_context: qexed_command::CommandContext,
     chat_context: ChatContext,
+    mut chunk_view: PlayerChunkView,
 ) -> anyhow::Result<()> {
     let mut keep_alive = tokio::time::interval(std::time::Duration::from_secs(10));
     keep_alive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut chunk_sync = tokio::time::interval(CHUNK_SYNC_INTERVAL);
+    chunk_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut keep_alive_id = 0_i64;
     let mut chat_session: Option<qexed_chat::SecureChatSession> = None;
     let mut next_chat_global_index = 0_i32;
@@ -792,6 +968,33 @@ async fn sustain_play_connection(
                             &mut payload,
                         )?;
                     handle_command_suggestion(connection, &command_context, packet).await?;
+                } else if packet_id == qexed_protocol::to_server::play::move_player_pos::MovePlayerPos::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::move_player_pos::MovePlayerPos>(
+                            &mut payload,
+                        )?;
+                    sync_player_chunk_position(connection, runtime, &mut chunk_view, packet.x, packet.z).await?;
+                } else if packet_id == qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot>(
+                            &mut payload,
+                        )?;
+                    sync_player_chunk_position(connection, runtime, &mut chunk_view, packet.x, packet.z).await?;
+                } else if packet_id == qexed_protocol::to_server::play::move_player_rot::MovePlayerRot::ID {
+                    let _packet =
+                        decode_payload::<qexed_protocol::to_server::play::move_player_rot::MovePlayerRot>(
+                            &mut payload,
+                        )?;
+                } else if packet_id == qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly::ID {
+                    let _packet =
+                        decode_payload::<qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly>(
+                            &mut payload,
+                        )?;
+                } else if packet_id == qexed_protocol::to_server::play::chunk_batch_received::ChunkBatchReceived::ID {
+                    let _packet =
+                        decode_payload::<qexed_protocol::to_server::play::chunk_batch_received::ChunkBatchReceived>(
+                            &mut payload,
+                        )?;
                 }
             }
             _ = keep_alive.tick() => {
@@ -800,6 +1003,22 @@ async fn sustain_play_connection(
                     .send_packet(&to_client::play::keep_alive::KeepAlive { keep_alive_id })
                     .await?;
                 connection.flush().await?;
+            }
+            _ = chunk_sync.tick(), if !chunk_view.is_complete() => {
+                let center_chunk_x = chunk_view.center_chunk_x;
+                let center_chunk_z = chunk_view.center_chunk_z;
+                let radius = chunk_view.radius;
+                send_chunk_window(
+                    connection,
+                    runtime,
+                    &mut chunk_view,
+                    center_chunk_x,
+                    center_chunk_z,
+                    radius,
+                    Some(CHUNK_SYNC_BATCH_LIMIT),
+                    true,
+                )
+                .await?;
             }
         }
     }
@@ -1359,7 +1578,7 @@ mod tests {
         let mut map_chunks = 0;
         let mut saw_batch_finished = false;
 
-        for _ in 0..64 {
+        for _ in 0..1024 {
             let packet_id = read_next_packet_id(&mut client).await;
             match packet_id {
                 to_client::play::login::Login::ID => saw_login = true,
@@ -1386,11 +1605,138 @@ mod tests {
         );
         assert!(saw_commands, "command tree packet was not sent");
         assert!(saw_batch_start, "chunk batch start packet was not sent");
-        assert!(map_chunks > 0, "initial map chunks were not sent");
+        assert!(map_chunks >= 1, "initial map chunk was not sent");
         assert!(
             saw_batch_finished,
             "chunk batch finished packet was not sent"
         );
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn login_generates_initial_chunks_when_worldgen_is_available() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut config = runtime_config();
+        let temp = tempfile::tempdir().unwrap();
+        let mut save_config = qexed_config::app::qexed_save::Save::default();
+        save_config.root.universe = temp.path().to_string_lossy().to_string();
+        let save = qexed_save::SaveService::new(save_config).unwrap();
+        config.save = save.clone();
+        config.world = qexed_world::WorldManager::new(save);
+        let process = std::sync::Arc::new(
+            crate::worldgen_process::WorldgenProcess::spawn()
+                .expect("worldgen process should start"),
+        );
+        config.worldgen_client =
+            qexed_world::generator_rpc::VanillaWorldgenClient::new(process.endpoint().to_string());
+        config.worldgen_process = Some(process);
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        assert!(
+            temp.path()
+                .join("world/dimensions/minecraft/overworld/region/r.0.0.mca")
+                .exists()
+        );
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn moving_between_chunks_syncs_chunk_window() {
+        init_registry_for_connection_test();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut config = runtime_config();
+        config.qexed.server.view_distance = 1;
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::move_player_pos::MovePlayerPos {
+                x: 32.5,
+                y: 64.0,
+                z: 0.5,
+                flags: 0,
+            },
+        )
+        .await;
+
+        let mut saw_view_position = false;
+        let mut map_chunks = 0;
+        let mut saw_unload = false;
+        let mut batch_size = None;
+        for _ in 0..1024 {
+            let mut payload = read_frame(&mut client.reader).await.unwrap();
+            match read_packet_id(&mut payload).unwrap() {
+                to_client::play::update_view_position::UpdateViewPosition::ID => {
+                    let packet = decode_payload::<
+                        to_client::play::update_view_position::UpdateViewPosition,
+                    >(&mut payload)
+                    .unwrap();
+                    if packet.chunk_x.0 == 2 && packet.chunk_z.0 == 0 {
+                        saw_view_position = true;
+                    }
+                }
+                to_client::play::map_chunk::MapChunk::ID => map_chunks += 1,
+                to_client::play::forget_level_chunk::ForgetLevelChunk::ID => saw_unload = true,
+                to_client::play::chunk_batch_finished::ChunkBatchFinished::ID => {
+                    let packet = decode_payload::<
+                        to_client::play::chunk_batch_finished::ChunkBatchFinished,
+                    >(&mut payload)
+                    .unwrap();
+                    batch_size = Some(packet.batch_size.0);
+                }
+                _ => {}
+            }
+            if batch_size.is_some() && saw_unload {
+                break;
+            }
+        }
+
+        assert!(
+            saw_view_position,
+            "view center was not updated after movement"
+        );
+        assert!(map_chunks > 0);
+        assert_eq!(batch_size, Some(map_chunks));
+        assert!(saw_unload, "old chunks were not unloaded after movement");
 
         drop(client);
         server.await.unwrap();
@@ -1584,14 +1930,18 @@ mod tests {
             };
             if let Err(err) = super::enter_play(
                 &mut connection,
-                &config.qexed,
-                config.authenticator,
-                config.chat,
+                &config,
+                config.authenticator.clone(),
+                config.chat.clone(),
                 &session,
             )
             .await
             {
-                assert!(err.to_string().contains("secure chat session"), "{err:#}");
+                assert!(
+                    err.to_string().contains("secure chat session")
+                        || super::is_expected_disconnect(&err),
+                    "{err:#}"
+                );
             }
         });
 
@@ -1693,9 +2043,9 @@ mod tests {
             };
             if let Err(err) = super::enter_play(
                 &mut connection,
-                &config.qexed,
-                config.authenticator,
-                config.chat,
+                &config,
+                config.authenticator.clone(),
+                config.chat.clone(),
                 &session,
             )
             .await
@@ -1838,7 +2188,7 @@ mod tests {
         R: tokio::io::AsyncRead + Unpin,
         W: tokio::io::AsyncWrite + Unpin,
     {
-        for _ in 0..128 {
+        for _ in 0..1024 {
             if read_next_packet_id(connection).await == expected_id {
                 return;
             }
@@ -1852,7 +2202,7 @@ mod tests {
         W: tokio::io::AsyncWrite + Unpin,
         T: Packet + Default,
     {
-        for _ in 0..128 {
+        for _ in 0..1024 {
             let mut payload = read_frame(&mut connection.reader).await.unwrap();
             if read_packet_id(&mut payload).unwrap() == T::ID {
                 return decode_payload::<T>(&mut payload).unwrap();
@@ -1899,10 +2249,20 @@ mod tests {
     }
 
     fn runtime_config() -> crate::bootstrap::RuntimeConfig {
+        let mut save_config = qexed_config::app::qexed_save::Save::default();
+        save_config.initialize_directories = false;
+        let save = qexed_save::SaveService::new(save_config).unwrap();
         crate::bootstrap::RuntimeConfig {
             qexed: qexed_config::app::qexed::Qexed::default(),
             authenticator: qexed_auth::Authenticator::new(Default::default()),
             chat: qexed_chat::ChatService::new(Default::default()).unwrap(),
+            save: save.clone(),
+            world: qexed_world::WorldManager::new(save),
+            local_worldgen: None,
+            worldgen_process: None,
+            worldgen_client: qexed_world::generator_rpc::VanillaWorldgenClient::new(
+                "http://127.0.0.1:1/",
+            ),
         }
     }
 

@@ -63,7 +63,7 @@ fn load_registry_entries(
     Ok(entries)
 }
 
-pub(crate) fn load_dynamic_registry_id_map(
+pub fn load_dynamic_registry_id_map(
     registry_dir: &std::path::Path,
     registry: &str,
 ) -> Result<HashMap<String, i32>> {
@@ -117,7 +117,7 @@ pub(super) fn load_static_registry_id_maps() -> Result<HashMap<String, HashMap<S
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_registry_id_map(registry_id: &str) -> Result<HashMap<String, i32>> {
+pub fn load_registry_id_map(registry_id: &str) -> Result<HashMap<String, i32>> {
     let value = load_registry_report()?;
     let entries = value
         .get(registry_id)
@@ -128,7 +128,7 @@ pub(crate) fn load_registry_id_map(registry_id: &str) -> Result<HashMap<String, 
 }
 
 #[allow(dead_code)]
-pub(crate) fn load_blocks_report() -> Result<Value> {
+pub fn load_blocks_report() -> Result<Value> {
     read_report_json(BLOCKS_REPORT)
 }
 

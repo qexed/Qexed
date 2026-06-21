@@ -7,6 +7,18 @@ edition = "2024"
 qexed_packet.workspace = true
 qexed_protocol.workspace = true
 qexed_registry.workspace = true
+qexed_save.workspace = true
+qexed_nbt.workspace = true
+qexed_worldgen.workspace = true
 
 anyhow.workspace = true
 bytes.workspace = true
+flate2.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+qexed_config.workspace = true
+tempfile.workspace = true
