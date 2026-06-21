@@ -34,6 +34,7 @@ pub enum ChunkSyncCause {
     InitialLogin,
     PlayerMove,
     CompletionTick,
+    UnloadTick,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +81,7 @@ pub struct ChunkSyncEvent {
     pub center_chunk_z: i32,
     pub loaded: Vec<ChunkLoadEvent>,
     pub unloaded: Vec<ChunkUnloadEvent>,
+    pub unloading: Vec<ChunkUnloadEvent>,
 }
 
 impl ChunkSyncEvent {
@@ -89,6 +91,7 @@ impl ChunkSyncEvent {
         center_chunk_z: i32,
         loaded: Vec<ChunkLoadEvent>,
         unloaded: Vec<ChunkUnloadEvent>,
+        unloading: Vec<ChunkUnloadEvent>,
     ) -> Self {
         Self {
             cause,
@@ -96,6 +99,7 @@ impl ChunkSyncEvent {
             center_chunk_z,
             loaded,
             unloaded,
+            unloading,
         }
     }
 
@@ -105,6 +109,10 @@ impl ChunkSyncEvent {
 
     pub fn unloaded_count(&self) -> usize {
         self.unloaded.len()
+    }
+
+    pub fn unloading_count(&self) -> usize {
+        self.unloading.len()
     }
 
     pub fn source_counts(&self) -> NetworkChunkSourceCounts {
@@ -629,6 +637,7 @@ mod tests {
                 ChunkLoadEvent::new(3, 0, NetworkChunkLoadSource::EmptyFallback),
             ],
             vec![ChunkUnloadEvent::new(0, -1)],
+            vec![ChunkUnloadEvent::new(1, -1)],
         );
 
         let counts = event.source_counts();
@@ -636,6 +645,7 @@ mod tests {
         assert_eq!(event.cause, ChunkSyncCause::PlayerMove);
         assert_eq!(event.loaded_count(), 4);
         assert_eq!(event.unloaded_count(), 1);
+        assert_eq!(event.unloading_count(), 1);
         assert_eq!(counts.saved, 1);
         assert_eq!(counts.local_generated, 1);
         assert_eq!(counts.vanilla_generated, 1);

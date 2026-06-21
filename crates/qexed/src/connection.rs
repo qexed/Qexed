@@ -20,7 +20,7 @@ use qexed_protocol::{
     },
 };
 use qexed_tcp_connect::{FramePart, PacketReadError, PacketSink, PacketStream, PacketWriteError};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{
@@ -39,6 +39,7 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const INITIAL_CHUNK_RADIUS: i32 = 0;
 const CHUNK_SYNC_BATCH_LIMIT: usize = 4;
 const CHUNK_SYNC_INTERVAL: Duration = Duration::from_secs(1);
+const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
 static SERVER_SESSION_ID: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
 
 type ClientConnection = ConnectionIo<OwnedReadHalf, OwnedWriteHalf>;
@@ -698,6 +699,7 @@ struct PlayerChunkView {
     center_chunk_z: i32,
     radius: i32,
     sent_chunks: HashSet<(i32, i32)>,
+    pending_unloads: HashMap<(i32, i32), std::time::Instant>,
 }
 
 impl PlayerChunkView {
@@ -707,21 +709,61 @@ impl PlayerChunkView {
             center_chunk_z: 0,
             radius: chunk_view_radius(view_distance),
             sent_chunks: HashSet::new(),
+            pending_unloads: HashMap::new(),
         }
     }
 
     fn is_complete(&self) -> bool {
-        self.sent_chunks.len() >= chunk_window_len(self.radius)
+        chunk_window_positions(self.center_chunk_x, self.center_chunk_z, self.radius)
+            .iter()
+            .all(|chunk| self.sent_chunks.contains(chunk))
+    }
+
+    fn mark_delayed_unloads(
+        &mut self,
+        full_window: &HashSet<(i32, i32)>,
+        unload_at: std::time::Instant,
+    ) -> Vec<(i32, i32)> {
+        self.pending_unloads
+            .retain(|chunk, _| self.sent_chunks.contains(chunk) && !full_window.contains(chunk));
+
+        let mut leaving = Vec::new();
+        for chunk in &self.sent_chunks {
+            if full_window.contains(chunk) {
+                self.pending_unloads.remove(chunk);
+            } else {
+                self.pending_unloads.entry(*chunk).or_insert(unload_at);
+                leaving.push(*chunk);
+            }
+        }
+        leaving.sort_unstable();
+        leaving
+    }
+
+    fn expired_unloads(&mut self, now: std::time::Instant) -> Vec<(i32, i32)> {
+        let full_window =
+            chunk_window_positions(self.center_chunk_x, self.center_chunk_z, self.radius);
+        let mut expired = self
+            .pending_unloads
+            .iter()
+            .filter_map(|(chunk, unload_at)| {
+                (*unload_at <= now
+                    && self.sent_chunks.contains(chunk)
+                    && !full_window.contains(chunk))
+                .then_some(*chunk)
+            })
+            .collect::<Vec<_>>();
+        expired.sort_unstable();
+        for chunk in &expired {
+            self.pending_unloads.remove(chunk);
+            self.sent_chunks.remove(chunk);
+        }
+        expired
     }
 }
 
 fn chunk_view_radius(view_distance: i32) -> i32 {
     view_distance.max(1)
-}
-
-fn chunk_window_len(radius: i32) -> usize {
-    let width = (radius * 2 + 1).max(1) as usize;
-    width * width
 }
 
 fn player_chunk_coordinate(position: f64) -> i32 {
@@ -821,20 +863,23 @@ async fn send_chunk_window(
         count += 1;
     }
     let leaving_chunks = chunk_view
-        .sent_chunks
-        .difference(&full_window)
-        .copied()
-        .collect::<Vec<_>>();
-    let unloaded = leaving_chunks
+        .mark_delayed_unloads(&full_window, std::time::Instant::now() + CHUNK_UNLOAD_DELAY);
+    let unloading = leaving_chunks
         .iter()
         .map(|(chunk_x, chunk_z)| qexed_world::ChunkUnloadEvent::new(*chunk_x, *chunk_z))
         .collect::<Vec<_>>();
-    let sync_event =
-        qexed_world::ChunkSyncEvent::new(cause, center_chunk_x, center_chunk_z, loaded, unloaded);
+    let sync_event = qexed_world::ChunkSyncEvent::new(
+        cause,
+        center_chunk_x,
+        center_chunk_z,
+        loaded,
+        Vec::new(),
+        unloading,
+    );
 
     chunk_view.center_chunk_x = center_chunk_x;
     chunk_view.center_chunk_z = center_chunk_z;
-    chunk_view.sent_chunks = target_chunks;
+    chunk_view.sent_chunks.extend(target_chunks);
 
     connection
         .send_packet_batch_with_capacity(256 * 1024, |batch| {
@@ -851,12 +896,6 @@ async fn send_chunk_window(
                     batch_size: VarInt(count as i32),
                 })?;
             }
-            for (chunk_x, chunk_z) in &leaving_chunks {
-                batch.push(&to_client::play::forget_level_chunk::ForgetLevelChunk {
-                    chunk_x: *chunk_x,
-                    chunk_z: *chunk_z,
-                })?;
-            }
             Ok(())
         })
         .await?;
@@ -866,11 +905,12 @@ async fn send_chunk_window(
 
 fn log_chunk_sync_event(event: &qexed_world::ChunkSyncEvent) {
     tklog::debug!(format!(
-        "synced player chunks: cause={:?}, center=({}, {}), sent_new={}, unloaded={}, first_loaded={}, first_unloaded={}, sources={}",
+        "synced player chunks: cause={:?}, center=({}, {}), sent_new={}, unloading={}, unloaded={}, first_loaded={}, first_unloaded={}, sources={}",
         event.cause,
         event.center_chunk_x,
         event.center_chunk_z,
         event.loaded_count(),
+        event.unloading_count(),
         event.unloaded_count(),
         first_loaded_chunk(event),
         first_unloaded_chunk(event),
@@ -1043,24 +1083,72 @@ async fn sustain_play_connection(
                     .await?;
                 connection.flush().await?;
             }
-            _ = chunk_sync.tick(), if !chunk_view.is_complete() => {
-                let center_chunk_x = chunk_view.center_chunk_x;
-                let center_chunk_z = chunk_view.center_chunk_z;
-                let radius = chunk_view.radius;
-                send_chunk_window(
+            _ = chunk_sync.tick(), if !chunk_view.is_complete() || !chunk_view.pending_unloads.is_empty() => {
+                if !chunk_view.is_complete() {
+                    let center_chunk_x = chunk_view.center_chunk_x;
+                    let center_chunk_z = chunk_view.center_chunk_z;
+                    let radius = chunk_view.radius;
+                    send_chunk_window(
+                        connection,
+                        runtime,
+                        &mut chunk_view,
+                        center_chunk_x,
+                        center_chunk_z,
+                        radius,
+                        Some(CHUNK_SYNC_BATCH_LIMIT),
+                        qexed_world::ChunkSyncCause::CompletionTick,
+                    )
+                    .await?;
+                }
+                unload_expired_chunks(
                     connection,
-                    runtime,
                     &mut chunk_view,
-                    center_chunk_x,
-                    center_chunk_z,
-                    radius,
-                    Some(CHUNK_SYNC_BATCH_LIMIT),
-                    qexed_world::ChunkSyncCause::CompletionTick,
+                    qexed_world::ChunkSyncCause::UnloadTick,
+                    std::time::Instant::now(),
                 )
                 .await?;
             }
         }
     }
+}
+
+async fn unload_expired_chunks(
+    connection: &mut ClientConnection,
+    chunk_view: &mut PlayerChunkView,
+    cause: qexed_world::ChunkSyncCause,
+    now: std::time::Instant,
+) -> anyhow::Result<()> {
+    let expired = chunk_view.expired_unloads(now);
+    if expired.is_empty() {
+        return Ok(());
+    }
+
+    connection
+        .send_packet_batch(|batch| {
+            for (chunk_x, chunk_z) in &expired {
+                batch.push(&to_client::play::forget_level_chunk::ForgetLevelChunk {
+                    chunk_x: *chunk_x,
+                    chunk_z: *chunk_z,
+                })?;
+            }
+            Ok(())
+        })
+        .await?;
+    connection.flush().await?;
+
+    let unloaded = expired
+        .into_iter()
+        .map(|(chunk_x, chunk_z)| qexed_world::ChunkUnloadEvent::new(chunk_x, chunk_z))
+        .collect();
+    log_chunk_sync_event(&qexed_world::ChunkSyncEvent::new(
+        cause,
+        chunk_view.center_chunk_x,
+        chunk_view.center_chunk_z,
+        Vec::new(),
+        unloaded,
+        Vec::new(),
+    ));
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -1414,8 +1502,9 @@ fn unknown_command_component(command: &str) -> qexed_protocol::types::TextCompon
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectionIo, build_payload, chunk_source_summary, decode_payload, first_loaded_chunk,
-        first_unloaded_chunk, read_frame, read_packet_id, write_frame,
+        ConnectionIo, PlayerChunkView, build_payload, chunk_source_summary, chunk_window_positions,
+        decode_payload, first_loaded_chunk, first_unloaded_chunk, read_frame, read_packet_id,
+        write_frame,
     };
     use qexed_packet::{Packet, net_types::VarInt};
     use qexed_protocol::to_client;
@@ -1430,7 +1519,10 @@ mod tests {
         login_acknowledged::LoginAcknowledged, login_start::LoginStart,
     };
     use qexed_protocol::to_server::status::ping_start::PingStart;
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration,
+    };
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
@@ -1470,6 +1562,7 @@ mod tests {
                 ),
             ],
             vec![qexed_world::ChunkUnloadEvent::new(0, 0)],
+            Vec::new(),
         );
 
         assert_eq!(first_loaded_chunk(&event), "(2, 0)");
@@ -1478,6 +1571,32 @@ mod tests {
             chunk_source_summary(&event),
             "saved=1, local_generated=0, vanilla_generated=0, empty_fallback=1"
         );
+    }
+
+    #[test]
+    fn chunk_view_delays_and_cancels_unloads() {
+        let mut chunk_view = PlayerChunkView::new(1);
+        chunk_view.sent_chunks.insert((-1, 0));
+        chunk_view.sent_chunks.insert((0, 0));
+
+        let unload_at = std::time::Instant::now() + Duration::from_secs(4);
+        let shifted_window = chunk_window_positions(2, 0, 1);
+        let leaving = chunk_view.mark_delayed_unloads(&shifted_window, unload_at);
+
+        assert_eq!(leaving, vec![(-1, 0), (0, 0)]);
+        assert!(chunk_view.sent_chunks.contains(&(-1, 0)));
+        assert!(chunk_view.pending_unloads.contains_key(&(-1, 0)));
+        assert!(
+            chunk_view
+                .expired_unloads(unload_at - Duration::from_millis(1))
+                .is_empty()
+        );
+
+        let original_window = chunk_window_positions(0, 0, 1);
+        chunk_view.mark_delayed_unloads(&original_window, unload_at);
+
+        assert!(!chunk_view.pending_unloads.contains_key(&(-1, 0)));
+        assert!(chunk_view.sent_chunks.contains(&(-1, 0)));
     }
 
     #[test]
@@ -1830,7 +1949,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn moving_between_chunks_syncs_chunk_window() {
+    async fn moving_between_chunks_delays_chunk_unload() {
         init_registry_for_connection_test();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1864,7 +1983,6 @@ mod tests {
 
         let mut saw_view_position = false;
         let mut map_chunks = 0;
-        let mut saw_unload = false;
         let mut batch_size = None;
         for _ in 0..1024 {
             let mut payload = read_frame(&mut client.reader).await.unwrap();
@@ -1880,7 +1998,9 @@ mod tests {
                 }
                 to_client::play::chunk_batch_start::ChunkBatchStart::ID => map_chunks = 0,
                 to_client::play::map_chunk::MapChunk::ID => map_chunks += 1,
-                to_client::play::forget_level_chunk::ForgetLevelChunk::ID => saw_unload = true,
+                to_client::play::forget_level_chunk::ForgetLevelChunk::ID => {
+                    panic!("old chunks should be delayed before unload")
+                }
                 to_client::play::chunk_batch_finished::ChunkBatchFinished::ID => {
                     let packet = decode_payload::<
                         to_client::play::chunk_batch_finished::ChunkBatchFinished,
@@ -1890,7 +2010,7 @@ mod tests {
                 }
                 _ => {}
             }
-            if batch_size.is_some() && saw_unload {
+            if batch_size.is_some() {
                 break;
             }
         }
@@ -1901,7 +2021,6 @@ mod tests {
         );
         assert!(map_chunks > 0);
         assert_eq!(batch_size, Some(map_chunks));
-        assert!(saw_unload, "old chunks were not unloaded after movement");
 
         drop(client);
         server.await.unwrap();
