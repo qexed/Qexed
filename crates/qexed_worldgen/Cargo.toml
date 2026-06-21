@@ -10,8 +10,11 @@ qexed_registry.workspace = true
 
 anyhow.workspace = true
 log.workspace = true
+openssl.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
+flate2.workspace = true
 tempfile.workspace = true
