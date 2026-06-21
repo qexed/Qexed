@@ -4,10 +4,15 @@ use qexed_protocol::to_client::play::map_chunk::{Chunk, Heightmaps, MapChunk};
 use qexed_save::{DimensionId, RegionKind, SaveService, WorldStoreKind, region_coordinate};
 
 pub mod chunk_nbt;
+mod chunk_sync;
 pub mod generator_rpc;
 mod light;
 mod manager;
 pub mod region;
+pub use chunk_sync::{
+    ChunkPosition, PlayerChunkView, chunk_view_radius, chunk_window_positions,
+    player_chunk_coordinate,
+};
 pub use light::{WorldLightAlgorithm, WorldLightMode};
 pub use manager::{
     ChunkLoadEvent, ChunkSyncCause, ChunkSyncEvent, ChunkUnloadEvent, NetworkChunkLoad,
