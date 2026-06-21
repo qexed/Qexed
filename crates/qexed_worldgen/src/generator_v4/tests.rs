@@ -237,6 +237,21 @@ mod tests {
     }
 
     #[test]
+    fn height_anchor_below_top_uses_world_top_y() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+
+        assert_eq!(HeightAnchor::AboveBottom(0).resolve(&settings), settings.min_y);
+        assert_eq!(
+            HeightAnchor::BelowTop(0).resolve(&settings),
+            settings.min_y + settings.height
+        );
+        assert_eq!(
+            HeightAnchor::BelowTop(8).resolve(&settings),
+            settings.min_y + settings.height - 8
+        );
+    }
+
+    #[test]
     fn vanilla_flat_uses_classic_flat_layers_from_min_y() {
         let layers = expand_layers(FlatSettings::classic().layers);
         let bedrock = chunk_nbt::default_block_state_id("minecraft:bedrock");
@@ -273,6 +288,60 @@ mod tests {
 
         assert!(settings.block_state_at(0, -64, 0).is_some());
         assert_eq!(settings.block_state_at(0, 320, 0), None);
+    }
+
+    #[test]
+    fn vanilla_noise_seed_zero_gravel_ore_spillover_reaches_oracle_diff() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let target_origin_x = 0;
+        let target_origin_z = 0;
+        let target_x = 1;
+        let target_y = -30;
+        let target_z = 0;
+        let ore = &settings.ore_features.features[1];
+        let mut matching_sources = Vec::new();
+
+        for source_chunk_x in -1..=1 {
+            for source_chunk_z in -1..=1 {
+                let source_origin_x = source_chunk_x * 16;
+                let source_origin_z = source_chunk_z * 16;
+                let decoration_seed =
+                    FeatureRandom::decoration_seed(settings.ore_features.seed, source_origin_x, source_origin_z);
+                let mut random = FeatureRandom::for_feature(decoration_seed, 1, 6);
+                let mut source = surface_test_chunk(&settings, settings.min_y + settings.height - 1, "minecraft:deepslate");
+                let mut target = surface_test_chunk(&settings, settings.min_y + settings.height - 1, "minecraft:deepslate");
+
+                if source_chunk_x == 0 && source_chunk_z == 0 {
+                    ore.place(
+                        &settings,
+                        target_origin_x,
+                        target_origin_z,
+                        &mut target,
+                        &mut random,
+                    );
+                } else {
+                    ore.place_with_spillover(
+                        &settings,
+                        source_origin_x,
+                        source_origin_z,
+                        target_origin_x,
+                        target_origin_z,
+                        &mut source,
+                        &mut target,
+                        &mut random,
+                    );
+                }
+
+                if target
+                    .layer(target_x, target_y, target_z, settings.min_y)
+                    .is_some_and(|layer| layer.is("minecraft:gravel"))
+                {
+                    matching_sources.push((source_chunk_x, source_chunk_z));
+                }
+            }
+        }
+
+        assert!(!matching_sources.is_empty());
     }
 
     #[test]
