@@ -18,11 +18,13 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
 
     private final Object lock = new Object();
     private final Path workRoot;
+    private final long seed;
     private Process process;
     private BufferedWriter consoleInput;
 
-    MinecraftServerChunkWriter() throws IOException {
+    MinecraftServerChunkWriter(long seed) throws IOException {
         this.workRoot = Files.createTempDirectory("qexed-vanilla-worldgen-");
+        this.seed = seed;
     }
 
     @Override
@@ -50,7 +52,7 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
         Path serverRoot = workRoot.resolve("server");
         Files.createDirectories(serverRoot);
         Files.writeString(serverRoot.resolve("eula.txt"), "eula=true\n");
-        writeServerProperties(serverRoot.resolve("server.properties"));
+        writeServerProperties(serverRoot.resolve("server.properties"), seed);
 
         ProcessBuilder builder = new ProcessBuilder(
                 javaExecutable(),
@@ -73,7 +75,7 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
         waitForServerReady(serverRoot.resolve("logs").resolve("latest.log"));
     }
 
-    private static void writeServerProperties(Path path) throws IOException {
+    private static void writeServerProperties(Path path, long seed) throws IOException {
         Properties properties = new Properties();
         properties.setProperty("online-mode", "false");
         properties.setProperty("enable-rcon", "false");
@@ -82,7 +84,7 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
         properties.setProperty("view-distance", "4");
         properties.setProperty("simulation-distance", "4");
         properties.setProperty("level-name", "world");
-        properties.setProperty("level-seed", "0");
+        properties.setProperty("level-seed", Long.toString(seed));
         properties.setProperty("server-port", "0");
         properties.setProperty("motd", "qexed vanilla worldgen");
         try (var output = Files.newOutputStream(path)) {

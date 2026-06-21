@@ -25,8 +25,9 @@ public final class WorldgenServer {
         int port = args.length > 0
                 ? Integer.parseInt(args[0])
                 : Integer.parseInt(System.getProperty("qexed.worldgen.port", "39170"));
+        long seed = configuredSeed();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
-        MinecraftServerChunkWriter chunkWriter = new MinecraftServerChunkWriter();
+        MinecraftServerChunkWriter chunkWriter = new MinecraftServerChunkWriter(seed);
         WorldgenServer handler = new WorldgenServer(chunkWriter);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
@@ -49,7 +50,19 @@ public final class WorldgenServer {
             }
         });
         server.start();
-        System.out.printf("qexed vanilla worldgen JSON-RPC listening on 127.0.0.1:%d%n", port);
+        System.out.printf("qexed vanilla worldgen JSON-RPC listening on 127.0.0.1:%d seed=%d%n", port, seed);
+    }
+
+    private static long configuredSeed() {
+        String property = System.getProperty("qexed.worldgen.seed");
+        if (property != null && !property.isBlank()) {
+            return Long.parseLong(property);
+        }
+        String env = System.getenv("QEXED_WORLDGEN_SEED");
+        if (env != null && !env.isBlank()) {
+            return Long.parseLong(env);
+        }
+        return 0L;
     }
 
     private byte[] handle(byte[] body) {
