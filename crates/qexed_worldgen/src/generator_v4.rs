@@ -65,6 +65,7 @@ include!("generator_v4/features_common.rs");
 include!("generator_v4/features_ores.rs");
 include!("generator_v4/support.rs");
 include!("generator_v4/nbt.rs");
+include!("generator_v4/tests.rs");
 
 pub(crate) use self::pipeline::generate_overworld_chunk_nbt;
 

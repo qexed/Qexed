@@ -1,11 +1,16 @@
 package dev.qexed.worldgen;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Files;
+import java.util.zip.InflaterInputStream;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.ChunkPos;
@@ -58,6 +63,22 @@ final class AnvilRegionWriter {
             byte[] compressed = new byte[length - 1];
             file.readFully(compressed);
             return compressed;
+        }
+    }
+
+    static String readChunkStatus(Path path, int chunkX, int chunkZ) throws Exception {
+        byte[] compressed = readCompressedChunk(path, chunkX, chunkZ);
+        if (compressed == null) {
+            return null;
+        }
+
+        try (DataInputStream input = new DataInputStream(
+                new InflaterInputStream(new ByteArrayInputStream(compressed)))) {
+            CompoundTag root = NbtIo.read(input, NbtAccounter.unlimitedHeap());
+            if (root == null || !root.contains("Status")) {
+                return null;
+            }
+            return root.getString("Status").orElse(null);
         }
     }
 

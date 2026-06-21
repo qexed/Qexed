@@ -82,6 +82,7 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
         properties.setProperty("view-distance", "4");
         properties.setProperty("simulation-distance", "4");
         properties.setProperty("level-name", "world");
+        properties.setProperty("level-seed", "0");
         properties.setProperty("server-port", "0");
         properties.setProperty("motd", "qexed vanilla worldgen");
         try (var output = Files.newOutputStream(path)) {
@@ -134,7 +135,8 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
         sendCommand("save-all flush");
         while (System.nanoTime() < deadline) {
             if (Files.exists(region)) {
-                if (readGeneratedCompressedChunkOrNull(chunk) != null) {
+                String status = AnvilRegionWriter.readChunkStatus(region, chunk.x(), chunk.z());
+                if ("minecraft:full".equals(status)) {
                     return;
                 }
             }
