@@ -592,17 +592,25 @@ mod oracle_diagnostics {
     fn oracle_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
+        let chunk_cache_path = oracle_root()
+            .join(format!("seed-{seed}"))
+            .join("minecraft/overworld/chunks")
+            .join(format!("x.{chunk_x}.z.{chunk_z}"))
+            .join(format!("r.{region_x}.{region_z}.mca"));
+        if chunk_cache_path.exists() {
+            return chunk_cache_path;
+        }
+
         oracle_root()
             .join(format!("seed-{seed}"))
             .join("minecraft/overworld/region")
             .join(format!("r.{region_x}.{region_z}.mca"))
     }
 
-    fn oracle_root() -> &'static Path {
-        Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../target/worldgen-oracle/26.2"
-        ))
+    fn oracle_root() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/worldgen-oracle")
+            .join(qexed_config::MC_VERSION)
     }
 
     fn print_gravel_summary(label: &str, root: &Tag) {

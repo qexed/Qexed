@@ -20,7 +20,6 @@ use qexed_protocol::{
     },
 };
 use qexed_tcp_connect::{FramePart, PacketReadError, PacketSink, PacketStream, PacketWriteError};
-use std::collections::{HashMap, HashSet};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{
@@ -657,7 +656,7 @@ async fn enter_play(
         })
         .await?;
 
-    let mut chunk_view = PlayerChunkView::new(view_distance);
+    let mut chunk_view = qexed_world::PlayerChunkView::new(view_distance);
     send_chunk_window(
         connection,
         runtime,
@@ -688,99 +687,22 @@ async fn enter_play(
 }
 
 fn initial_play_batch_capacity(view_distance: i32) -> usize {
-    let radius = chunk_view_radius(view_distance) as usize;
+    let radius = qexed_world::chunk_view_radius(view_distance) as usize;
     let chunk_count = (radius * 2 + 1).pow(2);
     8 * 1024 + chunk_count * 16
-}
-
-#[derive(Debug, Clone)]
-struct PlayerChunkView {
-    center_chunk_x: i32,
-    center_chunk_z: i32,
-    radius: i32,
-    sent_chunks: HashSet<(i32, i32)>,
-    pending_unloads: HashMap<(i32, i32), std::time::Instant>,
-}
-
-impl PlayerChunkView {
-    fn new(view_distance: i32) -> Self {
-        Self {
-            center_chunk_x: 0,
-            center_chunk_z: 0,
-            radius: chunk_view_radius(view_distance),
-            sent_chunks: HashSet::new(),
-            pending_unloads: HashMap::new(),
-        }
-    }
-
-    fn is_complete(&self) -> bool {
-        chunk_window_positions(self.center_chunk_x, self.center_chunk_z, self.radius)
-            .iter()
-            .all(|chunk| self.sent_chunks.contains(chunk))
-    }
-
-    fn mark_delayed_unloads(
-        &mut self,
-        full_window: &HashSet<(i32, i32)>,
-        unload_at: std::time::Instant,
-    ) -> Vec<(i32, i32)> {
-        self.pending_unloads
-            .retain(|chunk, _| self.sent_chunks.contains(chunk) && !full_window.contains(chunk));
-
-        let mut leaving = Vec::new();
-        for chunk in &self.sent_chunks {
-            if full_window.contains(chunk) {
-                self.pending_unloads.remove(chunk);
-            } else {
-                self.pending_unloads.entry(*chunk).or_insert(unload_at);
-                leaving.push(*chunk);
-            }
-        }
-        leaving.sort_unstable();
-        leaving
-    }
-
-    fn expired_unloads(&mut self, now: std::time::Instant) -> Vec<(i32, i32)> {
-        let full_window =
-            chunk_window_positions(self.center_chunk_x, self.center_chunk_z, self.radius);
-        let mut expired = self
-            .pending_unloads
-            .iter()
-            .filter_map(|(chunk, unload_at)| {
-                (*unload_at <= now
-                    && self.sent_chunks.contains(chunk)
-                    && !full_window.contains(chunk))
-                .then_some(*chunk)
-            })
-            .collect::<Vec<_>>();
-        expired.sort_unstable();
-        for chunk in &expired {
-            self.pending_unloads.remove(chunk);
-            self.sent_chunks.remove(chunk);
-        }
-        expired
-    }
-}
-
-fn chunk_view_radius(view_distance: i32) -> i32 {
-    view_distance.max(1)
-}
-
-fn player_chunk_coordinate(position: f64) -> i32 {
-    (position.floor() as i32).div_euclid(16)
 }
 
 async fn sync_player_chunk_position(
     connection: &mut ClientConnection,
     runtime: &crate::bootstrap::RuntimeConfig,
-    chunk_view: &mut PlayerChunkView,
+    chunk_view: &mut qexed_world::PlayerChunkView,
     x: f64,
     z: f64,
 ) -> anyhow::Result<()> {
-    let chunk_x = player_chunk_coordinate(x);
-    let chunk_z = player_chunk_coordinate(z);
-    if chunk_x == chunk_view.center_chunk_x
-        && chunk_z == chunk_view.center_chunk_z
+    let chunk_x = qexed_world::player_chunk_coordinate(x);
+    let chunk_z = qexed_world::player_chunk_coordinate(z);
+    if chunk_x == chunk_view.center_chunk_x()
+        && chunk_z == chunk_view.center_chunk_z()
         && chunk_view.is_complete()
     {
         return Ok(());
@@ -792,7 +714,7 @@ async fn sync_player_chunk_position(
         chunk_view,
         chunk_x,
         chunk_z,
-        chunk_view.radius,
+        chunk_view.radius(),
         Some(CHUNK_SYNC_BATCH_LIMIT),
         qexed_world::ChunkSyncCause::PlayerMove,
     )
@@ -802,7 +724,7 @@ async fn sync_player_chunk_position(
 async fn send_chunk_window(
     connection: &mut ClientConnection,
     runtime: &crate::bootstrap::RuntimeConfig,
-    chunk_view: &mut PlayerChunkView,
+    chunk_view: &mut qexed_world::PlayerChunkView,
     center_chunk_x: i32,
     center_chunk_z: i32,
     radius: i32,
@@ -812,15 +734,17 @@ async fn send_chunk_window(
     let mut count = 0;
     let dimension = qexed_save::DimensionId::overworld();
 
-    let mut target_chunks = chunk_window_positions(center_chunk_x, center_chunk_z, radius);
-    let full_window = chunk_window_positions(center_chunk_x, center_chunk_z, chunk_view.radius);
+    let mut target_chunks =
+        qexed_world::chunk_window_positions(center_chunk_x, center_chunk_z, radius);
+    let full_window =
+        qexed_world::chunk_window_positions(center_chunk_x, center_chunk_z, chunk_view.radius());
     let mut chunks = Vec::new();
     let mut loaded = Vec::new();
 
-    if radius == chunk_view.radius {
+    if radius == chunk_view.radius() {
         target_chunks.extend(
             chunk_view
-                .sent_chunks
+                .sent_chunks()
                 .iter()
                 .copied()
                 .filter(|chunk| full_window.contains(chunk)),
@@ -830,7 +754,7 @@ async fn send_chunk_window(
     let mut candidates = target_chunks
         .iter()
         .copied()
-        .filter(|chunk| !chunk_view.sent_chunks.contains(chunk))
+        .filter(|chunk| !chunk_view.sent_chunks().contains(chunk))
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(chunk_x, chunk_z)| {
         let dx = chunk_x - center_chunk_x;
@@ -877,9 +801,8 @@ async fn send_chunk_window(
         unloading,
     );
 
-    chunk_view.center_chunk_x = center_chunk_x;
-    chunk_view.center_chunk_z = center_chunk_z;
-    chunk_view.sent_chunks.extend(target_chunks);
+    chunk_view.set_center(center_chunk_x, center_chunk_z);
+    chunk_view.extend_sent_chunks(target_chunks);
 
     connection
         .send_packet_batch_with_capacity(256 * 1024, |batch| {
@@ -942,20 +865,6 @@ fn chunk_source_summary(event: &qexed_world::ChunkSyncEvent) -> String {
     )
 }
 
-fn chunk_window_positions(
-    center_chunk_x: i32,
-    center_chunk_z: i32,
-    radius: i32,
-) -> HashSet<(i32, i32)> {
-    let mut chunks = HashSet::new();
-    for chunk_z in center_chunk_z - radius..=center_chunk_z + radius {
-        for chunk_x in center_chunk_x - radius..=center_chunk_x + radius {
-            chunks.insert((chunk_x, chunk_z));
-        }
-    }
-    chunks
-}
-
 fn command_context(
     config: &qexed_config::app::qexed::Qexed,
     profile: &GameProfile,
@@ -989,7 +898,7 @@ async fn sustain_play_connection(
     runtime: &crate::bootstrap::RuntimeConfig,
     command_context: qexed_command::CommandContext,
     chat_context: ChatContext,
-    mut chunk_view: PlayerChunkView,
+    mut chunk_view: qexed_world::PlayerChunkView,
 ) -> anyhow::Result<()> {
     let mut keep_alive = tokio::time::interval(std::time::Duration::from_secs(10));
     keep_alive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1083,11 +992,11 @@ async fn sustain_play_connection(
                     .await?;
                 connection.flush().await?;
             }
-            _ = chunk_sync.tick(), if !chunk_view.is_complete() || !chunk_view.pending_unloads.is_empty() => {
+            _ = chunk_sync.tick(), if !chunk_view.is_complete() || chunk_view.has_pending_unloads() => {
                 if !chunk_view.is_complete() {
-                    let center_chunk_x = chunk_view.center_chunk_x;
-                    let center_chunk_z = chunk_view.center_chunk_z;
-                    let radius = chunk_view.radius;
+                    let center_chunk_x = chunk_view.center_chunk_x();
+                    let center_chunk_z = chunk_view.center_chunk_z();
+                    let radius = chunk_view.radius();
                     send_chunk_window(
                         connection,
                         runtime,
@@ -1114,7 +1023,7 @@ async fn sustain_play_connection(
 
 async fn unload_expired_chunks(
     connection: &mut ClientConnection,
-    chunk_view: &mut PlayerChunkView,
+    chunk_view: &mut qexed_world::PlayerChunkView,
     cause: qexed_world::ChunkSyncCause,
     now: std::time::Instant,
 ) -> anyhow::Result<()> {
@@ -1142,8 +1051,8 @@ async fn unload_expired_chunks(
         .collect();
     log_chunk_sync_event(&qexed_world::ChunkSyncEvent::new(
         cause,
-        chunk_view.center_chunk_x,
-        chunk_view.center_chunk_z,
+        chunk_view.center_chunk_x(),
+        chunk_view.center_chunk_z(),
         Vec::new(),
         unloaded,
         Vec::new(),
@@ -1502,9 +1411,8 @@ fn unknown_command_component(command: &str) -> qexed_protocol::types::TextCompon
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectionIo, PlayerChunkView, build_payload, chunk_source_summary, chunk_window_positions,
-        decode_payload, first_loaded_chunk, first_unloaded_chunk, read_frame, read_packet_id,
-        write_frame,
+        ConnectionIo, build_payload, chunk_source_summary, decode_payload, first_loaded_chunk,
+        first_unloaded_chunk, read_frame, read_packet_id, write_frame,
     };
     use qexed_packet::{Packet, net_types::VarInt};
     use qexed_protocol::to_client;
@@ -1520,6 +1428,7 @@ mod tests {
     };
     use qexed_protocol::to_server::status::ping_start::PingStart;
     use std::{
+        fs,
         net::TcpStream as StdTcpStream,
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
@@ -1577,34 +1486,34 @@ mod tests {
 
     #[test]
     fn chunk_view_delays_and_cancels_unloads() {
-        let mut chunk_view = PlayerChunkView::new(1);
-        chunk_view.sent_chunks.insert((-1, 0));
-        chunk_view.sent_chunks.insert((0, 0));
+        let mut chunk_view = qexed_world::PlayerChunkView::new(1);
+        chunk_view.mark_chunk_sent((-1, 0));
+        chunk_view.mark_chunk_sent((0, 0));
 
         let unload_at = std::time::Instant::now() + Duration::from_secs(4);
-        let shifted_window = chunk_window_positions(2, 0, 1);
+        let shifted_window = qexed_world::chunk_window_positions(2, 0, 1);
         let leaving = chunk_view.mark_delayed_unloads(&shifted_window, unload_at);
 
         assert_eq!(leaving, vec![(-1, 0), (0, 0)]);
-        assert!(chunk_view.sent_chunks.contains(&(-1, 0)));
-        assert!(chunk_view.pending_unloads.contains_key(&(-1, 0)));
+        assert!(chunk_view.sent_chunks().contains(&(-1, 0)));
+        assert!(chunk_view.has_pending_unloads());
         assert!(
             chunk_view
                 .expired_unloads(unload_at - Duration::from_millis(1))
                 .is_empty()
         );
 
-        let original_window = chunk_window_positions(0, 0, 1);
+        let original_window = qexed_world::chunk_window_positions(0, 0, 1);
         chunk_view.mark_delayed_unloads(&original_window, unload_at);
 
-        assert!(!chunk_view.pending_unloads.contains_key(&(-1, 0)));
-        assert!(chunk_view.sent_chunks.contains(&(-1, 0)));
+        assert!(!chunk_view.has_pending_unloads());
+        assert!(chunk_view.sent_chunks().contains(&(-1, 0)));
     }
 
     #[test]
     fn moved_chunk_window_identifies_chunks_to_unload() {
-        let old_window = super::chunk_window_positions(0, 0, 1);
-        let new_window = super::chunk_window_positions(2, 0, 1);
+        let old_window = qexed_world::chunk_window_positions(0, 0, 1);
+        let new_window = qexed_world::chunk_window_positions(2, 0, 1);
         let mut leaving_chunks = old_window
             .difference(&new_window)
             .copied()
@@ -1911,9 +1820,9 @@ mod tests {
         chunk_z: i32,
     ) {
         let target_region = manager.storage().region_path(dimension, chunk_x, chunk_z);
-        let cache_region = java_oracle_region_cache_path(dimension, seed, chunk_x, chunk_z);
-        if cache_region.exists() {
-            copy_region_file(&cache_region, &target_region)
+        let cache_entry = JavaOracleCacheEntry::new(dimension, seed, chunk_x, chunk_z);
+        if cache_entry.is_valid() {
+            copy_region_file(&cache_entry.region_path, &target_region)
                 .expect("cached Java oracle region should copy into test save");
             return;
         }
@@ -1925,30 +1834,105 @@ mod tests {
             .request_vanilla_generated_chunk(&client, dimension, chunk_x, chunk_z)
             .await
             .expect("Java oracle should generate chunk");
-        copy_region_file(&target_region, &cache_region)
+        cache_entry
+            .store_region(&target_region)
             .expect("Java oracle region should be saved into cache");
     }
 
-    fn java_oracle_region_cache_path(
-        dimension: &qexed_save::DimensionId,
+    const JAVA_ORACLE_CACHE_SCHEMA: &str = "2";
+    const JAVA_ORACLE_GENERATION_CONFIG: &str =
+        "minecraft-server;overworld;view-distance=4;simulation-distance=4;status=full";
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct JavaOracleCacheKey {
+        minecraft_version: &'static str,
+        cache_schema: &'static str,
         seed: i64,
         chunk_x: i32,
         chunk_z: i32,
-    ) -> PathBuf {
-        let region_x = chunk_x.div_euclid(32);
-        let region_z = chunk_z.div_euclid(32);
+        dimension_namespace: String,
+        dimension_value: String,
+        generation_config: &'static str,
+    }
+
+    impl JavaOracleCacheKey {
+        fn new(dimension: &qexed_save::DimensionId, seed: i64, chunk_x: i32, chunk_z: i32) -> Self {
+            Self {
+                minecraft_version: qexed_config::MC_VERSION,
+                cache_schema: JAVA_ORACLE_CACHE_SCHEMA,
+                seed,
+                chunk_x,
+                chunk_z,
+                dimension_namespace: dimension.namespace().to_string(),
+                dimension_value: dimension.value().to_string(),
+                generation_config: JAVA_ORACLE_GENERATION_CONFIG,
+            }
+        }
+
+        fn manifest(&self) -> String {
+            [
+                format!("cache_schema={}", self.cache_schema),
+                format!("minecraft_version={}", self.minecraft_version),
+                format!("seed={}", self.seed),
+                format!("chunk_x={}", self.chunk_x),
+                format!("chunk_z={}", self.chunk_z),
+                format!("dimension_namespace={}", self.dimension_namespace),
+                format!("dimension_value={}", self.dimension_value),
+                format!("generation_config={}", self.generation_config),
+            ]
+            .join("\n")
+                + "\n"
+        }
+    }
+
+    struct JavaOracleCacheEntry {
+        key: JavaOracleCacheKey,
+        region_path: PathBuf,
+        manifest_path: PathBuf,
+    }
+
+    impl JavaOracleCacheEntry {
+        fn new(dimension: &qexed_save::DimensionId, seed: i64, chunk_x: i32, chunk_z: i32) -> Self {
+            let region_x = chunk_x.div_euclid(32);
+            let region_z = chunk_z.div_euclid(32);
+            let key = JavaOracleCacheKey::new(dimension, seed, chunk_x, chunk_z);
+            let root = java_oracle_cache_root()
+                .join(format!("seed-{seed}"))
+                .join(dimension.namespace())
+                .join(dimension.value())
+                .join("chunks")
+                .join(format!("x.{chunk_x}.z.{chunk_z}"));
+            Self {
+                key,
+                region_path: root.join(format!("r.{region_x}.{region_z}.mca")),
+                manifest_path: root.join("manifest.txt"),
+            }
+        }
+
+        fn is_valid(&self) -> bool {
+            self.region_path.is_file()
+                && fs::read_to_string(&self.manifest_path)
+                    .is_ok_and(|manifest| manifest == self.key.manifest())
+        }
+
+        fn store_region(&self, source_region: &Path) -> std::io::Result<()> {
+            if let Some(parent) = self.region_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(source_region, &self.region_path)?;
+            fs::write(&self.manifest_path, self.key.manifest())?;
+            Ok(())
+        }
+    }
+
+    fn java_oracle_cache_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .expect("workspace root should resolve")
             .join("target")
             .join("worldgen-oracle")
-            .join("26.2")
-            .join(format!("seed-{seed}"))
-            .join(dimension.namespace())
-            .join(dimension.value())
-            .join("region")
-            .join(format!("r.{region_x}.{region_z}.mca"))
+            .join(qexed_config::MC_VERSION)
     }
 
     fn java_oracle_compare_seeds() -> Vec<i64> {
@@ -1961,6 +1945,22 @@ mod tests {
             .filter(|value| !value.is_empty())
             .map(|value| value.parse().expect("Java oracle seed should be an i64"))
             .collect()
+    }
+
+    #[test]
+    fn java_oracle_cache_manifest_keys_generation_inputs() {
+        let overworld = qexed_save::DimensionId::overworld();
+        let first = JavaOracleCacheKey::new(&overworld, 42, 0, 0).manifest();
+        let same = JavaOracleCacheKey::new(&overworld, 42, 0, 0).manifest();
+        let other_chunk = JavaOracleCacheKey::new(&overworld, 42, 1, 0).manifest();
+        let other_seed = JavaOracleCacheKey::new(&overworld, 43, 0, 0).manifest();
+
+        assert_eq!(first, same);
+        assert_ne!(first, other_chunk);
+        assert_ne!(first, other_seed);
+        assert!(first.contains(&format!("minecraft_version={}", qexed_config::MC_VERSION)));
+        assert!(first.contains("dimension_value=overworld"));
+        assert!(first.contains("generation_config=minecraft-server;overworld;"));
     }
 
     struct TestWorldgenProcess {
