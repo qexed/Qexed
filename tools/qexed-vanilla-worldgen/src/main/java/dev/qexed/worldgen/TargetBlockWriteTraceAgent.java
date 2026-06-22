@@ -17,8 +17,15 @@ public final class TargetBlockWriteTraceAgent {
     private static final String METHOD_DESC = "(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Lnet/minecraft/world/level/block/state/BlockState;";
     private static final String SECTION_METHOD_DESC = "(IIILnet/minecraft/world/level/block/state/BlockState;Z)Lnet/minecraft/world/level/block/state/BlockState;";
     private static final String GET_SECTION_DESC = "(I)Lnet/minecraft/world/level/chunk/LevelChunkSection;";
+    private static final String SET_DECORATION_SEED_DESC = "(JII)J";
+    private static final String SET_FEATURE_SEED_DESC = "(JII)V";
+    private static final String FEATURE_PLACE_DESC = "(Lnet/minecraft/world/level/levelgen/feature/configurations/FeatureConfiguration;Lnet/minecraft/world/level/WorldGenLevel;Lnet/minecraft/world/level/chunk/ChunkGenerator;Lnet/minecraft/util/RandomSource;Lnet/minecraft/core/BlockPos;)Z";
+    private static final String ORE_PLACE_DESC = "(Lnet/minecraft/world/level/levelgen/feature/FeaturePlaceContext;)Z";
     private static final Map<Object, SectionInfo> SECTIONS =
             Collections.synchronizedMap(new IdentityHashMap<>());
+    private static final Map<Object, FeatureSeedInfo> FEATURE_SEEDS =
+            Collections.synchronizedMap(new IdentityHashMap<>());
+    private static final ThreadLocal<FeatureSeedInfo> CURRENT_FEATURE_SEED = new ThreadLocal<>();
 
     private TargetBlockWriteTraceAgent() {
     }
@@ -123,6 +130,115 @@ public final class TargetBlockWriteTraceAgent {
         return section;
     }
 
+    public static void traceDecorationSeed(long decorationSeed, Object random, long worldSeed, int x, int z) {
+        FEATURE_SEEDS.put(random, new FeatureSeedInfo(worldSeed, x, z, decorationSeed, -1, -1));
+    }
+
+    public static void traceFeatureSeed(Object random, long decorationSeed, int featureIndex, int stepIndex) {
+        FeatureSeedInfo previous = FEATURE_SEEDS.get(random);
+        FeatureSeedInfo info = previous == null
+                ? new FeatureSeedInfo(0L, 0, 0, decorationSeed, featureIndex, stepIndex)
+                : previous.withFeature(decorationSeed, featureIndex, stepIndex);
+        FEATURE_SEEDS.put(random, info);
+        innerRandom(random).ifPresent(inner -> FEATURE_SEEDS.put(inner, info));
+        CURRENT_FEATURE_SEED.set(info);
+        if (isRedstoneLowerFeature(featureIndex, stepIndex)) {
+            System.out.printf(
+                    "java feature seed trace: name=ore_redstone_lower source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d%n",
+                    info.originX,
+                    info.originZ,
+                    Math.floorDiv(info.originX, 16),
+                    Math.floorDiv(info.originZ, 16),
+                    decorationSeed,
+                    stepIndex,
+                    featureIndex);
+        }
+    }
+
+    public static void traceOreFeaturePlace(Object context) {
+        try {
+            Object random = context.getClass().getMethod("random").invoke(context);
+            Object origin = context.getClass().getMethod("origin").invoke(context);
+            Object config = context.getClass().getMethod("config").invoke(context);
+            String configText = String.valueOf(config);
+            if (!configText.contains("redstone_ore")) {
+                return;
+            }
+            Class<?> vec3i = Class.forName("net.minecraft.core.Vec3i", false, origin.getClass().getClassLoader());
+            int x = (Integer) vec3i.getMethod("getX").invoke(origin);
+            int y = (Integer) vec3i.getMethod("getY").invoke(origin);
+            int z = (Integer) vec3i.getMethod("getZ").invoke(origin);
+            FeatureSeedInfo info = FEATURE_SEEDS.get(random);
+            System.out.printf(
+                    "java ore feature place trace: origin=(%d,%d,%d) source_origin=%s source_chunk=%s decoration_seed=%s step=%s index=%s config=%s%n",
+                    x,
+                    y,
+                    z,
+                    info == null ? "unknown" : "(" + info.originX + "," + info.originZ + ")",
+                    info == null
+                            ? "unknown"
+                            : "(" + Math.floorDiv(info.originX, 16) + "," + Math.floorDiv(info.originZ, 16) + ")",
+                    info == null ? "unknown" : Long.toString(info.decorationSeed),
+                    info == null ? "unknown" : Integer.toString(info.stepIndex),
+                    info == null ? "unknown" : Integer.toString(info.featureIndex),
+                    compactConfig(configText));
+        } catch (ReflectiveOperationException error) {
+            System.out.printf("java ore feature place trace failed: %s%n", error);
+        }
+    }
+
+    public static void traceFeaturePlace(Object config, Object random, Object origin) {
+        try {
+            FeatureSeedInfo info = FEATURE_SEEDS.get(random);
+            if (info == null) {
+                info = CURRENT_FEATURE_SEED.get();
+            }
+            if (info == null || !isRedstoneLowerFeature(info.featureIndex, info.stepIndex)) {
+                return;
+            }
+            String configClass = config.getClass().getName();
+            if (!"net.minecraft.world.level.levelgen.feature.configurations.OreConfiguration".equals(configClass)) {
+                return;
+            }
+            Class<?> vec3i = Class.forName("net.minecraft.core.Vec3i", false, origin.getClass().getClassLoader());
+            int x = (Integer) vec3i.getMethod("getX").invoke(origin);
+            int y = (Integer) vec3i.getMethod("getY").invoke(origin);
+            int z = (Integer) vec3i.getMethod("getZ").invoke(origin);
+            System.out.printf(
+                    "java ore_redstone_lower real place: source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d origin=(%d,%d,%d)%n",
+                    info.originX,
+                    info.originZ,
+                    Math.floorDiv(info.originX, 16),
+                    Math.floorDiv(info.originZ, 16),
+                    info.decorationSeed,
+                    info.stepIndex,
+                    info.featureIndex,
+                    x,
+                    y,
+                    z);
+        } catch (ReflectiveOperationException error) {
+            System.out.printf("java feature place trace failed: %s%n", error);
+        }
+    }
+
+    private static boolean isRedstoneLowerFeature(int featureIndex, int stepIndex) {
+        return stepIndex == 6 && featureIndex == 17;
+    }
+
+    private static String compactConfig(String configText) {
+        return configText.length() <= 240 ? configText : configText.substring(0, 240) + "...";
+    }
+
+    private static java.util.Optional<Object> innerRandom(Object random) {
+        try {
+            java.lang.reflect.Field field = random.getClass().getDeclaredField("randomSource");
+            field.setAccessible(true);
+            return java.util.Optional.ofNullable(field.get(random));
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return java.util.Optional.empty();
+        }
+    }
+
     private static int targetX() {
         return Integer.getInteger("qexed.traceBlock.x", 6);
     }
@@ -153,7 +269,10 @@ public final class TargetBlockWriteTraceAgent {
             if (!"net/minecraft/world/level/chunk/ProtoChunk".equals(className)
                     && !"net/minecraft/world/level/chunk/LevelChunk".equals(className)
                     && !"net/minecraft/world/level/chunk/ChunkAccess".equals(className)
-                    && !"net/minecraft/world/level/chunk/LevelChunkSection".equals(className)) {
+                    && !"net/minecraft/world/level/chunk/LevelChunkSection".equals(className)
+                    && !"net/minecraft/world/level/levelgen/WorldgenRandom".equals(className)
+                    && !"net/minecraft/world/level/levelgen/feature/Feature".equals(className)
+                    && !"net/minecraft/world/level/levelgen/feature/OreFeature".equals(className)) {
                 return null;
             }
 
@@ -177,6 +296,85 @@ public final class TargetBlockWriteTraceAgent {
         @Override
         public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
             MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+            if ("net/minecraft/world/level/levelgen/WorldgenRandom".equals(className)
+                    && "setDecorationSeed".equals(name)
+                    && SET_DECORATION_SEED_DESC.equals(descriptor)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitInsn(int opcode) {
+                        if (opcode == Opcodes.LRETURN) {
+                            visitInsn(Opcodes.DUP2);
+                            visitVarInsn(Opcodes.ALOAD, 0);
+                            visitVarInsn(Opcodes.LLOAD, 1);
+                            visitVarInsn(Opcodes.ILOAD, 3);
+                            visitVarInsn(Opcodes.ILOAD, 4);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                    "traceDecorationSeed",
+                                    "(JLjava/lang/Object;JII)V",
+                                    false);
+                        }
+                        super.visitInsn(opcode);
+                    }
+                };
+            }
+            if ("net/minecraft/world/level/levelgen/WorldgenRandom".equals(className)
+                    && "setFeatureSeed".equals(name)
+                    && SET_FEATURE_SEED_DESC.equals(descriptor)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        visitVarInsn(Opcodes.ALOAD, 0);
+                        visitVarInsn(Opcodes.LLOAD, 1);
+                        visitVarInsn(Opcodes.ILOAD, 3);
+                        visitVarInsn(Opcodes.ILOAD, 4);
+                        visitMethodInsn(
+                                Opcodes.INVOKESTATIC,
+                                "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                "traceFeatureSeed",
+                                "(Ljava/lang/Object;JII)V",
+                                false);
+                    }
+                };
+            }
+            if ("net/minecraft/world/level/levelgen/feature/OreFeature".equals(className)
+                    && "place".equals(name)
+                    && ORE_PLACE_DESC.equals(descriptor)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        visitVarInsn(Opcodes.ALOAD, 1);
+                        visitMethodInsn(
+                                Opcodes.INVOKESTATIC,
+                                "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                "traceOreFeaturePlace",
+                                "(Ljava/lang/Object;)V",
+                                false);
+                    }
+                };
+            }
+            if ("net/minecraft/world/level/levelgen/feature/Feature".equals(className)
+                    && "place".equals(name)
+                    && FEATURE_PLACE_DESC.equals(descriptor)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        visitVarInsn(Opcodes.ALOAD, 1);
+                        visitVarInsn(Opcodes.ALOAD, 4);
+                        visitVarInsn(Opcodes.ALOAD, 5);
+                        visitMethodInsn(
+                                Opcodes.INVOKESTATIC,
+                                "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                "traceFeaturePlace",
+                                "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V",
+                                false);
+                    }
+                };
+            }
             if (METHOD_NAME.equals(name) && SECTION_METHOD_DESC.equals(descriptor)) {
                 return new MethodVisitor(Opcodes.ASM9, method) {
                     @Override
@@ -242,5 +440,11 @@ public final class TargetBlockWriteTraceAgent {
     }
 
     private record SectionInfo(int chunkX, int chunkZ, int sectionY) {
+    }
+
+    private record FeatureSeedInfo(long worldSeed, int originX, int originZ, long decorationSeed, int featureIndex, int stepIndex) {
+        private FeatureSeedInfo withFeature(long nextDecorationSeed, int nextFeatureIndex, int nextStepIndex) {
+            return new FeatureSeedInfo(worldSeed, originX, originZ, nextDecorationSeed, nextFeatureIndex, nextStepIndex);
+        }
     }
 }
