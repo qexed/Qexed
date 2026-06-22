@@ -250,7 +250,7 @@ pub extern "C" fn qexed_plugin_player_item_pickup(ptr: i32, len: i32) -> i64 {
         return qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse::default());
     };
     let config = load_config();
-    if !config.enable || !config.auto_sell || payload.count <= 0 {
+    if !config.enable || payload.count <= 0 {
         return qexed_plugin_sdk::response_ptr_len(&PlayerItemPickupResponse::default());
     }
 
@@ -734,8 +734,6 @@ struct Config {
     unselected_label: String,
     #[serde(default = "default_lobby_server")]
     lobby_server: String,
-    #[serde(default = "default_enable")]
-    auto_sell: bool,
     #[serde(default = "default_currency_id")]
     currency_id: String,
     #[serde(default = "default_currency_name")]
@@ -1341,58 +1339,6 @@ fn plugin_enchantment_label(id: &str) -> &str {
     }
 }
 
-/// Enchantment metadata
-struct EnchantDef {
-    key: &'static str,
-    label: &'static str,
-    max_level: i32,
-    apply_to: &'static str, // "pickaxe", "sword", "bow", "armor", "all"
-    tier: &'static str,     // "T0", "T1", "T2"
-}
-
-fn enchantment_registry() -> Vec<EnchantDef> {
-    vec![
-        // Pickaxe T1
-        EnchantDef { key: "prison:eff", label: "效率+", max_level: 8, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:fortune", label: "时运权重", max_level: 4, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:autosmelt", label: "自动熔炼", max_level: 3, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:coindrop", label: "代币掉落", max_level: 4, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:autosell", label: "自动售卖", max_level: 3, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:magnet", label: "磁铁", max_level: 2, apply_to: "pickaxe", tier: "T0" },
-        EnchantDef { key: "prison:explosive", label: "爆破者", max_level: 5, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:vein", label: "矿脉连锁", max_level: 3, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:xdrill", label: "X形钻进", max_level: 2, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:xpboost", label: "经验汲取", max_level: 3, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:keysense", label: "钥匙感知", max_level: 1, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:reinforced", label: "强化", max_level: 3, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:selfrepair", label: "自修", max_level: 4, apply_to: "pickaxe", tier: "T1" },
-        // Legacy (keep for backward compat)
-        EnchantDef { key: "prison:blast", label: "爆破者", max_level: 3, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:hell_furnace", label: "地狱熔炉", max_level: 1, apply_to: "pickaxe", tier: "T1" },
-        EnchantDef { key: "prison:haste", label: "急速", max_level: 5, apply_to: "pickaxe", tier: "T1" },
-        // Weapon T2
-        EnchantDef { key: "prison:edge", label: "锐锋", max_level: 5, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:bleed", label: "流血", max_level: 3, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:burn", label: "灼烧", max_level: 3, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:stun", label: "眩晕", max_level: 2, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:lifesteal", label: "生命汲取", max_level: 3, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:execute", label: "处决", max_level: 2, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:launch", label: "击退+", max_level: 3, apply_to: "sword", tier: "T2" },
-        EnchantDef { key: "prison:disarm", label: "缴械", max_level: 1, apply_to: "sword", tier: "T2" },
-        // Bow T2
-        EnchantDef { key: "prison:piercearmor", label: "穿甲", max_level: 3, apply_to: "bow", tier: "T2" },
-        EnchantDef { key: "prison:shock", label: "电击弦", max_level: 2, apply_to: "bow", tier: "T2" },
-        // Armor T2
-        EnchantDef { key: "prison:padding", label: "缓冲", max_level: 4, apply_to: "armor", tier: "T2" },
-        EnchantDef { key: "prison:blastguard", label: "防爆衬", max_level: 3, apply_to: "armor", tier: "T2" },
-        EnchantDef { key: "prison:featherfall", label: "羽落", max_level: 3, apply_to: "armor", tier: "T2" },
-        EnchantDef { key: "prison:evade", label: "闪避", max_level: 2, apply_to: "armor", tier: "T2" },
-        EnchantDef { key: "prison:cleanse", label: "净化", max_level: 2, apply_to: "armor", tier: "T2" },
-        // Cosmetic T0
-        EnchantDef { key: "prison:glow", label: "霓虹辉光", max_level: 1, apply_to: "all", tier: "T0" },
-    ]
-}
-
 fn register_currency(config: &Config) {
     let _ = economy_register_currency(
         &config.currency_id,
@@ -1484,7 +1430,6 @@ auto_refill_enable = true
 auto_refill_threshold_percent = 30
 unselected_label = "未选择"
 lobby_server = "lobby_1"
-auto_sell = true
 currency_id = "qexed:coin"
 currency_name = "Coin"
 currency_symbol = "$"
