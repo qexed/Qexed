@@ -23,3 +23,8 @@ tasks.register("runtimeClasspathCopy", Copy) {
     from configurations.runtimeClasspath
     into layout.buildDirectory.dir("runtime-libs")
 }
+
+tasks.register("dumpRedstoneLowerSphereDiagnostic", JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "dev.qexed.worldgen.RedstoneLowerSphereDiagnostic"
+}
