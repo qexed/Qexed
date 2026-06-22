@@ -36,6 +36,7 @@ const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const CHUNK_GENERATION_TIMEOUT: Duration = Duration::from_millis(150);
 const INITIAL_CHUNK_RADIUS: i32 = 0;
+const INITIAL_CHUNK_PREWARM_LIMIT: usize = 16;
 const CHUNK_SYNC_BATCH_LIMIT: usize = 16;
 const CHUNK_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
@@ -619,6 +620,7 @@ async fn enter_play(
     )
     .await?;
     connection.flush().await?;
+    prewarm_initial_chunks(runtime, spawn_chunk_x, spawn_chunk_z, chunk_view.radius());
     fire_player_join_event(&player_state).await;
     let command_context = command_context(config, profile);
     let chat_context = ChatContext {
@@ -641,6 +643,58 @@ async fn enter_play(
     fire_player_leave_event(&player_state).await;
     result
 }
+
+fn prewarm_initial_chunks(
+    runtime: &crate::bootstrap::RuntimeConfig,
+    center_chunk_x: i32,
+    center_chunk_z: i32,
+    radius: i32,
+) {
+    let Some(generator) = runtime.local_worldgen.clone() else {
+        return;
+    };
+
+    let world = runtime.world.clone();
+    let dimension = qexed_save::DimensionId::overworld();
+    let mut chunks = qexed_world::chunk_window_positions(center_chunk_x, center_chunk_z, radius)
+        .into_iter()
+        .filter(|&(chunk_x, chunk_z)| chunk_x != center_chunk_x || chunk_z != center_chunk_z)
+        .collect::<Vec<_>>();
+    chunks.sort_by_key(|(chunk_x, chunk_z)| {
+        let dx = chunk_x - center_chunk_x;
+        let dz = chunk_z - center_chunk_z;
+        dx * dx + dz * dz
+    });
+    chunks.truncate(INITIAL_CHUNK_PREWARM_LIMIT);
+
+    if chunks.is_empty() {
+        return;
+    }
+
+    let _prewarm = tokio::task::spawn_blocking(move || {
+        for (chunk_x, chunk_z) in chunks {
+            match world.network_chunk(&dimension, chunk_x, chunk_z) {
+                Ok(Some(_)) => continue,
+                Ok(None) => {}
+                Err(err) => {
+                    tklog::warn!(format!(
+                        "initial chunk prewarm skipped unreadable chunk: chunk=({chunk_x}, {chunk_z}), error={err:#}"
+                    ));
+                    continue;
+                }
+            }
+
+            if let Err(err) =
+                world.request_local_generated_chunk(&generator, &dimension, chunk_x, chunk_z)
+            {
+                tklog::warn!(format!(
+                    "initial chunk prewarm failed: chunk=({chunk_x}, {chunk_z}), error={err:#}"
+                ));
+            }
+        }
+    });
+}
+
 fn load_player_state(
     runtime: &crate::bootstrap::RuntimeConfig,
     session: &LoginSession,
