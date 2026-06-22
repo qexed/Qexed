@@ -17,6 +17,7 @@ minecraft {
 
 dependencies {
     implementation "com.fasterxml.jackson.core:jackson-databind:2.18.2"
+    implementation "org.ow2.asm:asm:9.9"
 }
 
 tasks.register("runtimeClasspathCopy", Copy) {
@@ -27,4 +28,29 @@ tasks.register("runtimeClasspathCopy", Copy) {
 tasks.register("dumpRedstoneLowerSphereDiagnostic", JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = "dev.qexed.worldgen.RedstoneLowerSphereDiagnostic"
+}
+
+tasks.register("traceTargetBlockWrites", JavaExec) {
+    dependsOn tasks.named("targetBlockWriteTraceAgentJar")
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "dev.qexed.worldgen.TargetBlockWriteTraceDiagnostic"
+    environment "QEXED_VANILLA_TARGET_BLOCK_TRACE_AGENT",
+        tasks.named("targetBlockWriteTraceAgentJar").flatMap { it.archiveFile }.get().asFile.absolutePath
+}
+
+tasks.register("targetBlockWriteTraceAgentJar", Jar) {
+    archiveClassifier = "target-block-write-trace-agent"
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath
+            .filter { it.name.startsWith("asm-") }
+            .collect { zipTree(it) }
+    }
+    manifest {
+        attributes(
+            "Premain-Class": "dev.qexed.worldgen.TargetBlockWriteTraceAgent",
+            "Can-Redefine-Classes": "false",
+            "Can-Retransform-Classes": "false"
+        )
+    }
 }

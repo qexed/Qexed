@@ -3,6 +3,8 @@ package dev.qexed.worldgen;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.util.ArrayList;
+import java.util.List;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,18 +56,20 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
         Files.writeString(serverRoot.resolve("eula.txt"), "eula=true\n");
         writeServerProperties(serverRoot.resolve("server.properties"), seed);
 
-        ProcessBuilder builder = new ProcessBuilder(
-                javaExecutable(),
-                "-cp",
-                absoluteClassPath(),
-                Main.class.getName(),
-                "--nogui",
-                "--universe",
-                serverRoot.toAbsolutePath().toString(),
-                "--world",
-                "world",
-                "--port",
-                "0");
+        List<String> command = new ArrayList<>();
+        command.add(javaExecutable());
+        targetBlockTraceAgent().ifPresent(command::add);
+        command.add("-cp");
+        command.add(absoluteClassPath());
+        command.add(Main.class.getName());
+        command.add("--nogui");
+        command.add("--universe");
+        command.add(serverRoot.toAbsolutePath().toString());
+        command.add("--world");
+        command.add("world");
+        command.add("--port");
+        command.add("0");
+        ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(serverRoot.toFile());
         builder.redirectErrorStream(true);
         builder.redirectOutput(ProcessBuilder.Redirect.INHERIT);
@@ -202,6 +206,22 @@ final class MinecraftServerChunkWriter implements VanillaChunkWriter, AutoClosea
             classPath.append(Path.of(entry).toAbsolutePath());
         }
         return classPath.toString();
+    }
+
+    private static java.util.Optional<String> targetBlockTraceAgent() {
+        String path = System.getenv("QEXED_VANILLA_TARGET_BLOCK_TRACE_AGENT");
+        if (path == null || path.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        String target = System.getenv().getOrDefault("QEXED_VANILLA_TARGET_BLOCK_TRACE", "6,-61,0");
+        String[] parts = target.split(",");
+        if (parts.length != 3) {
+            throw new IllegalArgumentException("invalid QEXED_VANILLA_TARGET_BLOCK_TRACE: " + target);
+        }
+        return java.util.Optional.of(String.format(
+                "-javaagent:%s=target(%s)",
+                Path.of(path).toAbsolutePath(),
+                target));
     }
 
     @Override
