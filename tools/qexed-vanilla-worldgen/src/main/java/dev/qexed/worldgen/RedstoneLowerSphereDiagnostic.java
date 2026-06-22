@@ -1,5 +1,15 @@
 package dev.qexed.worldgen;
 
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
+import java.nio.file.Path;
+import java.util.BitSet;
+import java.util.Optional;
+import java.util.zip.InflaterInputStream;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 
@@ -9,6 +19,11 @@ public final class RedstoneLowerSphereDiagnostic {
     private static final int FEATURE_INDEX = 17;
     private static final int STEP_INDEX = 6;
     private static final int SIZE = 8;
+    private static final int TARGET_X = 6;
+    private static final int TARGET_Y = -61;
+    private static final int TARGET_Z = 0;
+    private static final String TARGET_BASE_STATE = "minecraft:deepslate[axis=y]";
+    private static final String TARGET_ORE_STATE = "minecraft:deepslate_redstone_ore";
 
     private RedstoneLowerSphereDiagnostic() {
     }
@@ -65,7 +80,8 @@ public final class RedstoneLowerSphereDiagnostic {
                     prefix.testedSizeZ + 1,
                     prefix.testedStrideX,
                     prefix.testedStrideY);
-            printSpheres(random, prefix);
+            printSpheresAndTargetPath(random, prefix);
+            printFinalVanillaBlockIfRequested(seed, chunkX, chunkZ);
             return;
         }
 
@@ -135,7 +151,7 @@ public final class RedstoneLowerSphereDiagnostic {
         }
     }
 
-    private static void printSpheres(XoroshiroRandomSource random, BlobPrefix prefix) {
+    private static void printSpheresAndTargetPath(XoroshiroRandomSource random, BlobPrefix prefix) {
         Sphere[] spheres = new Sphere[SIZE];
         for (int index = 0; index < SIZE; index++) {
             float step = (float) index / (float) SIZE;
@@ -183,6 +199,154 @@ public final class RedstoneLowerSphereDiagnostic {
                     sphere.radiusBeforeCull,
                     sphere.radiusAfterCull);
         }
+
+        traceTargetPlacement(prefix, spheres);
+    }
+
+    private static void traceTargetPlacement(BlobPrefix prefix, Sphere[] spheres) {
+        BitSet tested = new BitSet(prefix.testedSizeX * prefix.testedSizeY * prefix.testedSizeZ);
+        boolean placed = false;
+        for (Sphere sphere : spheres) {
+            double radius = sphere.radiusAfterCull;
+            if (radius < 0.0D) {
+                continue;
+            }
+
+            int xMin = Math.max(Mth.floor(sphere.x - radius), prefix.minBoxX);
+            int yMin = Math.max(Mth.floor(sphere.y - radius), prefix.minBoxY);
+            int zMin = Math.max(Mth.floor(sphere.z - radius), prefix.minBoxZ);
+            int xMax = Math.max(Mth.floor(sphere.x + radius), xMin);
+            int yMax = Math.max(Mth.floor(sphere.y + radius), yMin);
+            int zMax = Math.max(Mth.floor(sphere.z + radius), zMin);
+
+            for (int x = xMin; x <= xMax; x++) {
+                double xd = ((double) x + 0.5D - sphere.x) / radius;
+                if (xd * xd >= 1.0D) {
+                    continue;
+                }
+                for (int y = yMin; y <= yMax; y++) {
+                    double yd = ((double) y + 0.5D - sphere.y) / radius;
+                    if (xd * xd + yd * yd >= 1.0D) {
+                        continue;
+                    }
+                    for (int z = zMin; z <= zMax; z++) {
+                        double zd = ((double) z + 0.5D - sphere.z) / radius;
+                        boolean inside = xd * xd + yd * yd + zd * zd < 1.0D;
+                        boolean outsideBuildHeight = y < WORLD_MIN_Y || y >= WORLD_MIN_Y + WORLD_HEIGHT;
+                        if (!inside || outsideBuildHeight) {
+                            continue;
+                        }
+                        int bitSetIndex = x - prefix.minBoxX
+                                + (y - prefix.minBoxY) * prefix.testedStrideX
+                                + (z - prefix.minBoxZ) * prefix.testedStrideX * prefix.testedStrideY;
+                        boolean bitsetBefore = tested.get(bitSetIndex);
+                        if (x == TARGET_X && y == TARGET_Y && z == TARGET_Z) {
+                            String originalState = placed ? TARGET_ORE_STATE : TARGET_BASE_STATE;
+                            boolean targetPredicateMatches = originalState.startsWith("minecraft:deepslate");
+                            boolean discardAirCheckSkipped = true;
+                            boolean canPlaceOre = !bitsetBefore && targetPredicateMatches && discardAirCheckSkipped;
+                            System.out.printf(
+                                    "java ore_redstone_lower attempt=3 sphere=%d doPlace_replay target_path coord=(%d,%d,%d) bitset_index=%d bitset_before=%s original_state=%s target_predicate=DeepslateOreReplaceables target_predicate_matches=%s discard_air_check=skipped(discardChance=0.0) discard_air_check_result=%s can_place_ore=%s call_setBlockState=%s call_markPosForPostprocessing=%s%n",
+                                    sphere.index,
+                                    x,
+                                    y,
+                                    z,
+                                    bitSetIndex,
+                                    bitsetBefore,
+                                    originalState,
+                                    targetPredicateMatches,
+                                    discardAirCheckSkipped,
+                                    canPlaceOre,
+                                    canPlaceOre,
+                                    false);
+                        }
+                        if (!bitsetBefore) {
+                            tested.set(bitSetIndex);
+                            if (x == TARGET_X && y == TARGET_Y && z == TARGET_Z && !placed) {
+                                placed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static void printFinalVanillaBlockIfRequested(long seed, int chunkX, int chunkZ) {
+        String regionPath = System.getenv("QEXED_VANILLA_REGION_PATH");
+        if (regionPath == null || regionPath.isBlank()) {
+            return;
+        }
+
+        try {
+            String block = readBlockState(Path.of(regionPath), chunkX, chunkZ, TARGET_X, TARGET_Y, TARGET_Z)
+                    .orElse("missing");
+            System.out.printf(
+                    "java final vanilla cache seed=%d chunk=(%d,%d) target=(%d,%d,%d) block=%s%n",
+                    seed,
+                    chunkX,
+                    chunkZ,
+                    TARGET_X,
+                    TARGET_Y,
+                    TARGET_Z,
+                    block);
+        } catch (Exception ex) {
+            System.out.printf("java final vanilla cache read_failed path=%s error=%s%n", regionPath, ex);
+        }
+    }
+
+    private static Optional<String> readBlockState(Path regionPath, int chunkX, int chunkZ, int x, int y, int z) throws Exception {
+        byte[] compressedChunk = AnvilRegionWriter.readCompressedChunk(regionPath, chunkX, chunkZ);
+        if (compressedChunk == null) {
+            return Optional.empty();
+        }
+        try (DataInputStream input = new DataInputStream(
+                new InflaterInputStream(new ByteArrayInputStream(compressedChunk)))) {
+            CompoundTag root = NbtIo.read(input, NbtAccounter.unlimitedHeap());
+            if (root == null) {
+                return Optional.empty();
+            }
+            return blockStateAt(root, x, y, z);
+        }
+    }
+
+    private static Optional<String> blockStateAt(CompoundTag root, int x, int y, int z) {
+        ListTag sections = root.getListOrEmpty("sections");
+        int sectionY = Math.floorDiv(y, 16);
+        for (int sectionIndex = 0; sectionIndex < sections.size(); sectionIndex++) {
+            Optional<CompoundTag> section = sections.getCompound(sectionIndex);
+            if (section.isEmpty() || section.get().getByteOr("Y", (byte) 0) != (byte) sectionY) {
+                continue;
+            }
+            CompoundTag blockStates = section.get().getCompoundOrEmpty("block_states");
+            ListTag palette = blockStates.getListOrEmpty("palette");
+            if (palette.isEmpty()) {
+                return Optional.empty();
+            }
+            int paletteIndex = paletteIndex(blockStates, x, y, z);
+            if (paletteIndex < 0 || paletteIndex >= palette.size()) {
+                return Optional.empty();
+            }
+            return palette.getCompound(paletteIndex)
+                    .flatMap(state -> state.getString("Name"));
+        }
+        return Optional.empty();
+    }
+
+    private static int paletteIndex(CompoundTag blockStates, int x, int y, int z) {
+        long[] data = blockStates.getLongArray("data").orElse(null);
+        if (data == null || data.length == 0) {
+            return 0;
+        }
+
+        ListTag palette = blockStates.getListOrEmpty("palette");
+        int bitsPerEntry = Math.max(4, 32 - Integer.numberOfLeadingZeros(palette.size() - 1));
+        int index = Math.floorMod(y, 16) * 256 + Math.floorMod(z, 16) * 16 + Math.floorMod(x, 16);
+        int entriesPerLong = 64 / bitsPerEntry;
+        int longIndex = index / entriesPerLong;
+        int bitOffset = (index - longIndex * entriesPerLong) * bitsPerEntry;
+        long mask = (1L << bitsPerEntry) - 1L;
+        return (int) ((data[longIndex] >>> bitOffset) & mask);
     }
 
     private record BlobPrefix(
