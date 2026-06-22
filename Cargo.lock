@@ -1401,6 +1401,11 @@ dependencies = [
 [[package]]
 name = "qexed_ai"
 version = "0.1.0"
+dependencies = [
+ "qexed_block",
+ "qexed_entity",
+ "qexed_item",
+]
 
 [[package]]
 name = "qexed_auth"
