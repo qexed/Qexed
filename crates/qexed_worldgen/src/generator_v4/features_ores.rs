@@ -2029,16 +2029,12 @@ impl FeatureRandom {
 
     fn decoration_seed(world_seed: i64, origin_x: i32, origin_z: i32) -> i64 {
         let mut random = Self::new(world_seed);
-        random
-            .source
-            .set_decoration_seed(world_seed, origin_x, origin_z)
+        random.set_decoration_seed(world_seed, origin_x, origin_z)
     }
 
     fn for_feature(decoration_seed: i64, feature_index: i32, step_index: i32) -> Self {
         let mut random = Self::new(decoration_seed);
-        random
-            .source
-            .set_feature_seed(decoration_seed, feature_index, step_index);
+        random.set_feature_seed(decoration_seed, feature_index, step_index);
         random
     }
 
@@ -2046,23 +2042,62 @@ impl FeatureRandom {
         self.source.set_seed(seed);
     }
 
+    fn set_decoration_seed(&mut self, world_seed: i64, x: i32, z: i32) -> i64 {
+        self.set_seed(world_seed);
+        let x_seed = self.next_long() | 1;
+        let z_seed = self.next_long() | 1;
+        let seed = (x as i64)
+            .wrapping_mul(x_seed)
+            .wrapping_add((z as i64).wrapping_mul(z_seed))
+            ^ world_seed;
+        self.set_seed(seed);
+        seed
+    }
+
+    fn set_feature_seed(&mut self, decoration_seed: i64, feature_index: i32, step_index: i32) {
+        self.set_seed(
+            decoration_seed
+                .wrapping_add(feature_index as i64)
+                .wrapping_add((10_000 * step_index) as i64),
+        );
+    }
+
     fn next_int(&mut self, bound: i32) -> i32 {
-        self.source.next_int(bound as usize) as i32
+        assert!(bound > 0);
+        if (bound & -bound) == bound {
+            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
+        }
+
+        loop {
+            let sample = self.next_bits(31) as i32;
+            let modulo = sample % bound;
+            if sample.wrapping_sub(modulo).wrapping_add(bound - 1) >= 0 {
+                return modulo;
+            }
+        }
     }
 
     fn next_long(&mut self) -> i64 {
-        self.source.next_long() as i64
+        let upper = self.next_bits(32) as i32 as i64;
+        let lower = self.next_bits(32) as i32 as i64;
+        (upper << 32).wrapping_add(lower)
     }
 
     fn next_float(&mut self) -> f32 {
-        self.source.next_float()
+        self.next_bits(24) as f32 * 5.960_464_5e-8_f32
     }
 
     fn next_bool(&mut self) -> bool {
-        self.source.next_bool()
+        self.next_bits(1) != 0
     }
 
     fn next_double(&mut self) -> f64 {
-        self.source.next_double()
+        let upper = self.next_bits(26) as i64;
+        let lower = self.next_bits(27) as i64;
+        ((upper << 27) + lower) as f64 * (1.0 / ((1_u64 << 53) as f64))
+    }
+
+    fn next_bits(&mut self, bits: u32) -> u64 {
+        self.source.next_long() >> (64 - bits)
     }
 }

@@ -1,4 +1,4 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -259,6 +259,30 @@ mod tests {
         assert_eq!(random.next_float().to_bits(), 0.294_135_75_f32.to_bits());
     }
 
+    #[test]
+    fn feature_random_matches_java_26_2_worldgen_xoroshiro_outputs() {
+        let mut random = FeatureRandom::new(0);
+
+        assert_eq!(random.next_int(15), 13);
+        assert_eq!(random.next_int(1000), 875);
+        assert_eq!(random.next_float().to_bits(), 0x3e80_9cc8);
+        assert_eq!(random.next_double().to_bits(), 0x3fbd_fbe5_8661_b070);
+        assert_eq!(random.next_long(), -4_488_466_512_944_344_253);
+    }
+
+    #[test]
+    fn feature_random_uses_java_26_2_decoration_and_feature_seed() {
+        let decoration_seed = FeatureRandom::decoration_seed(0, -16, 0);
+        let mut random = FeatureRandom::for_feature(decoration_seed, 1, 6);
+
+        assert_eq!(decoration_seed, 6_716_476_193_438_028_432);
+        assert_eq!(random.next_int(16), 8);
+        assert_eq!(random.next_int(16), 3);
+        assert_eq!(random.next_int(384), 77);
+        assert_eq!(random.next_float().to_bits(), 0x3e6a_02f4);
+        assert_eq!(random.next_double().to_bits(), 0x3fef_0f62_678a_af92);
+        assert_eq!(random.next_long(), -4_344_698_855_324_982_475);
+    }
     #[test]
     fn height_anchor_below_top_uses_world_top_y() {
         let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
