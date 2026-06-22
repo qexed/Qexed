@@ -616,6 +616,56 @@ mod tests {
                         sphere.radius_before_cull,
                         sphere.radius_after_cull
                     );
+                    if sphere.radius_after_cull >= 0.0 {
+                        let floor_min_x = mth_floor(sphere.x - sphere.radius_after_cull);
+                        let floor_max_x = mth_floor(sphere.x + sphere.radius_after_cull);
+                        let floor_min_y = mth_floor(sphere.y - sphere.radius_after_cull);
+                        let floor_max_y = mth_floor(sphere.y + sphere.radius_after_cull);
+                        let floor_min_z = mth_floor(sphere.z - sphere.radius_after_cull);
+                        let floor_max_z = mth_floor(sphere.z + sphere.radius_after_cull);
+                        let raw_min_x = floor_min_x.max(shape.min_box_x);
+                        let raw_max_x = floor_max_x.max(raw_min_x);
+                        let raw_min_y = floor_min_y.max(shape.min_box_y);
+                        let raw_max_y = floor_max_y.max(raw_min_y);
+                        let raw_min_z = floor_min_z.max(shape.min_box_z);
+                        let raw_max_z = floor_max_z.max(raw_min_z);
+                        let target_in_bounds = target.0 >= raw_min_x
+                            && target.0 <= raw_max_x
+                            && target.1 >= raw_min_y
+                            && target.1 <= raw_max_y
+                            && target.2 >= raw_min_z
+                            && target.2 <= raw_max_z;
+                        let target_inside = target_in_bounds && {
+                            let xd = (target.0 as f64 + 0.5 - sphere.x) / sphere.radius_after_cull;
+                            let yd = (target.1 as f64 + 0.5 - sphere.y) / sphere.radius_after_cull;
+                            let zd = (target.2 as f64 + 0.5 - sphere.z) / sphere.radius_after_cull;
+                            xd * xd < 1.0
+                                && xd * xd + yd * yd < 1.0
+                                && xd * xd + yd * yd + zd * zd < 1.0
+                        };
+                        eprintln!(
+                            "seed0 ore_redstone_lower attempt=3 sphere={} bounds raw=(x={}..{} y={}..{} z={}..{}) clamped=(x={}..{} y={}..{} z={}..{}) target=({},{},{}) target_in_bounds={} target_inside={} target_bit={:?}",
+                            sphere.index,
+                            floor_min_x,
+                            floor_max_x,
+                            floor_min_y,
+                            floor_max_y,
+                            floor_min_z,
+                            floor_max_z,
+                            raw_min_x,
+                            raw_max_x,
+                            raw_min_y,
+                            raw_max_y,
+                            raw_min_z,
+                            raw_max_z,
+                            target.0,
+                            target.1,
+                            target.2,
+                            target_in_bounds,
+                            target_inside,
+                            target_bit
+                        );
+                    }
                 }
                 assert_eq!((x, y, z), (7, -59, 1));
             }

@@ -75,9 +75,9 @@ public final class RedstoneLowerSphereDiagnostic {
                     prefix.minBoxX,
                     prefix.minBoxY,
                     prefix.minBoxZ,
-                    prefix.testedSizeX + 1,
-                    prefix.testedSizeY + 1,
-                    prefix.testedSizeZ + 1,
+                    prefix.testedSizeX,
+                    prefix.testedSizeY,
+                    prefix.testedSizeZ,
                     prefix.testedStrideX,
                     prefix.testedStrideY);
             printSpheresAndTargetPath(random, prefix);
@@ -218,6 +218,45 @@ public final class RedstoneLowerSphereDiagnostic {
             int xMax = Math.max(Mth.floor(sphere.x + radius), xMin);
             int yMax = Math.max(Mth.floor(sphere.y + radius), yMin);
             int zMax = Math.max(Mth.floor(sphere.z + radius), zMin);
+            boolean targetInBounds = TARGET_X >= xMin
+                    && TARGET_X <= xMax
+                    && TARGET_Y >= yMin
+                    && TARGET_Y <= yMax
+                    && TARGET_Z >= zMin
+                    && TARGET_Z <= zMax;
+            boolean targetInside = false;
+            if (targetInBounds && radius > 0.0D) {
+                double xd = ((double) TARGET_X + 0.5D - sphere.x) / radius;
+                double yd = ((double) TARGET_Y + 0.5D - sphere.y) / radius;
+                double zd = ((double) TARGET_Z + 0.5D - sphere.z) / radius;
+                targetInside = xd * xd < 1.0D
+                        && xd * xd + yd * yd < 1.0D
+                        && xd * xd + yd * yd + zd * zd < 1.0D;
+            }
+            int targetBitSetIndex = TARGET_X - prefix.minBoxX
+                    + (TARGET_Y - prefix.minBoxY) * prefix.testedStrideX
+                    + (TARGET_Z - prefix.minBoxZ) * prefix.testedStrideX * prefix.testedStrideY;
+            System.out.printf(
+                    "java ore_redstone_lower attempt=3 sphere=%d doPlace_replay bounds raw=(x=%d..%d y=%d..%d z=%d..%d) clamped=(x=%d..%d y=%d..%d z=%d..%d) target=(%d,%d,%d) target_in_bounds=%s target_inside=%s target_bitset_index=%d%n",
+                    sphere.index,
+                    Mth.floor(sphere.x - radius),
+                    Mth.floor(sphere.x + radius),
+                    Mth.floor(sphere.y - radius),
+                    Mth.floor(sphere.y + radius),
+                    Mth.floor(sphere.z - radius),
+                    Mth.floor(sphere.z + radius),
+                    xMin,
+                    xMax,
+                    yMin,
+                    yMax,
+                    zMin,
+                    zMax,
+                    TARGET_X,
+                    TARGET_Y,
+                    TARGET_Z,
+                    targetInBounds,
+                    targetInside,
+                    targetBitSetIndex);
 
             for (int x = xMin; x <= xMax; x++) {
                 double xd = ((double) x + 0.5D - sphere.x) / radius;

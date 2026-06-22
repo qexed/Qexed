@@ -1689,6 +1689,28 @@ struct OreShapeScanStats {
     scans: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OreSphereTraceBounds {
+    floor_min_x: i32,
+    floor_max_x: i32,
+    floor_min_y: i32,
+    floor_max_y: i32,
+    floor_min_z: i32,
+    floor_max_z: i32,
+    raw_min_x: i32,
+    raw_max_x: i32,
+    raw_min_y: i32,
+    raw_max_y: i32,
+    raw_min_z: i32,
+    raw_max_z: i32,
+    iter_min_x: i32,
+    iter_max_x: i32,
+    iter_min_y: i32,
+    iter_max_y: i32,
+    iter_min_z: i32,
+    iter_max_z: i32,
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone)]
 struct OreSphereDiagnostic {
@@ -1886,7 +1908,26 @@ impl OreFeatureConfig {
                 shape,
                 sphere_index,
                 sphere,
-                Some((min_x, max_x, min_y, max_y, min_z, max_z)),
+                Some(OreSphereTraceBounds {
+                    floor_min_x: mth_floor(x - radius),
+                    floor_max_x: mth_floor(x + radius),
+                    floor_min_y: mth_floor(y - radius),
+                    floor_max_y: mth_floor(y + radius),
+                    floor_min_z: mth_floor(z - radius),
+                    floor_max_z: mth_floor(z + radius),
+                    raw_min_x,
+                    raw_max_x,
+                    raw_min_y,
+                    raw_max_y,
+                    raw_min_z,
+                    raw_max_z,
+                    iter_min_x: min_x,
+                    iter_max_x: max_x,
+                    iter_min_y: min_y,
+                    iter_max_y: max_y,
+                    iter_min_z: min_z,
+                    iter_max_z: max_z,
+                }),
             );
 
             for world_x in min_x..=max_x {
@@ -1966,7 +2007,7 @@ impl OreFeatureConfig {
         shape: &OreBlobShape,
         sphere_index: usize,
         sphere: [f64; 4],
-        bounds: Option<(i32, i32, i32, i32, i32, i32)>,
+        bounds: Option<OreSphereTraceBounds>,
     ) {
         let Some(target) = FeatureWriteTraceTarget::from_env() else {
             return;
@@ -1976,13 +2017,13 @@ impl OreFeatureConfig {
         }
 
         let [x, y, z, radius] = sphere;
-        let inside = bounds.is_some_and(|(min_x, max_x, min_y, max_y, min_z, max_z)| {
-            if target.x < min_x
-                || target.x > max_x
-                || target.y < min_y
-                || target.y > max_y
-                || target.z < min_z
-                || target.z > max_z
+        let inside = bounds.is_some_and(|bounds| {
+            if target.x < bounds.iter_min_x
+                || target.x > bounds.iter_max_x
+                || target.y < bounds.iter_min_y
+                || target.y > bounds.iter_max_y
+                || target.z < bounds.iter_min_z
+                || target.z > bounds.iter_max_z
                 || radius <= 0.0
             {
                 return false;
@@ -2020,8 +2061,28 @@ impl OreFeatureConfig {
             .map(|layer| layer.block.as_ref())
             .unwrap_or("outside_or_missing");
         let bounds = bounds
-            .map(|(min_x, max_x, min_y, max_y, min_z, max_z)| {
-                format!("x={min_x}..{max_x} y={min_y}..{max_y} z={min_z}..{max_z}")
+            .map(|bounds| {
+                format!(
+                    "raw=(x={}..{} y={}..{} z={}..{}) clamped=(x={}..{} y={}..{} z={}..{}) iter=(x={}..{} y={}..{} z={}..{})",
+                    bounds.floor_min_x,
+                    bounds.floor_max_x,
+                    bounds.floor_min_y,
+                    bounds.floor_max_y,
+                    bounds.floor_min_z,
+                    bounds.floor_max_z,
+                    bounds.raw_min_x,
+                    bounds.raw_max_x,
+                    bounds.raw_min_y,
+                    bounds.raw_max_y,
+                    bounds.raw_min_z,
+                    bounds.raw_max_z,
+                    bounds.iter_min_x,
+                    bounds.iter_max_x,
+                    bounds.iter_min_y,
+                    bounds.iter_max_y,
+                    bounds.iter_min_z,
+                    bounds.iter_max_z
+                )
             })
             .unwrap_or_else(|| "culled".to_string());
 
@@ -2091,12 +2152,12 @@ impl OreFeatureConfig {
     fn trace_context_is_target_attempt(&self) -> bool {
         FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
             current.borrow().as_ref().is_some_and(|context| {
-                context.feature_name == "ore_gravel"
+                context.feature_name == "ore_redstone_lower"
                     && context.step_index == 6
-                    && context.feature_index == 1
+                    && context.feature_index == 17
                     && context.phase == "local"
                     && context.attempt == Some(3)
-                    && context.attempt_origin == Some((8, -62, 8))
+                    && context.attempt_origin == Some((7, -59, 1))
             })
         })
     }
@@ -2126,9 +2187,9 @@ impl OreFeatureConfig {
             min_box_x: origin_x - spread_xy_ceil - precheck_radius,
             min_box_y: origin_y - 2 - precheck_radius,
             min_box_z: origin_z - spread_xy_ceil - precheck_radius,
-            tested_size_x: (2 * (spread_xy_ceil + precheck_radius) + 1) as usize,
-            tested_size_y: (2 * (2 + precheck_radius) + 1) as usize,
-            tested_size_z: (2 * (spread_xy_ceil + precheck_radius) + 1) as usize,
+            tested_size_x: (2 * (spread_xy_ceil + precheck_radius)) as usize,
+            tested_size_y: (2 * (2 + precheck_radius)) as usize,
+            tested_size_z: (2 * (spread_xy_ceil + precheck_radius)) as usize,
             tested_stride_x: (2 * (spread_xy_ceil + precheck_radius)) as usize,
             tested_stride_y: (2 * (2 + precheck_radius)) as usize,
         }
