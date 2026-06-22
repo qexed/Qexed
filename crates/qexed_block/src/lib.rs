@@ -337,6 +337,62 @@ pub fn block_state_id_has_fluid(id: impl Into<BlockStateId>) -> Result<bool> {
     Ok(block_state_has_fluid(&block_state(id)?))
 }
 
+pub fn block_state_is_replaceable(state: &BlockState) -> bool {
+    if block_state_is_air(state) || block_state_has_fluid(state) {
+        return true;
+    }
+
+    let name = state.block.as_str();
+    is_replaceable_block(name) || is_replaceable_snow_layer(name, state)
+}
+
+pub fn block_state_id_is_replaceable(id: impl Into<BlockStateId>) -> Result<bool> {
+    Ok(block_state_is_replaceable(&block_state(id)?))
+}
+
+pub fn block_state_has_collision(state: &BlockState) -> bool {
+    !is_collisionless_block(state.block.as_str())
+}
+
+pub fn block_state_id_has_collision(id: impl Into<BlockStateId>) -> Result<bool> {
+    Ok(block_state_has_collision(&block_state(id)?))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockCollisionShape {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+    pub min_z: f64,
+    pub max_z: f64,
+}
+
+impl BlockCollisionShape {
+    pub const FULL_BLOCK: Self = Self {
+        min_x: 0.0,
+        max_x: 1.0,
+        min_y: 0.0,
+        max_y: 1.0,
+        min_z: 0.0,
+        max_z: 1.0,
+    };
+}
+
+pub fn block_state_collision_shape(state: &BlockState) -> Option<BlockCollisionShape> {
+    if !block_state_has_collision(state) {
+        return None;
+    }
+
+    Some(collision_shape_for_block(state.block.as_str(), state))
+}
+
+pub fn block_state_id_collision_shape(
+    id: impl Into<BlockStateId>,
+) -> Result<Option<BlockCollisionShape>> {
+    Ok(block_state_collision_shape(&block_state(id)?))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InteractionHand {
     MainHand,
@@ -610,7 +666,7 @@ fn normalize_identifier(value: &str) -> String {
 fn is_replaceable_state(registry: &BlockRegistry, state_id: BlockStateId) -> bool {
     registry
         .state_by_id(state_id)
-        .is_some_and(|state| block_state_is_air(state) || block_state_has_fluid(state))
+        .is_some_and(block_state_is_replaceable)
 }
 
 fn is_air_state(registry: &BlockRegistry, state_id: BlockStateId) -> bool {
@@ -643,6 +699,138 @@ fn is_always_water_filled_block(name: &str) -> bool {
             | "minecraft:seagrass"
             | "minecraft:tall_seagrass"
     )
+}
+
+fn is_replaceable_block(name: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:short_grass"
+            | "minecraft:tall_grass"
+            | "minecraft:fern"
+            | "minecraft:large_fern"
+            | "minecraft:dead_bush"
+            | "minecraft:dandelion"
+            | "minecraft:poppy"
+            | "minecraft:blue_orchid"
+            | "minecraft:allium"
+            | "minecraft:azure_bluet"
+            | "minecraft:red_tulip"
+            | "minecraft:orange_tulip"
+            | "minecraft:white_tulip"
+            | "minecraft:pink_tulip"
+            | "minecraft:oxeye_daisy"
+            | "minecraft:cornflower"
+            | "minecraft:lily_of_the_valley"
+            | "minecraft:torchflower"
+            | "minecraft:sunflower"
+            | "minecraft:lilac"
+            | "minecraft:rose_bush"
+            | "minecraft:peony"
+            | "minecraft:pink_petals"
+            | "minecraft:wildflowers"
+            | "minecraft:leaf_litter"
+            | "minecraft:vine"
+            | "minecraft:cave_vines"
+            | "minecraft:cave_vines_plant"
+            | "minecraft:twisting_vines"
+            | "minecraft:twisting_vines_plant"
+            | "minecraft:weeping_vines"
+            | "minecraft:weeping_vines_plant"
+    )
+}
+
+fn is_replaceable_snow_layer(name: &str, state: &BlockState) -> bool {
+    matches!(name, "minecraft:snow" | "minecraft:snow_layer")
+        && state
+            .property("layers")
+            .and_then(|layers| layers.parse::<u8>().ok())
+            .is_none_or(|layers| layers <= 1)
+}
+
+fn is_collisionless_block(name: &str) -> bool {
+    is_air_block(name)
+        || matches!(
+            name,
+            "minecraft:water"
+                | "minecraft:lava"
+                | "minecraft:bubble_column"
+                | "minecraft:kelp"
+                | "minecraft:kelp_plant"
+                | "minecraft:seagrass"
+                | "minecraft:tall_seagrass"
+                | "minecraft:short_grass"
+                | "minecraft:tall_grass"
+                | "minecraft:fern"
+                | "minecraft:large_fern"
+                | "minecraft:dead_bush"
+                | "minecraft:dandelion"
+                | "minecraft:poppy"
+                | "minecraft:blue_orchid"
+                | "minecraft:allium"
+                | "minecraft:azure_bluet"
+                | "minecraft:red_tulip"
+                | "minecraft:orange_tulip"
+                | "minecraft:white_tulip"
+                | "minecraft:pink_tulip"
+                | "minecraft:oxeye_daisy"
+                | "minecraft:cornflower"
+                | "minecraft:lily_of_the_valley"
+                | "minecraft:torchflower"
+                | "minecraft:sunflower"
+                | "minecraft:lilac"
+                | "minecraft:rose_bush"
+                | "minecraft:peony"
+                | "minecraft:pink_petals"
+                | "minecraft:wildflowers"
+                | "minecraft:leaf_litter"
+                | "minecraft:vine"
+                | "minecraft:cave_vines"
+                | "minecraft:cave_vines_plant"
+                | "minecraft:twisting_vines"
+                | "minecraft:twisting_vines_plant"
+                | "minecraft:weeping_vines"
+                | "minecraft:weeping_vines_plant"
+                | "minecraft:torch"
+                | "minecraft:wall_torch"
+                | "minecraft:soul_torch"
+                | "minecraft:soul_wall_torch"
+                | "minecraft:redstone_torch"
+                | "minecraft:redstone_wall_torch"
+        )
+}
+
+fn collision_shape_for_block(name: &str, state: &BlockState) -> BlockCollisionShape {
+    if name == "minecraft:carpet" || name.ends_with("_carpet") {
+        return BlockCollisionShape {
+            max_y: 1.0 / 16.0,
+            ..BlockCollisionShape::FULL_BLOCK
+        };
+    }
+
+    if matches!(name, "minecraft:snow" | "minecraft:snow_layer") {
+        let layers = state
+            .property("layers")
+            .and_then(|layers| layers.parse::<u8>().ok())
+            .unwrap_or(1)
+            .clamp(1, 8);
+        return BlockCollisionShape {
+            max_y: f64::from(layers) / 8.0,
+            ..BlockCollisionShape::FULL_BLOCK
+        };
+    }
+
+    if matches!(name, "minecraft:lantern" | "minecraft:soul_lantern") {
+        return BlockCollisionShape {
+            min_x: 5.0 / 16.0,
+            max_x: 11.0 / 16.0,
+            min_y: 0.0,
+            max_y: 7.0 / 16.0,
+            min_z: 5.0 / 16.0,
+            max_z: 11.0 / 16.0,
+        };
+    }
+
+    BlockCollisionShape::FULL_BLOCK
 }
 
 fn default_state_id_from_report(states: &[ReportState]) -> Option<BlockStateId> {
@@ -775,6 +963,95 @@ mod tests {
     }
 
     #[test]
+    fn block_metadata_marks_common_replaceable_and_collisionless_states() {
+        let replaceable = [
+            "minecraft:air",
+            "minecraft:water",
+            "minecraft:lava",
+            "minecraft:short_grass",
+            "minecraft:fern",
+            "minecraft:poppy",
+            "minecraft:sunflower",
+            "minecraft:vine",
+            "minecraft:cave_vines",
+        ];
+
+        for block in replaceable {
+            let state = BlockState::new(block);
+            assert!(
+                block_state_is_replaceable(&state),
+                "{block} should be replaceable"
+            );
+            assert!(
+                !block_state_has_collision(&state),
+                "{block} should be collisionless"
+            );
+            assert_eq!(block_state_collision_shape(&state), None);
+        }
+
+        let torch = BlockState::new("minecraft:torch");
+        assert!(!block_state_is_replaceable(&torch));
+        assert!(!block_state_has_collision(&torch));
+        assert_eq!(block_state_collision_shape(&torch), None);
+
+        let stone = BlockState::new("minecraft:stone");
+        assert!(!block_state_is_replaceable(&stone));
+        assert!(block_state_has_collision(&stone));
+        assert_eq!(
+            block_state_collision_shape(&stone),
+            Some(BlockCollisionShape::FULL_BLOCK)
+        );
+    }
+
+    #[test]
+    fn block_metadata_handles_snow_lantern_and_carpet_shapes() {
+        let one_layer_snow = BlockState::with_properties("minecraft:snow", [("layers", "1")]);
+        assert!(block_state_is_replaceable(&one_layer_snow));
+        assert!(block_state_has_collision(&one_layer_snow));
+        assert_eq!(
+            block_state_collision_shape(&one_layer_snow),
+            Some(BlockCollisionShape {
+                max_y: 1.0 / 8.0,
+                ..BlockCollisionShape::FULL_BLOCK
+            })
+        );
+
+        let two_layer_snow = BlockState::with_properties("minecraft:snow", [("layers", "2")]);
+        assert!(!block_state_is_replaceable(&two_layer_snow));
+        assert_eq!(
+            block_state_collision_shape(&two_layer_snow),
+            Some(BlockCollisionShape {
+                max_y: 2.0 / 8.0,
+                ..BlockCollisionShape::FULL_BLOCK
+            })
+        );
+
+        let lantern = BlockState::new("minecraft:lantern");
+        assert!(!block_state_is_replaceable(&lantern));
+        assert_eq!(
+            block_state_collision_shape(&lantern),
+            Some(BlockCollisionShape {
+                min_x: 5.0 / 16.0,
+                max_x: 11.0 / 16.0,
+                min_y: 0.0,
+                max_y: 7.0 / 16.0,
+                min_z: 5.0 / 16.0,
+                max_z: 11.0 / 16.0,
+            })
+        );
+
+        let carpet = BlockState::new("minecraft:white_carpet");
+        assert!(!block_state_is_replaceable(&carpet));
+        assert_eq!(
+            block_state_collision_shape(&carpet),
+            Some(BlockCollisionShape {
+                max_y: 1.0 / 16.0,
+                ..BlockCollisionShape::FULL_BLOCK
+            })
+        );
+    }
+
+    #[test]
     fn block_action_validation_rejects_unknown_states_and_solid_replacement() {
         let registry = BlockRegistry::from_blocks_report(&json!({
             "minecraft:air": {
@@ -782,6 +1059,16 @@ mod tests {
             },
             "minecraft:stone": {
                 "states": [{"id": 1, "default": true}]
+            },
+            "minecraft:short_grass": {
+                "states": [{"id": 2, "default": true}]
+            },
+            "minecraft:snow": {
+                "properties": {"layers": ["1", "2"]},
+                "states": [
+                    {"id": 3, "properties": {"layers": "1"}, "default": true},
+                    {"id": 4, "properties": {"layers": "2"}}
+                ]
             }
         }))
         .unwrap();
@@ -804,6 +1091,26 @@ mod tests {
             blocked.validate(&registry),
             BlockValidationResult::Denied(BlockValidationError::TargetNotReplaceable(
                 BlockStateId::new(1)
+            ))
+        );
+
+        let mut grass = request.clone();
+        grass.replaced_state = Some(BlockStateId::new(2));
+        assert_eq!(grass.validate(&registry), BlockValidationResult::Allowed);
+
+        let mut one_layer_snow = request.clone();
+        one_layer_snow.replaced_state = Some(BlockStateId::new(3));
+        assert_eq!(
+            one_layer_snow.validate(&registry),
+            BlockValidationResult::Allowed
+        );
+
+        let mut two_layer_snow = request.clone();
+        two_layer_snow.replaced_state = Some(BlockStateId::new(4));
+        assert_eq!(
+            two_layer_snow.validate(&registry),
+            BlockValidationResult::Denied(BlockValidationError::TargetNotReplaceable(
+                BlockStateId::new(4)
             ))
         );
 
