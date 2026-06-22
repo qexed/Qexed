@@ -74,37 +74,50 @@ impl PlacedOreFeature {
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
-            let mut replay_random = random.clone();
-            let mut spill_random = replay_random.clone();
-            let reaches_target =
-                self.ore
-                    .may_spill_into(target_origin_x, target_origin_z, &mut spill_random, x, y, z);
-            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
-                self.ore.consume_shape_random(random);
+            let prefix = self.ore.sample_blob_prefix(random, x, y, z);
+            if !self.ore.precheck_passes(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                Some((target_origin_x, target_origin_z, &*target_chunk)),
+                x,
+                y,
+                z,
+            ) {
                 continue;
             }
-            self.ore.place_with_neighbor(
+            let mut spill_random = random.clone();
+            let reaches_target = self.ore.blob_prefix_may_spill_into(
+                target_origin_x,
+                target_origin_z,
+                &mut spill_random,
+                &prefix,
+            );
+            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
+                self.ore.consume_blob_shape_random(random);
+                continue;
+            }
+            let shape = self.ore.sample_blob_shape(random, prefix);
+            let mut replay_random = random.clone();
+            self.ore.place_shape_with_neighbor(
                 settings,
                 source_origin_x,
                 source_origin_z,
                 source_chunk,
                 Some((target_origin_x, target_origin_z, &*target_chunk)),
                 random,
-                x,
-                y,
-                z,
+                &shape,
             );
             if reaches_target {
-                self.ore.place_with_neighbor(
+                self.ore.place_shape_with_neighbor(
                     settings,
                     target_origin_x,
                     target_origin_z,
                     target_chunk,
                     Some((source_origin_x, source_origin_z, &*source_chunk)),
                     &mut replay_random,
-                    x,
-                    y,
-                    z,
+                    &shape,
                 );
             }
         }
@@ -1480,6 +1493,33 @@ struct OreFeatureTarget {
     block: BlockLayer,
 }
 
+#[derive(Debug, Clone)]
+struct OreBlobPrefix {
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    z0: f64,
+    z1: f64,
+    min_box_x: i32,
+    min_box_y: i32,
+    min_box_z: i32,
+    tested_size_x: usize,
+    tested_size_y: usize,
+    tested_size_z: usize,
+}
+
+#[derive(Debug, Clone)]
+struct OreBlobShape {
+    spheres: Vec<[f64; 4]>,
+    min_box_x: i32,
+    min_box_y: i32,
+    min_box_z: i32,
+    tested_size_x: usize,
+    tested_size_y: usize,
+    tested_size_z: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum OreTargetPredicate {
     StoneOreReplaceables,
@@ -1559,22 +1599,7 @@ impl OreFeatureConfig {
         origin_y: i32,
         origin_z: i32,
     ) -> bool {
-        let direction = random.next_float() * std::f32::consts::PI;
-        let spread_xy = self.size as f64 / 8.0;
-        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
-        let precheck_radius = precheck_radius.ceil() as i32;
-        let spread_xy_ceil = spread_xy.ceil() as i32;
-        let min_box_x = origin_x - spread_xy_ceil - precheck_radius;
-        let min_box_y = origin_y - 2 - precheck_radius;
-        let min_box_z = origin_z - spread_xy_ceil - precheck_radius;
-        let x_spread = (direction as f64).sin() * spread_xy;
-        let z_spread = (direction as f64).cos() * spread_xy;
-        let x0 = origin_x as f64 + x_spread;
-        let x1 = origin_x as f64 - x_spread;
-        let z0 = origin_z as f64 + z_spread;
-        let z1 = origin_z as f64 - z_spread;
-        let y0 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
-        let y1 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
+        let prefix = self.sample_blob_prefix(random, origin_x, origin_y, origin_z);
         if !self.precheck_passes(
             settings,
             chunk_min_x,
@@ -1588,62 +1613,45 @@ impl OreFeatureConfig {
             return false;
         }
 
-        let mut spheres = vec![[0.0; 4]; self.size as usize];
+        let shape = self.sample_blob_shape(random, prefix);
+        self.place_shape_with_neighbor(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbor,
+            random,
+            &shape,
+        )
+    }
 
-        for i in 0..self.size {
-            let step = i as f32 / self.size as f32;
-            let radius_noise = random.next_double() * self.size as f64 / 16.0;
-            let radius =
-                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
-                    / 2.0;
-            spheres[i as usize] = [
-                lerp_f64(step as f64, x0, x1),
-                lerp_f64(step as f64, y0, y1),
-                lerp_f64(step as f64, z0, z1),
-                radius,
-            ];
-        }
-
-        for i1 in 0..self.size as usize {
-            if spheres[i1][3] <= 0.0 {
-                continue;
-            }
-            for i2 in i1 + 1..self.size as usize {
-                if spheres[i2][3] <= 0.0 {
-                    continue;
-                }
-                let dx = spheres[i1][0] - spheres[i2][0];
-                let dy = spheres[i1][1] - spheres[i2][1];
-                let dz = spheres[i1][2] - spheres[i2][2];
-                let dr = spheres[i1][3] - spheres[i2][3];
-                if dr * dr > dx * dx + dy * dy + dz * dz {
-                    if dr > 0.0 {
-                        spheres[i2][3] = -1.0;
-                    } else {
-                        spheres[i1][3] = -1.0;
-                    }
-                }
-            }
-        }
-
-        let tested_size_x = (2 * (spread_xy_ceil + precheck_radius) + 1) as usize;
-        let tested_size_y = (2 * (2 + precheck_radius) + 1) as usize;
-        let tested_size_z = tested_size_x;
-        let mut tested = vec![false; tested_size_x * tested_size_y * tested_size_z];
+    #[allow(clippy::too_many_arguments)]
+    fn place_shape_with_neighbor(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &mut NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        random: &mut FeatureRandom,
+        shape: &OreBlobShape,
+    ) -> bool {
+        let mut tested =
+            vec![false; shape.tested_size_x * shape.tested_size_y * shape.tested_size_z];
         let mut placed = false;
-        for sphere in spheres {
+        for sphere in shape.spheres.iter().copied() {
             let [x, y, z, radius] = sphere;
             if radius < 0.0 {
                 continue;
             }
 
-            let raw_min_x = mth_floor(x - radius).max(min_box_x);
+            let raw_min_x = mth_floor(x - radius).max(shape.min_box_x);
             let raw_max_x = mth_floor(x + radius).max(raw_min_x);
             let min_x = raw_min_x.max(chunk_min_x);
             let max_x = raw_max_x.min(chunk_min_x + 15);
-            let min_y = mth_floor(y - radius).max(min_box_y);
+            let min_y = mth_floor(y - radius).max(shape.min_box_y);
             let max_y = mth_floor(y + radius).max(min_y);
-            let raw_min_z = mth_floor(z - radius).max(min_box_z);
+            let raw_min_z = mth_floor(z - radius).max(shape.min_box_z);
             let raw_max_z = mth_floor(z + radius).max(raw_min_z);
             let min_z = raw_min_z.max(chunk_min_z);
             let max_z = raw_max_z.min(chunk_min_z + 15);
@@ -1670,11 +1678,12 @@ impl OreFeatureConfig {
                         if xd * xd + yd * yd + zd * zd >= 1.0 {
                             continue;
                         }
-                        let tested_x = (world_x - min_box_x) as usize;
-                        let tested_y = (world_y - min_box_y) as usize;
-                        let tested_z = (world_z - min_box_z) as usize;
+                        let tested_x = (world_x - shape.min_box_x) as usize;
+                        let tested_y = (world_y - shape.min_box_y) as usize;
+                        let tested_z = (world_z - shape.min_box_z) as usize;
                         let tested_index =
-                            (tested_x * tested_size_y + tested_y) * tested_size_z + tested_z;
+                            (tested_x * shape.tested_size_y + tested_y) * shape.tested_size_z
+                                + tested_z;
                         if !tested[tested_index] {
                             tested[tested_index] = true;
                         } else {
@@ -1701,6 +1710,124 @@ impl OreFeatureConfig {
         }
 
         placed
+    }
+
+    fn sample_blob_prefix(
+        &self,
+        random: &mut FeatureRandom,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> OreBlobPrefix {
+        let direction = random.next_float() * std::f32::consts::PI;
+        let spread_xy = self.size as f64 / 8.0;
+        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
+        let precheck_radius = precheck_radius.ceil() as i32;
+        let spread_xy_ceil = spread_xy.ceil() as i32;
+        let x_spread = (direction as f64).sin() * spread_xy;
+        let z_spread = (direction as f64).cos() * spread_xy;
+
+        OreBlobPrefix {
+            x0: origin_x as f64 + x_spread,
+            x1: origin_x as f64 - x_spread,
+            y0: origin_y as f64 + random.next_int(3) as f64 - 2.0,
+            y1: origin_y as f64 + random.next_int(3) as f64 - 2.0,
+            z0: origin_z as f64 + z_spread,
+            z1: origin_z as f64 - z_spread,
+            min_box_x: origin_x - spread_xy_ceil - precheck_radius,
+            min_box_y: origin_y - 2 - precheck_radius,
+            min_box_z: origin_z - spread_xy_ceil - precheck_radius,
+            tested_size_x: (2 * (spread_xy_ceil + precheck_radius) + 1) as usize,
+            tested_size_y: (2 * (2 + precheck_radius) + 1) as usize,
+            tested_size_z: (2 * (spread_xy_ceil + precheck_radius) + 1) as usize,
+        }
+    }
+
+    fn sample_blob_shape(
+        &self,
+        random: &mut FeatureRandom,
+        prefix: OreBlobPrefix,
+    ) -> OreBlobShape {
+        let mut spheres = vec![[0.0; 4]; self.size as usize];
+
+        for i in 0..self.size {
+            let step = i as f32 / self.size as f32;
+            let radius_noise = random.next_double() * self.size as f64 / 16.0;
+            let radius =
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
+                    / 2.0;
+            let x = lerp_f64(step as f64, prefix.x0, prefix.x1);
+            let y = lerp_f64(step as f64, prefix.y0, prefix.y1);
+            let z = lerp_f64(step as f64, prefix.z0, prefix.z1);
+            spheres[i as usize] = [x, y, z, radius];
+        }
+
+        for i1 in 0..self.size as usize {
+            if spheres[i1][3] <= 0.0 {
+                continue;
+            }
+            for i2 in i1 + 1..self.size as usize {
+                if spheres[i2][3] <= 0.0 {
+                    continue;
+                }
+                let dx = spheres[i1][0] - spheres[i2][0];
+                let dy = spheres[i1][1] - spheres[i2][1];
+                let dz = spheres[i1][2] - spheres[i2][2];
+                let dr = spheres[i1][3] - spheres[i2][3];
+                if dr * dr > dx * dx + dy * dy + dz * dz {
+                    if dr > 0.0 {
+                        spheres[i2][3] = -1.0;
+                    } else {
+                        spheres[i1][3] = -1.0;
+                    }
+                }
+            }
+        }
+
+        OreBlobShape {
+            spheres,
+            min_box_x: prefix.min_box_x,
+            min_box_y: prefix.min_box_y,
+            min_box_z: prefix.min_box_z,
+            tested_size_x: prefix.tested_size_x,
+            tested_size_y: prefix.tested_size_y,
+            tested_size_z: prefix.tested_size_z,
+        }
+    }
+
+    fn blob_prefix_may_spill_into(
+        &self,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+        prefix: &OreBlobPrefix,
+    ) -> bool {
+        let mut min_x = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut min_z = i32::MAX;
+        let mut max_z = i32::MIN;
+
+        for i in 0..self.size {
+            let step = i as f32 / self.size as f32;
+            let radius_noise = random.next_double() * self.size as f64 / 16.0;
+            let radius =
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
+                    / 2.0;
+            let x = lerp_f64(step as f64, prefix.x0, prefix.x1);
+            let z = lerp_f64(step as f64, prefix.z0, prefix.z1);
+            min_x = min_x.min(mth_floor(x - radius));
+            max_x = max_x.max(mth_floor(x + radius).max(min_x));
+            min_z = min_z.min(mth_floor(z - radius));
+            max_z = max_z.max(mth_floor(z + radius).max(min_z));
+        }
+
+        horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
+    }
+
+    fn consume_blob_shape_random(&self, random: &mut FeatureRandom) {
+        for _ in 0..self.size {
+            let _radius_noise = random.next_double();
+        }
     }
 
     fn may_spill_into(
@@ -1806,15 +1933,6 @@ impl OreFeatureConfig {
 
     fn can_skip_non_spilling_blob_replay(&self) -> bool {
         self.discard_chance_on_air_exposure <= 0.0
-    }
-
-    fn consume_shape_random(&self, random: &mut FeatureRandom) {
-        let _direction = random.next_float();
-        let _y0 = random.next_int(3);
-        let _y1 = random.next_int(3);
-        for _ in 0..self.size {
-            let _radius_noise = random.next_double();
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
