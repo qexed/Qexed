@@ -1692,8 +1692,25 @@ impl OreFeatureConfig {
         random: &mut FeatureRandom,
         shape: &OreBlobShape,
     ) -> bool {
-        let mut tested =
-            vec![false; shape.tested_size_x * shape.tested_size_y * shape.tested_size_z];
+        let tested_min_x = shape.min_box_x.max(chunk_min_x);
+        let tested_max_x =
+            (shape.min_box_x + shape.tested_size_x as i32 - 1).min(chunk_min_x + 15);
+        let tested_min_y = shape.min_box_y.max(settings.min_y);
+        let tested_max_y = (shape.min_box_y + shape.tested_size_y as i32 - 1)
+            .min(settings.min_y + settings.height - 1);
+        let tested_min_z = shape.min_box_z.max(chunk_min_z);
+        let tested_max_z =
+            (shape.min_box_z + shape.tested_size_z as i32 - 1).min(chunk_min_z + 15);
+        if tested_min_x > tested_max_x
+            || tested_min_y > tested_max_y
+            || tested_min_z > tested_max_z
+        {
+            return false;
+        }
+        let tested_size_x = (tested_max_x - tested_min_x + 1) as usize;
+        let tested_size_y = (tested_max_y - tested_min_y + 1) as usize;
+        let tested_size_z = (tested_max_z - tested_min_z + 1) as usize;
+        let mut tested = None;
         let mut placed = false;
         for (sphere_index, sphere) in shape.spheres.iter().copied().enumerate() {
             let [x, y, z, radius] = sphere;
@@ -1715,13 +1732,15 @@ impl OreFeatureConfig {
             let raw_max_x = mth_floor(x + radius).max(raw_min_x);
             let min_x = raw_min_x.max(chunk_min_x);
             let max_x = raw_max_x.min(chunk_min_x + 15);
-            let min_y = mth_floor(y - radius).max(shape.min_box_y);
-            let max_y = mth_floor(y + radius).max(min_y);
+            let raw_min_y = mth_floor(y - radius).max(shape.min_box_y);
+            let raw_max_y = mth_floor(y + radius).max(raw_min_y);
+            let min_y = raw_min_y.max(settings.min_y);
+            let max_y = raw_max_y.min(settings.min_y + settings.height - 1);
             let raw_min_z = mth_floor(z - radius).max(shape.min_box_z);
             let raw_max_z = mth_floor(z + radius).max(raw_min_z);
             let min_z = raw_min_z.max(chunk_min_z);
             let max_z = raw_max_z.min(chunk_min_z + 15);
-            if min_x > max_x || min_z > max_z {
+            if min_x > max_x || min_y > max_y || min_z > max_z {
                 continue;
             }
             self.trace_shape_sphere_at_target(
@@ -1741,9 +1760,7 @@ impl OreFeatureConfig {
                     continue;
                 }
 
-                for world_y in
-                    min_y.max(settings.min_y)..=max_y.min(settings.min_y + settings.height - 1)
-                {
+                for world_y in min_y..=max_y {
                     let yd = (world_y as f64 + 0.5 - y) / radius;
                     if xd * xd + yd * yd >= 1.0 {
                         continue;
@@ -1760,6 +1777,14 @@ impl OreFeatureConfig {
                         let tested_index = tested_x
                             + tested_y * shape.tested_stride_x
                             + tested_z * shape.tested_stride_x * shape.tested_stride_y;
+                        let compact_x = (world_x - tested_min_x) as usize;
+                        let compact_y = (world_y - tested_min_y) as usize;
+                        let compact_z = (world_z - tested_min_z) as usize;
+                        let compact_index = compact_x
+                            + compact_y * tested_size_x
+                            + compact_z * tested_size_x * tested_size_y;
+                        let tested =
+                            tested.get_or_insert_with(|| vec![false; tested_size_x * tested_size_y * tested_size_z]);
                         self.trace_tested_bit_at_target(
                             settings,
                             chunk_min_x,
@@ -1770,10 +1795,10 @@ impl OreFeatureConfig {
                             world_z,
                             sphere_index,
                             tested_index,
-                            tested[tested_index],
+                            tested[compact_index],
                         );
-                        if !tested[tested_index] {
-                            tested[tested_index] = true;
+                        if !tested[compact_index] {
+                            tested[compact_index] = true;
                         } else {
                             continue;
                         }
