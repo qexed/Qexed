@@ -457,7 +457,7 @@ mod oracle_diagnostics {
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
         io::{Read, Seek, SeekFrom},
-        path::Path,
+        path::{Path, PathBuf},
         time::{Duration, Instant},
     };
 
@@ -541,6 +541,73 @@ mod oracle_diagnostics {
             }
             None => println!("no block diff found"),
         }
+    }
+
+    #[test]
+    fn cached_seed_zero_oracle_metadata_and_target_mapping_diagnostic() {
+        let seed = 0;
+        let chunk_x = 0;
+        let chunk_z = 0;
+        let chunk_dir = oracle_chunk_cache_dir(seed, chunk_x, chunk_z);
+        let region_path = oracle_chunk_cache_region_path(seed, chunk_x, chunk_z);
+        if !region_path.exists() {
+            println!("oracle cache absent: {}", region_path.display());
+            return;
+        }
+
+        let manifest =
+            read_manifest(&chunk_dir.join("manifest.txt")).expect("read oracle manifest");
+        assert_eq!(
+            manifest.get("minecraft_version").map(String::as_str),
+            Some(qexed_config::MC_VERSION)
+        );
+        assert_eq!(manifest.get("seed").map(String::as_str), Some("0"));
+        assert_eq!(manifest.get("chunk_x").map(String::as_str), Some("0"));
+        assert_eq!(manifest.get("chunk_z").map(String::as_str), Some("0"));
+        assert_eq!(
+            manifest.get("dimension_namespace").map(String::as_str),
+            Some("minecraft")
+        );
+        assert_eq!(
+            manifest.get("dimension_value").map(String::as_str),
+            Some("overworld")
+        );
+        assert!(manifest
+            .get("generation_config")
+            .is_some_and(|value| value.contains("minecraft-server;overworld")));
+
+        let noise_settings_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../cache/mojang")
+            .join(qexed_config::MC_VERSION)
+            .join("data/minecraft/worldgen/noise_settings/overworld.json");
+        assert!(
+            noise_settings_path.exists(),
+            "missing noise settings cache: {}",
+            noise_settings_path.display()
+        );
+
+        let chunk = read_cached_region_chunk(&region_path, chunk_x, chunk_z)
+            .expect("read cached Java chunk");
+        let x: i32 = 6;
+        let y: i32 = -61;
+        let z: i32 = 0;
+        let section_y = y.div_euclid(16);
+        let local_y = y.rem_euclid(16) as usize;
+        let block_index = local_y * 256 + z as usize * 16 + x as usize;
+        let sections = sections_by_y(compound(&chunk).expect("oracle root"));
+        let section = sections.get(&section_y).expect("target section");
+        let indices = section_block_indices(section).expect("decode target section palette");
+        let palette_index = indices[block_index];
+        let block = block_name_at_index(section, palette_index);
+
+        assert_eq!(section_y, -4);
+        assert_eq!(local_y, 3);
+        assert_eq!(block_index, 774);
+        assert_eq!(block, "minecraft:deepslate[axis=y]");
+        assert_eq!(
+            block_at(&chunk, x, y, z).as_deref(),
+            Some("minecraft:deepslate[axis=y]")
+        );
     }
 
     #[test]
@@ -762,11 +829,15 @@ mod oracle_diagnostics {
     fn oracle_chunk_cache_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
+        oracle_chunk_cache_dir(seed, chunk_x, chunk_z)
+            .join(format!("r.{region_x}.{region_z}.mca"))
+    }
+
+    fn oracle_chunk_cache_dir(seed: i64, chunk_x: i32, chunk_z: i32) -> PathBuf {
         oracle_root()
             .join(format!("seed-{seed}"))
             .join("minecraft/overworld/chunks")
             .join(format!("x.{chunk_x}.z.{chunk_z}"))
-            .join(format!("r.{region_x}.{region_z}.mca"))
     }
 
     fn rust_chunk_cache_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
@@ -783,6 +854,17 @@ mod oracle_diagnostics {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/worldgen-oracle")
             .join(qexed_config::MC_VERSION)
+    }
+
+    fn read_manifest(path: &Path) -> anyhow::Result<HashMap<String, String>> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(content
+            .lines()
+            .filter_map(|line| {
+                let (key, value) = line.split_once('=')?;
+                Some((key.to_string(), value.to_string()))
+            })
+            .collect())
     }
 
     fn duration_ms(duration: Duration) -> f64 {

@@ -978,6 +978,79 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_redstone_lower_matches_mojang_cache() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let redstone_lower = &settings.ore_features.features[17];
+
+        assert_eq!(redstone_lower.step_index, 6);
+        assert_eq!(redstone_lower.feature_index, 17);
+        assert!(matches!(redstone_lower.count, OrePlacementCount::Constant(8)));
+        assert!(matches!(
+            redstone_lower.height,
+            OreHeight::Trapezoid(HeightAnchor::AboveBottom(-32), HeightAnchor::AboveBottom(32))
+        ));
+        assert_eq!(redstone_lower.ore.size, 8);
+        assert_eq!(redstone_lower.ore.discard_chance_on_air_exposure, 0.0);
+        assert!(redstone_lower
+            .ore
+            .targets
+            .iter()
+            .any(|target| matches!(target.predicate, OreTargetPredicate::StoneOreReplaceables)
+                && target.block.is("minecraft:redstone_ore")
+                && target
+                    .block
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "lit" && value == "false")));
+        assert!(redstone_lower
+            .ore
+            .targets
+            .iter()
+            .any(|target| matches!(target.predicate, OreTargetPredicate::DeepslateOreReplaceables)
+                && target.block.is("minecraft:deepslate_redstone_ore")
+                && target
+                    .block
+                    .properties
+                    .iter()
+                    .any(|(name, value)| name == "lit" && value == "false")));
+
+        let placed: serde_json::Value = read_json(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../cache/mojang/26.2/data/minecraft/worldgen/placed_feature/ore_redstone_lower.json",
+            ),
+        )
+        .unwrap();
+        let configured: serde_json::Value = read_json(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../cache/mojang/26.2/data/minecraft/worldgen/configured_feature/ore_redstone.json"),
+        )
+        .unwrap();
+
+        assert_eq!(placed["feature"], "minecraft:ore_redstone");
+        assert_eq!(placed["placement"][0]["type"], "minecraft:count");
+        assert_eq!(placed["placement"][0]["count"], 8);
+        assert_eq!(placed["placement"][2]["height"]["type"], "minecraft:trapezoid");
+        assert_eq!(
+            placed["placement"][2]["height"]["min_inclusive"]["above_bottom"],
+            -32
+        );
+        assert_eq!(
+            placed["placement"][2]["height"]["max_inclusive"]["above_bottom"],
+            32
+        );
+        assert_eq!(configured["config"]["size"], 8);
+        assert_eq!(configured["config"]["discard_chance_on_air_exposure"], 0.0);
+        assert_eq!(
+            configured["config"]["targets"][0]["state"]["Name"],
+            "minecraft:redstone_ore"
+        );
+        assert_eq!(
+            configured["config"]["targets"][1]["state"]["Name"],
+            "minecraft:deepslate_redstone_ore"
+        );
+    }
+
+    #[test]
     fn vanilla_noise_configures_underwater_magma_and_soft_disks() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let magma = &settings.ore_features.underwater_magma;
