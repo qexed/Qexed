@@ -43,10 +43,11 @@ impl PlacedOreFeature {
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let x = origin_x + random.next_int(16);
             let z = origin_z + random.next_int(16);
             let y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, x, y, z);
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
@@ -75,6 +76,17 @@ impl PlacedOreFeature {
                 continue;
             }
             let prefix = self.ore.sample_blob_prefix(random, x, y, z);
+            let mut spill_random = random.clone();
+            let reaches_target = self.ore.blob_prefix_may_spill_into(
+                target_origin_x,
+                target_origin_z,
+                &mut spill_random,
+                &prefix,
+            );
+            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
+                self.ore.consume_blob_shape_random(random);
+                continue;
+            }
             if !self.ore.precheck_passes(
                 settings,
                 source_origin_x,
@@ -87,28 +99,19 @@ impl PlacedOreFeature {
             ) {
                 continue;
             }
-            let mut spill_random = random.clone();
-            let reaches_target = self.ore.blob_prefix_may_spill_into(
-                target_origin_x,
-                target_origin_z,
-                &mut spill_random,
-                &prefix,
-            );
-            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
-                self.ore.consume_blob_shape_random(random);
-                continue;
-            }
             let shape = self.ore.sample_blob_shape(random, prefix);
             let mut replay_random = random.clone();
-            self.ore.place_shape_with_neighbor(
-                settings,
-                source_origin_x,
-                source_origin_z,
-                source_chunk,
-                Some((target_origin_x, target_origin_z, &*target_chunk)),
-                random,
-                &shape,
-            );
+            if self.ore.needs_source_spillover_replay() {
+                self.ore.place_shape_with_neighbor(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    Some((target_origin_x, target_origin_z, &*target_chunk)),
+                    random,
+                    &shape,
+                );
+            }
             if reaches_target {
                 self.ore.place_shape_with_neighbor(
                     settings,
@@ -132,10 +135,11 @@ impl PlacedOreFeature {
         target_origin_z: i32,
         random: &mut FeatureRandom,
     ) -> bool {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
             let y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, x, y, z);
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
@@ -706,12 +710,13 @@ impl PlacedDiskFeature {
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let x = origin_x + random.next_int(16);
             let z = origin_z + random.next_int(16);
             let local_x = (x - origin_x) as usize;
             let local_z = (z - origin_z) as usize;
             let y = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            update_feature_write_trace_attempt(attempt, x, y, z);
             if y <= settings.min_y
                 || !self.biome_filter.allows_at(&settings.density, x, y, z)
                 || !self.can_start_at(chunk, local_x, y, local_z, settings.min_y)
@@ -735,12 +740,13 @@ impl PlacedDiskFeature {
         target_chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
             let local_x = (x - source_origin_x) as usize;
             let local_z = (z - source_origin_z) as usize;
             let y = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
+            update_feature_write_trace_attempt(attempt, x, y, z);
             if y <= settings.min_y
                 || !self.biome_filter.allows_at(&settings.density, x, y, z)
                 || !self.can_start_at(source_chunk, local_x, y, local_z, settings.min_y)
@@ -864,6 +870,17 @@ impl PlacedDiskFeature {
                         local_z,
                         settings.min_y,
                     );
+                    trace_feature_write_at_target(
+                        world_x,
+                        world_y,
+                        world_z,
+                        origin_x,
+                        origin_z,
+                        local_x,
+                        local_z,
+                        current,
+                        &replacement,
+                    );
                     chunk.set_layer(local_x, world_y, local_z, settings.min_y, replacement);
                 }
             }
@@ -941,6 +958,21 @@ impl PlacedDiskFeature {
                     if let Some((local_x, local_z)) =
                         local_coords(world_x, world_z, source_origin_x, source_origin_z)
                     {
+                        if let Some(previous) =
+                            source_chunk.layer(local_x, world_y, local_z, settings.min_y)
+                        {
+                            trace_feature_write_at_target(
+                                world_x,
+                                world_y,
+                                world_z,
+                                source_origin_x,
+                                source_origin_z,
+                                local_x,
+                                local_z,
+                                previous,
+                                &replacement,
+                            );
+                        }
                         source_chunk.set_layer(
                             local_x,
                             world_y,
@@ -951,6 +983,21 @@ impl PlacedDiskFeature {
                     } else if let Some((local_x, local_z)) =
                         local_coords(world_x, world_z, target_origin_x, target_origin_z)
                     {
+                        if let Some(previous) =
+                            target_chunk.layer(local_x, world_y, local_z, settings.min_y)
+                        {
+                            trace_feature_write_at_target(
+                                world_x,
+                                world_y,
+                                world_z,
+                                target_origin_x,
+                                target_origin_z,
+                                local_x,
+                                local_z,
+                                previous,
+                                &replacement,
+                            );
+                        }
                         target_chunk.set_layer(
                             local_x,
                             world_y,
@@ -1910,6 +1957,17 @@ impl OreFeatureConfig {
             return false;
         }
 
+        trace_feature_write_at_target(
+            world_x,
+            world_y,
+            world_z,
+            chunk_min_x,
+            chunk_min_z,
+            local_x,
+            local_z,
+            current,
+            &ore,
+        );
         chunk.set_layer(local_x, world_y, local_z, settings.min_y, ore);
         true
     }
@@ -1933,6 +1991,10 @@ impl OreFeatureConfig {
 
     fn can_skip_non_spilling_blob_replay(&self) -> bool {
         self.discard_chance_on_air_exposure <= 0.0
+    }
+
+    fn needs_source_spillover_replay(&self) -> bool {
+        self.discard_chance_on_air_exposure > 0.0
     }
 
     #[allow(clippy::too_many_arguments)]

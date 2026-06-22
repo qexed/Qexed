@@ -7,6 +7,7 @@ const FEATURE_TRACE_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE";
 const FEATURE_PROFILE_ENV: &str = "QEXED_WORLDGEN_FEATURE_PROFILE";
 const FEATURE_TRACE_STOP_AFTER_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER";
 const FEATURE_TRACE_TIMEOUT_MS_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_TIMEOUT_MS";
+const FEATURE_WRITE_TRACE_TARGET_ENV: &str = "QEXED_WORLDGEN_FEATURE_WRITE_TRACE_TARGET";
 const FULL_DIAGNOSTIC_TEST_NAME: &str = "v4_pipeline_full_chunk_manual_diagnostic";
 
 fn should_profile_to_stderr() -> bool {
@@ -14,6 +15,134 @@ fn should_profile_to_stderr() -> bool {
         || std::thread::current()
             .name()
             .is_some_and(|name| name.contains(FULL_DIAGNOSTIC_TEST_NAME))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FeatureWriteTraceTarget {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+impl FeatureWriteTraceTarget {
+    fn from_env() -> Option<Self> {
+        static TARGET: OnceLock<Option<FeatureWriteTraceTarget>> = OnceLock::new();
+        *TARGET.get_or_init(|| {
+            let value = std::env::var(FEATURE_WRITE_TRACE_TARGET_ENV).ok()?;
+            let mut parts = value.split(',').map(str::trim);
+            let x = parts.next()?.parse().ok()?;
+            let y = parts.next()?.parse().ok()?;
+            let z = parts.next()?.parse().ok()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            Some(Self { x, y, z })
+        })
+    }
+
+    fn matches(self, x: i32, y: i32, z: i32) -> bool {
+        self.x == x && self.y == y && self.z == z
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FeatureWriteTraceContext {
+    chunk_x: i32,
+    chunk_z: i32,
+    ordinal: usize,
+    feature_name: &'static str,
+    step_index: i32,
+    feature_index: i32,
+    phase: &'static str,
+    source_chunk_x: i32,
+    source_chunk_z: i32,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_chunk_x: i32,
+    target_chunk_z: i32,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    decoration_seed: i64,
+    attempt: Option<i32>,
+    attempt_origin: Option<(i32, i32, i32)>,
+}
+
+thread_local! {
+    static FEATURE_WRITE_TRACE_CONTEXT: std::cell::RefCell<Option<FeatureWriteTraceContext>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn with_feature_write_trace_context<T>(
+    context: FeatureWriteTraceContext,
+    action: impl FnOnce() -> T,
+) -> T {
+    FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+        let previous = current.replace(Some(context));
+        let result = action();
+        current.replace(previous);
+        result
+    })
+}
+
+fn update_feature_write_trace_attempt(attempt: i32, origin_x: i32, origin_y: i32, origin_z: i32) {
+    FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+        if let Some(context) = current.borrow_mut().as_mut() {
+            context.attempt = Some(attempt);
+            context.attempt_origin = Some((origin_x, origin_y, origin_z));
+        }
+    });
+}
+
+fn trace_feature_write_at_target(
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    chunk_origin_x: i32,
+    chunk_origin_z: i32,
+    local_x: usize,
+    local_z: usize,
+    previous: &BlockLayer,
+    replacement: &BlockLayer,
+) {
+    if !FeatureWriteTraceTarget::from_env()
+        .is_some_and(|target| target.matches(world_x, world_y, world_z))
+    {
+        return;
+    }
+
+    FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+        if let Some(context) = current.borrow().as_ref() {
+            eprintln!(
+                "feature write trace: chunk=({},{}) coord=({world_x},{world_y},{world_z}) local=({local_x},{world_y},{local_z}) phase={} ordinal={} name={} step={} index={} source_chunk=({},{}) source_origin=({},{}) target_chunk=({},{}) target_origin=({},{}) write_origin=({chunk_origin_x},{chunk_origin_z}) decoration_seed={} attempt={} attempt_origin={} previous={} replacement={}",
+                context.chunk_x,
+                context.chunk_z,
+                context.phase,
+                context.ordinal,
+                context.feature_name,
+                context.step_index,
+                context.feature_index,
+                context.source_chunk_x,
+                context.source_chunk_z,
+                context.source_origin_x,
+                context.source_origin_z,
+                context.target_chunk_x,
+                context.target_chunk_z,
+                context.target_origin_x,
+                context.target_origin_z,
+                context.decoration_seed,
+                context
+                    .attempt
+                    .map(|attempt| attempt.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                context
+                    .attempt_origin
+                    .map(|(x, y, z)| format!("({x},{y},{z})"))
+                    .unwrap_or_else(|| "none".to_string()),
+                previous.block,
+                replacement.block
+            );
+        }
+    });
 }
 
 #[derive(Debug, Clone)]
@@ -1004,92 +1133,115 @@ impl OverworldOreFeatures {
 
                     let source_origin_x = neighbor_sources.origin_x(source_index);
                     let source_origin_z = neighbor_sources.origin_z(source_index);
+                    let source_chunk_x = source_origin_x.div_euclid(16);
+                    let source_chunk_z = source_origin_z.div_euclid(16);
+                    let source_decoration_seed = neighbor_sources.decoration_seed(source_index);
                     let mut random = FeatureRandom::for_feature(
-                        neighbor_sources.decoration_seed(source_index),
+                        source_decoration_seed,
                         feature.feature_index(),
                         feature.step_index(),
                     );
                     let spillover_start = Instant::now();
-                    match feature {
-                        PlacedUndergroundFeature::MonsterRoom(feature) => {
-                            let mut source = neighbor_sources.take_source(source_index);
-                            feature.place_with_spillover_lazy_neighbors(
-                                settings,
-                                source_origin_x,
-                                source_origin_z,
-                                origin_x,
-                                origin_z,
-                                source.chunk_mut(),
-                                chunk,
-                                &mut random,
-                                &mut neighbor_sources,
-                                &mut profile,
-                                feature_name,
-                            );
-                            neighbor_sources.restore_source(source_index, source);
-                        }
-                        PlacedUndergroundFeature::Structure(feature) => {
-                            let mut source = neighbor_sources.take_source(source_index);
-                            let source_neighbors = neighbor_sources.context_chunks();
-                            feature.place_with_spillover_neighbors(
-                                settings,
-                                source_origin_x,
-                                source_origin_z,
-                                origin_x,
-                                origin_z,
-                                source.chunk_mut(),
-                                chunk,
-                                &source_neighbors,
-                                &mut random,
-                            );
-                            neighbor_sources.restore_source(source_index, source);
-                        }
-                        PlacedUndergroundFeature::HugeMushroom(feature) => {
-                            let mut source = neighbor_sources.take_source(source_index);
-                            let source_neighbors = neighbor_sources.context_chunks();
-                            feature.place_with_spillover_neighbors(
-                                settings,
-                                source_origin_x,
-                                source_origin_z,
-                                origin_x,
-                                origin_z,
-                                source.chunk_mut(),
-                                chunk,
-                                &source_neighbors,
-                                &mut random,
-                            );
-                            neighbor_sources.restore_source(source_index, source);
-                        }
-                        PlacedUndergroundFeature::Tree(feature) => {
-                            let mut source = neighbor_sources.take_source(source_index);
-                            let source_neighbors = neighbor_sources.context_chunks();
-                            feature.place_with_spillover_neighbors(
-                                settings,
-                                source_origin_x,
-                                source_origin_z,
-                                origin_x,
-                                origin_z,
-                                source.chunk_mut(),
-                                chunk,
-                                &source_neighbors,
-                                &mut random,
-                            );
-                            neighbor_sources.restore_source(source_index, source);
-                        }
-                        _ => {
-                            let source = neighbor_sources.source_mut(source_index);
-                            feature.place_spillover_from(
-                                settings,
-                                source_origin_x,
-                                source_origin_z,
-                                origin_x,
-                                origin_z,
-                                source.chunk_mut(),
-                                chunk,
-                                &mut random,
-                            )
-                        }
-                    }
+                    let trace_context = FeatureWriteTraceContext {
+                        chunk_x,
+                        chunk_z,
+                        ordinal,
+                        feature_name,
+                        step_index,
+                        feature_index,
+                        phase: "spillover",
+                        source_chunk_x,
+                        source_chunk_z,
+                        source_origin_x,
+                        source_origin_z,
+                        target_chunk_x: chunk_x,
+                        target_chunk_z: chunk_z,
+                        target_origin_x: origin_x,
+                        target_origin_z: origin_z,
+                        decoration_seed: source_decoration_seed,
+                        attempt: None,
+                        attempt_origin: None,
+                    };
+                    with_feature_write_trace_context(trace_context, || match feature {
+                            PlacedUndergroundFeature::MonsterRoom(feature) => {
+                                let mut source = neighbor_sources.take_source(source_index);
+                                feature.place_with_spillover_lazy_neighbors(
+                                    settings,
+                                    source_origin_x,
+                                    source_origin_z,
+                                    origin_x,
+                                    origin_z,
+                                    source.chunk_mut(),
+                                    chunk,
+                                    &mut random,
+                                    &mut neighbor_sources,
+                                    &mut profile,
+                                    feature_name,
+                                );
+                                neighbor_sources.restore_source(source_index, source);
+                            }
+                            PlacedUndergroundFeature::Structure(feature) => {
+                                let mut source = neighbor_sources.take_source(source_index);
+                                let source_neighbors = neighbor_sources.context_chunks();
+                                feature.place_with_spillover_neighbors(
+                                    settings,
+                                    source_origin_x,
+                                    source_origin_z,
+                                    origin_x,
+                                    origin_z,
+                                    source.chunk_mut(),
+                                    chunk,
+                                    &source_neighbors,
+                                    &mut random,
+                                );
+                                neighbor_sources.restore_source(source_index, source);
+                            }
+                            PlacedUndergroundFeature::HugeMushroom(feature) => {
+                                let mut source = neighbor_sources.take_source(source_index);
+                                let source_neighbors = neighbor_sources.context_chunks();
+                                feature.place_with_spillover_neighbors(
+                                    settings,
+                                    source_origin_x,
+                                    source_origin_z,
+                                    origin_x,
+                                    origin_z,
+                                    source.chunk_mut(),
+                                    chunk,
+                                    &source_neighbors,
+                                    &mut random,
+                                );
+                                neighbor_sources.restore_source(source_index, source);
+                            }
+                            PlacedUndergroundFeature::Tree(feature) => {
+                                let mut source = neighbor_sources.take_source(source_index);
+                                let source_neighbors = neighbor_sources.context_chunks();
+                                feature.place_with_spillover_neighbors(
+                                    settings,
+                                    source_origin_x,
+                                    source_origin_z,
+                                    origin_x,
+                                    origin_z,
+                                    source.chunk_mut(),
+                                    chunk,
+                                    &source_neighbors,
+                                    &mut random,
+                                );
+                                neighbor_sources.restore_source(source_index, source);
+                            }
+                            _ => {
+                                let source = neighbor_sources.source_mut(source_index);
+                                feature.place_spillover_from(
+                                    settings,
+                                    source_origin_x,
+                                    source_origin_z,
+                                    origin_x,
+                                    origin_z,
+                                    source.chunk_mut(),
+                                    chunk,
+                                    &mut random,
+                                )
+                            }
+                        });
                     if let Some(profile) = profile.as_mut() {
                         profile.record(
                             &feature_label,
@@ -1105,7 +1257,27 @@ impl OverworldOreFeatures {
                     feature.feature_index(),
                     feature.step_index(),
                 );
-                let local_elapsed = match feature {
+                let trace_context = FeatureWriteTraceContext {
+                    chunk_x,
+                    chunk_z,
+                    ordinal,
+                    feature_name,
+                    step_index,
+                    feature_index,
+                    phase: "local",
+                    source_chunk_x: chunk_x,
+                    source_chunk_z: chunk_z,
+                    source_origin_x: origin_x,
+                    source_origin_z: origin_z,
+                    target_chunk_x: chunk_x,
+                    target_chunk_z: chunk_z,
+                    target_origin_x: origin_x,
+                    target_origin_z: origin_z,
+                    decoration_seed,
+                    attempt: None,
+                    attempt_origin: None,
+                };
+                let local_elapsed = with_feature_write_trace_context(trace_context, || match feature {
                     PlacedUndergroundFeature::MultifaceGrowth(feature) => {
                         let context_start = Instant::now();
                         let neighbor_chunks = neighbor_sources.all_context(settings);
@@ -1248,7 +1420,7 @@ impl OverworldOreFeatures {
                         feature.place(settings, origin_x, origin_z, chunk, &mut random);
                         local_start.elapsed()
                     }
-                };
+                });
                 if let Some(profile) = profile.as_mut() {
                     profile.record(&feature_label, FeatureProfilePhase::Local, local_elapsed);
                 }
