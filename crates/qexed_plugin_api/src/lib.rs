@@ -199,6 +199,99 @@ pub struct PluginLoadFinishEvent;
 
 impl Event for PluginLoadFinishEvent {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkChunkLoadSource {
+    Saved,
+    LocalGenerated,
+    VanillaGenerated,
+    EmptyFallback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChunkSyncCause {
+    InitialLogin,
+    PlayerMove,
+    CompletionTick,
+    UnloadTick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkLoadEvent {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+    pub source: NetworkChunkLoadSource,
+}
+
+impl ChunkLoadEvent {
+    pub fn new(chunk_x: i32, chunk_z: i32, source: NetworkChunkLoadSource) -> Self {
+        Self {
+            chunk_x,
+            chunk_z,
+            source,
+        }
+    }
+}
+
+impl Event for ChunkLoadEvent {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkUnloadEvent {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+}
+
+impl ChunkUnloadEvent {
+    pub fn new(chunk_x: i32, chunk_z: i32) -> Self {
+        Self { chunk_x, chunk_z }
+    }
+}
+
+impl Event for ChunkUnloadEvent {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkSyncEvent {
+    pub cause: ChunkSyncCause,
+    pub center_chunk_x: i32,
+    pub center_chunk_z: i32,
+    pub loaded: Vec<ChunkLoadEvent>,
+    pub unloaded: Vec<ChunkUnloadEvent>,
+    pub unloading: Vec<ChunkUnloadEvent>,
+}
+
+impl ChunkSyncEvent {
+    pub fn new(
+        cause: ChunkSyncCause,
+        center_chunk_x: i32,
+        center_chunk_z: i32,
+        loaded: Vec<ChunkLoadEvent>,
+        unloaded: Vec<ChunkUnloadEvent>,
+        unloading: Vec<ChunkUnloadEvent>,
+    ) -> Self {
+        Self {
+            cause,
+            center_chunk_x,
+            center_chunk_z,
+            loaded,
+            unloaded,
+            unloading,
+        }
+    }
+
+    pub fn loaded_count(&self) -> usize {
+        self.loaded.len()
+    }
+
+    pub fn unloaded_count(&self) -> usize {
+        self.unloaded.len()
+    }
+
+    pub fn unloading_count(&self) -> usize {
+        self.unloading.len()
+    }
+}
+
+impl Event for ChunkSyncEvent {}
+
 /// 事件处理器 —— 插件实现此 trait 来订阅特定事件。
 #[async_trait]
 pub trait EventHandler<E: Event>: Send + Sync {
