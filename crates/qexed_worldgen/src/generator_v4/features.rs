@@ -1301,6 +1301,7 @@ struct NeighborFeatureSources {
     seed: i64,
     target_origin_x: i32,
     target_origin_z: i32,
+    all_loaded: bool,
     entries: Vec<Option<NeighborFeatureSource>>,
 }
 
@@ -1322,6 +1323,7 @@ impl NeighborFeatureSources {
             seed,
             target_origin_x: chunk_x * 16,
             target_origin_z: chunk_z * 16,
+            all_loaded: false,
             entries,
         }
     }
@@ -1336,9 +1338,16 @@ impl NeighborFeatureSources {
     }
 
     fn ensure_all(&mut self, settings: &NoiseSettings) {
+        if self.all_loaded {
+            return;
+        }
         for index in 0..self.entries.len() {
             self.ensure_loaded(settings, index);
         }
+        self.all_loaded = self
+            .entries
+            .iter()
+            .all(|source| source.as_ref().is_some_and(|source| source.chunk.is_some()));
     }
 
     fn candidates(&self, feature: PlacedUndergroundFeature<'_>) -> Vec<usize> {
@@ -1368,6 +1377,7 @@ impl NeighborFeatureSources {
         if source.chunk.is_some() {
             return;
         }
+        self.all_loaded = false;
         source.decoration_seed =
             FeatureRandom::decoration_seed(self.seed, source.origin_x, source.origin_z);
         source.chunk = Some(settings.feature_source_chunk(source.chunk_x, source.chunk_z));
@@ -1477,6 +1487,10 @@ impl NeighborFeatureSources {
     fn restore_source(&mut self, index: usize, source: NeighborFeatureSource) {
         debug_assert!(self.entries[index].is_none());
         self.entries[index] = Some(source);
+        self.all_loaded = self
+            .entries
+            .iter()
+            .all(|source| source.as_ref().is_some_and(|source| source.chunk.is_some()));
     }
 
     fn source_mut(&mut self, index: usize) -> &mut NeighborFeatureSource {
