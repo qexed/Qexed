@@ -1,0 +1,10 @@
+[package]
+name = "qexed_item"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_nbt.workspace = true
+
+serde.workspace = true
+thiserror.workspace = true

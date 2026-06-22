@@ -1399,6 +1399,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_ai"
+version = "0.1.0"
+
+[[package]]
 name = "qexed_auth"
 version = "0.1.0"
 dependencies = [
@@ -1416,6 +1420,17 @@ dependencies = [
  "sha1",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "qexed_block"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qexed_packet",
+ "qexed_registry",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1471,12 +1486,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_entity"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "qexed_error_macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "qexed_item"
+version = "0.1.0"
+dependencies = [
+ "qexed_nbt",
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -2,11 +2,15 @@
 resolver = "3"
 members = [
     "crates/qexed",
+    "crates/qexed_ai",
     "crates/qexed_auth",
+    "crates/qexed_block",
     "crates/qexed_chat",
     "crates/qexed_command",
+    "crates/qexed_entity",
     "crates/qexed_tcp_connect",
     "crates/qexed_config",
+    "crates/qexed_item",
     "crates/qexed_log",
     "crates/qexed_nbt",
     "crates/qexed_packet",
@@ -25,12 +29,16 @@ members = [
 ]
 [workspace.dependencies]
 qexed.path = "crates/qexed"
+qexed_ai.path = "crates/qexed_ai"
 qexed_auth.path = "crates/qexed_auth"
+qexed_block.path = "crates/qexed_block"
 qexed_chat.path = "crates/qexed_chat"
 qexed_command.path = "crates/qexed_command"
+qexed_entity.path = "crates/qexed_entity"
 qexed_tcp_connect.path = "crates/qexed_tcp_connect"
 # 内部包
 qexed_config.path = "crates/qexed_config"
+qexed_item.path = "crates/qexed_item"
 qexed_log.path = "crates/qexed_log"
 qexed_nbt.path = "crates/qexed_nbt"
 qexed_packet.path = "crates/qexed_packet"
