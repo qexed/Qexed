@@ -36,6 +36,10 @@ pub async fn init() -> anyhow::Result<()> {
     mgr.scan_folder()?;
     mgr.load_all().await;
     mgr.enable_all().await;
+    let result = mgr.fire(&qexed_plugin_api::PluginLoadFinishEvent).await;
+    for error in result.errors {
+        tklog::error!("PluginLoadFinishEvent 处理失败: {}", error);
+    }
     PLUGIN_MANAGER.store(Box::into_raw(Box::new(mgr)), Ordering::Release);
     INITIALIZED.store(true, Ordering::Release);
     tklog::info!("加载插件完成");

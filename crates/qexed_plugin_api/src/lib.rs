@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use async_trait::async_trait;
+pub use async_trait::async_trait;
 
 // ---------------------------------------------------------------------------
 // PluginMeta — 插件元数据

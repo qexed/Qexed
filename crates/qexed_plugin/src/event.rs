@@ -67,3 +67,54 @@ impl PluginManager {
         EventEmitResult::new(ctx.is_cancelled(), errors)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use qexed_plugin_api::{
+        EventContext, EventHandler, EventRegistryExt, PluginError, PluginLoadFinishEvent,
+        async_trait,
+    };
+
+    use super::*;
+
+    struct CountingHandler {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl EventHandler<PluginLoadFinishEvent> for CountingHandler {
+        async fn handle(
+            &self,
+            _api: &dyn HostApi,
+            _event: &PluginLoadFinishEvent,
+            _ctx: &EventContext,
+        ) -> Result<(), PluginError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn fire_dispatches_registered_handler() {
+        let manager = PluginManager::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        manager.register::<PluginLoadFinishEvent>(
+            PluginHandle(0),
+            Box::new(CountingHandler {
+                calls: calls.clone(),
+            }),
+        );
+
+        let result = manager.fire(&PluginLoadFinishEvent).await;
+
+        assert!(result.is_ok());
+        assert!(!result.is_cancelled());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}
