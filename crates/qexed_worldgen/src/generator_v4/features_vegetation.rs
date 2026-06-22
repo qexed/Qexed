@@ -800,19 +800,26 @@ impl PlacedSimpleVegetationFeature {
                     );
                 }
 
-                let mut target_random = candidate_random;
-                let in_target = overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z);
-                self.place_candidate_with_neighbors(
-                    settings,
+                let in_target = self.candidate_can_touch_chunk(
+                    world_x,
+                    world_z,
                     target_origin_x,
                     target_origin_z,
-                    target_chunk,
-                    &[(source_origin_x, source_origin_z, &*source_chunk)],
-                    &mut target_random,
-                    world_x,
-                    world_y,
-                    world_z,
                 );
+                let mut target_random = candidate_random;
+                if in_target {
+                    self.place_candidate_with_neighbors(
+                        settings,
+                        target_origin_x,
+                        target_origin_z,
+                        target_chunk,
+                        &[(source_origin_x, source_origin_z, &*source_chunk)],
+                        &mut target_random,
+                        world_x,
+                        world_y,
+                        world_z,
+                    );
+                }
 
                 if in_source {
                     *random = source_random;
@@ -836,7 +843,6 @@ impl PlacedSimpleVegetationFeature {
             .as_ref()
             .map(|threshold| threshold.sample(source_origin_x, source_origin_z))
             .unwrap_or_else(|| self.count_provider.sample(self.outer_count, random));
-        let radius = self.max_horizontal_spillover();
         for _ in 0..outer_count {
             if random.next_float() >= 1.0 / self.rarity as f32 {
                 continue;
@@ -848,19 +854,38 @@ impl PlacedSimpleVegetationFeature {
                 let world_x = base_x + self.xz_offset.sample(random);
                 let _world_y = self.y_offset.sample(random);
                 let world_z = base_z + self.xz_offset.sample(random);
-                if horizontal_box_overlaps_chunk(
-                    world_x - radius,
-                    world_x + radius,
-                    world_z - radius,
-                    world_z + radius,
-                    target_origin_x,
-                    target_origin_z,
-                ) {
+                if self.candidate_can_touch_chunk(world_x, world_z, target_origin_x, target_origin_z)
+                {
                     return true;
                 }
             }
         }
         false
+    }
+
+    fn candidate_can_touch_chunk(
+        &self,
+        world_x: i32,
+        world_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+    ) -> bool {
+        let radius = self.candidate_context_radius();
+        horizontal_box_overlaps_chunk(
+            world_x - radius,
+            world_x + radius,
+            world_z - radius,
+            world_z + radius,
+            target_origin_x,
+            target_origin_z,
+        )
+    }
+
+    fn candidate_context_radius(&self) -> i32 {
+        match self.placement_predicate {
+            SimpleVegetationPlacementPredicate::Air => 0,
+            SimpleVegetationPlacementPredicate::AirSurvivesNearWater => 1,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
