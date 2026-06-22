@@ -514,6 +514,37 @@ mod oracle_diagnostics {
 
     #[test]
     #[ignore = "manual oracle cache diagnostic"]
+    fn dump_cached_seed_zero_chunk_diff() {
+        let seed = 0;
+        let chunk_x = 0;
+        let chunk_z = 0;
+        let java_path = oracle_chunk_cache_region_path(seed, chunk_x, chunk_z);
+        let rust_path = rust_chunk_cache_region_path(seed, chunk_x, chunk_z);
+        let expected =
+            read_cached_region_chunk(&java_path, chunk_x, chunk_z).expect("read cached Java chunk");
+        let actual =
+            read_cached_region_chunk(&rust_path, chunk_x, chunk_z).expect("read cached Rust chunk");
+
+        println!("module=qexed_worldgen::compare::oracle_diagnostics");
+        println!("java_cache={}", java_path.display());
+        println!("rust_cache={}", rust_path.display());
+
+        let comparison = compare_chunk_nbt(&expected, &actual);
+        println!("equal={}", comparison.equal);
+        if let Some(difference) = comparison.differences.first() {
+            println!("first_nbt_diff={difference}");
+        }
+
+        match first_block_diff(&expected, &actual) {
+            Some((x, y, z, expected_name, actual_name)) => {
+                println!("first_diff=({x},{y},{z}) expected={expected_name} actual={actual_name}");
+            }
+            None => println!("no block diff found"),
+        }
+    }
+
+    #[test]
+    #[ignore = "manual oracle cache diagnostic"]
     fn dump_oracle_cache_entry_delta() {
         let seed = 0;
         let chunk_x = 0;
@@ -688,6 +719,16 @@ mod oracle_diagnostics {
         Ok(tag)
     }
 
+    fn read_cached_region_chunk(path: &Path, chunk_x: i32, chunk_z: i32) -> anyhow::Result<Tag> {
+        let region = qexed_world::region::AnvilRegion::from_file(path)?;
+        let chunk = region
+            .read_chunk(chunk_x, chunk_z)?
+            .ok_or_else(|| anyhow::anyhow!("chunk is not present"))?;
+        let raw = chunk.decompress()?;
+        let (_, tag) = qexed_nbt::from_slice(&raw)?;
+        Ok(tag)
+    }
+
     fn available_oracle_seeds() -> anyhow::Result<Vec<i64>> {
         let root = oracle_root();
         let mut seeds = if root.exists() {
@@ -707,11 +748,7 @@ mod oracle_diagnostics {
     fn oracle_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
-        let chunk_cache_path = oracle_root()
-            .join(format!("seed-{seed}"))
-            .join("minecraft/overworld/chunks")
-            .join(format!("x.{chunk_x}.z.{chunk_z}"))
-            .join(format!("r.{region_x}.{region_z}.mca"));
+        let chunk_cache_path = oracle_chunk_cache_region_path(seed, chunk_x, chunk_z);
         if chunk_cache_path.exists() {
             return chunk_cache_path;
         }
@@ -719,6 +756,26 @@ mod oracle_diagnostics {
         oracle_root()
             .join(format!("seed-{seed}"))
             .join("minecraft/overworld/region")
+            .join(format!("r.{region_x}.{region_z}.mca"))
+    }
+
+    fn oracle_chunk_cache_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
+        let region_x = chunk_x.div_euclid(32);
+        let region_z = chunk_z.div_euclid(32);
+        oracle_root()
+            .join(format!("seed-{seed}"))
+            .join("minecraft/overworld/chunks")
+            .join(format!("x.{chunk_x}.z.{chunk_z}"))
+            .join(format!("r.{region_x}.{region_z}.mca"))
+    }
+
+    fn rust_chunk_cache_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
+        let region_x = chunk_x.div_euclid(32);
+        let region_z = chunk_z.div_euclid(32);
+        oracle_root()
+            .join(format!("seed-{seed}"))
+            .join("minecraft/overworld/rust/chunks")
+            .join(format!("x.{chunk_x}.z.{chunk_z}"))
             .join(format!("r.{region_x}.{region_z}.mca"))
     }
 

@@ -1657,6 +1657,7 @@ dependencies = [
  "qexed_config",
  "qexed_nbt",
  "qexed_registry",
+ "qexed_world",
  "rayon",
  "serde",
  "serde_json",

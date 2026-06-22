@@ -17,4 +17,5 @@ rayon.workspace = true
 
 [dev-dependencies]
 flate2.workspace = true
+qexed_world.workspace = true
 tempfile.workspace = true
