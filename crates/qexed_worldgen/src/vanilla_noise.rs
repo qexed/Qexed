@@ -2406,6 +2406,11 @@ impl XoroshiroRandomSource {
         self.random.next_long() as u32
     }
 
+    pub(crate) fn next_bits(&mut self, bits: u32) -> u32 {
+        assert!(bits <= 32);
+        (self.random.next_long() >> (64 - bits)) as u32
+    }
+
     pub(crate) fn next_double(&mut self) -> f64 {
         (self.random.next_long() >> 11) as f64 * (1.0 / ((1_u64 << 53) as f64))
     }

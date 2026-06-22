@@ -2873,11 +2873,27 @@ impl FeatureRandom {
 
     fn next_int(&mut self, bound: i32) -> i32 {
         assert!(bound > 0);
-        self.source.next_int(bound as usize) as i32
+        if bound & (bound - 1) == 0 {
+            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
+        }
+
+        loop {
+            let bits = self.next_bits(31) as i32;
+            let value = bits % bound;
+            if bits - value + (bound - 1) >= 0 {
+                return value;
+            }
+        }
     }
 
     fn next_long(&mut self) -> i64 {
-        self.source.next_long() as i64
+        let high = (self.next_bits(32) as i32 as i64) << 32;
+        let low = self.next_bits(32) as i32 as i64;
+        high.wrapping_add(low)
+    }
+
+    fn next_bits(&mut self, bits: u32) -> u32 {
+        self.source.next_bits(bits)
     }
 
     fn next_float(&mut self) -> f32 {
@@ -2885,10 +2901,12 @@ impl FeatureRandom {
     }
 
     fn next_bool(&mut self) -> bool {
-        self.source.next_bool()
+        self.next_bits(1) != 0
     }
 
     fn next_double(&mut self) -> f64 {
-        self.source.next_double()
+        let high = self.next_bits(26) as u64;
+        let low = self.next_bits(27) as u64;
+        ((high << 27) | low) as f64 * (1.0 / ((1_u64 << 53) as f64))
     }
 }

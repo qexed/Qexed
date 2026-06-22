@@ -1157,6 +1157,48 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_redstone_lower_seed_zero_attempts_match_java() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let redstone_lower = &settings.ore_features.features[17];
+        let mut random = FeatureRandom::for_feature(
+            FeatureRandom::decoration_seed(settings.ore_features.seed, 0, 0),
+            redstone_lower.feature_index,
+            redstone_lower.step_index,
+        );
+
+        assert_eq!(redstone_lower.step_index, 6);
+        assert_eq!(redstone_lower.feature_index, 17);
+        assert_eq!(redstone_lower.count.sample(&mut random), 8);
+
+        let attempts = (0..8)
+            .map(|_| {
+                let x = random.next_int(16);
+                let z = random.next_int(16);
+                let y = redstone_lower.height.sample(&settings, &mut random);
+                let _prefix = redstone_lower.ore.sample_blob_prefix(&mut random, x, y, z);
+                redstone_lower
+                    .ore
+                    .consume_blob_shape_random(&mut random);
+                (x, y, z)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            attempts,
+            vec![
+                (10, -69, 2),
+                (2, -64, 14),
+                (11, -34, 4),
+                (6, -87, 1),
+                (14, -83, 4),
+                (6, -92, 7),
+                (7, -70, 11),
+                (10, -86, 10),
+            ]
+        );
+    }
+
+    #[test]
     fn vanilla_noise_configures_underwater_magma_and_soft_disks() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let magma = &settings.ore_features.underwater_magma;
