@@ -220,6 +220,14 @@ impl BlockRegistry {
         self.state_ids.get(state).copied()
     }
 
+    pub fn state_id_by_name(
+        &self,
+        block: impl Into<BlockId>,
+        properties: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Option<BlockStateId> {
+        self.state_id(&BlockState::with_properties(block, properties))
+    }
+
     pub fn state_by_id(&self, id: impl Into<BlockStateId>) -> Option<&BlockState> {
         self.states_by_id.get(&id.into())
     }
@@ -236,6 +244,14 @@ pub fn block_state_id(state: &BlockState) -> Result<BlockStateId> {
     BlockRegistry::cached()?
         .state_id(state)
         .with_context(|| format!("block state not found in registry: {:?}", state))
+}
+
+pub fn block_state_id_by_name(
+    block: impl Into<BlockId>,
+    properties: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+) -> Result<BlockStateId> {
+    let state = BlockState::with_properties(block, properties);
+    block_state_id(&state)
 }
 
 pub fn block_state_varint(state: &BlockState) -> Result<VarInt> {
@@ -316,5 +332,39 @@ mod tests {
 
         assert_eq!(packet_id, VarInt(42));
         assert_eq!(BlockStateId::from(packet_id), BlockStateId::new(42));
+    }
+
+    #[test]
+    fn registry_resolves_state_id_from_vanilla_block_name_and_properties() {
+        let registry = BlockRegistry::from_blocks_report(&json!({
+            "minecraft:oak_log": {
+                "properties": {
+                    "axis": ["x", "y", "z"]
+                },
+                "states": [
+                    {"id": 10, "properties": {"axis": "x"}},
+                    {"id": 11, "properties": {"axis": "y"}, "default": true},
+                    {"id": 12, "properties": {"axis": "z"}}
+                ]
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            registry
+                .state_id_by_name("oak_log", [("axis", "z")])
+                .unwrap(),
+            BlockStateId::new(12)
+        );
+        assert_eq!(
+            registry
+                .state_id_by_name("minecraft:oak_log", [] as [(&str, &str); 0])
+                .unwrap(),
+            BlockStateId::new(11)
+        );
+        assert_eq!(
+            registry.state_id_by_name("oak_log", [("axis", "north")]),
+            None
+        );
     }
 }
