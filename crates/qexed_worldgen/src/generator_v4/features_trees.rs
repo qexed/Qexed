@@ -1197,6 +1197,24 @@ struct FoliageOrigin {
     radius_offset: i32,
 }
 
+#[derive(Debug, Default)]
+struct PlacedTrunk {
+    local_logs: Vec<(i32, i32, i32)>,
+    decorator_logs: Vec<(i32, i32, i32)>,
+    foliage_origins: Vec<FoliageOrigin>,
+}
+
+impl PlacedTrunk {
+    fn record_log(&mut self, pos: (i32, i32, i32), placed: bool, record_for_decorators: bool) {
+        if placed {
+            self.local_logs.push(pos);
+        }
+        if placed || record_for_decorators {
+            self.decorator_logs.push(pos);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct TreeGroundDecoratorConfig {
     tries: i32,
@@ -1206,8 +1224,7 @@ struct TreeGroundDecoratorConfig {
 }
 
 impl TreeGroundDecoratorConfig {
-    fn leaf_litter(tries: i32, radius: i32, height: i32) -> Self {
-        let max_segments = if radius > 0 { 3 } else { 4 };
+    fn leaf_litter(tries: i32, radius: i32, height: i32, max_segments: i32) -> Self {
         let mut entries = Vec::with_capacity((max_segments * 4) as usize);
         for segment_amount in 1..=max_segments {
             for facing in ["north", "east", "south", "west"] {
@@ -1326,8 +1343,8 @@ impl OakTreeConfig {
 
     fn with_leaf_litter_decorators(mut self) -> Self {
         self.ground_decorators = vec![
-            TreeGroundDecoratorConfig::leaf_litter(96, 4, 2),
-            TreeGroundDecoratorConfig::leaf_litter(150, 0, 2),
+            TreeGroundDecoratorConfig::leaf_litter(96, 4, 2, 3),
+            TreeGroundDecoratorConfig::leaf_litter(150, 2, 2, 4),
         ];
         self
     }
@@ -1879,7 +1896,7 @@ impl OakTreeConfig {
             );
         }
 
-        let (logs, foliage_origins) = self.place_trunk(
+        let trunk = self.place_trunk(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -1891,7 +1908,7 @@ impl OakTreeConfig {
             tree_height,
             !require_local_logs,
         );
-        if require_local_logs && logs.is_empty() {
+        if require_local_logs && trunk.local_logs.is_empty() {
             return false;
         }
 
@@ -1902,7 +1919,7 @@ impl OakTreeConfig {
             chunk,
             random,
             tree_height,
-            &foliage_origins,
+            &trunk.foliage_origins,
         );
 
         self.try_place_beehive(
@@ -1912,7 +1929,7 @@ impl OakTreeConfig {
             chunk,
             neighbors,
             random,
-            &logs,
+            &trunk.local_logs,
             &leaves,
         );
         self.place_ground_decorators(
@@ -1921,7 +1938,7 @@ impl OakTreeConfig {
             chunk_min_z,
             chunk,
             random,
-            &logs,
+            &trunk.decorator_logs,
         );
 
         true
@@ -1953,8 +1970,8 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
-        record_all_foliage_origins: bool,
-    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
+        record_all_trunk_positions: bool,
+    ) -> PlacedTrunk {
         match self.trunk_placer {
             TreeTrunkConfig::Straight => self.place_straight_trunk(
                 settings,
@@ -1965,6 +1982,7 @@ impl OakTreeConfig {
                 world_y,
                 world_z,
                 tree_height,
+                record_all_trunk_positions,
             ),
             TreeTrunkConfig::Forking => self.place_forking_trunk(
                 settings,
@@ -1976,7 +1994,7 @@ impl OakTreeConfig {
                 world_y,
                 world_z,
                 tree_height,
-                record_all_foliage_origins,
+                record_all_trunk_positions,
             ),
             TreeTrunkConfig::Giant => self.place_giant_trunk(
                 settings,
@@ -1987,6 +2005,7 @@ impl OakTreeConfig {
                 world_y,
                 world_z,
                 tree_height,
+                record_all_trunk_positions,
             ),
         }
     }
@@ -2002,31 +2021,30 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
-    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
-        let mut logs = Vec::new();
+        record_all_trunk_positions: bool,
+    ) -> PlacedTrunk {
+        let mut trunk = PlacedTrunk::default();
         for dy in 0..tree_height {
-            if self.try_place_log(
+            let log_y = world_y + dy;
+            let placed = self.try_place_log(
                 settings,
                 chunk_min_x,
                 chunk_min_z,
                 chunk,
                 world_x,
-                world_y + dy,
+                log_y,
                 world_z,
-            ) {
-                logs.push((world_x, world_y + dy, world_z));
-            }
+            );
+            trunk.record_log((world_x, log_y, world_z), placed, record_all_trunk_positions);
         }
 
-        (
-            logs,
-            vec![FoliageOrigin {
-                x: world_x,
-                y: world_y + tree_height,
-                z: world_z,
-                radius_offset: 0,
-            }],
-        )
+        trunk.foliage_origins.push(FoliageOrigin {
+            x: world_x,
+            y: world_y + tree_height,
+            z: world_z,
+            radius_offset: 0,
+        });
+        trunk
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2041,10 +2059,9 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
-        record_all_foliage_origins: bool,
-    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
-        let mut logs = Vec::new();
-        let mut foliage_origins = Vec::new();
+        record_all_trunk_positions: bool,
+    ) -> PlacedTrunk {
+        let mut trunk = PlacedTrunk::default();
         let lean_direction = horizontal_directions()[random.next_int(4) as usize];
         let lean_height = tree_height - random.next_int(4) - 1;
         let mut lean_steps = 3 - random.next_int(3);
@@ -2068,15 +2085,17 @@ impl OakTreeConfig {
                 log_y,
                 trunk_z,
             );
-            if placed {
-                logs.push((trunk_x, log_y, trunk_z));
-            }
-            if placed || record_all_foliage_origins {
+            trunk.record_log(
+                (trunk_x, log_y, trunk_z),
+                placed,
+                record_all_trunk_positions,
+            );
+            if placed || record_all_trunk_positions {
                 end_y = Some(log_y + 1);
             }
         }
         if let Some(end_y) = end_y {
-            foliage_origins.push(FoliageOrigin {
+            trunk.foliage_origins.push(FoliageOrigin {
                 x: trunk_x,
                 y: end_y,
                 z: trunk_z,
@@ -2107,10 +2126,12 @@ impl OakTreeConfig {
                         log_y,
                         trunk_z,
                     );
-                    if placed {
-                        logs.push((trunk_x, log_y, trunk_z));
-                    }
-                    if placed || record_all_foliage_origins {
+                    trunk.record_log(
+                        (trunk_x, log_y, trunk_z),
+                        placed,
+                        record_all_trunk_positions,
+                    );
+                    if placed || record_all_trunk_positions {
                         end_y = Some(log_y + 1);
                     }
                     branch_steps -= 1;
@@ -2119,7 +2140,7 @@ impl OakTreeConfig {
             }
 
             if let Some(end_y) = end_y {
-                foliage_origins.push(FoliageOrigin {
+                trunk.foliage_origins.push(FoliageOrigin {
                     x: trunk_x,
                     y: end_y,
                     z: trunk_z,
@@ -2128,7 +2149,7 @@ impl OakTreeConfig {
             }
         }
 
-        (logs, foliage_origins)
+        trunk
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2142,33 +2163,34 @@ impl OakTreeConfig {
         world_y: i32,
         world_z: i32,
         tree_height: i32,
-    ) -> (Vec<(i32, i32, i32)>, Vec<FoliageOrigin>) {
-        let mut logs = Vec::new();
+        record_all_trunk_positions: bool,
+    ) -> PlacedTrunk {
+        let mut trunk = PlacedTrunk::default();
         for dy in 0..tree_height {
             for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                if self.try_place_log(
+                let log_x = world_x + dx;
+                let log_y = world_y + dy;
+                let log_z = world_z + dz;
+                let placed = self.try_place_log(
                     settings,
                     chunk_min_x,
                     chunk_min_z,
                     chunk,
-                    world_x + dx,
-                    world_y + dy,
-                    world_z + dz,
-                ) {
-                    logs.push((world_x + dx, world_y + dy, world_z + dz));
-                }
+                    log_x,
+                    log_y,
+                    log_z,
+                );
+                trunk.record_log((log_x, log_y, log_z), placed, record_all_trunk_positions);
             }
         }
 
-        (
-            logs,
-            vec![FoliageOrigin {
-                x: world_x + 1,
-                y: world_y + tree_height,
-                z: world_z + 1,
-                radius_offset: 1,
-            }],
-        )
+        trunk.foliage_origins.push(FoliageOrigin {
+            x: world_x + 1,
+            y: world_y + tree_height,
+            z: world_z + 1,
+            radius_offset: 1,
+        });
+        trunk
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -152,6 +152,29 @@ mod tests {
         })
     }
 
+    fn assert_leaf_litter_entries(entries: &[BlockLayer], max_segments: i32) {
+        assert_eq!(entries.len(), (max_segments * 4) as usize);
+
+        for (index, entry) in entries.iter().enumerate() {
+            let segment_amount = index / 4 + 1;
+            let facing = match index % 4 {
+                0 => "north",
+                1 => "east",
+                2 => "south",
+                _ => "west",
+            };
+
+            assert!(entry.is("minecraft:leaf_litter"));
+            assert!(entry
+                .properties
+                .iter()
+                .any(|(name, value)| name == "facing" && value == facing));
+            assert!(entry.properties.iter().any(|(name, value)| {
+                name == "segment_amount" && value == &segment_amount.to_string()
+            }));
+        }
+    }
+
     fn generate_noise_chunk_without_neighbor_tree_spillover(
         settings: &NoiseSettings,
         chunk_x: i32,
@@ -2513,8 +2536,12 @@ mod tests {
         assert_eq!(feature.config.default_tree.ground_decorators.len(), 2);
         assert_eq!(feature.config.default_tree.ground_decorators[0].tries, 96);
         assert_eq!(feature.config.default_tree.ground_decorators[0].radius, 4);
+        assert_eq!(feature.config.default_tree.ground_decorators[0].height, 2);
+        assert_leaf_litter_entries(&feature.config.default_tree.ground_decorators[0].entries, 3);
         assert_eq!(feature.config.default_tree.ground_decorators[1].tries, 150);
-        assert_eq!(feature.config.default_tree.ground_decorators[1].radius, 0);
+        assert_eq!(feature.config.default_tree.ground_decorators[1].radius, 2);
+        assert_eq!(feature.config.default_tree.ground_decorators[1].height, 2);
+        assert_leaf_litter_entries(&feature.config.default_tree.ground_decorators[1].entries, 4);
         assert_eq!(feature.config.variants[1].tree.ground_decorators.len(), 2);
         assert_eq!(feature.config.variants[2].tree.ground_decorators.len(), 2);
         assert!(feature.config.variants[0].tree.ground_decorators.is_empty());
@@ -6957,6 +6984,58 @@ mod tests {
         ));
 
         assert!(chunk_contains_block(&target, "minecraft:oak_leaves"));
+        assert!(!chunk_contains_block(&target, "minecraft:oak_log"));
+    }
+
+    #[test]
+    fn vanilla_noise_giant_tree_spillover_places_boundary_trunk_and_foliage() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = grass_surface_test_chunk(&settings, 64);
+        let mut target = grass_surface_test_chunk(&settings, 64);
+        let tree = OakTreeConfig::mega_jungle_tree();
+        let mut random = FeatureRandom::new(12345);
+        let mut replay_random = random.clone();
+
+        assert!(tree.place(&settings, 0, 0, &mut source, &mut random, 15, 65, 8));
+        assert!(tree.place_spillover(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            65,
+            8,
+        ));
+
+        assert!(layer_at_world(&target, 16, 0, 16, 65, 8, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:jungle_log")));
+        assert!(chunk_contains_block(&target, "minecraft:jungle_leaves"));
+    }
+
+    #[test]
+    fn vanilla_noise_forest_leaf_litter_spillover_places_neighbor_decorators() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut source = grass_surface_test_chunk(&settings, 64);
+        let mut target = grass_surface_test_chunk(&settings, 64);
+        let tree = OakTreeConfig::oak_bees_0002_leaf_litter();
+        let mut random = FeatureRandom::new(12345);
+        let mut replay_random = random.clone();
+
+        assert!(tree.place(&settings, 0, 0, &mut source, &mut random, 15, 65, 8));
+        assert!(tree.place_spillover(
+            &settings,
+            16,
+            0,
+            &mut target,
+            &mut replay_random,
+            15,
+            65,
+            8,
+        ));
+
+        assert!(chunk_contains_block(&target, "minecraft:oak_leaves"));
+        assert!(chunk_contains_block(&target, "minecraft:leaf_litter"));
         assert!(!chunk_contains_block(&target, "minecraft:oak_log"));
     }
 
