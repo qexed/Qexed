@@ -79,6 +79,33 @@ mod tests {
     }
 
     #[test]
+    fn generated_chunk_root_writes_post_processing_per_section() {
+        let root = generate_overworld_chunk_nbt(0, 0, 0).unwrap();
+        let Tag::Compound(fields) = root else {
+            panic!("generated chunk root should be compound");
+        };
+        let Some(Tag::List(header, sections)) = fields.get("PostProcessing") else {
+            panic!("PostProcessing should be a list");
+        };
+
+        assert_eq!(header.tag_id, tag_id::LIST);
+        assert_eq!(header.length, section_count());
+        assert_eq!(sections.len(), section_count() as usize);
+        assert!(sections.iter().all(|section| {
+            matches!(
+                section,
+                Tag::List(
+                    ListHeader {
+                        tag_id: tag_id::END,
+                        length: 0,
+                    },
+                    _
+                )
+            )
+        }));
+    }
+
+    #[test]
     #[ignore = "manual worldgen perf smoke"]
     fn worldgen_v4_perf_smoke_reports_stage_timings() {
         let settings = cached_noise_settings(DEFAULT_NOISE_PRESET, 0);

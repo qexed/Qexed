@@ -246,9 +246,9 @@ fn flat_chunk_root(chunk_x: i32, chunk_z: i32, layers: &[FlatLayer], biome: &str
         chunk_x,
         chunk_z,
         compound_tag([
-            ("sections", sections_tag(layers, biome)),
-            ("Heightmaps", heightmaps_tag(layers)),
-            ("block_entities", empty_compound_list_tag()),
+        ("sections", sections_tag(layers, biome)),
+        ("Heightmaps", heightmaps_tag(layers)),
+        ("block_entities", empty_compound_list_tag()),
         ]),
     )
 }
@@ -258,9 +258,9 @@ fn noise_chunk_root(chunk_x: i32, chunk_z: i32, chunk: &NoiseChunkBlocks, _biome
         chunk_x,
         chunk_z,
         compound_tag([
-            ("sections", noise_sections_tag(chunk)),
-            ("Heightmaps", noise_heightmaps_tag(chunk)),
-            ("block_entities", empty_compound_list_tag()),
+        ("sections", noise_sections_tag(chunk)),
+        ("Heightmaps", noise_heightmaps_tag(chunk)),
+        ("block_entities", empty_compound_list_tag()),
         ]),
     )
 }
@@ -392,7 +392,7 @@ fn full_light_array() -> Tag {
 
 fn noise_block_states_tag(chunk: &NoiseChunkBlocks, section_y: i32) -> Tag {
     let mut palette = Vec::new();
-    let mut index_by_block = HashMap::<String, usize>::new();
+    let mut index_by_block = HashMap::<i32, usize>::new();
     let mut values = vec![0_i32; BLOCK_ENTRY_COUNT];
     let start_y = section_y * SECTION_HEIGHT;
 
@@ -406,9 +406,10 @@ fn noise_block_states_tag(chunk: &NoiseChunkBlocks, section_y: i32) -> Tag {
                 } else {
                     continue;
                 };
-                let key = block_state_palette_key(&layer.block, &layer.properties);
                 let next_index = palette.len();
-                let palette_index = *index_by_block.entry(key).or_insert_with(|| {
+                let palette_index = *index_by_block
+                    .entry(layer.block_state_id)
+                    .or_insert_with(|| {
                     palette.push(block_state_tag(&layer.block, &layer.properties));
                     next_index
                 });
@@ -429,18 +430,23 @@ fn noise_block_states_tag(chunk: &NoiseChunkBlocks, section_y: i32) -> Tag {
 
 fn block_states_tag(layers: &[FlatLayer]) -> Tag {
     let mut palette = Vec::new();
-    let mut index_by_block = HashMap::<String, usize>::new();
+    let mut index_by_block = HashMap::<i32, usize>::new();
     let mut values = vec![0_i32; BLOCK_ENTRY_COUNT];
     let air = chunk_nbt::default_block_state("minecraft:air");
 
     for local_y in 0..SECTION_HEIGHT as usize {
-        let (block, properties) = layers
+        let (block, properties, block_state_id) = layers
             .get(local_y)
-            .map(|layer| (layer.block.as_str(), layer.properties.as_slice()))
-            .unwrap_or(("minecraft:air", air.properties.as_slice()));
-        let key = block_state_palette_key(block, properties);
+            .map(|layer| {
+                (
+                    layer.block.as_str(),
+                    layer.properties.as_slice(),
+                    layer.block_state_id,
+                )
+            })
+            .unwrap_or(("minecraft:air", air.properties.as_slice(), air.id));
         let next_index = palette.len();
-        let palette_index = *index_by_block.entry(key).or_insert_with(|| {
+        let palette_index = *index_by_block.entry(block_state_id).or_insert_with(|| {
             palette.push(block_state_tag(block, properties));
             next_index
         });
@@ -563,18 +569,6 @@ fn block_state_tag(name: &str, properties: &[(String, String)]) -> Tag {
         );
     }
     Tag::Compound(Arc::new(fields))
-}
-
-fn block_state_palette_key(name: &str, properties: &[(String, String)]) -> String {
-    let mut key = name.to_string();
-    key.push('|');
-    for (name, value) in properties {
-        key.push_str(name);
-        key.push('=');
-        key.push_str(value);
-        key.push(';');
-    }
-    key
 }
 
 fn paletted_container(palette: Vec<Tag>, data: Option<Vec<i64>>) -> Tag {

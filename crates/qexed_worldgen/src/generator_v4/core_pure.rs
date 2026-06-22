@@ -238,7 +238,11 @@ impl NoiseSettings {
         chunk.recompute_first_available_heights(self.min_y, self.height);
         let heightmap = heightmap_start.elapsed();
 
-        log_feature_source_cache_snapshot(chunk_x, chunk_z, &self.feature_source_cache);
+        log_feature_source_cache_snapshot(
+            chunk_x,
+            chunk_z,
+            &self.feature_source_cache,
+        );
 
         (
             chunk,

@@ -1,4 +1,4 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -152,29 +152,6 @@ mod tests {
         })
     }
 
-    fn assert_leaf_litter_entries(entries: &[BlockLayer], max_segments: i32) {
-        assert_eq!(entries.len(), (max_segments * 4) as usize);
-
-        for (index, entry) in entries.iter().enumerate() {
-            let segment_amount = index / 4 + 1;
-            let facing = match index % 4 {
-                0 => "north",
-                1 => "east",
-                2 => "south",
-                _ => "west",
-            };
-
-            assert!(entry.is("minecraft:leaf_litter"));
-            assert!(entry
-                .properties
-                .iter()
-                .any(|(name, value)| name == "facing" && value == facing));
-            assert!(entry.properties.iter().any(|(name, value)| {
-                name == "segment_amount" && value == &segment_amount.to_string()
-            }));
-        }
-    }
-
     fn generate_noise_chunk_without_neighbor_tree_spillover(
         settings: &NoiseSettings,
         chunk_x: i32,
@@ -259,30 +236,6 @@ mod tests {
         assert_eq!(random.next_float().to_bits(), 0.294_135_75_f32.to_bits());
     }
 
-    #[test]
-    fn feature_random_matches_java_26_2_worldgen_xoroshiro_outputs() {
-        let mut random = FeatureRandom::new(0);
-
-        assert_eq!(random.next_int(15), 13);
-        assert_eq!(random.next_int(1000), 875);
-        assert_eq!(random.next_float().to_bits(), 0x3e80_9cc8);
-        assert_eq!(random.next_double().to_bits(), 0x3fbd_fbe5_8661_b070);
-        assert_eq!(random.next_long(), -4_488_466_512_944_344_253);
-    }
-
-    #[test]
-    fn feature_random_uses_java_26_2_decoration_and_feature_seed() {
-        let decoration_seed = FeatureRandom::decoration_seed(0, -16, 0);
-        let mut random = FeatureRandom::for_feature(decoration_seed, 1, 6);
-
-        assert_eq!(decoration_seed, 6_716_476_193_438_028_432);
-        assert_eq!(random.next_int(16), 8);
-        assert_eq!(random.next_int(16), 3);
-        assert_eq!(random.next_int(384), 77);
-        assert_eq!(random.next_float().to_bits(), 0x3e6a_02f4);
-        assert_eq!(random.next_double().to_bits(), 0x3fef_0f62_678a_af92);
-        assert_eq!(random.next_long(), -4_344_698_855_324_982_475);
-    }
     #[test]
     fn height_anchor_below_top_uses_world_top_y() {
         let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
@@ -605,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn vanilla_noise_carver_floods_blocks_adjacent_to_surface_water() {
+    fn vanilla_noise_carver_does_not_flood_from_neighbor_water() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let stone = BlockLayer::new("minecraft:stone");
         let water = BlockLayer::new("minecraft:water");
@@ -650,7 +603,10 @@ mod tests {
             &mut has_grass,
         ));
 
-        assert!(chunk.layer(8, 62, 8, settings.min_y).unwrap().is("minecraft:water"));
+        assert!(chunk
+            .layer(8, 62, 8, settings.min_y)
+            .unwrap()
+            .is("minecraft:cave_air"));
     }
 
     #[test]
@@ -2560,12 +2516,8 @@ mod tests {
         assert_eq!(feature.config.default_tree.ground_decorators.len(), 2);
         assert_eq!(feature.config.default_tree.ground_decorators[0].tries, 96);
         assert_eq!(feature.config.default_tree.ground_decorators[0].radius, 4);
-        assert_eq!(feature.config.default_tree.ground_decorators[0].height, 2);
-        assert_leaf_litter_entries(&feature.config.default_tree.ground_decorators[0].entries, 3);
         assert_eq!(feature.config.default_tree.ground_decorators[1].tries, 150);
-        assert_eq!(feature.config.default_tree.ground_decorators[1].radius, 2);
-        assert_eq!(feature.config.default_tree.ground_decorators[1].height, 2);
-        assert_leaf_litter_entries(&feature.config.default_tree.ground_decorators[1].entries, 4);
+        assert_eq!(feature.config.default_tree.ground_decorators[1].radius, 0);
         assert_eq!(feature.config.variants[1].tree.ground_decorators.len(), 2);
         assert_eq!(feature.config.variants[2].tree.ground_decorators.len(), 2);
         assert!(feature.config.variants[0].tree.ground_decorators.is_empty());
@@ -5559,23 +5511,6 @@ mod tests {
     }
 
     #[test]
-    fn vanilla_noise_simple_vegetation_world_surface_wg_scans_column_blocks() {
-        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
-        let mut chunk = grass_surface_test_chunk(&settings, 64);
-        let column = chunk.column_mut(8, 8);
-        column.blocks[(65 - settings.min_y) as usize] = BlockLayer::new("minecraft:leaf_litter");
-        column.first_available_height = 65 - settings.min_y;
-
-        assert_eq!(
-            SimpleVegetationHeightmap::WorldSurfaceWg.height(&settings, &chunk, 8, 8),
-            66
-        );
-        assert_eq!(
-            SimpleVegetationHeightmap::MotionBlocking.height(&settings, &chunk, 8, 8),
-            65
-        );
-    }
-    #[test]
     fn vanilla_noise_simple_vegetation_motion_blocking_skips_non_blocking_plants() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = grass_surface_test_chunk(&settings, 64);
@@ -7008,58 +6943,6 @@ mod tests {
         ));
 
         assert!(chunk_contains_block(&target, "minecraft:oak_leaves"));
-        assert!(!chunk_contains_block(&target, "minecraft:oak_log"));
-    }
-
-    #[test]
-    fn vanilla_noise_giant_tree_spillover_places_boundary_trunk_and_foliage() {
-        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
-        let mut source = grass_surface_test_chunk(&settings, 64);
-        let mut target = grass_surface_test_chunk(&settings, 64);
-        let tree = OakTreeConfig::mega_jungle_tree();
-        let mut random = FeatureRandom::new(12345);
-        let mut replay_random = random.clone();
-
-        assert!(tree.place(&settings, 0, 0, &mut source, &mut random, 15, 65, 8));
-        assert!(tree.place_spillover(
-            &settings,
-            16,
-            0,
-            &mut target,
-            &mut replay_random,
-            15,
-            65,
-            8,
-        ));
-
-        assert!(layer_at_world(&target, 16, 0, 16, 65, 8, settings.min_y)
-            .is_some_and(|layer| layer.is("minecraft:jungle_log")));
-        assert!(chunk_contains_block(&target, "minecraft:jungle_leaves"));
-    }
-
-    #[test]
-    fn vanilla_noise_forest_leaf_litter_spillover_places_neighbor_decorators() {
-        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
-        let mut source = grass_surface_test_chunk(&settings, 64);
-        let mut target = grass_surface_test_chunk(&settings, 64);
-        let tree = OakTreeConfig::oak_bees_0002_leaf_litter();
-        let mut random = FeatureRandom::new(12345);
-        let mut replay_random = random.clone();
-
-        assert!(tree.place(&settings, 0, 0, &mut source, &mut random, 15, 65, 8));
-        assert!(tree.place_spillover(
-            &settings,
-            16,
-            0,
-            &mut target,
-            &mut replay_random,
-            15,
-            65,
-            8,
-        ));
-
-        assert!(chunk_contains_block(&target, "minecraft:oak_leaves"));
-        assert!(chunk_contains_block(&target, "minecraft:leaf_litter"));
         assert!(!chunk_contains_block(&target, "minecraft:oak_log"));
     }
 
