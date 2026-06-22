@@ -8,11 +8,18 @@ pub enum BehaviorStatus {
     Failure,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalStatus {
+    Active,
+    Complete,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GoalId(String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Goal {
+pub struct GoalState {
     id: GoalId,
     priority: i32,
     complete: bool,
@@ -68,11 +75,22 @@ pub trait Behavior<E> {
     fn tick(&mut self, context: &mut AiTickContext<'_, E>) -> BehaviorStatus;
 }
 
+pub trait Goal<E> {
+    fn id(&self) -> &GoalId;
+    fn priority(&self) -> i32;
+    fn is_complete(&self) -> bool;
+    fn tick_goal(&mut self, context: &mut AiTickContext<'_, E>) -> GoalStatus;
+}
+
 pub trait AiTick<E> {
     fn tick_ai(&mut self, context: &mut AiTickContext<'_, E>) -> BehaviorStatus;
 }
 
 pub struct NoopBehavior;
+
+pub struct NoopGoal {
+    state: GoalState,
+}
 
 pub struct Sequence<E> {
     children: Vec<Box<dyn Behavior<E>>>,
@@ -92,6 +110,7 @@ pub struct WanderBehavior {
 pub struct AiAgent<E> {
     entity: E,
     behavior: Box<dyn Behavior<E>>,
+    goals: Vec<Box<dyn Goal<E>>>,
     blackboard: Blackboard,
     memory: Memory,
 }
@@ -117,7 +136,7 @@ impl GoalId {
     }
 }
 
-impl Goal {
+impl GoalState {
     pub fn new(id: impl Into<String>, priority: i32) -> Self {
         Self {
             id: GoalId::new(id),
@@ -140,6 +159,36 @@ impl Goal {
 
     pub fn mark_complete(&mut self) {
         self.complete = true;
+    }
+}
+
+impl NoopGoal {
+    pub fn new(id: impl Into<String>, priority: i32) -> Self {
+        Self {
+            state: GoalState::new(id, priority),
+        }
+    }
+}
+
+impl<E> Goal<E> for NoopGoal {
+    fn id(&self) -> &GoalId {
+        self.state.id()
+    }
+
+    fn priority(&self) -> i32 {
+        self.state.priority()
+    }
+
+    fn is_complete(&self) -> bool {
+        self.state.is_complete()
+    }
+
+    fn tick_goal(&mut self, context: &mut AiTickContext<'_, E>) -> GoalStatus {
+        context
+            .commands
+            .push(AiCommand::SetGoal(self.state.id().clone()));
+        self.state.mark_complete();
+        GoalStatus::Complete
     }
 }
 
@@ -283,13 +332,27 @@ impl<E> AiAgent<E> {
         Self {
             entity,
             behavior,
+            goals: Vec::new(),
             blackboard: Blackboard::default(),
             memory: Memory::default(),
         }
     }
 
+    pub fn with_goal(mut self, goal: Box<dyn Goal<E>>) -> Self {
+        self.add_goal(goal);
+        self
+    }
+
+    pub fn add_goal(&mut self, goal: Box<dyn Goal<E>>) {
+        self.goals.push(goal);
+    }
+
     pub fn entity(&self) -> &E {
         &self.entity
+    }
+
+    pub fn goals(&self) -> &[Box<dyn Goal<E>>] {
+        &self.goals
     }
 
     pub fn blackboard(&self) -> &Blackboard {
@@ -336,14 +399,34 @@ impl<E: Copy + Eq + Hash> AiScheduler<E> {
         };
 
         for agent in &mut self.agents {
-            let mut context = AiTickContext {
-                entity: agent.entity,
-                tick: self.tick,
-                blackboard: &mut agent.blackboard,
-                memory: &mut agent.memory,
-                commands: &mut output.commands,
-            };
-            agent.behavior.tick(&mut context);
+            if let Some(goal_index) = agent
+                .goals
+                .iter()
+                .enumerate()
+                .filter(|(_, goal)| !goal.is_complete())
+                .max_by_key(|(_, goal)| goal.priority())
+                .map(|(index, _)| index)
+            {
+                let mut context = AiTickContext {
+                    entity: agent.entity,
+                    tick: self.tick,
+                    blackboard: &mut agent.blackboard,
+                    memory: &mut agent.memory,
+                    commands: &mut output.commands,
+                };
+                agent.goals[goal_index].tick_goal(&mut context);
+            }
+
+            {
+                let mut context = AiTickContext {
+                    entity: agent.entity,
+                    tick: self.tick,
+                    blackboard: &mut agent.blackboard,
+                    memory: &mut agent.memory,
+                    commands: &mut output.commands,
+                };
+                agent.behavior.tick(&mut context);
+            }
         }
 
         output
@@ -358,7 +441,7 @@ impl<E: Copy + Eq + Hash> AiScheduler<E> {
 mod tests {
     use super::{
         AiAgent, AiCommand, AiScheduler, Behavior, BehaviorStatus, Blackboard, BlackboardValue,
-        Memory, NoopBehavior, Selector, Sequence, WanderBehavior,
+        GoalStatus, Memory, NoopBehavior, NoopGoal, Selector, Sequence, WanderBehavior,
     };
 
     struct FixedBehavior(BehaviorStatus);
@@ -459,5 +542,45 @@ mod tests {
         let tick = scheduler.tick();
 
         assert_eq!(tick.commands, vec![AiCommand::Noop]);
+    }
+
+    #[test]
+    fn scheduler_ticks_highest_priority_goal_before_behavior() {
+        let mut scheduler = AiScheduler::new();
+        let agent = AiAgent::new(11_u64, Box::new(NoopBehavior))
+            .with_goal(Box::new(NoopGoal::new("idle", 1)))
+            .with_goal(Box::new(NoopGoal::new("urgent", 10)));
+        scheduler.add_agent(agent);
+
+        let tick = scheduler.tick();
+
+        assert_eq!(
+            tick.commands,
+            vec![
+                AiCommand::SetGoal(super::GoalId::new("urgent")),
+                AiCommand::Noop
+            ]
+        );
+    }
+
+    #[test]
+    fn noop_goal_completes_after_one_tick() {
+        let mut goal = NoopGoal::new("idle", 1);
+        let mut blackboard = Blackboard::default();
+        let mut memory = Memory::default();
+        let mut commands = Vec::new();
+        let mut context = super::AiTickContext {
+            entity: 1_u64,
+            tick: 1,
+            blackboard: &mut blackboard,
+            memory: &mut memory,
+            commands: &mut commands,
+        };
+
+        assert_eq!(
+            super::Goal::tick_goal(&mut goal, &mut context),
+            GoalStatus::Complete
+        );
+        assert!(super::Goal::<u64>::is_complete(&goal));
     }
 }
