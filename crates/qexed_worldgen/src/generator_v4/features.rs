@@ -2226,6 +2226,14 @@ impl PlacedUndergroundFeature<'_> {
                 target_origin_z,
                 random,
             ),
+            Self::Dripstone(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
             Self::HugeMushroom(feature) => feature.may_spill_into(
                 source_origin_x,
                 source_origin_z,
@@ -2237,7 +2245,6 @@ impl PlacedUndergroundFeature<'_> {
             | Self::CaveVines(_)
             | Self::ClassicVines(_)
             | Self::SporeBlossom(_)
-            | Self::Dripstone(_)
             | Self::Sculk(_)
             | Self::Surface(_)
             | Self::BlockColumn(_)
