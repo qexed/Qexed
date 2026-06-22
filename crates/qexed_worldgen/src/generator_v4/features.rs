@@ -289,19 +289,19 @@ impl OverworldOreFeatures {
                     lapis_buried,
                 ),
                 PlacedOreFeature::new(
-                    25,
-                    OrePlacementCount::Constant(16),
-                    OreHeight::Trapezoid(HeightAnchor::Absolute(-16), HeightAnchor::Absolute(112)),
-                    copper,
-                )
-                .with_biome_filter(FeatureBiomeFilter::Exclude(DRIPSTONE_CAVES_ORE_BIOMES)),
-                PlacedOreFeature::new(
                     24,
                     OrePlacementCount::Constant(16),
                     OreHeight::Trapezoid(HeightAnchor::Absolute(-16), HeightAnchor::Absolute(112)),
                     copper_large,
                 )
                 .with_biome_filter(FeatureBiomeFilter::Include(DRIPSTONE_CAVES_ORE_BIOMES)),
+                PlacedOreFeature::new(
+                    24,
+                    OrePlacementCount::Constant(16),
+                    OreHeight::Trapezoid(HeightAnchor::Absolute(-16), HeightAnchor::Absolute(112)),
+                    copper,
+                )
+                .with_biome_filter(FeatureBiomeFilter::Exclude(DRIPSTONE_CAVES_ORE_BIOMES)),
                 PlacedOreFeature::new(
                     29,
                     OrePlacementCount::Constant(50),
@@ -325,7 +325,7 @@ impl OverworldOreFeatures {
                 .with_step_index(7)
                 .with_biome_filter(FeatureBiomeFilter::Include(EMERALD_ORE_BIOMES)),
             ],
-            underwater_magma: PlacedUnderwaterMagmaFeature::new(26),
+            underwater_magma: PlacedUnderwaterMagmaFeature::new(25),
             lush_clay_ore: PlacedOreFeature::new(
                 28,
                 OrePlacementCount::Constant(46),

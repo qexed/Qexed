@@ -684,29 +684,19 @@ mod tests {
 
         assert!(features.iter().any(|feature| {
             feature.feature_index == 24
-                && feature.ore.size == 10
-                && matches!(feature.biome_filter, FeatureBiomeFilter::Exclude(biomes) if biomes.contains(&"minecraft:dripstone_caves"))
-        }));
-        assert!(features.iter().any(|feature| {
-            feature.feature_index == 24
                 && feature.ore.size == 20
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:dripstone_caves"))
         }));
         assert!(features.iter().any(|feature| {
-            feature.feature_index == 26
-                && matches!(feature.count, OrePlacementCount::Constant(46))
-                && feature
-                    .ore
-                    .targets
-                    .iter()
-                    .any(|target| {
-                        matches!(target.predicate, OreTargetPredicate::BaseStoneOverworld)
-                            && target.block.block.as_ref() == "minecraft:clay"
-                    })
-                && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes == LUSH_CAVES_ORE_BIOMES)
+            feature.feature_index == 24
+                && feature.ore.size == 10
+                && matches!(feature.biome_filter, FeatureBiomeFilter::Exclude(biomes) if biomes.contains(&"minecraft:dripstone_caves"))
         }));
+        let lush_clay = &settings.ore_features.lush_clay_ore;
+        assert_eq!(lush_clay.feature_index, 28);
+        assert!(matches!(lush_clay.count, OrePlacementCount::Constant(46)));
         assert!(features.iter().any(|feature| {
-            feature.feature_index == 26
+            feature.feature_index == 29
                 && feature
                     .ore
                     .targets
@@ -749,27 +739,27 @@ mod tests {
             OrePlacementCount::Uniform { min: 44, max: 52 }
         ));
         assert!(disks.iter().any(|feature| {
-            feature.feature_index == 26
+            feature.feature_index == 30
                 && feature.target_blocks == DISK_DIRT_GRASS_TARGETS
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Exclude(biomes) if biomes.contains(&"minecraft:badlands"))
         }));
         assert!(disks.iter().any(|feature| {
-            feature.feature_index == 27
+            feature.feature_index == 30
                 && feature.target_blocks == DISK_DIRT_GRASS_TARGETS
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:badlands"))
         }));
         assert!(disks.iter().any(|feature| {
-            feature.feature_index == 27
+            feature.feature_index == 31
                 && feature.target_blocks == DISK_DIRT_CLAY_TARGETS
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Exclude(biomes) if biomes.contains(&"minecraft:badlands"))
         }));
         assert!(disks.iter().any(|feature| {
-            feature.feature_index == 29
+            feature.feature_index == 32
                 && feature.target_blocks == DISK_DIRT_GRASS_TARGETS
                 && matches!(feature.biome_filter, FeatureBiomeFilter::Include(biomes) if biomes.contains(&"minecraft:badlands"))
         }));
         assert!(disks.iter().any(|feature| {
-            feature.feature_index == 30
+            feature.feature_index == 27
                 && feature.target_blocks == DISK_DIRT_MUD_TARGETS
                 && matches!(
                     feature.surface_anchor,
