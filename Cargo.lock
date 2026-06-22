@@ -1379,6 +1379,7 @@ dependencies = [
  "qexed_chat",
  "qexed_command",
  "qexed_config",
+ "qexed_entity",
  "qexed_log",
  "qexed_nbt",
  "qexed_packet",
