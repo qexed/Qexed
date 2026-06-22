@@ -4,8 +4,17 @@ use std::sync::{Condvar, Mutex};
 const FEATURE_SOURCE_CACHE_LIMIT: usize = 96;
 const FEATURE_PROFILE_TOP_COUNT: usize = 12;
 const FEATURE_TRACE_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE";
+const FEATURE_PROFILE_ENV: &str = "QEXED_WORLDGEN_FEATURE_PROFILE";
 const FEATURE_TRACE_STOP_AFTER_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER";
 const FEATURE_TRACE_TIMEOUT_MS_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_TIMEOUT_MS";
+const FULL_DIAGNOSTIC_TEST_NAME: &str = "v4_pipeline_full_chunk_manual_diagnostic";
+
+fn should_profile_to_stderr() -> bool {
+    std::env::var_os(FEATURE_PROFILE_ENV).is_some()
+        || std::thread::current()
+            .name()
+            .is_some_and(|name| name.contains(FULL_DIAGNOSTIC_TEST_NAME))
+}
 
 #[derive(Debug, Clone)]
 struct WorldgenStageTrace {
@@ -930,8 +939,9 @@ impl OverworldOreFeatures {
         let origin_z = chunk_z * 16;
         let decoration_seed = FeatureRandom::decoration_seed(self.seed, origin_x, origin_z);
         let mut neighbor_sources = NeighborFeatureSources::new(self.seed, chunk_x, chunk_z);
-        let mut profile =
-            log::log_enabled!(log::Level::Debug).then(FeaturePlacementProfile::default);
+        let profile_to_stderr = should_profile_to_stderr();
+        let mut profile = (profile_to_stderr || log::log_enabled!(log::Level::Debug))
+            .then(|| FeaturePlacementProfile::new(profile_to_stderr));
 
         let trace = FeatureTrace::from_env();
 
@@ -940,6 +950,8 @@ impl OverworldOreFeatures {
             let feature_name = feature.name();
             let step_index = feature.step_index();
             let feature_index = feature.feature_index();
+            let feature_label =
+                format!("{feature_name}(step={step_index},index={feature_index},ord={ordinal})");
             let diagnostic_start = trace.start(
                 chunk_x,
                 chunk_z,
@@ -981,7 +993,7 @@ impl OverworldOreFeatures {
                     };
                     if let Some(profile) = profile.as_mut() {
                         profile.record(
-                            feature_name,
+                            &feature_label,
                             FeatureProfilePhase::NeighborLoad,
                             load_start.elapsed(),
                         );
@@ -1080,7 +1092,7 @@ impl OverworldOreFeatures {
                     }
                     if let Some(profile) = profile.as_mut() {
                         profile.record(
-                            feature_name,
+                            &feature_label,
                             FeatureProfilePhase::Spillover,
                             spillover_start.elapsed(),
                         );
@@ -1099,7 +1111,7 @@ impl OverworldOreFeatures {
                         let neighbor_chunks = neighbor_sources.all_context(settings);
                         if let Some(profile) = profile.as_mut() {
                             profile.record(
-                                feature_name,
+                                &feature_label,
                                 FeatureProfilePhase::NeighborLoad,
                                 context_start.elapsed(),
                             );
@@ -1120,7 +1132,7 @@ impl OverworldOreFeatures {
                         let neighbor_chunks = neighbor_sources.all_context(settings);
                         if let Some(profile) = profile.as_mut() {
                             profile.record(
-                                feature_name,
+                                &feature_label,
                                 FeatureProfilePhase::NeighborLoad,
                                 context_start.elapsed(),
                             );
@@ -1141,7 +1153,7 @@ impl OverworldOreFeatures {
                         let neighbor_chunks = neighbor_sources.all_context(settings);
                         if let Some(profile) = profile.as_mut() {
                             profile.record(
-                                feature_name,
+                                &feature_label,
                                 FeatureProfilePhase::NeighborLoad,
                                 context_start.elapsed(),
                             );
@@ -1162,7 +1174,7 @@ impl OverworldOreFeatures {
                         let neighbor_chunks = neighbor_sources.all_context(settings);
                         if let Some(profile) = profile.as_mut() {
                             profile.record(
-                                feature_name,
+                                &feature_label,
                                 FeatureProfilePhase::NeighborLoad,
                                 context_start.elapsed(),
                             );
@@ -1194,7 +1206,7 @@ impl OverworldOreFeatures {
                         let neighbor_chunks = neighbor_sources.all_context(settings);
                         if let Some(profile) = profile.as_mut() {
                             profile.record(
-                                feature_name,
+                                &feature_label,
                                 FeatureProfilePhase::NeighborLoad,
                                 context_start.elapsed(),
                             );
@@ -1215,7 +1227,7 @@ impl OverworldOreFeatures {
                         let neighbor_chunks = neighbor_sources.all_context(settings);
                         if let Some(profile) = profile.as_mut() {
                             profile.record(
-                                feature_name,
+                                &feature_label,
                                 FeatureProfilePhase::NeighborLoad,
                                 context_start.elapsed(),
                             );
@@ -1238,7 +1250,7 @@ impl OverworldOreFeatures {
                     }
                 };
                 if let Some(profile) = profile.as_mut() {
-                    profile.record(feature_name, FeatureProfilePhase::Local, local_elapsed);
+                    profile.record(&feature_label, FeatureProfilePhase::Local, local_elapsed);
                 }
             }
             if let Some(start) = diagnostic_start {
@@ -1272,12 +1284,20 @@ impl OverworldOreFeatures {
 
 #[derive(Debug, Default)]
 struct FeaturePlacementProfile {
-    entries: HashMap<&'static str, FeaturePlacementProfileEntry>,
+    entries: HashMap<String, FeaturePlacementProfileEntry>,
+    stderr: bool,
 }
 
 impl FeaturePlacementProfile {
-    fn record(&mut self, feature: &'static str, phase: FeatureProfilePhase, duration: Duration) {
-        let entry = self.entries.entry(feature).or_default();
+    fn new(stderr: bool) -> Self {
+        Self {
+            entries: HashMap::new(),
+            stderr,
+        }
+    }
+
+    fn record(&mut self, feature: &str, phase: FeatureProfilePhase, duration: Duration) {
+        let entry = self.entries.entry(feature.to_string()).or_default();
         match phase {
             FeatureProfilePhase::Local => {
                 entry.local += duration;
@@ -1327,7 +1347,11 @@ impl FeaturePlacementProfile {
             .collect::<Vec<_>>()
             .join("; ");
 
-        log::debug!("vanilla_noise feature profile: chunk=({chunk_x}, {chunk_z}), top=[{summary}]");
+        let message = format!("vanilla_noise feature profile: chunk=({chunk_x}, {chunk_z}), top=[{summary}]");
+        if self.stderr {
+            eprintln!("{message}");
+        }
+        log::debug!("{message}");
     }
 }
 

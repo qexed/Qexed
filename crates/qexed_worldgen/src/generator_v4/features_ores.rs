@@ -123,6 +123,9 @@ impl PlacedOreFeature {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
             let y = self.height.sample(settings, random);
+            if !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
             let mut replay_random = random.clone();
             if self.ore.may_spill_into(
                 target_origin_x,
@@ -1623,7 +1626,10 @@ impl OreFeatureConfig {
             }
         }
 
-        let mut tested = HashSet::<(i32, i32, i32)>::new();
+        let tested_size_x = (2 * (spread_xy_ceil + precheck_radius) + 1) as usize;
+        let tested_size_y = (2 * (2 + precheck_radius) + 1) as usize;
+        let tested_size_z = tested_size_x;
+        let mut tested = vec![false; tested_size_x * tested_size_y * tested_size_z];
         let mut placed = false;
         for sphere in spheres {
             let [x, y, z, radius] = sphere;
@@ -1631,12 +1637,19 @@ impl OreFeatureConfig {
                 continue;
             }
 
-            let min_x = mth_floor(x - radius).max(min_box_x);
-            let max_x = mth_floor(x + radius).max(min_x);
+            let raw_min_x = mth_floor(x - radius).max(min_box_x);
+            let raw_max_x = mth_floor(x + radius).max(raw_min_x);
+            let min_x = raw_min_x.max(chunk_min_x);
+            let max_x = raw_max_x.min(chunk_min_x + 15);
             let min_y = mth_floor(y - radius).max(min_box_y);
             let max_y = mth_floor(y + radius).max(min_y);
-            let min_z = mth_floor(z - radius).max(min_box_z);
-            let max_z = mth_floor(z + radius).max(min_z);
+            let raw_min_z = mth_floor(z - radius).max(min_box_z);
+            let raw_max_z = mth_floor(z + radius).max(raw_min_z);
+            let min_z = raw_min_z.max(chunk_min_z);
+            let max_z = raw_max_z.min(chunk_min_z + 15);
+            if min_x > max_x || min_z > max_z {
+                continue;
+            }
 
             for world_x in min_x..=max_x {
                 let xd = (world_x as f64 + 0.5 - x) / radius;
@@ -1657,8 +1670,18 @@ impl OreFeatureConfig {
                         if xd * xd + yd * yd + zd * zd >= 1.0 {
                             continue;
                         }
-                        if tested.insert((world_x, world_y, world_z))
-                            && self.try_place_block_with_neighbor(
+                        let tested_x = (world_x - min_box_x) as usize;
+                        let tested_y = (world_y - min_box_y) as usize;
+                        let tested_z = (world_z - min_box_z) as usize;
+                        let tested_index =
+                            (tested_x * tested_size_y + tested_y) * tested_size_z + tested_z;
+                        if !tested[tested_index] {
+                            tested[tested_index] = true;
+                        } else {
+                            continue;
+                        }
+                        if self
+                            .try_place_block_with_neighbor(
                                 settings,
                                 chunk_min_x,
                                 chunk_min_z,
