@@ -81,7 +81,7 @@ impl EffectRuntime {
             "minecraft:instant_damage" => survival.apply_damage(amount, DeathMessage::Magic),
             _ => SurvivalDamage::None,
         };
-        if outcome.changed() {
+        if outcome.changed() && outcome.death_message().is_none() {
             sink.send(survival.health_packet()).await?;
         }
         if let Some(id) = effect_id(effect) {
@@ -156,7 +156,7 @@ impl EffectRuntime {
                 .await?;
             }
         }
-        if outcome.changed() {
+        if outcome.changed() && outcome.death_message().is_none() {
             sink.send(survival.health_packet()).await?;
         }
         Ok(outcome)

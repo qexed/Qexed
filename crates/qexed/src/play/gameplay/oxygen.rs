@@ -98,7 +98,7 @@ impl OxygenRuntime {
         }
         self.air = 0;
         let damage = survival.apply_damage(2.0, DeathMessage::Drown);
-        if damage.changed() {
+        if damage.changed() && damage.death_message().is_none() {
             sink.send(survival.health_packet()).await?;
         }
         Ok(damage)

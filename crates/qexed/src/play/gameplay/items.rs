@@ -3,17 +3,38 @@ use qexed_protocol::types::{ComponentsToAdd, Slot, minecraft};
 
 use crate::plugins::{ItemEnchantment, ItemStackPayload, PluginEnchantment};
 
-pub(super) fn item_stack_payload(slot: &Slot) -> ItemStackPayload {
+pub(in crate::play) fn item_stack_payload(slot: &Slot) -> ItemStackPayload {
     let item_id = slot.item_id.as_ref().map(|id| id.0).unwrap_or(-1);
     let (damage, max_damage) = durability(slot);
     ItemStackPayload {
         item_id,
         item_name: crate::inventory::item_name_for_id(item_id).unwrap_or_default(),
+        display_name: display_name(slot).unwrap_or_default(),
         count: slot.item_count.0,
         damage,
         max_damage,
         enchantments: enchantments(slot),
         plugin_enchantments: plugin_enchantments(slot),
+    }
+}
+
+fn display_name(slot: &Slot) -> Option<String> {
+    let components = slot.components_to_add.as_ref()?;
+    components.iter().find_map(|component| match component {
+        ComponentsToAdd::MinecraftItemName(value) => text_component_plain_text(&value.name),
+        ComponentsToAdd::MinecraftCustomName(value) => text_component_plain_text(&value.name),
+        _ => None,
+    })
+}
+
+fn text_component_plain_text(tag: &qexed_protocol::types::TextComponent) -> Option<String> {
+    match tag {
+        qexed_nbt::Tag::String(value) => Some(value.to_string()),
+        qexed_nbt::Tag::Compound(values) => match values.get("text") {
+            Some(qexed_nbt::Tag::String(value)) => Some(value.to_string()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

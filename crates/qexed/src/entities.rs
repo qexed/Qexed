@@ -2,7 +2,7 @@ mod manager;
 mod model;
 mod registry;
 
-pub use manager::{DroppedItemUpdate, EntityManager};
+pub use manager::{DroppedItemUpdate, EntityManager, VisualProjectileSpawnRequest};
 #[cfg(test)]
 pub use qexed_entity::npc_profile_name;
 pub use qexed_entity::{

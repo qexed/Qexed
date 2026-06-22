@@ -308,9 +308,7 @@ impl SurvivalState {
             return SurvivalDamage::None;
         };
 
-        let fall_location = fall_context
-            .climbable
-            .unwrap_or(FallLocation::Generic);
+        let fall_location = fall_context.climbable.unwrap_or(FallLocation::Generic);
         let (effective_distance, damage_modifier, death_message) =
             fall_damage_profile(fall_distance, fall_context.landing, fall_location);
         let damage = ((effective_distance + 1.0e-6 - SAFE_FALL_DISTANCE) * damage_modifier).floor();

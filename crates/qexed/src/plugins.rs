@@ -27,10 +27,11 @@ pub use qexed_plugin_api::{
     MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp,
     NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
-    PlayerAttackResponse, PlayerBlockInteractPayload, PlayerInputPayload, PlayerItemPickupQuery,
-    PlayerItemPickupResponse, PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse,
-    PlayerPayloadOwned, PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, PluginEnchantment, PotionEffectTickQuery, PotionEffectTickResponse,
+    PlayerAttackResponse, PlayerBlockInteractPayload, PlayerDeathQuery, PlayerDeathResponse,
+    PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse, PlayerMovePayload,
+    PlayerOxygenTickQuery, PlayerOxygenTickResponse, PlayerPayloadOwned, PlayerTickPayload,
+    PlayerUseItemPayload, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
+    PluginEnchantment, PotionEffectTickQuery, PotionEffectTickResponse, ProjectileHitPlayerPayload,
     ProxyConnectResultPayload, SoundPayload, SoundResponse,
 };
 
@@ -206,8 +207,7 @@ fn load_plugins(
 
 /// Filters out plugins whose hard dependencies are missing, cascading removal.
 fn filter_plugins_with_dependencies(mut plugins: Vec<PluginInstance>) -> Vec<PluginInstance> {
-    let mut available: HashSet<String> =
-        plugins.iter().map(|p| p.manifest.id.clone()).collect();
+    let mut available: HashSet<String> = plugins.iter().map(|p| p.manifest.id.clone()).collect();
 
     loop {
         let before = plugins.len();
@@ -353,7 +353,11 @@ fn topological_sort_plugins(plugins: Vec<PluginInstance>) -> Vec<PluginInstance>
     let mut items: Vec<Option<PluginInstance>> = plugins.into_iter().map(Some).collect();
     sorted
         .into_iter()
-        .map(|idx| items[idx].take().expect("topological sort index is duplicate"))
+        .map(|idx| {
+            items[idx]
+                .take()
+                .expect("topological sort index is duplicate")
+        })
         .collect()
 }
 
@@ -892,6 +896,57 @@ impl PluginManager {
         result
     }
 
+    pub fn handle_player_use_item(
+        &self,
+        player: &OnlinePlayer,
+        hand: String,
+        action: String,
+        item: ItemStackPayload,
+        sequence: i32,
+        yaw: f32,
+        pitch: f32,
+    ) -> PluginCommandResponse {
+        let query = PlayerUseItemPayload {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            position: player_position_payload(player.position),
+            hand,
+            action,
+            item,
+            sequence,
+            yaw,
+            pitch,
+        };
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::PlayerUseItem, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn handle_projectile_hit_player(
+        &self,
+        query: ProjectileHitPlayerPayload,
+    ) -> PluginCommandResponse {
+        let mut result = PluginCommandResponse {
+            handled: false,
+            actions: Vec::new(),
+        };
+        for response in
+            self.query_encoded::<_, PluginCommandResponse>(PluginEvent::ProjectileHitPlayer, &query)
+        {
+            result.handled |= response.handled;
+            result.actions.extend(response.actions);
+        }
+        result
+    }
+
     pub fn emit_click_detected(
         &self,
         player: &OnlinePlayer,
@@ -941,6 +996,36 @@ impl PluginManager {
             result.cancel |= response.cancel;
             result.consume |= response.consume;
             result.actions.extend(response.actions);
+        }
+        result
+    }
+
+    pub fn handle_player_death(
+        &self,
+        player: &OnlinePlayer,
+        cause: String,
+        source_entity_id: i32,
+    ) -> PlayerDeathResponse {
+        let query = PlayerDeathQuery {
+            player: player_payload_owned(player),
+            dimension: player.dimension.clone(),
+            position: player_position_payload(player.position),
+            cause,
+            source_entity_id,
+        };
+        let mut result = PlayerDeathResponse {
+            cancel: false,
+            message: String::new(),
+            overlay: false,
+        };
+        for response in
+            self.query_encoded::<_, PlayerDeathResponse>(PluginEvent::PlayerDeath, &query)
+        {
+            result.cancel |= response.cancel;
+            if !response.message.trim().is_empty() {
+                result.message = response.message;
+                result.overlay = response.overlay;
+            }
         }
         result
     }

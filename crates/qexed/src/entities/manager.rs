@@ -194,10 +194,12 @@ struct EntitySummonState {
     remaining_ticks: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct EntityProjectileState {
     source_entity_id: i32,
     kind: EntityProjectileKind,
+    plugin_event: String,
+    plugin_tag: String,
     damage: f32,
     damage_kind: crate::players::PlayerDamageKind,
     knockback: f32,
@@ -241,6 +243,18 @@ struct EntityPlayerPotionEffectRequest {
 }
 
 #[derive(Debug, Clone)]
+struct EntityProjectileHitPlayerRequest {
+    shooter_profile_id: uuid::Uuid,
+    target_profile_id: uuid::Uuid,
+    projectile_entity_id: i32,
+    projectile_kind: String,
+    dimension: String,
+    position: EntityPosition,
+    configured_event: String,
+    tag: String,
+}
+
+#[derive(Debug, Clone)]
 struct EntityEntityDamageRequest {
     target_entity_id: i32,
     amount: f32,
@@ -255,6 +269,8 @@ struct EntityProjectileSpawnRequest {
     motion: EntityMotion,
     source_entity_id: i32,
     kind: EntityProjectileKind,
+    plugin_event: String,
+    plugin_tag: String,
     damage: f32,
     damage_kind: crate::players::PlayerDamageKind,
     knockback: f32,
@@ -267,6 +283,24 @@ struct EntityProjectileSpawnRequest {
     splash_radius: f64,
     potion_effect: Option<EntityPotionEffect>,
     target_profile_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VisualProjectileSpawnRequest {
+    pub kind: String,
+    pub configured_event: String,
+    pub tag: String,
+    pub dimension: String,
+    pub position: EntityPosition,
+    pub velocity_x: f64,
+    pub velocity_y: f64,
+    pub velocity_z: f64,
+    pub source_entity_id: i32,
+    pub damage: f32,
+    pub knockback: f32,
+    pub gravity_per_tick: f64,
+    pub hit_radius: f64,
+    pub lifetime_ticks: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +329,21 @@ enum EntityProjectileKind {
 }
 
 impl EntityProjectileKind {
+    fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "" | "arrow" | "minecraft:arrow" => Some(Self::Arrow),
+            "small_fireball" | "minecraft:small_fireball" => Some(Self::SmallFireball),
+            "fireball" | "minecraft:fireball" => Some(Self::Fireball),
+            "potion" | "splash_potion" | "minecraft:splash_potion" => Some(Self::Potion),
+            "shulker_bullet" | "minecraft:shulker_bullet" => Some(Self::ShulkerBullet),
+            "wind_charge" | "minecraft:wind_charge" => Some(Self::WindCharge),
+            "wither_skull" | "minecraft:wither_skull" => Some(Self::WitherSkull),
+            "trident" | "minecraft:trident" => Some(Self::Trident),
+            "snowball" | "minecraft:snowball" => Some(Self::Snowball),
+            _ => None,
+        }
+    }
+
     fn ai(self) -> &'static str {
         match self {
             Self::Arrow => ENTITY_PROJECTILE_ARROW_AI,
@@ -320,6 +369,20 @@ impl EntityProjectileKind {
             Self::WitherSkull => "minecraft:wither_skull",
             Self::Trident => "minecraft:trident",
             Self::Snowball => "minecraft:snowball",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Arrow => "arrow",
+            Self::SmallFireball => "small_fireball",
+            Self::Fireball => "fireball",
+            Self::Potion => "splash_potion",
+            Self::ShulkerBullet => "shulker_bullet",
+            Self::WindCharge => "wind_charge",
+            Self::WitherSkull => "wither_skull",
+            Self::Trident => "trident",
+            Self::Snowball => "snowball",
         }
     }
 
@@ -813,6 +876,24 @@ impl EntityManager {
         Ok(())
     }
 
+    pub fn send_spawn_to_rendered_viewers_with_velocity(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        entity: &ManagedEntity,
+        velocity_x: f64,
+        velocity_y: f64,
+        velocity_z: f64,
+    ) -> Result<()> {
+        let packets = entity.spawn_packets_with_velocity(velocity_x, velocity_y, velocity_z)?;
+        for player in players.list_except(uuid::Uuid::nil()) {
+            if entity_visible_to_player(entity, &player, rendering) {
+                players.send_packets_to(player.profile.uuid, packets.clone());
+            }
+        }
+        Ok(())
+    }
+
     pub fn refresh_managed_entities_for_viewers(
         &self,
         players: &crate::players::PlayerManager,
@@ -1181,7 +1262,7 @@ impl EntityManager {
             display_name: String::new(),
             skin_textures: String::new(),
             skin_signature: String::new(),
-            data: 0,
+            data: request.source_entity_id,
             ai: request.kind.ai().to_string(),
             ai_params: BTreeMap::new(),
             auto_jump: false,
@@ -1204,6 +1285,8 @@ impl EntityManager {
                 EntityProjectileState {
                     source_entity_id: request.source_entity_id,
                     kind: request.kind,
+                    plugin_event: request.plugin_event,
+                    plugin_tag: request.plugin_tag,
                     damage: request.damage,
                     damage_kind: request.damage_kind,
                     knockback: request.knockback,
@@ -1218,7 +1301,14 @@ impl EntityManager {
                     target_profile_id: request.target_profile_id,
                 },
             );
-        self.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
+        self.send_spawn_to_rendered_viewers_with_velocity(
+            players,
+            rendering,
+            &entity,
+            request.motion.velocity_x,
+            request.motion.velocity_y,
+            request.motion.velocity_z,
+        )?;
 
         let packets = entity.position_packets_with_velocity(
             request.motion.velocity_x,
@@ -1231,6 +1321,64 @@ impl EntityManager {
             }
         }
         Ok(())
+    }
+
+    pub fn spawn_visual_projectile(
+        &self,
+        players: &crate::players::PlayerManager,
+        rendering: &qexed_config::app::qexed::server::EntityRendering,
+        request: VisualProjectileSpawnRequest,
+    ) -> Result<()> {
+        let Some(kind) = EntityProjectileKind::from_name(&request.kind) else {
+            anyhow::bail!("unsupported projectile kind: {}", request.kind);
+        };
+        let speed_sq = request.velocity_x * request.velocity_x
+            + request.velocity_y * request.velocity_y
+            + request.velocity_z * request.velocity_z;
+        if speed_sq <= f64::EPSILON {
+            anyhow::bail!("projectile velocity must be non-zero");
+        }
+        let (yaw, pitch) =
+            rotation_from_velocity(request.velocity_x, request.velocity_y, request.velocity_z);
+        let mut position = request.position;
+        position.yaw = yaw;
+        position.pitch = pitch;
+        position.on_ground = false;
+        self.spawn_projectile(
+            players,
+            rendering,
+            EntityProjectileSpawnRequest {
+                key: format!(
+                    "projectile:plugin:{}",
+                    rand::RngCore::next_u64(&mut rand::thread_rng())
+                ),
+                entity_type: kind.entity_type().to_string(),
+                dimension: request.dimension,
+                position,
+                motion: EntityMotion {
+                    velocity_x: request.velocity_x,
+                    velocity_y: request.velocity_y,
+                    velocity_z: request.velocity_z,
+                    ..Default::default()
+                },
+                source_entity_id: request.source_entity_id,
+                kind,
+                plugin_event: request.configured_event,
+                plugin_tag: request.tag,
+                damage: request.damage.max(0.0),
+                damage_kind: kind.damage_kind(),
+                knockback: request.knockback.max(0.0),
+                gravity_per_tick: request.gravity_per_tick.max(0.0),
+                hit_radius: request.hit_radius.clamp(0.1, 8.0),
+                lifetime_ticks: request.lifetime_ticks.max(1),
+                explosion_radius: 0.0,
+                explosion_damage: 0.0,
+                explosion_break_blocks: false,
+                splash_radius: 0.0,
+                potion_effect: None,
+                target_profile_id: None,
+            },
+        )
     }
 
     fn spawn_summoned_entity(
@@ -1883,7 +2031,7 @@ impl EntityManager {
         tick_ms: u64,
     ) -> Result<()> {
         if !self.should_run_ai_tick(tick_ms) {
-        let _span = crate::profile_span!("entity:tick_ai");
+            let _span = crate::profile_span!("entity:tick_ai");
             return Ok(());
         }
         let now = Instant::now();
@@ -1907,6 +2055,7 @@ impl EntityManager {
         let mut environment_damage = Vec::new();
         let mut player_damage_requests = Vec::new();
         let mut player_potion_effect_requests = Vec::new();
+        let mut projectile_hit_player_requests = Vec::new();
         let mut entity_damage_requests = Vec::new();
         let mut projectile_spawns = Vec::new();
         let mut summon_spawns = Vec::new();
@@ -2100,6 +2249,7 @@ impl EntityManager {
                         tick_ms,
                         &mut player_damage_requests,
                         &mut player_potion_effect_requests,
+                        &mut projectile_hit_player_requests,
                         &mut entity_damage_requests,
                         &mut explosion_block_requests,
                     );
@@ -2252,6 +2402,18 @@ impl EntityManager {
                 request.source_position,
                 request.knockback,
             );
+        }
+        for request in projectile_hit_player_requests {
+            players.emit_projectile_hit_player(crate::players::ProjectileHitPlayerEvent {
+                shooter_profile_id: request.shooter_profile_id,
+                target_profile_id: request.target_profile_id,
+                projectile_entity_id: request.projectile_entity_id,
+                projectile_kind: request.projectile_kind,
+                dimension: request.dimension,
+                position: request.position,
+                configured_event: request.configured_event,
+                tag: request.tag,
+            });
         }
         for request in projectile_spawns {
             self.spawn_projectile(players, rendering, request)?;
@@ -5605,6 +5767,8 @@ fn ranged_projectile_spawn_request_at(
         },
         source_entity_id: entity.entity_id,
         kind: projectile_kind,
+        plugin_event: String::new(),
+        plugin_tag: String::new(),
         damage: profile.ranged_attack_damage,
         damage_kind: projectile_kind.damage_kind(),
         knockback: profile.attack_knockback,
@@ -6620,6 +6784,7 @@ fn apply_projectile_tick(
     tick_ms: u64,
     player_damage_requests: &mut Vec<EntityPlayerDamageRequest>,
     player_potion_effect_requests: &mut Vec<EntityPlayerPotionEffectRequest>,
+    projectile_hit_player_requests: &mut Vec<EntityProjectileHitPlayerRequest>,
     entity_damage_requests: &mut Vec<EntityEntityDamageRequest>,
     explosion_block_requests: &mut Vec<EntityExplosionBlockRequest>,
 ) -> bool {
@@ -6646,6 +6811,9 @@ fn apply_projectile_tick(
     entity.position.on_ground = false;
 
     if projectile_hits_solid_block(entity, world, collision_cache) {
+        if projectile_kind_has_no_solid_block_impact(state.kind) {
+            return true;
+        }
         apply_projectile_impact(
             entity,
             state,
@@ -6690,10 +6858,27 @@ fn apply_projectile_tick(
         entity.position,
         &entity.dimension,
         viewers,
+        state.source_entity_id,
         state.hit_radius,
     ) else {
         return false;
     };
+    if !state.plugin_event.trim().is_empty()
+        && let Some(shooter) = viewers
+            .iter()
+            .find(|player| player.entity_id == state.source_entity_id)
+    {
+        projectile_hit_player_requests.push(EntityProjectileHitPlayerRequest {
+            shooter_profile_id: shooter.profile.uuid,
+            target_profile_id: target.profile.uuid,
+            projectile_entity_id: entity.entity_id,
+            projectile_kind: state.kind.name().to_string(),
+            dimension: entity.dimension.clone(),
+            position: entity.position,
+            configured_event: state.plugin_event.clone(),
+            tag: state.plugin_tag.clone(),
+        });
+    }
     apply_projectile_impact(
         entity,
         state,
@@ -6707,6 +6892,15 @@ fn apply_projectile_tick(
         explosion_block_requests,
     );
     true
+}
+
+fn projectile_kind_has_no_solid_block_impact(kind: EntityProjectileKind) -> bool {
+    matches!(
+        kind,
+        EntityProjectileKind::Arrow
+            | EntityProjectileKind::Trident
+            | EntityProjectileKind::Snowball
+    )
 }
 
 fn apply_shulker_bullet_homing(
@@ -7080,26 +7274,81 @@ fn projectile_hit_player<'a>(
     current: EntityPosition,
     dimension: &str,
     viewers: &'a [crate::players::OnlinePlayer],
+    source_entity_id: i32,
     hit_radius: f64,
 ) -> Option<&'a crate::players::OnlinePlayer> {
     let hit_radius = hit_radius.clamp(0.1, 8.0);
     viewers
         .iter()
-        .filter(|player| player.dimension == dimension && player_can_be_attacked(player))
         .filter(|player| {
-            let target = EntityPosition {
-                x: player.position.x,
-                y: player.position.y + 1.0,
-                z: player.position.z,
-                yaw: player.position.yaw,
-                pitch: player.position.pitch,
-                on_ground: player.position.on_ground,
-            };
-            point_segment_distance_sq(target, previous, current) <= hit_radius * hit_radius
+            player.dimension == dimension
+                && player.entity_id != source_entity_id
+                && player_can_be_attacked(player)
         })
+        .filter(|player| segment_intersects_player_hitbox(previous, current, player, hit_radius))
         .min_by(|left, right| {
             distance_sq(current, left.position).total_cmp(&distance_sq(current, right.position))
         })
+}
+
+fn segment_intersects_player_hitbox(
+    start: EntityPosition,
+    end: EntityPosition,
+    player: &crate::players::OnlinePlayer,
+    inflate: f64,
+) -> bool {
+    const PLAYER_HALF_WIDTH: f64 = 0.3;
+    const PLAYER_HEIGHT: f64 = 1.8;
+
+    let min_x = player.position.x - PLAYER_HALF_WIDTH - inflate;
+    let max_x = player.position.x + PLAYER_HALF_WIDTH + inflate;
+    let min_y = player.position.y - inflate;
+    let max_y = player.position.y + PLAYER_HEIGHT + inflate;
+    let min_z = player.position.z - PLAYER_HALF_WIDTH - inflate;
+    let max_z = player.position.z + PLAYER_HALF_WIDTH + inflate;
+
+    segment_intersects_aabb(
+        (start.x, start.y, start.z),
+        (end.x, end.y, end.z),
+        (min_x, min_y, min_z),
+        (max_x, max_y, max_z),
+    )
+}
+
+fn segment_intersects_aabb(
+    start: (f64, f64, f64),
+    end: (f64, f64, f64),
+    min: (f64, f64, f64),
+    max: (f64, f64, f64),
+) -> bool {
+    let delta = (end.0 - start.0, end.1 - start.1, end.2 - start.2);
+    let mut t_min: f64 = 0.0;
+    let mut t_max: f64 = 1.0;
+
+    for (origin, direction, min_bound, max_bound) in [
+        (start.0, delta.0, min.0, max.0),
+        (start.1, delta.1, min.1, max.1),
+        (start.2, delta.2, min.2, max.2),
+    ] {
+        if direction.abs() <= f64::EPSILON {
+            if origin < min_bound || origin > max_bound {
+                return false;
+            }
+            continue;
+        }
+        let inv = 1.0 / direction;
+        let mut near = (min_bound - origin) * inv;
+        let mut far = (max_bound - origin) * inv;
+        if near > far {
+            std::mem::swap(&mut near, &mut far);
+        }
+        t_min = t_min.max(near);
+        t_max = t_max.min(far);
+        if t_min > t_max {
+            return false;
+        }
+    }
+    true
 }
 
 fn point_segment_distance_sq(

@@ -69,9 +69,7 @@ impl PendingDig {
         // Allow up to 1.5 ticks early to compensate for latency between the
         // client finishing its local progress and the STOP_DESTROY_BLOCK
         // packet reaching the server.
-        self.elapsed
-            .saturating_add(Duration::from_millis(75))
-            >= self.required
+        self.elapsed.saturating_add(Duration::from_millis(75)) >= self.required
     }
 
     /// Calculate the block destruction stage (0-9) based on accumulated tick

@@ -84,7 +84,8 @@ impl Packet for AddEntity {
         self.pitch.deserialize(r)?;
         self.yaw.deserialize(r)?;
         self.head_yaw.deserialize(r)?;
-        self.data.deserialize(r)
+        self.data.deserialize(r)?;
+        Ok(())
     }
 }
 
@@ -393,7 +394,7 @@ fn unpack_lp_value(value: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use qexed_packet::Packet;
+    use qexed_packet::{Packet, PacketCodec, net_types::VarInt};
 
     use super::{AddEntity, EntityPosition, EntityPositionSync, TeleportEntity};
 
@@ -412,6 +413,10 @@ mod tests {
                 on_ground: true,
             },
         );
+        let mut packet = packet;
+        packet.velocity_x = 0.12;
+        packet.velocity_y = -0.08;
+        packet.velocity_z = 0.04;
         let mut buf = bytes::BytesMut::new();
         let mut writer = qexed_packet::PacketWriter::new(&mut buf);
         packet.serialize(&mut writer).unwrap();
@@ -421,7 +426,83 @@ mod tests {
         let mut decoded = AddEntity::default();
         decoded.deserialize(&mut reader).unwrap();
 
-        assert_eq!(decoded, packet);
+        assert_eq!(decoded.entity_id, packet.entity_id);
+        assert_eq!(decoded.uuid, packet.uuid);
+        assert_eq!(decoded.entity_type, packet.entity_type);
+        assert_eq!(decoded.x, packet.x);
+        assert_eq!(decoded.y, packet.y);
+        assert_eq!(decoded.z, packet.z);
+        assert_eq!(decoded.pitch, packet.pitch);
+        assert_eq!(decoded.yaw, packet.yaw);
+        assert_eq!(decoded.head_yaw, packet.head_yaw);
+        assert_eq!(decoded.data, packet.data);
+        assert!((decoded.velocity_x - packet.velocity_x).abs() < 0.001);
+        assert!((decoded.velocity_y - packet.velocity_y).abs() < 0.001);
+        assert!((decoded.velocity_z - packet.velocity_z).abs() < 0.001);
+    }
+
+    #[test]
+    fn add_entity_writes_velocity_before_rotations() {
+        let mut packet = AddEntity::new(
+            7,
+            uuid::Uuid::from_u128(0x00112233445566778899aabbccddeeff),
+            146,
+            EntityPosition {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                yaw: 90.0,
+                pitch: 45.0,
+                on_ground: true,
+            },
+            12,
+        );
+        packet.velocity_x = 0.12;
+        packet.velocity_y = -0.08;
+        packet.velocity_z = 0.04;
+
+        let mut buf = bytes::BytesMut::new();
+        let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+        packet.serialize(&mut writer).unwrap();
+
+        let mut bytes = buf.freeze();
+        let mut reader = qexed_packet::PacketReader::new(&mut bytes);
+        let mut entity_id = VarInt::default();
+        entity_id.deserialize(&mut reader).unwrap();
+        let mut uuid = uuid::Uuid::nil();
+        uuid.deserialize(&mut reader).unwrap();
+        let mut entity_type = VarInt::default();
+        entity_type.deserialize(&mut reader).unwrap();
+        let mut x = 0.0;
+        x.deserialize(&mut reader).unwrap();
+        let mut y = 0.0;
+        y.deserialize(&mut reader).unwrap();
+        let mut z = 0.0;
+        z.deserialize(&mut reader).unwrap();
+
+        let (velocity_x, velocity_y, velocity_z) = super::read_lp_vec3(&mut reader).unwrap();
+        let mut pitch = 0;
+        pitch.deserialize(&mut reader).unwrap();
+        let mut yaw = 0;
+        yaw.deserialize(&mut reader).unwrap();
+        let mut head_yaw = 0;
+        head_yaw.deserialize(&mut reader).unwrap();
+        let mut data = VarInt::default();
+        data.deserialize(&mut reader).unwrap();
+
+        assert_eq!(entity_id, packet.entity_id);
+        assert_eq!(uuid, packet.uuid);
+        assert_eq!(entity_type, packet.entity_type);
+        assert_eq!(x, packet.x);
+        assert_eq!(y, packet.y);
+        assert_eq!(z, packet.z);
+        assert!((velocity_x - packet.velocity_x).abs() < 0.001);
+        assert!((velocity_y - packet.velocity_y).abs() < 0.001);
+        assert!((velocity_z - packet.velocity_z).abs() < 0.001);
+        assert_eq!(pitch, packet.pitch);
+        assert_eq!(yaw, packet.yaw);
+        assert_eq!(head_yaw, packet.head_yaw);
+        assert_eq!(data, packet.data);
     }
 
     #[test]

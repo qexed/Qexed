@@ -21,6 +21,18 @@ pub struct BlockChange {
 }
 
 #[derive(Debug, Clone)]
+pub struct ProjectileHitPlayerEvent {
+    pub shooter_profile_id: uuid::Uuid,
+    pub target_profile_id: uuid::Uuid,
+    pub projectile_entity_id: i32,
+    pub projectile_kind: String,
+    pub dimension: String,
+    pub position: EntityPosition,
+    pub configured_event: String,
+    pub tag: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum PlayerEvent {
     Joined(OnlinePlayer),
     Left {
@@ -73,6 +85,7 @@ pub enum PlayerEvent {
         item: Slot,
         item_name: String,
     },
+    ProjectileHitPlayer(ProjectileHitPlayerEvent),
     EquipmentChanged {
         profile_id: uuid::Uuid,
         entity_id: i32,

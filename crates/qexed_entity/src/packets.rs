@@ -9,6 +9,7 @@ use qexed_protocol::{
         add_entity::{AddEntity, EntityPositionSync, PlayerInfoRemove, RemoveEntities, RotateHead},
         player_info_update::{PlayerInfoActions, PlayerInfoEntry, PlayerInfoUpdate},
         set_entity_data::SetEntityData,
+        set_entity_motion::SetEntityMotion,
         take_item_entity::TakeItemEntity,
     },
     types::{EntityMetadata, EntityMetadataEnum, EntityMetadataSub},
@@ -39,6 +40,15 @@ const DEFAULT_SLIME_SIZE: i32 = 4;
 
 impl ManagedEntity {
     pub fn spawn_packets(&self) -> Result<Vec<Bytes>> {
+        self.spawn_packets_with_velocity(0.0, 0.0, 0.0)
+    }
+
+    pub fn spawn_packets_with_velocity(
+        &self,
+        velocity_x: f64,
+        velocity_y: f64,
+        velocity_z: f64,
+    ) -> Result<Vec<Bytes>> {
         let mut packets = Vec::new();
         let player_npc =
             self.kind == ManagedEntityKind::Npc && self.entity_type == "minecraft:player";
@@ -50,7 +60,7 @@ impl ManagedEntity {
             })?);
         }
 
-        let add_entity = if player_npc {
+        let mut add_entity = if player_npc {
             AddEntity::player(
                 self.entity_id,
                 self.uuid,
@@ -66,7 +76,18 @@ impl ManagedEntity {
                 self.data,
             )
         };
+        add_entity.velocity_x = velocity_x;
+        add_entity.velocity_y = velocity_y;
+        add_entity.velocity_z = velocity_z;
         packets.push(packet_bytes(add_entity)?);
+        if velocity_x != 0.0 || velocity_y != 0.0 || velocity_z != 0.0 {
+            packets.push(packet_bytes(SetEntityMotion::from_velocity(
+                self.entity_id,
+                velocity_x,
+                velocity_y,
+                velocity_z,
+            ))?);
+        }
         packets.push(packet_bytes(RotateHead::new(
             self.entity_id,
             self.position.yaw,
@@ -108,16 +129,28 @@ impl ManagedEntity {
         velocity_y: f64,
         velocity_z: f64,
     ) -> Result<Vec<Bytes>> {
-        Ok(vec![
-            packet_bytes(EntityPositionSync::from_position_with_velocity(
+        let mut packets = vec![packet_bytes(
+            EntityPositionSync::from_position_with_velocity(
                 self.entity_id,
                 self.position,
                 velocity_x,
                 velocity_y,
                 velocity_z,
-            ))?,
-            packet_bytes(RotateHead::new(self.entity_id, self.position.yaw))?,
-        ])
+            ),
+        )?];
+        if velocity_x != 0.0 || velocity_y != 0.0 || velocity_z != 0.0 {
+            packets.push(packet_bytes(SetEntityMotion::from_velocity(
+                self.entity_id,
+                velocity_x,
+                velocity_y,
+                velocity_z,
+            ))?);
+        }
+        packets.push(packet_bytes(RotateHead::new(
+            self.entity_id,
+            self.position.yaw,
+        ))?);
+        Ok(packets)
     }
 
     fn profile(&self) -> GameProfile {
@@ -553,6 +586,7 @@ mod tests {
     use qexed_protocol::to_client::play::{
         add_entity::{EntityPosition, EntityPositionSync},
         set_entity_data::SetEntityData,
+        set_entity_motion::SetEntityMotion,
     };
 
     use super::*;
@@ -746,5 +780,63 @@ mod tests {
         assert_eq!(sync.velocity_x, 0.12);
         assert_eq!(sync.velocity_y, 0.0);
         assert_eq!(sync.velocity_z, -0.04);
+    }
+
+    #[test]
+    fn spawn_packets_with_velocity_include_motion_packet() {
+        let entity = ManagedEntity {
+            key: "arrow".to_string(),
+            entity_id: 7,
+            uuid: uuid::Uuid::new_v4(),
+            kind: ManagedEntityKind::Entity,
+            entity_type: "minecraft:arrow".to_string(),
+            entity_type_id: 1,
+            dimension: "minecraft:overworld".to_string(),
+            position: EntityPosition {
+                x: 1.0,
+                y: 64.0,
+                z: 2.0,
+                yaw: 90.0,
+                pitch: -15.0,
+                on_ground: false,
+            },
+            name: "Arrow".to_string(),
+            display_name: String::new(),
+            skin_textures: String::new(),
+            skin_signature: String::new(),
+            data: 0,
+            ai: String::new(),
+            ai_params: Default::default(),
+            auto_jump: false,
+            spawn_rule: String::new(),
+            custom_type: String::new(),
+            look_at_players: false,
+            main_hand_event: "interact".to_string(),
+            off_hand_event: "interact_off_hand".to_string(),
+            attack_event: "attack".to_string(),
+        };
+
+        let packets = entity
+            .spawn_packets_with_velocity(0.12, -0.08, 0.04)
+            .unwrap();
+        let motion_payload = packets
+            .iter()
+            .find_map(|packet| {
+                let mut payload = packet.clone();
+                let mut reader = qexed_packet::PacketReader::new(&mut payload);
+                let mut packet_id = VarInt::default();
+                packet_id.deserialize(&mut reader).ok()?;
+                if packet_id.0 != SetEntityMotion::ID {
+                    return None;
+                }
+                let mut motion = SetEntityMotion::default();
+                motion.deserialize(&mut reader).ok()?;
+                Some(motion)
+            })
+            .expect("motion packet should be sent for non-zero velocity");
+
+        assert!((motion_payload.velocity_x - 0.12).abs() < 0.001);
+        assert!((motion_payload.velocity_y + 0.08).abs() < 0.001);
+        assert!((motion_payload.velocity_z - 0.04).abs() < 0.001);
     }
 }

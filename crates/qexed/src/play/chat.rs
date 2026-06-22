@@ -12,7 +12,7 @@ use qexed_protocol::to_client::play::{
 
 use qexed_config::app::qexed::server::{ForwardingMode, GameMode, Server};
 
-use crate::players::PlayerManager;
+use crate::players::{PlayerDamageKind, PlayerManager};
 
 use super::util::{text_component, translatable_component};
 
@@ -399,6 +399,7 @@ where
                         world,
                         world_rules,
                         &config.world,
+                        entities,
                         players,
                         plugins,
                         profile.uuid,
@@ -413,6 +414,7 @@ where
                         visible_player_entities,
                         viewer_position,
                         render_distance,
+                        None,
                         action,
                     )
                     .await?;
@@ -2559,6 +2561,7 @@ pub(super) async fn apply_plugin_action<W>(
     world: &crate::world::WorldManager,
     world_rules: &crate::world::WorldRulesManager,
     world_config: &qexed_config::app::qexed::server::World,
+    entities: &crate::entities::EntityManager,
     players: &crate::players::PlayerManager,
     plugins: &crate::plugins::PluginManager,
     actor: uuid::Uuid,
@@ -2573,6 +2576,7 @@ pub(super) async fn apply_plugin_action<W>(
     visible_player_entities: &mut std::collections::HashSet<uuid::Uuid>,
     viewer_position: EntityPosition,
     render_distance: f64,
+    mut inventory: Option<&mut crate::inventory::PlayerInventory>,
     action: crate::plugins::PlayerAction,
 ) -> Result<bool>
 where
@@ -2619,7 +2623,7 @@ where
             } else {
                 dimension.trim().to_string()
             };
-            teleport_current_player(
+            let teleported = teleport_current_player(
                 sink,
                 world,
                 world_rules,
@@ -2635,7 +2639,17 @@ where
                 &dimension,
                 destination,
             )
-            .await
+            .await?;
+            if teleported && let Some(server_config) = server_config {
+                for packet in entities.managed_entity_view_packets(
+                    play_dimension,
+                    *position,
+                    &server_config.entity_rendering,
+                )? {
+                    sink.send_raw(packet).await?;
+                }
+            }
+            Ok(teleported)
         }
         crate::plugins::PlayerAction::Transfer {
             host,
@@ -2678,9 +2692,43 @@ where
             *active_config_menu = opened;
             Ok(false)
         }
-        crate::plugins::PlayerAction::GiveItem { .. } => {
-            log::debug!("plugin GiveItem action ignored outside inventory-aware context");
-            Ok(false)
+        crate::plugins::PlayerAction::GiveItem {
+            item, count, name, ..
+        } => {
+            let Some((mut slot, normalized)) = command_item_stack(&item, count.clamp(1, 64)) else {
+                log::debug!("plugin GiveItem action ignored: unknown item={item}");
+                return Ok(false);
+            };
+            let display_name = if name.trim().is_empty() {
+                normalized
+            } else {
+                let display_name = name.trim().to_string();
+                let components = slot.components_to_add.get_or_insert_with(Vec::new);
+                components.push(qexed_protocol::types::ComponentsToAdd::MinecraftItemName(
+                    qexed_protocol::types::minecraft::ItemName {
+                        name: text_component(display_name.as_str()),
+                    },
+                ));
+                slot.number_of_components_to_add = Some(VarInt(components.len() as i32));
+                display_name
+            };
+            Ok(players.give_item(actor, slot, display_name))
+        }
+        crate::plugins::PlayerAction::ResetInventory { restore_menu_items } => {
+            let Some(inventory) = inventory.as_deref_mut() else {
+                log::debug!("plugin ResetInventory action ignored: inventory unavailable");
+                return Ok(false);
+            };
+            *inventory = crate::inventory::PlayerInventory::empty();
+            if restore_menu_items {
+                let _ = menus.sync_hotbar_items(inventory);
+            }
+            let actor_entity_id = players
+                .player_by_uuid(actor)
+                .map(|player| player.entity_id)
+                .unwrap_or_default();
+            super::resync_inventory_state(sink, players, actor, actor_entity_id, inventory).await?;
+            Ok(true)
         }
         crate::plugins::PlayerAction::SetPlayersVisible { visible } => {
             super::set_other_players_visible(
@@ -2697,9 +2745,132 @@ where
             *players_hidden = !visible;
             Ok(false)
         }
+        crate::plugins::PlayerAction::SpawnProjectile {
+            kind,
+            configured_event,
+            tag,
+            dimension,
+            x,
+            y,
+            z,
+            velocity_x,
+            velocity_y,
+            velocity_z,
+            source_entity_id,
+            damage,
+            knockback,
+            gravity_per_tick,
+            hit_radius,
+            lifetime_ticks,
+        } => {
+            let Some(server_config) = server_config else {
+                log::debug!("plugin SpawnProjectile action ignored: server config unavailable");
+                return Ok(false);
+            };
+            let dimension = if dimension.trim().is_empty() {
+                play_dimension.clone()
+            } else {
+                dimension.trim().to_string()
+            };
+            let source_entity_id = if source_entity_id != 0 {
+                source_entity_id
+            } else {
+                players
+                    .player_by_uuid(actor)
+                    .map(|player| player.entity_id)
+                    .unwrap_or_default()
+            };
+            if let Err(err) = entities.spawn_visual_projectile(
+                players,
+                &server_config.entity_rendering,
+                crate::entities::VisualProjectileSpawnRequest {
+                    kind,
+                    configured_event,
+                    tag,
+                    dimension,
+                    position: EntityPosition {
+                        x,
+                        y,
+                        z,
+                        yaw: 0.0,
+                        pitch: 0.0,
+                        on_ground: false,
+                    },
+                    velocity_x,
+                    velocity_y,
+                    velocity_z,
+                    source_entity_id,
+                    damage,
+                    knockback,
+                    gravity_per_tick,
+                    hit_radius,
+                    lifetime_ticks,
+                },
+            ) {
+                log::debug!("plugin SpawnProjectile action ignored: {err:#}");
+            }
+            Ok(false)
+        }
         crate::plugins::PlayerAction::Velocity { x, y, z, additive } => {
             send_player_velocity(sink, position, next_teleport_id, x, y, z, additive).await?;
             Ok(false)
+        }
+        crate::plugins::PlayerAction::DamagePlayer {
+            uuid,
+            username,
+            amount,
+            kind,
+            source_entity_id,
+            source_x,
+            source_y,
+            source_z,
+            knockback,
+        } => {
+            let target = if !uuid.trim().is_empty() {
+                uuid::Uuid::parse_str(uuid.trim())
+                    .ok()
+                    .and_then(|profile_id| players.player_by_uuid(profile_id))
+            } else if !username.trim().is_empty() {
+                players.player_by_name(username.trim())
+            } else {
+                players.player_by_uuid(actor)
+            };
+            let Some(target) = target else {
+                log::debug!(
+                    "plugin DamagePlayer action ignored: target not found uuid={}, username={}",
+                    uuid,
+                    username
+                );
+                return Ok(false);
+            };
+            let source_position = if source_x == 0.0 && source_y == 0.0 && source_z == 0.0 {
+                *position
+            } else {
+                EntityPosition {
+                    x: source_x,
+                    y: source_y,
+                    z: source_z,
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    on_ground: false,
+                }
+            };
+            let actor_entity_id = players
+                .player_by_uuid(actor)
+                .map(|player| player.entity_id)
+                .unwrap_or(target.entity_id);
+            Ok(players.damage_player(
+                target.profile.uuid,
+                amount,
+                plugin_damage_kind(&kind),
+                if source_entity_id != 0 {
+                    source_entity_id
+                } else {
+                    actor_entity_id
+                },
+                source_position,
+                knockback,
+            ))
         }
         crate::plugins::PlayerAction::BossBar {
             id,
@@ -2728,6 +2899,16 @@ where
                 .await?;
             Ok(false)
         }
+    }
+}
+
+fn plugin_damage_kind(kind: &str) -> PlayerDamageKind {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "mob" | "mob_attack" | "attack" | "player" | "melee" => PlayerDamageKind::MobAttack,
+        "projectile" | "arrow" | "bow" => PlayerDamageKind::Projectile,
+        "explosion" | "explode" => PlayerDamageKind::Explosion,
+        "magic" | "potion" => PlayerDamageKind::Magic,
+        _ => PlayerDamageKind::Generic,
     }
 }
 

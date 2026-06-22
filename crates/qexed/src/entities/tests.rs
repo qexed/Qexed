@@ -1,12 +1,13 @@
 use super::{
     EntityIdAllocator, EntityManager, EntitySpawnRequest, ManagedEntity, ManagedEntityKind,
-    entity_type_id, npc_profile_name,
+    VisualProjectileSpawnRequest, entity_type_id, npc_profile_name,
 };
 use bytes::{Bytes, BytesMut};
 use qexed_packet::Packet;
 use qexed_protocol::{
     to_client::play::{
-        add_entity::EntityPosition, player_info_update::PlayerInfoUpdate,
+        add_entity::{AddEntity, EntityPosition},
+        player_info_update::PlayerInfoUpdate,
         set_entity_data::SetEntityData,
     },
     types::EntityMetadataEnum,
@@ -1549,6 +1550,118 @@ fn vanilla_skeleton_ranged_ai_spawns_arrow_projectile() {
             .any(|entity| entity.entity_type == "minecraft:arrow"
                 && entity.ai == "vanilla_projectile:arrow")
     );
+}
+
+#[test]
+fn visual_arrow_spawn_packets_include_source_entity_id_as_projectile_data() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Viewer", test_position(0.0, 64.0, 0.0));
+    drain_player_events(&mut session);
+
+    manager
+        .spawn_visual_projectile(
+            &players,
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            VisualProjectileSpawnRequest {
+                kind: "arrow".to_string(),
+                configured_event: "murder:detective_arrow".to_string(),
+                tag: "detective_bow".to_string(),
+                dimension: "minecraft:overworld".to_string(),
+                position: test_position(0.0, 65.5, 0.0),
+                velocity_x: 1.0,
+                velocity_y: 0.1,
+                velocity_z: 0.0,
+                source_entity_id: session.player.entity_id,
+                damage: 0.0,
+                knockback: 0.0,
+                gravity_per_tick: 0.0,
+                hit_radius: 0.5,
+                lifetime_ticks: 20,
+            },
+        )
+        .unwrap();
+
+    let mut add_entity = None;
+    while let Ok(event) = session.receiver.try_recv() {
+        let crate::players::PlayerEvent::ClientboundPackets { packets } = event else {
+            continue;
+        };
+        for packet in packets {
+            let mut payload = BytesMut::from(packet.as_ref());
+            if crate::connection::read_packet_id(&mut payload).unwrap() == AddEntity::ID {
+                add_entity = Some(decode_clientbound_packet::<AddEntity>(&packet));
+                break;
+            }
+        }
+        if add_entity.is_some() {
+            break;
+        }
+    }
+
+    let add_entity = add_entity.expect("visual projectile add entity packet");
+    assert_eq!(add_entity.data.0, session.player.entity_id);
+}
+
+#[test]
+fn visual_arrow_projectile_hitting_solid_block_is_removed_without_impact_event() {
+    let (manager, players) = test_manager_and_players();
+    let mut session = join_test_player(&players, "Shooter", test_position(0.0, 64.0, 0.0));
+    let world = empty_world();
+    world.set_runtime_block(
+        "minecraft:overworld",
+        qexed_packet::net_types::Position { x: 1, y: 65, z: 0 },
+        stone_block_state(),
+    );
+
+    manager
+        .spawn_visual_projectile(
+            &players,
+            &qexed_config::app::qexed::server::EntityRendering::default(),
+            VisualProjectileSpawnRequest {
+                kind: "arrow".to_string(),
+                configured_event: "murder:detective_arrow".to_string(),
+                tag: "detective_bow".to_string(),
+                dimension: "minecraft:overworld".to_string(),
+                position: EntityPosition {
+                    x: 0.5,
+                    y: 65.5,
+                    z: 0.5,
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    on_ground: false,
+                },
+                velocity_x: 0.6,
+                velocity_y: 0.0,
+                velocity_z: 0.0,
+                source_entity_id: session.player.entity_id,
+                damage: 0.0,
+                knockback: 0.0,
+                gravity_per_tick: 0.0,
+                hit_radius: 0.5,
+                lifetime_ticks: 20,
+            },
+        )
+        .unwrap();
+    drain_player_events(&mut session);
+
+    tick_entities(&manager, &players, &world);
+
+    assert!(
+        manager
+            .list_for_dimension("minecraft:overworld")
+            .iter()
+            .all(|entity| entity.entity_type != "minecraft:arrow")
+    );
+    while let Ok(event) = session.receiver.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                crate::players::PlayerEvent::Damage { .. }
+                    | crate::players::PlayerEvent::ProjectileHitPlayer(_)
+            ),
+            "solid block impact should not emit player impact events, got {event:?}"
+        );
+    }
 }
 
 #[test]

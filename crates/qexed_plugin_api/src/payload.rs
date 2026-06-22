@@ -144,6 +144,8 @@ pub struct ItemStackPayload {
     pub item_id: i32,
     #[serde(default)]
     pub item_name: String,
+    #[serde(default)]
+    pub display_name: String,
     #[serde(default = "one")]
     pub count: i32,
     #[serde(default)]
@@ -473,6 +475,38 @@ pub struct PlayerInputPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerUseItemPayload {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub hand: String,
+    pub action: String,
+    pub item: ItemStackPayload,
+    #[serde(default)]
+    pub sequence: i32,
+    #[serde(default)]
+    pub yaw: f32,
+    #[serde(default)]
+    pub pitch: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectileHitPlayerPayload {
+    pub shooter: PlayerPayloadOwned,
+    pub target: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    #[serde(default)]
+    pub projectile_entity_id: i32,
+    #[serde(default)]
+    pub projectile_kind: String,
+    #[serde(default)]
+    pub configured_event: String,
+    #[serde(default)]
+    pub tag: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickDetectedPayload {
     pub player: PlayerPayloadOwned,
     pub dimension: String,
@@ -503,6 +537,26 @@ pub struct PlayerItemPickupResponse {
     pub consume: bool,
     #[serde(default)]
     pub actions: Vec<PlayerAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerDeathQuery {
+    pub player: PlayerPayloadOwned,
+    pub dimension: String,
+    pub position: PlayerPositionPayload,
+    pub cause: String,
+    #[serde(default)]
+    pub source_entity_id: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlayerDeathResponse {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub overlay: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -897,8 +951,40 @@ pub enum PlayerAction {
         #[serde(default)]
         plugin_enchantments: Vec<PluginEnchantment>,
     },
+    ResetInventory {
+        #[serde(default)]
+        restore_menu_items: bool,
+    },
     SetPlayersVisible {
         visible: bool,
+    },
+    SpawnProjectile {
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        configured_event: String,
+        #[serde(default)]
+        tag: String,
+        #[serde(default)]
+        dimension: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        velocity_x: f64,
+        velocity_y: f64,
+        velocity_z: f64,
+        #[serde(default)]
+        source_entity_id: i32,
+        #[serde(default)]
+        damage: f32,
+        #[serde(default)]
+        knockback: f32,
+        #[serde(default)]
+        gravity_per_tick: f64,
+        #[serde(default)]
+        hit_radius: f64,
+        #[serde(default)]
+        lifetime_ticks: i32,
     },
     Velocity {
         x: f64,
@@ -906,6 +992,25 @@ pub enum PlayerAction {
         z: f64,
         #[serde(default)]
         additive: bool,
+    },
+    DamagePlayer {
+        #[serde(default)]
+        uuid: String,
+        #[serde(default)]
+        username: String,
+        amount: f32,
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        source_entity_id: i32,
+        #[serde(default)]
+        source_x: f64,
+        #[serde(default)]
+        source_y: f64,
+        #[serde(default)]
+        source_z: f64,
+        #[serde(default)]
+        knockback: f32,
     },
     BossBar {
         id: String,

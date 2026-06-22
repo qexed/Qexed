@@ -1,7 +1,7 @@
 //! Global profiler access for Qexed server.
 
-use std::sync::OnceLock;
 use qexed_profiler::Profiler;
+use std::sync::OnceLock;
 
 static PROFILER: OnceLock<Profiler> = OnceLock::new();
 
@@ -15,10 +15,8 @@ pub fn get() -> Option<&'static Profiler> {
 
 #[macro_export]
 macro_rules! profile_span {
-    ($name:expr) => {
-        {
-            let _span = $crate::profiler::get().map(|p| p.span($name));
-            _span
-        }
-    };
+    ($name:expr) => {{
+        let _span = $crate::profiler::get().map(|p| p.span($name));
+        _span
+    }};
 }

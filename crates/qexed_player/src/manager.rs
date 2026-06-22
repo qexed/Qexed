@@ -4,7 +4,10 @@ use bytes::Bytes;
 use qexed_protocol::to_client::play::{add_entity::EntityPosition, set_equipment::Equipment};
 use tokio::sync::mpsc;
 
-use crate::{OnlinePlayer, PlayerDamageKind, PlayerEvent, PlayerSession, model::PlayerHandle};
+use crate::{
+    OnlinePlayer, PlayerDamageKind, PlayerEvent, PlayerSession,
+    model::{PlayerHandle, ProjectileHitPlayerEvent},
+};
 
 pub const DEFAULT_DISPLAYED_SKIN_PARTS: u8 = 0x7f;
 
@@ -304,6 +307,17 @@ impl PlayerManager {
             .is_ok()
     }
 
+    pub fn emit_projectile_hit_player(&self, event: ProjectileHitPlayerEvent) -> bool {
+        let players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get(&event.shooter_profile_id) else {
+            return false;
+        };
+        handle
+            .sender
+            .send(PlayerEvent::ProjectileHitPlayer(event))
+            .is_ok()
+    }
+
     pub fn player_by_name(&self, username: &str) -> Option<OnlinePlayer> {
         let username = username.trim();
         if username.is_empty() {
@@ -328,6 +342,15 @@ impl PlayerManager {
             .lock()
             .expect("player manager poisoned")
             .get(&profile_id)
+            .map(|handle| handle.player.clone())
+    }
+
+    pub fn player_by_entity_id(&self, entity_id: i32) -> Option<OnlinePlayer> {
+        self.players
+            .lock()
+            .expect("player manager poisoned")
+            .values()
+            .find(|handle| handle.player.entity_id == entity_id)
             .map(|handle| handle.player.clone())
     }
 

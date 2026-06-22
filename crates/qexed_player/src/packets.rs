@@ -81,6 +81,7 @@ impl PlayerEvent {
                 item: _,
                 item_name: _,
             } => Ok(Vec::new()),
+            Self::ProjectileHitPlayer(_) => Ok(Vec::new()),
             Self::DimensionChanged {
                 profile_id: _,
                 entity_id,

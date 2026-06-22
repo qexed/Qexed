@@ -23,7 +23,11 @@ enum ConsoleCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProfileAction { Start, Stop, Report }
+enum ProfileAction {
+    Start,
+    Stop,
+    Report,
+}
 
 impl ConsoleCommand {
     fn parse(input: &str) -> Self {
@@ -183,14 +187,25 @@ async fn execute(
 }
 
 fn handle_profile(context: &ServerContext, action: ProfileAction) {
-    let Some(p) = crate::profiler::get() else { print_console("Profiler not initialized"); return; };
+    let Some(p) = crate::profiler::get() else {
+        print_console("Profiler not initialized");
+        return;
+    };
     match action {
-        ProfileAction::Start => { p.enable(); print_console("Profiler started. Run 'profile report' to generate."); }
-        ProfileAction::Stop => { p.disable(); print_console("Profiler stopped."); }
+        ProfileAction::Start => {
+            p.enable();
+            print_console("Profiler started. Run 'profile report' to generate.");
+        }
+        ProfileAction::Stop => {
+            p.disable();
+            print_console("Profiler stopped.");
+        }
         ProfileAction::Report => {
             p.disable();
             let html = p.report_html();
-            let path = std::env::current_dir().unwrap_or_default().join("profile_report.html");
+            let path = std::env::current_dir()
+                .unwrap_or_default()
+                .join("profile_report.html");
             match std::fs::write(&path, &html) {
                 Ok(_) => print_console(format!("Report: {}", path.display())),
                 Err(e) => print_console(format!("Failed: {e}")),

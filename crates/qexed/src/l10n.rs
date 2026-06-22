@@ -74,19 +74,18 @@ pub fn initialize(lang_dir: &Path, fallback_language: impl Into<String>) -> Resu
         );
     }
 
-    L10N
-        .set(L10nData {
-            translations,
-            fallback_language: fallback,
-        })
-        .map_err(|_| anyhow::anyhow!("l10n already initialized"))
+    L10N.set(L10nData {
+        translations,
+        fallback_language: fallback,
+    })
+    .map_err(|_| anyhow::anyhow!("l10n already initialized"))
 }
 
 fn load_lang_file(path: &Path) -> Result<HashMap<String, String>> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("无法读取语言文件: {}", path.display()))?;
-    let value: Value =
-        serde_json::from_str(&content).with_context(|| format!("语言文件 JSON 解析失败: {}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取语言文件: {}", path.display()))?;
+    let value: Value = serde_json::from_str(&content)
+        .with_context(|| format!("语言文件 JSON 解析失败: {}", path.display()))?;
 
     let obj = value
         .as_object()
@@ -197,8 +196,7 @@ pub fn fallback_language() -> Option<&'static str> {
 
 /// Get the list of available language codes.
 pub fn available_languages() -> Vec<String> {
-    L10N
-        .get()
+    L10N.get()
         .map(|data| data.translations.keys().cloned().collect())
         .unwrap_or_default()
 }

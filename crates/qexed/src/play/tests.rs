@@ -1539,9 +1539,6 @@ fn is_sapling_recognizes_all_types() {
 
 // ── Fluid tests ──
 
-
-
-
 fn grow_tree_blocks_produces_trunk_and_leaves() {
     let pos = Position { x: 0, y: 64, z: 0 };
     let blocks = super::grow_tree_blocks(&pos, "minecraft:oak_sapling");

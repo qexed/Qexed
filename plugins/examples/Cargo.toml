@@ -26,4 +26,7 @@ members = [
     "backpack",
     "digfight",
     "pve_entity",
+    "murder_mystery",
+    "lobby_services",
+    "skip_death_respawn",
 ]

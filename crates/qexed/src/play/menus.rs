@@ -101,6 +101,10 @@ impl MenuRuntime {
         self.config.enable
     }
 
+    pub(super) fn reset_inventory_on_join(&self) -> bool {
+        self.enabled() && self.config.reset_inventory_on_join
+    }
+
     pub(super) fn sync_hotbar_items(
         &self,
         inventory: &mut crate::inventory::PlayerInventory,
@@ -408,6 +412,7 @@ mod tests {
         });
         let mut inventory = crate::inventory::PlayerInventory::empty();
 
+        assert!(runtime.reset_inventory_on_join());
         let changes = runtime.sync_hotbar_items(&mut inventory);
 
         assert_eq!(changes.len(), 1);

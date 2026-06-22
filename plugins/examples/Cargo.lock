@@ -283,6 +283,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
+name = "lobby_services"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -322,6 +331,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
+]
+
+[[package]]
+name = "murder_mystery"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -544,6 +562,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "skip_death_respawn"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
 ]
 
 [[package]]
