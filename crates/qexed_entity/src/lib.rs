@@ -1,14 +1,20 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EntityId(i32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EntityTypeId(i32);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EntityKind {
     Player,
-    Mob { type_id: i32 },
-    Object { type_id: i32 },
+    Mob { type_id: EntityTypeId },
+    Object { type_id: EntityTypeId },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -48,25 +54,43 @@ pub struct EntityIdAllocator {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum EntityEvent {
-    Spawned(EntitySnapshot),
-    Despawned(EntityId),
-    PoseUpdated { id: EntityId, pose: EntityPose },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EntitySnapshot {
+pub struct EntitySpawnSnapshot {
     pub id: EntityId,
     pub uuid: uuid::Uuid,
     pub kind: EntityKind,
     pub pose: EntityPose,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EntityPoseSnapshot {
+    pub id: EntityId,
+    pub pose: EntityPose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityDespawnSnapshot {
+    pub id: EntityId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EntityUpdateSnapshot {
+    Spawn(EntitySpawnSnapshot),
+    Despawn(EntityDespawnSnapshot),
+    Pose(EntityPoseSnapshot),
+}
+
+pub type EntitySnapshot = EntitySpawnSnapshot;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertEntityError {
+    DuplicateId(EntityId),
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct EntityStore {
     allocator: EntityIdAllocator,
     entities: BTreeMap<EntityId, Entity>,
-    events: Vec<EntityEvent>,
+    updates: Vec<EntityUpdateSnapshot>,
 }
 
 impl EntityId {
@@ -74,8 +98,46 @@ impl EntityId {
         Self(value)
     }
 
-    pub const fn get(self) -> i32 {
+    pub const fn as_i32(self) -> i32 {
         self.0
+    }
+
+    pub const fn get(self) -> i32 {
+        self.as_i32()
+    }
+}
+
+impl From<EntityId> for i32 {
+    fn from(id: EntityId) -> Self {
+        id.as_i32()
+    }
+}
+
+impl fmt::Display for EntityId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl EntityTypeId {
+    pub const fn new(value: i32) -> Self {
+        Self(value)
+    }
+
+    pub const fn as_i32(self) -> i32 {
+        self.0
+    }
+}
+
+impl From<i32> for EntityTypeId {
+    fn from(value: i32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<EntityTypeId> for i32 {
+    fn from(id: EntityTypeId) -> Self {
+        id.as_i32()
     }
 }
 
@@ -129,6 +191,10 @@ impl EntityIdAllocator {
     pub const fn next(&self) -> i32 {
         self.next
     }
+
+    fn reserve_after(&mut self, id: EntityId) {
+        self.next = self.next.max(id.as_i32().saturating_add(1));
+    }
 }
 
 impl Default for EntityIdAllocator {
@@ -139,12 +205,7 @@ impl Default for EntityIdAllocator {
 
 impl Entity {
     pub fn new(id: EntityId, kind: EntityKind, pose: EntityPose) -> Self {
-        Self {
-            id,
-            uuid: uuid::Uuid::new_v4(),
-            kind,
-            pose,
-        }
+        Self::with_uuid(id, uuid::Uuid::new_v4(), kind, pose)
     }
 
     pub fn with_uuid(id: EntityId, uuid: uuid::Uuid, kind: EntityKind, pose: EntityPose) -> Self {
@@ -164,6 +225,13 @@ impl Entity {
             pose: self.pose,
         }
     }
+
+    pub fn pose_snapshot(&self) -> EntityPoseSnapshot {
+        EntityPoseSnapshot {
+            id: self.id,
+            pose: self.pose,
+        }
+    }
 }
 
 impl EntityStore {
@@ -173,7 +241,8 @@ impl EntityStore {
 
     pub fn spawn(&mut self, kind: EntityKind, pose: EntityPose) -> EntityId {
         let id = self.allocator.allocate();
-        self.insert(Entity::new(id, kind, pose));
+        let entity = Entity::new(id, kind, pose);
+        self.insert_allocated(entity);
         id
     }
 
@@ -184,20 +253,24 @@ impl EntityStore {
         pose: EntityPose,
     ) -> EntityId {
         let id = self.allocator.allocate();
-        self.insert(Entity::with_uuid(id, uuid, kind, pose));
+        let entity = Entity::with_uuid(id, uuid, kind, pose);
+        self.insert_allocated(entity);
         id
     }
 
-    pub fn insert(&mut self, entity: Entity) {
-        self.allocator.next = self.allocator.next.max(entity.id.get().saturating_add(1));
-        let snapshot = entity.snapshot();
-        self.entities.insert(entity.id, entity);
-        self.events.push(EntityEvent::Spawned(snapshot));
+    pub fn insert(&mut self, entity: Entity) -> Result<(), InsertEntityError> {
+        if self.entities.contains_key(&entity.id) {
+            return Err(InsertEntityError::DuplicateId(entity.id));
+        }
+        self.allocator.reserve_after(entity.id);
+        self.insert_allocated(entity);
+        Ok(())
     }
 
     pub fn despawn(&mut self, id: EntityId) -> Option<Entity> {
         let entity = self.entities.remove(&id)?;
-        self.events.push(EntityEvent::Despawned(id));
+        self.updates
+            .push(EntityUpdateSnapshot::Despawn(EntityDespawnSnapshot { id }));
         Some(entity)
     }
 
@@ -206,12 +279,17 @@ impl EntityStore {
             return false;
         };
         entity.pose = pose;
-        self.events.push(EntityEvent::PoseUpdated { id, pose });
+        self.updates
+            .push(EntityUpdateSnapshot::Pose(EntityPoseSnapshot { id, pose }));
         true
     }
 
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
         self.entities.get(&id)
+    }
+
+    pub fn contains(&self, id: EntityId) -> bool {
+        self.entities.contains_key(&id)
     }
 
     pub fn len(&self) -> usize {
@@ -222,24 +300,34 @@ impl EntityStore {
         self.entities.is_empty()
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &Entity> {
+        self.entities.values()
+    }
+
     pub fn snapshots(&self) -> Vec<EntitySnapshot> {
-        self.entities.values().map(Entity::snapshot).collect()
+        self.iter().map(Entity::snapshot).collect()
     }
 
-    pub fn events(&self) -> &[EntityEvent] {
-        &self.events
+    pub fn updates(&self) -> &[EntityUpdateSnapshot] {
+        &self.updates
     }
 
-    pub fn drain_events(&mut self) -> Vec<EntityEvent> {
-        std::mem::take(&mut self.events)
+    pub fn drain_updates(&mut self) -> Vec<EntityUpdateSnapshot> {
+        std::mem::take(&mut self.updates)
+    }
+
+    fn insert_allocated(&mut self, entity: Entity) {
+        let snapshot = entity.snapshot();
+        self.entities.insert(entity.id, entity);
+        self.updates.push(EntityUpdateSnapshot::Spawn(snapshot));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        EntityEvent, EntityId, EntityIdAllocator, EntityKind, EntityPose, EntityPosition,
-        EntityStore, EntityVelocity,
+        Entity, EntityId, EntityIdAllocator, EntityKind, EntityPose, EntityPosition, EntityStore,
+        EntityTypeId, EntityUpdateSnapshot, EntityVelocity, InsertEntityError,
     };
 
     #[test]
@@ -275,7 +363,7 @@ mod tests {
         assert_eq!(id, EntityId::new(1));
         assert_eq!(store.len(), 1);
         assert_eq!(store.get(id).unwrap().pose, pose);
-        assert!(matches!(store.events()[0], EntityEvent::Spawned(_)));
+        assert!(matches!(store.updates()[0], EntityUpdateSnapshot::Spawn(_)));
 
         let updated = EntityPose {
             position: EntityPosition {
@@ -286,11 +374,14 @@ mod tests {
         };
         assert!(store.update_pose(id, updated));
         assert_eq!(store.get(id).unwrap().pose, updated);
-        assert!(matches!(store.events()[1], EntityEvent::PoseUpdated { .. }));
+        assert!(matches!(store.updates()[1], EntityUpdateSnapshot::Pose(_)));
 
         assert!(store.despawn(id).is_some());
         assert!(store.is_empty());
-        assert!(matches!(store.events()[2], EntityEvent::Despawned(_)));
+        assert!(matches!(
+            store.updates()[2],
+            EntityUpdateSnapshot::Despawn(_)
+        ));
     }
 
     #[test]
@@ -299,7 +390,9 @@ mod tests {
         let uuid = uuid::Uuid::from_u128(1);
         let id = store.spawn_with_uuid(
             uuid,
-            EntityKind::Mob { type_id: 146 },
+            EntityKind::Mob {
+                type_id: EntityTypeId::new(146),
+            },
             EntityPose::default(),
         );
 
@@ -308,6 +401,42 @@ mod tests {
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].id, id);
         assert_eq!(snapshots[0].uuid, uuid);
-        assert_eq!(snapshots[0].kind, EntityKind::Mob { type_id: 146 });
+        assert_eq!(
+            snapshots[0].kind,
+            EntityKind::Mob {
+                type_id: EntityTypeId::new(146)
+            }
+        );
+    }
+
+    #[test]
+    fn insert_rejects_duplicate_ids_and_reserves_next_id() {
+        let mut store = EntityStore::new();
+        let entity = Entity::with_uuid(
+            EntityId::new(10),
+            uuid::Uuid::from_u128(2),
+            EntityKind::Object {
+                type_id: EntityTypeId::new(1),
+            },
+            EntityPose::default(),
+        );
+
+        assert_eq!(store.insert(entity.clone()), Ok(()));
+        assert_eq!(
+            store.insert(entity),
+            Err(InsertEntityError::DuplicateId(EntityId::new(10)))
+        );
+
+        let id = store.spawn(EntityKind::Player, EntityPose::default());
+        assert_eq!(id, EntityId::new(11));
+    }
+
+    #[test]
+    fn drain_updates_clears_pending_snapshots() {
+        let mut store = EntityStore::new();
+
+        store.spawn(EntityKind::Player, EntityPose::default());
+        assert_eq!(store.drain_updates().len(), 1);
+        assert!(store.updates().is_empty());
     }
 }
