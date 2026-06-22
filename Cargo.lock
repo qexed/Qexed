@@ -1382,6 +1382,7 @@ dependencies = [
  "qexed_log",
  "qexed_nbt",
  "qexed_packet",
+ "qexed_player",
  "qexed_plugin",
  "qexed_plugin_api",
  "qexed_protocol",

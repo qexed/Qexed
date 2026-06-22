@@ -44,6 +44,13 @@ static SERVER_SESSION_ID: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock:
 type ClientConnection = ConnectionIo<OwnedReadHalf, OwnedWriteHalf>;
 
 #[derive(Debug, Clone)]
+struct PlayerState {
+    player: qexed_player::Player,
+    store: qexed_player::PlayerConfigStore,
+    config: qexed_player::PlayerConfig,
+}
+
+#[derive(Debug, Clone)]
 struct LoginSession {
     profile: GameProfile,
     online_mode: bool,
@@ -519,6 +526,11 @@ async fn handle_configuration_side_packet(
         >(payload)?;
         return Ok(true);
     }
+    if packet_id == qexed_protocol::to_server::configuration::pong::Pong::ID {
+        let _packet =
+            decode_payload::<qexed_protocol::to_server::configuration::pong::Pong>(payload)?;
+        return Ok(true);
+    }
     if packet_id == qexed_protocol::to_server::configuration::keep_alive::KeepAlive::ID {
         let packet = decode_payload::<
             qexed_protocol::to_server::configuration::keep_alive::KeepAlive,
@@ -542,9 +554,13 @@ async fn enter_play(
 ) -> anyhow::Result<()> {
     let config = &runtime.qexed;
     let profile = &session.profile;
+    let player_state = load_player_state(runtime, session)?;
+    let spawn = player_state.player.position();
     let view_distance = config.server.view_distance.max(1);
     let simulation_distance = config.server.simulation_distance.max(1);
     let dimension_type = qexed_registry::dimension_type_holder_id("minecraft:overworld")?;
+    let spawn_chunk_x = qexed_world::player_chunk_coordinate(spawn.x);
+    let spawn_chunk_z = qexed_world::player_chunk_coordinate(spawn.z);
 
     connection
         .send_packet_batch_with_capacity(initial_play_batch_capacity(view_distance), |batch| {
@@ -575,14 +591,14 @@ async fn enter_play(
             })?;
             batch.push(&to_client::play::position::Position {
                 teleport_id: VarInt(1),
-                x: 0.5,
-                y: 64.0,
-                z: 0.5,
+                x: spawn.x,
+                y: spawn.y,
+                z: spawn.z,
                 dx: 0.0,
                 dy: 0.0,
                 dz: 0.0,
-                yaw: 0.0,
-                pitch: 0.0,
+                yaw: spawn.yaw,
+                pitch: spawn.pitch,
                 flags: 0,
             })?;
             batch.push(&to_client::play::change_difficulty::ChangeDifficulty {
@@ -645,8 +661,8 @@ async fn enter_play(
                 view_distance: VarInt(view_distance),
             })?;
             batch.push(&to_client::play::update_view_position::UpdateViewPosition {
-                chunk_x: VarInt(0),
-                chunk_z: VarInt(0),
+                chunk_x: VarInt(spawn_chunk_x),
+                chunk_z: VarInt(spawn_chunk_z),
             })?;
             batch.push(&to_client::play::ticking_state::TickingState::default())?;
             batch.push(&to_client::play::system_chat::SystemChat {
@@ -661,8 +677,8 @@ async fn enter_play(
         connection,
         runtime,
         &mut chunk_view,
-        0,
-        0,
+        spawn_chunk_x,
+        spawn_chunk_z,
         INITIAL_CHUNK_RADIUS,
         None,
         qexed_world::ChunkSyncCause::InitialLogin,
@@ -681,9 +697,36 @@ async fn enter_play(
         runtime,
         command_context,
         chat_context,
+        player_state,
         chunk_view,
     )
     .await
+}
+
+fn load_player_state(
+    runtime: &crate::bootstrap::RuntimeConfig,
+    session: &LoginSession,
+) -> anyhow::Result<PlayerState> {
+    let player_session = if session.online_mode {
+        qexed_player::PlayerSession::online()
+    } else {
+        qexed_player::PlayerSession::offline()
+    };
+    let mut player = qexed_player::Player::new(session.profile.clone(), player_session);
+    let store = qexed_player::PlayerConfigStore::new(runtime.save.clone());
+    let config = match store.load(player.uuid())? {
+        Some(config) => {
+            player.set_position(config.last_position);
+            config
+        }
+        None => qexed_player::PlayerConfig::from_player(&player),
+    };
+
+    Ok(PlayerState {
+        player,
+        store,
+        config,
+    })
 }
 
 fn initial_play_batch_capacity(view_distance: i32) -> usize {
@@ -823,7 +866,91 @@ async fn send_chunk_window(
         })
         .await?;
     log_chunk_sync_event(&sync_event);
+    fire_chunk_sync_events(&sync_event).await;
     Ok(())
+}
+
+async fn fire_chunk_sync_events(event: &qexed_world::ChunkSyncEvent) {
+    let Some(plugin_manager) = qexed_plugin::try_plugin_manager() else {
+        return;
+    };
+    let plugin_event = plugin_chunk_sync_event(event);
+
+    for load in &plugin_event.loaded {
+        let _ = plugin_manager.fire(load).await;
+    }
+    for unload in &plugin_event.unloaded {
+        let _ = plugin_manager.fire(unload).await;
+    }
+
+    let _ = plugin_manager.fire(&plugin_event).await;
+}
+
+fn plugin_chunk_sync_event(
+    event: &qexed_world::ChunkSyncEvent,
+) -> qexed_plugin_api::ChunkSyncEvent {
+    qexed_plugin_api::ChunkSyncEvent::new(
+        plugin_chunk_sync_cause(event.cause),
+        event.center_chunk_x,
+        event.center_chunk_z,
+        event.loaded.iter().map(plugin_chunk_load_event).collect(),
+        event
+            .unloaded
+            .iter()
+            .map(plugin_chunk_unload_event)
+            .collect(),
+        event
+            .unloading
+            .iter()
+            .map(plugin_chunk_unload_event)
+            .collect(),
+    )
+}
+
+fn plugin_chunk_load_event(
+    event: &qexed_world::ChunkLoadEvent,
+) -> qexed_plugin_api::ChunkLoadEvent {
+    qexed_plugin_api::ChunkLoadEvent::new(
+        event.chunk_x,
+        event.chunk_z,
+        plugin_chunk_load_source(event.source),
+    )
+}
+
+fn plugin_chunk_unload_event(
+    event: &qexed_world::ChunkUnloadEvent,
+) -> qexed_plugin_api::ChunkUnloadEvent {
+    qexed_plugin_api::ChunkUnloadEvent::new(event.chunk_x, event.chunk_z)
+}
+
+fn plugin_chunk_sync_cause(cause: qexed_world::ChunkSyncCause) -> qexed_plugin_api::ChunkSyncCause {
+    match cause {
+        qexed_world::ChunkSyncCause::InitialLogin => qexed_plugin_api::ChunkSyncCause::InitialLogin,
+        qexed_world::ChunkSyncCause::PlayerMove => qexed_plugin_api::ChunkSyncCause::PlayerMove,
+        qexed_world::ChunkSyncCause::CompletionTick => {
+            qexed_plugin_api::ChunkSyncCause::CompletionTick
+        }
+        qexed_world::ChunkSyncCause::UnloadTick => qexed_plugin_api::ChunkSyncCause::UnloadTick,
+    }
+}
+
+fn plugin_chunk_load_source(
+    source: qexed_world::NetworkChunkLoadSource,
+) -> qexed_plugin_api::NetworkChunkLoadSource {
+    match source {
+        qexed_world::NetworkChunkLoadSource::Saved => {
+            qexed_plugin_api::NetworkChunkLoadSource::Saved
+        }
+        qexed_world::NetworkChunkLoadSource::LocalGenerated => {
+            qexed_plugin_api::NetworkChunkLoadSource::LocalGenerated
+        }
+        qexed_world::NetworkChunkLoadSource::VanillaGenerated => {
+            qexed_plugin_api::NetworkChunkLoadSource::VanillaGenerated
+        }
+        qexed_world::NetworkChunkLoadSource::EmptyFallback => {
+            qexed_plugin_api::NetworkChunkLoadSource::EmptyFallback
+        }
+    }
 }
 
 fn log_chunk_sync_event(event: &qexed_world::ChunkSyncEvent) {
@@ -898,6 +1025,7 @@ async fn sustain_play_connection(
     runtime: &crate::bootstrap::RuntimeConfig,
     command_context: qexed_command::CommandContext,
     chat_context: ChatContext,
+    mut player_state: PlayerState,
     mut chunk_view: qexed_world::PlayerChunkView,
 ) -> anyhow::Result<()> {
     let mut keep_alive = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -961,23 +1089,60 @@ async fn sustain_play_connection(
                         decode_payload::<qexed_protocol::to_server::play::move_player_pos::MovePlayerPos>(
                             &mut payload,
                         )?;
-                    sync_player_chunk_position(connection, runtime, &mut chunk_view, packet.x, packet.z).await?;
+                    let current = player_state.player.position();
+                    update_player_position(
+                        connection,
+                        runtime,
+                        &mut chunk_view,
+                        &mut player_state,
+                        qexed_player::PlayerPosition {
+                            x: packet.x,
+                            y: packet.y,
+                            z: packet.z,
+                            yaw: current.yaw,
+                            pitch: current.pitch,
+                        },
+                    ).await?;
                 } else if packet_id == qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot::ID {
                     let packet =
                         decode_payload::<qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot>(
                             &mut payload,
                         )?;
-                    sync_player_chunk_position(connection, runtime, &mut chunk_view, packet.x, packet.z).await?;
+                    update_player_position(
+                        connection,
+                        runtime,
+                        &mut chunk_view,
+                        &mut player_state,
+                        qexed_player::PlayerPosition {
+                            x: packet.x,
+                            y: packet.y,
+                            z: packet.z,
+                            yaw: packet.yaw,
+                            pitch: packet.pitch,
+                        },
+                    ).await?;
                 } else if packet_id == qexed_protocol::to_server::play::move_player_rot::MovePlayerRot::ID {
-                    let _packet =
+                    let packet =
                         decode_payload::<qexed_protocol::to_server::play::move_player_rot::MovePlayerRot>(
                             &mut payload,
                         )?;
+                    let current = player_state.player.position();
+                    player_state.player.set_position(qexed_player::PlayerPosition {
+                        yaw: packet.yaw,
+                        pitch: packet.pitch,
+                        ..current
+                    });
                 } else if packet_id == qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly::ID {
                     let _packet =
                         decode_payload::<qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly>(
                             &mut payload,
                         )?;
+                } else if packet_id == qexed_protocol::to_server::play::custom_payload::CustomPayload::ID {
+                    let packet =
+                        decode_payload::<qexed_protocol::to_server::play::custom_payload::CustomPayload>(
+                            &mut payload,
+                        )?;
+                    handle_play_custom_payload(connection, packet).await?;
                 } else if packet_id == qexed_protocol::to_server::play::chunk_batch_received::ChunkBatchReceived::ID {
                     let _packet =
                         decode_payload::<qexed_protocol::to_server::play::chunk_batch_received::ChunkBatchReceived>(
@@ -1021,6 +1186,36 @@ async fn sustain_play_connection(
     }
 }
 
+async fn update_player_position(
+    connection: &mut ClientConnection,
+    runtime: &crate::bootstrap::RuntimeConfig,
+    chunk_view: &mut qexed_world::PlayerChunkView,
+    player_state: &mut PlayerState,
+    position: qexed_player::PlayerPosition,
+) -> anyhow::Result<()> {
+    player_state.player.set_position(position);
+    player_state.config.last_position = position;
+    player_state.config.updated_at_unix_seconds = current_unix_seconds();
+    player_state.store.save(&player_state.config)?;
+    sync_player_chunk_position(connection, runtime, chunk_view, position.x, position.z).await
+}
+
+async fn handle_play_custom_payload(
+    connection: &mut ClientConnection,
+    packet: qexed_protocol::to_server::play::custom_payload::CustomPayload,
+) -> anyhow::Result<()> {
+    if packet.channel == "minecraft:brand" || packet.channel == "brand" {
+        connection
+            .send_packet(&to_client::play::custom_payload::CustomPayload {
+                channel: "minecraft:brand".to_string(),
+                data: RestBuffer(string_payload(SERVER_BRAND)?),
+            })
+            .await?;
+        connection.flush().await?;
+    }
+    Ok(())
+}
+
 async fn unload_expired_chunks(
     connection: &mut ClientConnection,
     chunk_view: &mut qexed_world::PlayerChunkView,
@@ -1049,14 +1244,16 @@ async fn unload_expired_chunks(
         .into_iter()
         .map(|(chunk_x, chunk_z)| qexed_world::ChunkUnloadEvent::new(chunk_x, chunk_z))
         .collect();
-    log_chunk_sync_event(&qexed_world::ChunkSyncEvent::new(
+    let sync_event = qexed_world::ChunkSyncEvent::new(
         cause,
         chunk_view.center_chunk_x(),
         chunk_view.center_chunk_z(),
         Vec::new(),
         unloaded,
         Vec::new(),
-    ));
+    );
+    log_chunk_sync_event(&sync_event);
+    fire_chunk_sync_events(&sync_event).await;
     Ok(())
 }
 
@@ -1354,6 +1551,13 @@ fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextCompone
         qexed_nbt::Tag::String(std::sync::Arc::from(text.into())),
     );
     qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
+}
+
+fn current_unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or_default()
 }
 
 fn unknown_command_component(command: &str) -> qexed_protocol::types::TextComponent {
@@ -2485,6 +2689,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let mut config = runtime_config();
+        let _temp = attach_temp_save(&mut config);
         config.qexed.server.view_distance = 1;
 
         let server = tokio::spawn(async move {
@@ -2551,6 +2756,74 @@ mod tests {
         );
         assert!(map_chunks > 0);
         assert_eq!(batch_size, Some(map_chunks));
+
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn player_position_is_saved_and_used_on_next_login() {
+        init_registry_for_connection_test();
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut first_config = runtime_config_with_save_root(temp.path());
+        first_config.qexed.server.view_distance = 1;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, first_config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+
+        write_packet(
+            &mut client,
+            &qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot {
+                x: 48.5,
+                y: 70.0,
+                z: -16.5,
+                yaw: 45.0,
+                pitch: 10.0,
+                flags: 0,
+            },
+        )
+        .await;
+
+        wait_for_play_packet(
+            &mut client,
+            to_client::play::chunk_batch_finished::ChunkBatchFinished::ID,
+        )
+        .await;
+        drop(client);
+        server.await.unwrap();
+
+        let second_config = runtime_config_with_save_root(temp.path());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::handle(stream, second_config).await;
+        });
+
+        let mut client = connect(addr).await;
+        login_to_play(&mut client).await;
+        let position =
+            wait_for_play_packet_decoded::<_, _, to_client::play::position::Position>(&mut client)
+                .await;
+
+        assert_eq!(position.x, 48.5);
+        assert_eq!(position.y, 70.0);
+        assert_eq!(position.z, -16.5);
+        assert_eq!(position.yaw, 45.0);
+        assert_eq!(position.pitch, 10.0);
 
         drop(client);
         server.await.unwrap();
@@ -3074,6 +3347,26 @@ mod tests {
             world: qexed_world::WorldManager::new(save),
             local_worldgen: None,
         }
+    }
+
+    fn runtime_config_with_save_root(root: &Path) -> crate::bootstrap::RuntimeConfig {
+        let mut config = runtime_config();
+        let mut save_config = qexed_config::app::qexed_save::Save::default();
+        save_config.root.universe = root.to_string_lossy().to_string();
+        save_config.root.world = "world".to_string();
+        let save = qexed_save::SaveService::new(save_config).unwrap();
+        save.initialize_directories().unwrap();
+        config.save = save.clone();
+        config.world = qexed_world::WorldManager::new(save);
+        config
+    }
+
+    fn attach_temp_save(config: &mut crate::bootstrap::RuntimeConfig) -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        let save_config = runtime_config_with_save_root(temp.path());
+        config.save = save_config.save.clone();
+        config.world = save_config.world;
+        temp
     }
 
     fn online_runtime_config() -> crate::bootstrap::RuntimeConfig {
