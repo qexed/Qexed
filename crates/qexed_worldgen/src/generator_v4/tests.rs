@@ -3833,6 +3833,73 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_monster_room_lazy_spillover_skips_source_context_when_target_prevents_place() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let stone = BlockLayer::new("minecraft:stone");
+        let air = BlockLayer::new("minecraft:air");
+        let columns = |block: &BlockLayer| {
+            (0..HEIGHTMAP_ENTRY_COUNT)
+                .map(|_| NoiseColumnBlocks {
+                    blocks: (settings.min_y..settings.min_y + settings.height)
+                        .map(|_| block.clone())
+                        .collect(),
+                    first_available_height: settings.height,
+                })
+                .collect()
+        };
+        let feature = &settings.ore_features.monster_rooms[0];
+        let mut seed = None;
+        for candidate in 0..128 {
+            let mut random = FeatureRandom::new(candidate);
+            random.next_int(16);
+            let world_x = random.next_int(16);
+            random.next_int(16);
+            let shape = feature.config.sample_shape(&mut random);
+            if shape.overlaps_chunk(world_x, 8, 16, 0) {
+                seed = Some(candidate);
+                break;
+            }
+        }
+        let seed = seed.expect("small seed range should include a target-overlapping room");
+        let mut source = NoiseChunkBlocks {
+            columns: columns(&stone),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut target = NoiseChunkBlocks {
+            columns: columns(&air),
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let mut random = FeatureRandom::new(seed);
+        let mut neighbor_sources = NeighborFeatureSources::new(12345, 1, 0);
+        let mut profile = None;
+
+        feature.place_with_spillover_lazy_neighbors(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &mut source,
+            &mut target,
+            &mut random,
+            &mut neighbor_sources,
+            &mut profile,
+            "monster_room",
+        );
+
+        assert!(neighbor_sources
+            .entries
+            .iter()
+            .filter_map(Option::as_ref)
+            .all(|source| source.chunk.is_none()));
+        assert!(!chunk_contains_block(&target, "minecraft:cobblestone"));
+        assert!(!chunk_contains_block(&target, "minecraft:mossy_cobblestone"));
+        assert!(!chunk_contains_block(&target, "minecraft:spawner"));
+    }
+
+    #[test]
     fn vanilla_noise_glow_lichen_places_on_air_or_water_next_to_rock() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let stone = BlockLayer::new("minecraft:stone");

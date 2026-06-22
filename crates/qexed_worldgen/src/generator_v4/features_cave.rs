@@ -292,6 +292,30 @@ impl PlacedMonsterRoomFeature {
                 continue;
             }
 
+            if self.config.known_chunk_prevents_place(
+                settings,
+                target_origin_x,
+                target_origin_z,
+                target_chunk,
+                world_x,
+                world_y,
+                world_z,
+                shape,
+            ) {
+                self.config.place_resolved(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    source_chunk,
+                    random,
+                    world_x,
+                    world_y,
+                    world_z,
+                    shape,
+                );
+                continue;
+            }
+
             let mut replay_random = random.clone();
             let (min_x, max_x, min_z, max_z) = shape.bounds(world_x, world_z);
             let context_start = Instant::now();
