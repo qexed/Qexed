@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use qexed_packet::net_types::VarInt;
+use qexed_packet::net_types::{Position, VarInt};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -208,8 +208,25 @@ impl BlockRegistry {
         self.blocks.get(&id.into())
     }
 
+    pub fn contains_block(&self, id: impl Into<BlockId>) -> bool {
+        self.blocks.contains_key(&id.into())
+    }
+
+    pub fn blocks(&self) -> impl Iterator<Item = &BlockDefinition> {
+        self.blocks.values()
+    }
+
+    pub fn states(&self) -> impl Iterator<Item = (BlockStateId, &BlockState)> {
+        self.states_by_id.iter().map(|(id, state)| (*id, state))
+    }
+
     pub fn default_state_id(&self, id: impl Into<BlockId>) -> Option<BlockStateId> {
         self.block(id).map(BlockDefinition::default_state)
+    }
+
+    pub fn default_state(&self, id: impl Into<BlockId>) -> Option<&BlockState> {
+        self.default_state_id(id)
+            .and_then(|state_id| self.state_by_id(state_id))
     }
 
     pub fn state_id(&self, state: &BlockState) -> Option<BlockStateId> {
@@ -230,6 +247,34 @@ impl BlockRegistry {
 
     pub fn state_by_id(&self, id: impl Into<BlockStateId>) -> Option<&BlockState> {
         self.states_by_id.get(&id.into())
+    }
+
+    pub fn definition_by_state_id(
+        &self,
+        id: impl Into<BlockStateId>,
+    ) -> Option<(&BlockDefinition, &BlockState)> {
+        let state = self.state_by_id(id)?;
+        let definition = self.block(state.block.clone())?;
+        Some((definition, state))
+    }
+
+    pub fn validate_state_id(&self, id: impl Into<BlockStateId>) -> BlockValidationResult {
+        let state_id = id.into();
+        if self.states_by_id.contains_key(&state_id) {
+            BlockValidationResult::Allowed
+        } else {
+            BlockValidationResult::Denied(BlockValidationError::UnknownBlockState(state_id))
+        }
+    }
+
+    pub fn validate_state(&self, state: &BlockState) -> BlockValidationResult {
+        if self.state_id(state).is_some() {
+            BlockValidationResult::Allowed
+        } else {
+            BlockValidationResult::Denied(BlockValidationError::UnknownBlockStateName(
+                state.clone(),
+            ))
+        }
     }
 }
 
@@ -258,6 +303,301 @@ pub fn block_state_varint(state: &BlockState) -> Result<VarInt> {
     Ok(block_state_id(state)?.into())
 }
 
+pub fn block_state(id: impl Into<BlockStateId>) -> Result<BlockState> {
+    let id = id.into();
+    BlockRegistry::cached()?
+        .state_by_id(id)
+        .cloned()
+        .with_context(|| format!("block state id not found in registry: {}", id.get()))
+}
+
+pub fn is_air_block(id: impl AsRef<str>) -> bool {
+    matches!(
+        normalize_identifier(id.as_ref()).as_str(),
+        "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
+    )
+}
+
+pub fn block_state_is_air(state: &BlockState) -> bool {
+    is_air_block(state.block.as_str())
+}
+
+pub fn block_state_id_is_air(id: impl Into<BlockStateId>) -> Result<bool> {
+    Ok(block_state_is_air(&block_state(id)?))
+}
+
+pub fn block_state_has_fluid(state: &BlockState) -> bool {
+    state.block.as_str() == "minecraft:water"
+        || state.block.as_str() == "minecraft:lava"
+        || is_always_water_filled_block(state.block.as_str())
+        || state.property("waterlogged") == Some("true")
+}
+
+pub fn block_state_id_has_fluid(id: impl Into<BlockStateId>) -> Result<bool> {
+    Ok(block_state_has_fluid(&block_state(id)?))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InteractionHand {
+    MainHand,
+    OffHand,
+}
+
+impl InteractionHand {
+    pub fn from_protocol_id(id: i32) -> Option<Self> {
+        match id {
+            0 => Some(Self::MainHand),
+            1 => Some(Self::OffHand),
+            _ => None,
+        }
+    }
+
+    pub fn protocol_id(self) -> i32 {
+        match self {
+            Self::MainHand => 0,
+            Self::OffHand => 1,
+        }
+    }
+}
+
+impl From<InteractionHand> for VarInt {
+    fn from(value: InteractionHand) -> Self {
+        Self(value.protocol_id())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlockFace {
+    Bottom,
+    Top,
+    North,
+    South,
+    West,
+    East,
+}
+
+impl BlockFace {
+    pub fn from_protocol_id(id: i32) -> Option<Self> {
+        match id {
+            0 => Some(Self::Bottom),
+            1 => Some(Self::Top),
+            2 => Some(Self::North),
+            3 => Some(Self::South),
+            4 => Some(Self::West),
+            5 => Some(Self::East),
+            _ => None,
+        }
+    }
+
+    pub fn protocol_id(self) -> i32 {
+        match self {
+            Self::Bottom => 0,
+            Self::Top => 1,
+            Self::North => 2,
+            Self::South => 3,
+            Self::West => 4,
+            Self::East => 5,
+        }
+    }
+
+    pub fn adjacent_position(self, position: &Position) -> Position {
+        let mut adjacent = position.clone();
+        match self {
+            Self::Bottom => adjacent.y -= 1,
+            Self::Top => adjacent.y += 1,
+            Self::North => adjacent.z -= 1,
+            Self::South => adjacent.z += 1,
+            Self::West => adjacent.x -= 1,
+            Self::East => adjacent.x += 1,
+        }
+        adjacent
+    }
+}
+
+impl From<BlockFace> for VarInt {
+    fn from(value: BlockFace) -> Self {
+        Self(value.protocol_id())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlockActionKind {
+    Place,
+    Break,
+    Interact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockHit {
+    pub face: BlockFace,
+    pub cursor_x: f32,
+    pub cursor_y: f32,
+    pub cursor_z: f32,
+    pub inside_block: bool,
+    pub world_border_hit: bool,
+}
+
+impl BlockHit {
+    pub fn new(face: BlockFace, cursor_x: f32, cursor_y: f32, cursor_z: f32) -> Self {
+        Self {
+            face,
+            cursor_x,
+            cursor_y,
+            cursor_z,
+            inside_block: false,
+            world_border_hit: false,
+        }
+    }
+
+    pub fn validate(&self) -> BlockValidationResult {
+        if self.world_border_hit {
+            return BlockValidationResult::Denied(BlockValidationError::WorldBorderHit);
+        }
+
+        if valid_cursor_coordinate(self.cursor_x)
+            && valid_cursor_coordinate(self.cursor_y)
+            && valid_cursor_coordinate(self.cursor_z)
+        {
+            BlockValidationResult::Allowed
+        } else {
+            BlockValidationResult::Denied(BlockValidationError::InvalidHitCursor)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockPlacementRequest {
+    pub position: Position,
+    pub placed_state: BlockStateId,
+    pub replaced_state: Option<BlockStateId>,
+    pub hand: InteractionHand,
+    pub hit: BlockHit,
+    pub sequence: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockBreakRequest {
+    pub position: Position,
+    pub current_state: Option<BlockStateId>,
+    pub face: BlockFace,
+    pub sequence: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockInteractEvent {
+    pub position: Position,
+    pub state: Option<BlockStateId>,
+    pub hand: InteractionHand,
+    pub hit: BlockHit,
+    pub sequence: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockChangeEvent {
+    pub kind: BlockActionKind,
+    pub position: Position,
+    pub previous_state: Option<BlockStateId>,
+    pub new_state: Option<BlockStateId>,
+    pub sequence: Option<i32>,
+}
+
+impl BlockPlacementRequest {
+    pub fn target_position(&self) -> Position {
+        self.hit.face.adjacent_position(&self.position)
+    }
+
+    pub fn validate(&self, registry: &BlockRegistry) -> BlockValidationResult {
+        if let BlockValidationResult::Denied(reason) = validate_world_position(&self.position) {
+            return BlockValidationResult::Denied(reason);
+        }
+        if let BlockValidationResult::Denied(reason) = self.hit.validate() {
+            return BlockValidationResult::Denied(reason);
+        }
+        if let BlockValidationResult::Denied(reason) = registry.validate_state_id(self.placed_state)
+        {
+            return BlockValidationResult::Denied(reason);
+        }
+        if let Some(replaced_state) = self.replaced_state {
+            if let BlockValidationResult::Denied(reason) =
+                registry.validate_state_id(replaced_state)
+            {
+                return BlockValidationResult::Denied(reason);
+            }
+            if !is_replaceable_state(registry, replaced_state) {
+                return BlockValidationResult::Denied(BlockValidationError::TargetNotReplaceable(
+                    replaced_state,
+                ));
+            }
+        }
+        BlockValidationResult::Allowed
+    }
+}
+
+impl BlockBreakRequest {
+    pub fn validate(&self, registry: &BlockRegistry) -> BlockValidationResult {
+        if let BlockValidationResult::Denied(reason) = validate_world_position(&self.position) {
+            return BlockValidationResult::Denied(reason);
+        }
+        if let Some(current_state) = self.current_state {
+            if let BlockValidationResult::Denied(reason) = registry.validate_state_id(current_state)
+            {
+                return BlockValidationResult::Denied(reason);
+            }
+            if is_air_state(registry, current_state) {
+                return BlockValidationResult::Denied(BlockValidationError::TargetIsAir);
+            }
+        }
+        BlockValidationResult::Allowed
+    }
+}
+
+impl BlockInteractEvent {
+    pub fn validate(&self, registry: &BlockRegistry) -> BlockValidationResult {
+        if let BlockValidationResult::Denied(reason) = validate_world_position(&self.position) {
+            return BlockValidationResult::Denied(reason);
+        }
+        if let BlockValidationResult::Denied(reason) = self.hit.validate() {
+            return BlockValidationResult::Denied(reason);
+        }
+        if let Some(state) = self.state
+            && let BlockValidationResult::Denied(reason) = registry.validate_state_id(state)
+        {
+            return BlockValidationResult::Denied(reason);
+        }
+        BlockValidationResult::Allowed
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockValidationResult {
+    Allowed,
+    Denied(BlockValidationError),
+}
+
+impl BlockValidationResult {
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed)
+    }
+
+    pub fn denied_reason(&self) -> Option<&BlockValidationError> {
+        match self {
+            Self::Allowed => None,
+            Self::Denied(reason) => Some(reason),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockValidationError {
+    UnknownBlockState(BlockStateId),
+    UnknownBlockStateName(BlockState),
+    PositionOutOfBounds { y: i32 },
+    InvalidHitCursor,
+    WorldBorderHit,
+    TargetIsAir,
+    TargetNotReplaceable(BlockStateId),
+}
+
 fn normalize_identifier(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.contains(':') {
@@ -265,6 +605,44 @@ fn normalize_identifier(value: &str) -> String {
     } else {
         format!("minecraft:{trimmed}")
     }
+}
+
+fn is_replaceable_state(registry: &BlockRegistry, state_id: BlockStateId) -> bool {
+    registry
+        .state_by_id(state_id)
+        .is_some_and(|state| block_state_is_air(state) || block_state_has_fluid(state))
+}
+
+fn is_air_state(registry: &BlockRegistry, state_id: BlockStateId) -> bool {
+    registry
+        .state_by_id(state_id)
+        .is_some_and(block_state_is_air)
+}
+
+fn validate_world_position(position: &Position) -> BlockValidationResult {
+    const VANILLA_MIN_Y: i32 = -64;
+    const VANILLA_MAX_Y: i32 = 319;
+
+    if (VANILLA_MIN_Y..=VANILLA_MAX_Y).contains(&position.y) {
+        BlockValidationResult::Allowed
+    } else {
+        BlockValidationResult::Denied(BlockValidationError::PositionOutOfBounds { y: position.y })
+    }
+}
+
+fn valid_cursor_coordinate(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
+fn is_always_water_filled_block(name: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:bubble_column"
+            | "minecraft:kelp"
+            | "minecraft:kelp_plant"
+            | "minecraft:seagrass"
+            | "minecraft:tall_seagrass"
+    )
 }
 
 fn default_state_id_from_report(states: &[ReportState]) -> Option<BlockStateId> {
@@ -366,5 +744,130 @@ mod tests {
             registry.state_id_by_name("oak_log", [("axis", "north")]),
             None
         );
+    }
+
+    #[test]
+    fn registry_exposes_state_lookup_and_metadata_iteration() {
+        let registry = BlockRegistry::from_blocks_report(&json!({
+            "minecraft:air": {
+                "states": [{"id": 0, "default": true}]
+            },
+            "minecraft:water": {
+                "properties": {"level": ["0"]},
+                "states": [{"id": 86, "properties": {"level": "0"}, "default": true}]
+            }
+        }))
+        .unwrap();
+
+        assert!(registry.contains_block("air"));
+        assert_eq!(registry.blocks().count(), 2);
+        assert_eq!(registry.states().count(), 2);
+        assert_eq!(
+            registry.default_state("water").unwrap().property("level"),
+            Some("0")
+        );
+
+        let (definition, state) = registry
+            .definition_by_state_id(BlockStateId::new(86))
+            .unwrap();
+        assert_eq!(definition.id().as_str(), "minecraft:water");
+        assert!(block_state_has_fluid(state));
+    }
+
+    #[test]
+    fn block_action_validation_rejects_unknown_states_and_solid_replacement() {
+        let registry = BlockRegistry::from_blocks_report(&json!({
+            "minecraft:air": {
+                "states": [{"id": 0, "default": true}]
+            },
+            "minecraft:stone": {
+                "states": [{"id": 1, "default": true}]
+            }
+        }))
+        .unwrap();
+
+        let request = BlockPlacementRequest {
+            position: Position { x: 0, y: 64, z: 0 },
+            placed_state: BlockStateId::new(1),
+            replaced_state: Some(BlockStateId::new(0)),
+            hand: InteractionHand::MainHand,
+            hit: BlockHit::new(BlockFace::Top, 0.5, 1.0, 0.5),
+            sequence: Some(7),
+        };
+
+        assert_eq!(request.validate(&registry), BlockValidationResult::Allowed);
+        assert_eq!(request.target_position(), Position { x: 0, y: 65, z: 0 });
+
+        let mut blocked = request.clone();
+        blocked.replaced_state = Some(BlockStateId::new(1));
+        assert_eq!(
+            blocked.validate(&registry),
+            BlockValidationResult::Denied(BlockValidationError::TargetNotReplaceable(
+                BlockStateId::new(1)
+            ))
+        );
+
+        let mut unknown = request;
+        unknown.placed_state = BlockStateId::new(99);
+        assert_eq!(
+            unknown.validate(&registry),
+            BlockValidationResult::Denied(BlockValidationError::UnknownBlockState(
+                BlockStateId::new(99)
+            ))
+        );
+    }
+
+    #[test]
+    fn block_break_and_interact_validation_cover_air_bounds_and_hit_cursor() {
+        let registry = BlockRegistry::from_blocks_report(&json!({
+            "minecraft:air": {
+                "states": [{"id": 0, "default": true}]
+            },
+            "minecraft:stone": {
+                "states": [{"id": 1, "default": true}]
+            }
+        }))
+        .unwrap();
+
+        let air_break = BlockBreakRequest {
+            position: Position { x: 0, y: 64, z: 0 },
+            current_state: Some(BlockStateId::new(0)),
+            face: BlockFace::Top,
+            sequence: None,
+        };
+        assert_eq!(
+            air_break.validate(&registry),
+            BlockValidationResult::Denied(BlockValidationError::TargetIsAir)
+        );
+
+        let bad_y = BlockInteractEvent {
+            position: Position { x: 0, y: 400, z: 0 },
+            state: Some(BlockStateId::new(1)),
+            hand: InteractionHand::OffHand,
+            hit: BlockHit::new(BlockFace::North, 1.2, 0.5, 0.5),
+            sequence: None,
+        };
+        assert_eq!(
+            bad_y.validate(&registry),
+            BlockValidationResult::Denied(BlockValidationError::PositionOutOfBounds { y: 400 })
+        );
+
+        let bad_cursor = BlockInteractEvent {
+            position: Position { x: 0, y: 64, z: 0 },
+            state: Some(BlockStateId::new(1)),
+            hand: InteractionHand::OffHand,
+            hit: BlockHit::new(BlockFace::North, 1.2, 0.5, 0.5),
+            sequence: None,
+        };
+        assert_eq!(
+            bad_cursor.validate(&registry),
+            BlockValidationResult::Denied(BlockValidationError::InvalidHitCursor)
+        );
+
+        assert_eq!(
+            InteractionHand::from_protocol_id(1),
+            Some(InteractionHand::OffHand)
+        );
+        assert_eq!(BlockFace::from_protocol_id(4), Some(BlockFace::West));
     }
 }
