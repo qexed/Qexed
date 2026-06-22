@@ -13,6 +13,16 @@ pub struct RuntimeConfig {
     pub local_worldgen: Option<std::sync::Arc<qexed_worldgen::WorldGenerator>>,
 }
 
+impl RuntimeConfig {
+    pub fn reload_save_system(&mut self) -> anyhow::Result<()> {
+        self.world.flush_writes();
+        let save = reload_save_service()?;
+        self.save = save.clone();
+        self.world = qexed_world::WorldManager::new(save);
+        Ok(())
+    }
+}
+
 pub async fn load(
     args: &qexed_config::app::qexed::args::ServerArgs,
 ) -> anyhow::Result<Option<RuntimeConfig>> {
@@ -35,9 +45,7 @@ pub async fn load(
     let qexed = load_config::<Qexed>("qexed").await?;
     let auth = load_config::<Auth>("auth").await?;
     let chat = load_config::<Chat>("chat").await?;
-    let save = load_config::<Save>("save").await?;
-    let save = qexed_save::SaveService::new(save)?;
-    save.initialize_directories()?;
+    let save = reload_save_service()?;
     let world = qexed_world::WorldManager::new(save.clone());
     qexed_log::init()?;
     qexed_registry::init()?;
@@ -67,6 +75,13 @@ pub async fn load(
         .await;
 
     Ok(Some(config))
+}
+
+fn reload_save_service() -> anyhow::Result<qexed_save::SaveService> {
+    let save = Save::reload_from_disk()?;
+    let save = qexed_save::SaveService::new(save)?;
+    save.initialize_directories()?;
+    Ok(save)
 }
 
 async fn load_config<T>(name: &'static str) -> anyhow::Result<T>

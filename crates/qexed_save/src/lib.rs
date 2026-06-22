@@ -65,6 +65,10 @@ impl SaveService {
 
         create_dir_if_writable(self.root.path())?;
         create_dir_if_writable(&self.root.path().join(&self.config.player.root_dir))?;
+        let world_data_store = self.world_store(WorldStoreKind::Data);
+        if world_data_store.enabled && world_data_store.mode.can_write() {
+            create_dir_if_writable(&self.world_data_dir())?;
+        }
         for kind in [
             PlayerStoreKind::Data,
             PlayerStoreKind::Advancements,
@@ -84,7 +88,6 @@ impl SaveService {
             let dimension_root = self.dimension_root(&dimension);
             create_dir_if_writable(&dimension_root)?;
             for kind in [
-                WorldStoreKind::Data,
                 WorldStoreKind::Region,
                 WorldStoreKind::Entities,
                 WorldStoreKind::Poi,
@@ -124,6 +127,10 @@ impl SaveService {
     }
 
     pub fn world_store_dir(&self, dimension: &DimensionId, kind: WorldStoreKind) -> PathBuf {
+        if kind == WorldStoreKind::Data {
+            return self.world_data_dir();
+        }
+
         self.dimension_root(dimension)
             .join(&self.world_store(kind).dir)
     }
@@ -176,6 +183,12 @@ impl SaveService {
 
     fn player_file_path(&self, kind: PlayerStoreKind, file_name: String) -> PathBuf {
         self.player_store_dir(kind).join(file_name)
+    }
+
+    fn world_data_dir(&self) -> PathBuf {
+        self.root
+            .path()
+            .join(&self.world_store(WorldStoreKind::Data).dir)
     }
 }
 
@@ -376,7 +389,10 @@ fn create_dir_if_writable(path: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DimensionId, RegionKind, SaveRoot, SaveService, StorageMode, region_coordinate};
+    use super::{
+        DimensionId, RegionKind, SaveRoot, SaveService, StorageMode, WorldStoreKind,
+        region_coordinate,
+    };
 
     #[test]
     fn uses_java_26_2_dimension_paths() {
@@ -496,6 +512,10 @@ mod tests {
             service.region_path(&DimensionId::the_nether(), RegionKind::Entity, -1, 0),
             std::path::PathBuf::from("./demo/dims/minecraft/the_nether/mob_storage/r.-1.0.mca")
         );
+        assert_eq!(
+            service.world_store_dir(&DimensionId::the_end(), WorldStoreKind::Data),
+            std::path::PathBuf::from("./demo/data")
+        );
     }
 
     #[test]
@@ -516,9 +536,11 @@ mod tests {
         service.initialize_directories().unwrap();
 
         let root = temp.join("world");
+        assert!(root.join("data").is_dir());
         assert!(root.join("players/data").is_dir());
         assert!(!root.join("players/advancements").exists());
         assert!(root.join("dimensions/minecraft/overworld/region").is_dir());
+        assert!(!root.join("dimensions/minecraft/overworld/data").exists());
         assert!(
             !root
                 .join("dimensions/minecraft/overworld/entities")

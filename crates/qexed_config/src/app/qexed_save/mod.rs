@@ -119,24 +119,18 @@ mod tests {
     use super::{Save, StorageMode};
     use qexed_config::tool::AppConfigTrait;
 
-    #[tokio::test]
-    async fn creates_save_toml_with_default_storage_layout() {
+    static CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn creates_save_toml_with_default_storage_layout() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap();
         let config_dir =
             std::env::temp_dir().join(format!("qexed-save-config-test-{}", std::process::id()));
         let _ = qexed_config::CONFIG_PATH.set(config_dir.clone());
         let config_dir = qexed_config::CONFIG_PATH.get().unwrap().clone();
+        let _ = std::fs::remove_dir_all(&config_dir);
 
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let join_handle = Save::load_or_create_default(move |config| async move {
-            sender
-                .send(config)
-                .map_err(|_| anyhow::anyhow!("failed to send save config"))?;
-            Ok(())
-        })
-        .unwrap();
-
-        join_handle.await.unwrap().unwrap();
-        let config = receiver.await.unwrap();
+        let config = Save::reload_from_disk().unwrap();
         let file = std::fs::read_to_string(config_dir.join("save.toml")).unwrap();
 
         assert_eq!(config.root.universe, ".");
@@ -149,5 +143,39 @@ mod tests {
         assert!(file.contains("[player]"));
         assert!(file.contains("[world]"));
         assert!(file.contains("mode = \"read_write\""));
+    }
+
+    #[test]
+    fn reload_from_disk_merges_new_default_save_fields() {
+        let _guard = CONFIG_TEST_LOCK.lock().unwrap();
+        let config_dir =
+            std::env::temp_dir().join(format!("qexed-save-reload-test-{}", std::process::id()));
+        let _ = qexed_config::CONFIG_PATH.set(config_dir.clone());
+        let config_dir = qexed_config::CONFIG_PATH.get().unwrap().clone();
+        let _ = std::fs::remove_dir_all(&config_dir);
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("save.toml"),
+            r#"
+[root]
+universe = "./run"
+world = "demo"
+"#,
+        )
+        .unwrap();
+
+        let config = Save::reload_from_disk().unwrap();
+        let file = std::fs::read_to_string(config_dir.join("save.toml")).unwrap();
+
+        assert_eq!(config.root.universe, "./run");
+        assert_eq!(config.root.world, "demo");
+        assert_eq!(config.player.root_dir, "players");
+        assert_eq!(config.world.region.dir, "region");
+        assert_eq!(config.world.poi.mode, StorageMode::ReadWrite);
+        assert!(file.contains("initialize_directories = true"));
+        assert!(file.contains("[player.data]"));
+        assert!(file.contains("[world.poi]"));
+
+        std::fs::remove_dir_all(config_dir).unwrap();
     }
 }

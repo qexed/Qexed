@@ -21,6 +21,12 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
         F: FnOnce(Self) -> Fut,
         Fut: std::future::Future<Output = anyhow::Result<()>> + std::marker::Send + 'static,
     {
+        let config = Self::reload_from_disk()?;
+
+        Ok(tokio::spawn(load_event(config)))
+    }
+
+    fn reload_from_disk() -> Result<Self> {
         validate_config_name(Self::NAME)?;
 
         let base_dir = config_base_dir()?;
@@ -28,41 +34,38 @@ pub trait AppConfigTrait: Serialize + for<'de> Deserialize<'de> + Default + Size
         let path = final_path.join(Self::NAME).with_extension("toml");
         let secrets_path = secrets_path_for(&path)?;
 
-        let config = if !path.exists() {
-            Self::create_new_config(&path, &secrets_path, None, None)?
-        } else {
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read config file {}", path.display()))?;
-            let mut doc = content
-                .parse::<DocumentMut>()
-                .with_context(|| format!("invalid TOML in {}", path.display()))?;
+        if !path.exists() {
+            return Self::create_new_config(&path, &secrets_path, None, None);
+        }
 
-            let default_doc = default_config_document::<Self>()?;
-            let sensitive_fields = Self::sensitive_fields();
-            let secrets_doc = read_secrets_doc(&secrets_path)?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read config file {}", path.display()))?;
+        let mut doc = content
+            .parse::<DocumentMut>()
+            .with_context(|| format!("invalid TOML in {}", path.display()))?;
 
-            merge_missing_default_items(doc.as_item_mut(), default_doc.as_item());
-            let effective_secrets =
-                migrate_sensitive_fields(&mut doc, secrets_doc, &sensitive_fields)?;
-            overlay_missing_sensitive_defaults(
-                &mut doc,
-                &default_doc,
-                &effective_secrets,
-                &sensitive_fields,
-            );
-            apply_sensitive_display_values(&mut doc, &effective_secrets, &sensitive_fields);
-            remove_root_items_by_prefix(&mut doc, "auto_doc_");
+        let default_doc = default_config_document::<Self>()?;
+        let sensitive_fields = Self::sensitive_fields();
+        let secrets_doc = read_secrets_doc(&secrets_path)?;
 
-            write_config_document(&doc, &path)?;
-            write_secrets_doc(&secrets_path, &effective_secrets)?;
+        merge_missing_default_items(doc.as_item_mut(), default_doc.as_item());
+        let effective_secrets = migrate_sensitive_fields(&mut doc, secrets_doc, &sensitive_fields)?;
+        overlay_missing_sensitive_defaults(
+            &mut doc,
+            &default_doc,
+            &effective_secrets,
+            &sensitive_fields,
+        );
+        apply_sensitive_display_values(&mut doc, &effective_secrets, &sensitive_fields);
+        remove_root_items_by_prefix(&mut doc, "auto_doc_");
 
-            let mut config_doc = doc.clone();
-            overlay_sensitive_values(&mut config_doc, &effective_secrets, &sensitive_fields);
-            toml::from_str(&config_doc.to_string())
-                .with_context(|| format!("config type mismatch for {}", path.display()))?
-        };
+        write_config_document(&doc, &path)?;
+        write_secrets_doc(&secrets_path, &effective_secrets)?;
 
-        Ok(tokio::spawn(load_event(config)))
+        let mut config_doc = doc.clone();
+        overlay_sensitive_values(&mut config_doc, &effective_secrets, &sensitive_fields);
+        toml::from_str(&config_doc.to_string())
+            .with_context(|| format!("config type mismatch for {}", path.display()))
     }
 
     fn save_to_config(
