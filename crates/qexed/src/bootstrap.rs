@@ -10,7 +10,13 @@ pub struct RuntimeConfig {
     pub chat: qexed_chat::ChatService,
     pub save: qexed_save::SaveService,
     pub world: qexed_world::WorldManager,
+    pub entities: RuntimeEntities,
     pub local_worldgen: Option<std::sync::Arc<qexed_worldgen::WorldGenerator>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeEntities {
+    store: std::sync::Arc<std::sync::Mutex<qexed_entity::EntityStore>>,
 }
 
 impl RuntimeConfig {
@@ -20,6 +26,39 @@ impl RuntimeConfig {
         self.save = save.clone();
         self.world = qexed_world::WorldManager::new(save);
         Ok(())
+    }
+}
+
+impl RuntimeEntities {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn spawn_player(
+        &self,
+        uuid: uuid::Uuid,
+        pose: qexed_entity::EntityPose,
+    ) -> qexed_entity::EntitySnapshot {
+        let mut store = self.store.lock().expect("entity store mutex poisoned");
+        let id = store.spawn_with_uuid(uuid, qexed_entity::EntityKind::Player, pose);
+        store
+            .get(id)
+            .expect("spawned player entity must be readable")
+            .snapshot()
+    }
+
+    pub fn update_pose(&self, id: qexed_entity::EntityId, pose: qexed_entity::EntityPose) -> bool {
+        self.store
+            .lock()
+            .expect("entity store mutex poisoned")
+            .update_pose(id, pose)
+    }
+
+    pub fn despawn(&self, id: qexed_entity::EntityId) -> Option<qexed_entity::Entity> {
+        self.store
+            .lock()
+            .expect("entity store mutex poisoned")
+            .despawn(id)
     }
 }
 
@@ -67,6 +106,7 @@ pub async fn load(
         chat: qexed_chat::ChatService::new(chat)?,
         save,
         world,
+        entities: RuntimeEntities::new(),
         local_worldgen,
     };
     qexed_plugin::init().await?;

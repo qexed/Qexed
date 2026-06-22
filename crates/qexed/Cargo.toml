@@ -8,6 +8,7 @@ qexed_config.workspace = true
 qexed_auth.workspace = true
 qexed_chat.workspace = true
 qexed_command.workspace = true
+qexed_entity.workspace = true
 qexed_log.workspace = true
 qexed_registry.workspace = true
 qexed_save.workspace = true

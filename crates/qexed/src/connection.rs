@@ -48,6 +48,7 @@ struct PlayerState {
     player: qexed_player::Player,
     store: qexed_player::PlayerConfigStore,
     config: qexed_player::PlayerConfig,
+    entity_id: qexed_entity::EntityId,
 }
 
 #[derive(Debug, Clone)]
@@ -556,6 +557,7 @@ async fn enter_play(
     let profile = &session.profile;
     let player_state = load_player_state(runtime, session)?;
     let spawn = player_state.player.position();
+    let player_entity_id = player_state.entity_id.as_i32();
     let view_distance = config.server.view_distance.max(1);
     let simulation_distance = config.server.simulation_distance.max(1);
     let dimension_type = qexed_registry::dimension_type_holder_id("minecraft:overworld")?;
@@ -565,7 +567,7 @@ async fn enter_play(
     connection
         .send_packet_batch_with_capacity(initial_play_batch_capacity(view_distance), |batch| {
             batch.push(&to_client::play::login::Login {
-                entity_id: 1,
+                entity_id: player_entity_id,
                 is_hardcore: false,
                 dimension_names: vec!["minecraft:overworld".to_string()],
                 max_player: VarInt(config.server.max_players.max(0)),
@@ -693,7 +695,8 @@ async fn enter_play(
         authenticator,
         service: chat_service,
     };
-    sustain_play_connection(
+    let player_entity_id = player_state.entity_id;
+    let result = sustain_play_connection(
         connection,
         runtime,
         command_context,
@@ -701,7 +704,9 @@ async fn enter_play(
         player_state,
         chunk_view,
     )
-    .await
+    .await;
+    runtime.entities.despawn(player_entity_id);
+    result
 }
 
 fn load_player_state(
@@ -723,10 +728,15 @@ fn load_player_state(
         None => qexed_player::PlayerConfig::from_player(&player),
     };
 
+    let entity = runtime
+        .entities
+        .spawn_player(player.uuid(), player_entity_pose(player.position(), true));
+
     Ok(PlayerState {
         player,
         store,
         config,
+        entity_id: entity.id,
     })
 }
 
@@ -1134,6 +1144,7 @@ async fn sustain_play_connection(
                             yaw: current.yaw,
                             pitch: current.pitch,
                         },
+                        packet.flags & 0x01 != 0,
                     ).await?;
                 } else if packet_id == qexed_protocol::to_server::play::move_player_pos_rot::MovePlayerPosRot::ID {
                     let packet =
@@ -1152,6 +1163,7 @@ async fn sustain_play_connection(
                             yaw: packet.yaw,
                             pitch: packet.pitch,
                         },
+                        packet.flags & 0x01 != 0,
                     ).await?;
                 } else if packet_id == qexed_protocol::to_server::play::move_player_rot::MovePlayerRot::ID {
                     let packet =
@@ -1159,16 +1171,28 @@ async fn sustain_play_connection(
                             &mut payload,
                         )?;
                     let current = player_state.player.position();
-                    player_state.player.set_position(qexed_player::PlayerPosition {
+                    let position = qexed_player::PlayerPosition {
                         yaw: packet.yaw,
                         pitch: packet.pitch,
                         ..current
-                    });
+                    };
+                    player_state.player.set_position(position);
+                    runtime.entities.update_pose(
+                        player_state.entity_id,
+                        player_entity_pose(position, packet.flags & 0x01 != 0),
+                    );
                 } else if packet_id == qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly::ID {
-                    let _packet =
+                    let packet =
                         decode_payload::<qexed_protocol::to_server::play::move_player_status_only::MovePlayerStatusOnly>(
                             &mut payload,
                         )?;
+                    runtime.entities.update_pose(
+                        player_state.entity_id,
+                        player_entity_pose(
+                            player_state.player.position(),
+                            packet.flags & 0x01 != 0,
+                        ),
+                    );
                 } else if packet_id == qexed_protocol::to_server::play::custom_payload::CustomPayload::ID {
                     let packet =
                         decode_payload::<qexed_protocol::to_server::play::custom_payload::CustomPayload>(
@@ -1225,12 +1249,34 @@ async fn update_player_position(
     chunk_view: &mut qexed_world::PlayerChunkView,
     player_state: &mut PlayerState,
     position: qexed_player::PlayerPosition,
+    on_ground: bool,
 ) -> anyhow::Result<()> {
     player_state.player.set_position(position);
+    runtime.entities.update_pose(
+        player_state.entity_id,
+        player_entity_pose(position, on_ground),
+    );
     player_state.config.last_position = position;
     player_state.config.updated_at_unix_seconds = current_unix_seconds();
     player_state.store.save(&player_state.config)?;
     sync_player_chunk_position(connection, runtime, chunk_view, position.x, position.z).await
+}
+
+fn player_entity_pose(
+    position: qexed_player::PlayerPosition,
+    on_ground: bool,
+) -> qexed_entity::EntityPose {
+    qexed_entity::EntityPose {
+        position: qexed_entity::EntityPosition {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+        },
+        velocity: qexed_entity::EntityVelocity::default(),
+        yaw: position.yaw,
+        pitch: position.pitch,
+        on_ground,
+    }
 }
 
 async fn handle_play_custom_payload(
@@ -3387,6 +3433,7 @@ mod tests {
             chat: qexed_chat::ChatService::new(Default::default()).unwrap(),
             save: save.clone(),
             world: qexed_world::WorldManager::new(save),
+            entities: crate::bootstrap::RuntimeEntities::new(),
             local_worldgen: None,
         }
     }
