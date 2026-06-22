@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 
+pub mod entity_adapter;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BehaviorStatus {
     Running,
