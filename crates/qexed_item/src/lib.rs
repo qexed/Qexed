@@ -16,6 +16,8 @@ pub enum ItemError {
     InvalidCount { count: u8, max: u8 },
     #[error("item not found: {0}")]
     NotFound(ItemId),
+    #[error("incompatible item stacks")]
+    IncompatibleStack,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -100,6 +102,10 @@ impl ItemStack {
         Self::with_components(item, count, max_stack_size, ItemComponents::default())
     }
 
+    pub fn empty(item: ItemId, max_stack_size: u8) -> Result<Self, ItemError> {
+        Self::new(item, 0, max_stack_size)
+    }
+
     pub fn with_components(
         item: ItemId,
         count: u8,
@@ -121,8 +127,54 @@ impl ItemStack {
         Ok(())
     }
 
+    pub fn set_count_clamped(&mut self, count: u8) {
+        self.count = count.min(self.max_stack_size);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+
+    pub fn remaining_capacity(&self) -> u8 {
+        self.max_stack_size.saturating_sub(self.count)
+    }
+
+    pub fn can_merge_with(&self, other: &Self) -> bool {
+        self.is_empty()
+            || other.is_empty()
+            || (self.item == other.item
+                && self.max_stack_size == other.max_stack_size
+                && self.components == other.components)
+    }
+
+    pub fn merge_from(&mut self, other: &mut Self) -> Result<u8, ItemError> {
+        if other.is_empty() {
+            return Ok(0);
+        }
+
+        if self.is_empty() {
+            self.item = other.item.clone();
+            self.max_stack_size = other.max_stack_size;
+            self.components = other.components.clone();
+        } else if !self.can_merge_with(other) {
+            return Err(ItemError::IncompatibleStack);
+        }
+
+        let moved = self.remaining_capacity().min(other.count);
+        self.count += moved;
+        other.count -= moved;
+        Ok(moved)
+    }
+
+    pub fn split(&mut self, count: u8) -> Result<Self, ItemError> {
+        let split_count = count.min(self.count);
+        self.count -= split_count;
+        Self::with_components(
+            self.item.clone(),
+            split_count,
+            self.max_stack_size,
+            self.components.clone(),
+        )
     }
 }
 
@@ -141,12 +193,44 @@ impl ItemComponents {
         self.inner.get(key)
     }
 
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        match self.get(key) {
+            Some(ComponentValue::Bool(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn get_i64(&self, key: &str) -> Option<i64> {
+        match self.get(key) {
+            Some(ComponentValue::I64(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn get_f64(&self, key: &str) -> Option<f64> {
+        match self.get(key) {
+            Some(ComponentValue::F64(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        match self.get(key) {
+            Some(ComponentValue::String(value)) => Some(value),
+            _ => None,
+        }
+    }
+
     pub fn insert(
         &mut self,
         key: impl Into<String>,
         value: ComponentValue,
     ) -> Option<ComponentValue> {
         self.inner.insert(key.into(), value)
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<ComponentValue> {
+        self.inner.remove(key)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -252,7 +336,7 @@ fn is_valid_identifier(value: &str) -> bool {
 mod tests {
     use super::{
         ComponentValue, DEFAULT_MAX_STACK_SIZE, ItemComponents, ItemDefinition, ItemError, ItemId,
-        ItemRegistry,
+        ItemRegistry, ItemStack,
     };
 
     #[test]
@@ -309,5 +393,95 @@ mod tests {
             components.get("minecraft:custom_name"),
             Some(&ComponentValue::String("Stone".into()))
         );
+    }
+
+    #[test]
+    fn clamps_stack_count_to_capacity() {
+        let id = ItemId::new("minecraft:egg").unwrap();
+        let mut stack = ItemStack::new(id, 3, 16).unwrap();
+
+        stack.set_count_clamped(20);
+
+        assert_eq!(stack.count, 16);
+        assert_eq!(stack.remaining_capacity(), 0);
+    }
+
+    #[test]
+    fn splits_stack_without_exceeding_available_count() {
+        let id = ItemId::new("minecraft:stone").unwrap();
+        let mut stack = ItemStack::new(id.clone(), 10, DEFAULT_MAX_STACK_SIZE).unwrap();
+
+        let split = stack.split(64).unwrap();
+
+        assert_eq!(split.item, id);
+        assert_eq!(split.count, 10);
+        assert_eq!(stack.count, 0);
+        assert!(stack.is_empty());
+    }
+
+    #[test]
+    fn merges_compatible_stacks_up_to_capacity() {
+        let id = ItemId::new("minecraft:stone").unwrap();
+        let mut target = ItemStack::new(id.clone(), 60, DEFAULT_MAX_STACK_SIZE).unwrap();
+        let mut source = ItemStack::new(id, 8, DEFAULT_MAX_STACK_SIZE).unwrap();
+
+        let moved = target.merge_from(&mut source).unwrap();
+
+        assert_eq!(moved, 4);
+        assert_eq!(target.count, DEFAULT_MAX_STACK_SIZE);
+        assert_eq!(source.count, 4);
+    }
+
+    #[test]
+    fn empty_stack_adopts_merged_item_identity() {
+        let mut empty = ItemStack::empty(
+            ItemId::new("minecraft:air").unwrap(),
+            DEFAULT_MAX_STACK_SIZE,
+        )
+        .unwrap();
+        let mut source = ItemStack::new(ItemId::new("minecraft:dirt").unwrap(), 12, 16).unwrap();
+
+        let moved = empty.merge_from(&mut source).unwrap();
+
+        assert_eq!(moved, 12);
+        assert_eq!(empty.item.as_str(), "minecraft:dirt");
+        assert_eq!(empty.max_stack_size, 16);
+        assert_eq!(empty.count, 12);
+        assert!(source.is_empty());
+    }
+
+    #[test]
+    fn rejects_merge_with_different_components() {
+        let id = ItemId::new("minecraft:stone").unwrap();
+        let mut components = ItemComponents::default();
+        components.insert("minecraft:custom_name", ComponentValue::String("A".into()));
+        let mut target =
+            ItemStack::with_components(id.clone(), 1, DEFAULT_MAX_STACK_SIZE, components).unwrap();
+        let mut source = ItemStack::new(id, 1, DEFAULT_MAX_STACK_SIZE).unwrap();
+
+        assert_eq!(
+            target.merge_from(&mut source).unwrap_err(),
+            ItemError::IncompatibleStack
+        );
+        assert_eq!(target.count, 1);
+        assert_eq!(source.count, 1);
+    }
+
+    #[test]
+    fn components_expose_typed_helpers() {
+        let mut components = ItemComponents::default();
+        components.insert("minecraft:unbreakable", ComponentValue::Bool(true));
+        components.insert("minecraft:damage", ComponentValue::I64(7));
+        components.insert("qexed:weight", ComponentValue::F64(1.5));
+        components.insert(
+            "minecraft:custom_name",
+            ComponentValue::String("Pick".into()),
+        );
+
+        assert_eq!(components.get_bool("minecraft:unbreakable"), Some(true));
+        assert_eq!(components.get_i64("minecraft:damage"), Some(7));
+        assert_eq!(components.get_f64("qexed:weight"), Some(1.5));
+        assert_eq!(components.get_str("minecraft:custom_name"), Some("Pick"));
+        assert_eq!(components.get_str("minecraft:damage"), None);
     }
 }
