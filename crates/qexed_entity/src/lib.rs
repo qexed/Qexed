@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -80,6 +81,44 @@ pub enum EntityUpdateSnapshot {
 }
 
 pub type EntitySnapshot = EntitySpawnSnapshot;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntityBroadcastBatch {
+    pub spawns: Vec<EntitySpawnSnapshot>,
+    pub poses: Vec<EntityPoseSnapshot>,
+    pub despawns: Vec<EntityDespawnSnapshot>,
+}
+
+impl EntityBroadcastBatch {
+    pub fn new(
+        spawns: Vec<EntitySpawnSnapshot>,
+        poses: Vec<EntityPoseSnapshot>,
+        despawns: Vec<EntityDespawnSnapshot>,
+    ) -> Self {
+        Self {
+            spawns,
+            poses,
+            despawns,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.spawns.is_empty() && self.poses.is_empty() && self.despawns.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntityView {
+    viewer: EntityId,
+    radius_blocks: f64,
+    visible: BTreeSet<EntityId>,
+    poses: BTreeMap<EntityId, EntityPose>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EntityRuntime {
+    store: Arc<Mutex<EntityStore>>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsertEntityError {
@@ -169,6 +208,19 @@ impl Default for EntityPose {
             yaw: 0.0,
             pitch: 0.0,
             on_ground: true,
+        }
+    }
+}
+
+impl EntityPose {
+    pub fn advanced(self, delta_seconds: f64) -> Self {
+        Self {
+            position: EntityPosition {
+                x: self.position.x + self.velocity.x * delta_seconds,
+                y: self.position.y + self.velocity.y * delta_seconds,
+                z: self.position.z + self.velocity.z * delta_seconds,
+            },
+            ..self
         }
     }
 }
@@ -278,21 +330,30 @@ impl EntityStore {
         let Some(entity) = self.entities.get_mut(&id) else {
             return false;
         };
+        if entity.pose == pose {
+            return true;
+        }
         entity.pose = pose;
         self.updates
             .push(EntityUpdateSnapshot::Pose(EntityPoseSnapshot { id, pose }));
         true
     }
 
-    pub fn update_pose_with(&mut self, id: EntityId, update: impl FnOnce(&mut EntityPose)) -> bool {
-        let Some(entity) = self.entities.get_mut(&id) else {
-            return false;
-        };
-        update(&mut entity.pose);
-        let pose = entity.pose;
+    pub fn tick(&mut self, delta_seconds: f64) -> usize {
+        let mut moved = Vec::new();
+        for entity in self.entities.values_mut() {
+            let pose = entity.pose.advanced(delta_seconds);
+            if pose == entity.pose {
+                continue;
+            }
+            entity.pose = pose;
+            moved.push(entity.pose_snapshot());
+        }
+
+        let count = moved.len();
         self.updates
-            .push(EntityUpdateSnapshot::Pose(EntityPoseSnapshot { id, pose }));
-        true
+            .extend(moved.into_iter().map(EntityUpdateSnapshot::Pose));
+        count
     }
 
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
@@ -319,6 +380,19 @@ impl EntityStore {
         self.iter().map(Entity::snapshot).collect()
     }
 
+    pub fn visible_snapshots(
+        &self,
+        viewer: EntityId,
+        center: EntityPosition,
+        radius_blocks: f64,
+    ) -> Vec<EntitySnapshot> {
+        self.iter()
+            .filter(|entity| entity.id != viewer)
+            .filter(|entity| is_in_range(entity.pose.position, center, radius_blocks))
+            .map(Entity::snapshot)
+            .collect()
+    }
+
     pub fn updates(&self) -> &[EntityUpdateSnapshot] {
         &self.updates
     }
@@ -334,11 +408,134 @@ impl EntityStore {
     }
 }
 
+impl EntityView {
+    pub fn new(viewer: EntityId, radius_blocks: f64) -> Self {
+        Self {
+            viewer,
+            radius_blocks: radius_blocks.max(0.0),
+            visible: BTreeSet::new(),
+            poses: BTreeMap::new(),
+        }
+    }
+
+    pub const fn viewer(&self) -> EntityId {
+        self.viewer
+    }
+
+    pub fn radius_blocks(&self) -> f64 {
+        self.radius_blocks
+    }
+
+    pub fn set_radius_blocks(&mut self, radius_blocks: f64) {
+        self.radius_blocks = radius_blocks.max(0.0);
+    }
+
+    pub fn reconcile(
+        &mut self,
+        store: &EntityStore,
+        center: EntityPosition,
+    ) -> EntityBroadcastBatch {
+        let snapshots = store.visible_snapshots(self.viewer, center, self.radius_blocks);
+        let current: BTreeSet<_> = snapshots.iter().map(|snapshot| snapshot.id).collect();
+
+        let spawns = snapshots
+            .iter()
+            .filter(|snapshot| !self.visible.contains(&snapshot.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let despawns = self
+            .visible
+            .difference(&current)
+            .copied()
+            .map(|id| EntityDespawnSnapshot { id })
+            .collect::<Vec<_>>();
+        let poses = snapshots
+            .iter()
+            .filter(|snapshot| self.visible.contains(&snapshot.id))
+            .filter(|snapshot| self.poses.get(&snapshot.id).copied() != Some(snapshot.pose))
+            .map(|snapshot| EntityPoseSnapshot {
+                id: snapshot.id,
+                pose: snapshot.pose,
+            })
+            .collect::<Vec<_>>();
+
+        self.visible = current;
+        self.poses = snapshots
+            .into_iter()
+            .map(|snapshot| (snapshot.id, snapshot.pose))
+            .collect();
+
+        EntityBroadcastBatch::new(spawns, poses, despawns)
+    }
+}
+
+impl EntityRuntime {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn spawn_player(&self, uuid: uuid::Uuid, pose: EntityPose) -> EntitySnapshot {
+        let mut store = self.store.lock().expect("entity store mutex poisoned");
+        let id = store.spawn_with_uuid(uuid, EntityKind::Player, pose);
+        store
+            .get(id)
+            .expect("spawned player entity must be readable")
+            .snapshot()
+    }
+
+    pub fn spawn(&self, kind: EntityKind, pose: EntityPose) -> EntitySnapshot {
+        let mut store = self.store.lock().expect("entity store mutex poisoned");
+        let id = store.spawn(kind, pose);
+        store
+            .get(id)
+            .expect("spawned entity must be readable")
+            .snapshot()
+    }
+
+    pub fn update_pose(&self, id: EntityId, pose: EntityPose) -> bool {
+        self.store
+            .lock()
+            .expect("entity store mutex poisoned")
+            .update_pose(id, pose)
+    }
+
+    pub fn despawn(&self, id: EntityId) -> Option<Entity> {
+        self.store
+            .lock()
+            .expect("entity store mutex poisoned")
+            .despawn(id)
+    }
+
+    pub fn tick(&self, delta_seconds: f64) -> usize {
+        self.store
+            .lock()
+            .expect("entity store mutex poisoned")
+            .tick(delta_seconds)
+    }
+
+    pub fn reconcile_view(
+        &self,
+        view: &mut EntityView,
+        center: EntityPosition,
+    ) -> EntityBroadcastBatch {
+        let store = self.store.lock().expect("entity store mutex poisoned");
+        view.reconcile(&store, center)
+    }
+}
+
+fn is_in_range(position: EntityPosition, center: EntityPosition, radius_blocks: f64) -> bool {
+    let dx = position.x - center.x;
+    let dy = position.y - center.y;
+    let dz = position.z - center.z;
+    dx * dx + dy * dy + dz * dz <= radius_blocks * radius_blocks
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Entity, EntityId, EntityIdAllocator, EntityKind, EntityPose, EntityPosition, EntityStore,
-        EntityTypeId, EntityUpdateSnapshot, EntityVelocity, InsertEntityError,
+        Entity, EntityDespawnSnapshot, EntityId, EntityIdAllocator, EntityKind, EntityPose,
+        EntityPosition, EntityStore, EntityTypeId, EntityUpdateSnapshot, EntityVelocity,
+        EntityView, InsertEntityError,
     };
 
     #[test]
@@ -449,5 +646,97 @@ mod tests {
         store.spawn(EntityKind::Player, EntityPose::default());
         assert_eq!(store.drain_updates().len(), 1);
         assert!(store.updates().is_empty());
+    }
+
+    #[test]
+    fn tick_advances_entities_with_velocity() {
+        let mut store = EntityStore::new();
+        let id = store.spawn(
+            EntityKind::Object {
+                type_id: EntityTypeId::new(1),
+            },
+            EntityPose {
+                velocity: EntityVelocity {
+                    x: 2.0,
+                    y: 0.0,
+                    z: -1.0,
+                },
+                ..EntityPose::default()
+            },
+        );
+        store.drain_updates();
+
+        assert_eq!(store.tick(0.5), 1);
+        let pose = store.get(id).unwrap().pose;
+        assert_eq!(pose.position.x, 1.0);
+        assert_eq!(pose.position.z, -0.5);
+        assert!(matches!(store.updates(), [EntityUpdateSnapshot::Pose(_)]));
+    }
+
+    #[test]
+    fn entity_view_reports_spawn_pose_and_remove_by_range() {
+        let mut store = EntityStore::new();
+        let viewer = store.spawn(EntityKind::Player, EntityPose::default());
+        let seen = store.spawn(
+            EntityKind::Mob {
+                type_id: EntityTypeId::new(2),
+            },
+            EntityPose {
+                position: EntityPosition {
+                    x: 8.0,
+                    y: 64.0,
+                    z: 0.0,
+                },
+                ..EntityPose::default()
+            },
+        );
+        let hidden = store.spawn(
+            EntityKind::Mob {
+                type_id: EntityTypeId::new(3),
+            },
+            EntityPose {
+                position: EntityPosition {
+                    x: 40.0,
+                    y: 64.0,
+                    z: 0.0,
+                },
+                ..EntityPose::default()
+            },
+        );
+        let mut view = EntityView::new(viewer, 16.0);
+
+        let batch = view.reconcile(&store, EntityPosition::default());
+        assert_eq!(batch.spawns.len(), 1);
+        assert_eq!(batch.spawns[0].id, seen);
+
+        store.update_pose(
+            seen,
+            EntityPose {
+                position: EntityPosition {
+                    x: 9.0,
+                    y: 64.0,
+                    z: 0.0,
+                },
+                ..EntityPose::default()
+            },
+        );
+        let batch = view.reconcile(&store, EntityPosition::default());
+        assert_eq!(batch.poses.len(), 1);
+        assert_eq!(batch.poses[0].id, seen);
+
+        store.update_pose(
+            seen,
+            EntityPose {
+                position: EntityPosition {
+                    x: 32.0,
+                    y: 64.0,
+                    z: 0.0,
+                },
+                ..EntityPose::default()
+            },
+        );
+        let batch = view.reconcile(&store, EntityPosition::default());
+        assert_eq!(batch.despawns, vec![EntityDespawnSnapshot { id: seen }]);
+        assert!(!batch.spawns.iter().any(|snapshot| snapshot.id == hidden));
     }
 }
