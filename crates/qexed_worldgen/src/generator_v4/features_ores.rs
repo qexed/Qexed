@@ -1566,6 +1566,12 @@ impl OreFeatureConfig {
     ) -> bool {
         let direction = random.next_float() * std::f32::consts::PI;
         let spread_xy = self.size as f64 / 8.0;
+        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
+        let precheck_radius = precheck_radius.ceil() as i32;
+        let spread_xy_ceil = spread_xy.ceil() as i32;
+        let min_box_x = origin_x - spread_xy_ceil - precheck_radius;
+        let min_box_y = origin_y - 2 - precheck_radius;
+        let min_box_z = origin_z - spread_xy_ceil - precheck_radius;
         let x_spread = mth_sin(direction) as f64 * spread_xy;
         let z_spread = mth_cos(direction) as f64 * spread_xy;
         let x0 = origin_x as f64 + x_spread;
@@ -1620,11 +1626,11 @@ impl OreFeatureConfig {
                 continue;
             }
 
-            let min_x = mth_floor(x - radius);
+            let min_x = mth_floor(x - radius).max(min_box_x);
             let max_x = mth_floor(x + radius);
-            let min_y = mth_floor(y - radius);
+            let min_y = mth_floor(y - radius).max(min_box_y);
             let max_y = mth_floor(y + radius);
-            let min_z = mth_floor(z - radius);
+            let min_z = mth_floor(z - radius).max(min_box_z);
             let max_z = mth_floor(z + radius);
 
             for world_x in min_x..=max_x {
