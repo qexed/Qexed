@@ -1,7 +1,6 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use qexed_nbt::Tag;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -15,9 +14,11 @@ pub enum ItemError {
     InvalidMaxStackSize(u8),
     #[error("invalid item count {count}, max {max}")]
     InvalidCount { count: u8, max: u8 },
+    #[error("item not found: {0}")]
+    NotFound(ItemId),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ItemId(String);
 
@@ -67,6 +68,7 @@ impl std::fmt::Display for ItemId {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDefinition {
     pub id: ItemId,
+    #[serde(default = "default_max_stack_size")]
     pub max_stack_size: u8,
 }
 
@@ -84,11 +86,12 @@ impl ItemDefinition {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemStack {
     pub item: ItemId,
     pub count: u8,
     pub max_stack_size: u8,
+    #[serde(default, skip_serializing_if = "ItemComponents::is_empty")]
     pub components: ItemComponents,
 }
 
@@ -123,22 +126,26 @@ impl ItemStack {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ItemComponents {
-    inner: HashMap<String, Tag>,
+    inner: BTreeMap<String, ComponentValue>,
 }
 
 impl ItemComponents {
-    pub fn new(inner: HashMap<String, Tag>) -> Self {
+    pub fn new(inner: BTreeMap<String, ComponentValue>) -> Self {
         Self { inner }
     }
 
-    pub fn get(&self, key: &str) -> Option<&Tag> {
+    pub fn get(&self, key: &str) -> Option<&ComponentValue> {
         self.inner.get(key)
     }
 
-    pub fn insert(&mut self, key: impl Into<String>, value: Tag) -> Option<Tag> {
+    pub fn insert(
+        &mut self,
+        key: impl Into<String>,
+        value: ComponentValue,
+    ) -> Option<ComponentValue> {
         self.inner.insert(key.into(), value)
     }
 
@@ -146,14 +153,27 @@ impl ItemComponents {
         self.inner.is_empty()
     }
 
-    pub fn as_map(&self) -> &HashMap<String, Tag> {
+    pub fn as_map(&self) -> &BTreeMap<String, ComponentValue> {
         &self.inner
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ComponentValue {
+    Bool(bool),
+    I64(i64),
+    F64(f64),
+    String(String),
+    List(Vec<ComponentValue>),
+    Compound(BTreeMap<String, ComponentValue>),
+}
+
+pub type ItemNbt = BTreeMap<String, ComponentValue>;
+
 #[derive(Debug, Clone, Default)]
 pub struct ItemRegistry {
-    items: HashMap<ItemId, Arc<ItemDefinition>>,
+    items: BTreeMap<ItemId, Arc<ItemDefinition>>,
 }
 
 impl ItemRegistry {
@@ -174,8 +194,15 @@ impl ItemRegistry {
         self.get(&id)
     }
 
-    pub fn stack(&self, id: &ItemId, count: u8) -> Option<Result<ItemStack, ItemError>> {
-        self.get(id).map(|item| item.stack(count))
+    pub fn stack(&self, id: &ItemId, count: u8) -> Result<ItemStack, ItemError> {
+        self.get(id)
+            .ok_or_else(|| ItemError::NotFound(id.clone()))?
+            .stack(count)
+    }
+
+    pub fn stack_by_str(&self, id: &str, count: u8) -> Result<ItemStack, ItemError> {
+        let id = ItemId::new(id)?;
+        self.stack(&id, count)
     }
 
     pub fn len(&self) -> usize {
@@ -200,6 +227,10 @@ fn validate_stack_size(count: u8, max_stack_size: u8) -> Result<(), ItemError> {
     Ok(())
 }
 
+fn default_max_stack_size() -> u8 {
+    DEFAULT_MAX_STACK_SIZE
+}
+
 fn is_valid_identifier(value: &str) -> bool {
     let Some((namespace, path)) = value.split_once(':') else {
         return false;
@@ -219,7 +250,10 @@ fn is_valid_identifier(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_MAX_STACK_SIZE, ItemDefinition, ItemError, ItemId, ItemRegistry};
+    use super::{
+        ComponentValue, DEFAULT_MAX_STACK_SIZE, ItemComponents, ItemDefinition, ItemError, ItemId,
+        ItemRegistry,
+    };
 
     #[test]
     fn validates_item_id_shape() {
@@ -248,10 +282,32 @@ mod tests {
         let mut registry = ItemRegistry::new();
         registry.register(ItemDefinition::new(id.clone(), DEFAULT_MAX_STACK_SIZE).unwrap());
 
-        let stack = registry.stack(&id, 32).unwrap().unwrap();
+        let stack = registry.stack(&id, 32).unwrap();
 
         assert_eq!(stack.item, id);
         assert_eq!(stack.count, 32);
         assert_eq!(stack.max_stack_size, DEFAULT_MAX_STACK_SIZE);
+    }
+
+    #[test]
+    fn registry_reports_missing_items() {
+        let registry = ItemRegistry::new();
+        let id = ItemId::new("minecraft:missing").unwrap();
+
+        assert_eq!(registry.stack(&id, 1).unwrap_err(), ItemError::NotFound(id));
+    }
+
+    #[test]
+    fn components_hold_serializable_placeholders() {
+        let mut components = ItemComponents::default();
+        components.insert(
+            "minecraft:custom_name",
+            ComponentValue::String("Stone".into()),
+        );
+
+        assert_eq!(
+            components.get("minecraft:custom_name"),
+            Some(&ComponentValue::String("Stone".into()))
+        );
     }
 }
