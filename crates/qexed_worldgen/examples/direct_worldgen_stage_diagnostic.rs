@@ -1,9 +1,15 @@
 use std::io::Write as _;
+use std::process;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use qexed_worldgen::{ChunkRequest, WorldGenerator};
 
+static DIAG_STARTED: OnceLock<Instant> = OnceLock::new();
+
 fn main() -> anyhow::Result<()> {
+    DIAG_STARTED.get_or_init(Instant::now);
+    configure_feature_trace();
     let seed = env_i64("QEXED_DIAG_SEED", 0);
     let chunk_x = env_i32("QEXED_DIAG_CHUNK_X", 0);
     let chunk_z = env_i32("QEXED_DIAG_CHUNK_Z", 0);
@@ -63,6 +69,37 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn configure_feature_trace() {
+    if std::env::var_os("QEXED_WORLDGEN_FEATURE_TRACE").is_none() {
+        unsafe {
+            std::env::set_var("QEXED_WORLDGEN_FEATURE_TRACE", "1");
+        }
+    }
+    if let Ok(stop_after) = std::env::var("QEXED_DIAG_STOP_AFTER") {
+        unsafe {
+            std::env::set_var("QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER", stop_after);
+        }
+    }
+    if let Ok(timeout_ms) = std::env::var("QEXED_DIAG_TIMEOUT_MS") {
+        unsafe {
+            std::env::set_var("QEXED_WORLDGEN_FEATURE_TRACE_TIMEOUT_MS", &timeout_ms);
+        }
+        if let Ok(timeout_ms) = timeout_ms.parse::<u64>() {
+            if timeout_ms > 0 {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(timeout_ms));
+                    eprintln!(
+                        "direct_worldgen_diag_timeout elapsed_ms={:.2}",
+                        diag_elapsed_ms()
+                    );
+                    let _ = std::io::stderr().flush();
+                    process::exit(124);
+                });
+            }
+        }
+    }
+}
+
 fn env_i64(name: &str, default: i64) -> i64 {
     std::env::var(name)
         .ok()
@@ -87,4 +124,11 @@ fn print_done(stage: &str, started: Instant) {
 
 fn flush_stdout() {
     let _ = std::io::stdout().flush();
+}
+
+fn diag_elapsed_ms() -> f64 {
+    DIAG_STARTED
+        .get()
+        .map(|started| started.elapsed().as_secs_f64() * 1000.0)
+        .unwrap_or(0.0)
 }

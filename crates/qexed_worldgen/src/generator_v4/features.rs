@@ -3,6 +3,171 @@ use std::sync::{Condvar, Mutex};
 
 const FEATURE_SOURCE_CACHE_LIMIT: usize = 96;
 const FEATURE_PROFILE_TOP_COUNT: usize = 12;
+const FEATURE_TRACE_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE";
+const FEATURE_TRACE_STOP_AFTER_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER";
+const FEATURE_TRACE_TIMEOUT_MS_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_TIMEOUT_MS";
+
+#[derive(Debug, Clone)]
+struct WorldgenStageTrace {
+    enabled: bool,
+    chunk_x: i32,
+    chunk_z: i32,
+}
+
+impl WorldgenStageTrace {
+    fn from_env(chunk_x: i32, chunk_z: i32) -> Self {
+        Self {
+            enabled: std::env::var_os(FEATURE_TRACE_ENV).is_some(),
+            chunk_x,
+            chunk_z,
+        }
+    }
+
+    fn start(&self, stage: &str) {
+        if self.enabled {
+            eprintln!(
+                "worldgen stage trace start: chunk=({},{}) stage={stage}",
+                self.chunk_x, self.chunk_z
+            );
+        }
+    }
+
+    fn done(&self, stage: &str, elapsed: Duration) {
+        if self.enabled {
+            eprintln!(
+                "worldgen stage trace done: chunk=({},{}) stage={stage} elapsed_ms={:.2}",
+                self.chunk_x,
+                self.chunk_z,
+                duration_ms(elapsed)
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FeatureTrace {
+    enabled: bool,
+    stop_after: Option<FeatureTraceStopAfter>,
+    timeout: Option<Duration>,
+    started: Instant,
+}
+
+impl FeatureTrace {
+    fn from_env() -> Self {
+        Self {
+            enabled: std::env::var_os(FEATURE_TRACE_ENV).is_some(),
+            stop_after: std::env::var(FEATURE_TRACE_STOP_AFTER_ENV)
+                .ok()
+                .and_then(|value| FeatureTraceStopAfter::parse(&value)),
+            timeout: std::env::var(FEATURE_TRACE_TIMEOUT_MS_ENV)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .map(Duration::from_millis),
+            started: Instant::now(),
+        }
+    }
+
+    fn start(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        ordinal: usize,
+        feature_name: &str,
+        step_index: i32,
+        feature_index: i32,
+    ) -> Option<Instant> {
+        if !self.enabled {
+            return None;
+        }
+        eprintln!(
+            "feature trace start: chunk=({chunk_x},{chunk_z}) ordinal={ordinal} name={feature_name} step={step_index} index={feature_index}"
+        );
+        Some(Instant::now())
+    }
+
+    fn done(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        ordinal: usize,
+        feature_name: &str,
+        step_index: i32,
+        feature_index: i32,
+        start: Instant,
+    ) {
+        eprintln!(
+            "feature trace done: chunk=({chunk_x},{chunk_z}) ordinal={ordinal} name={feature_name} step={step_index} index={feature_index} elapsed_ms={:.2}",
+            duration_ms(start.elapsed())
+        );
+    }
+
+    fn should_stop(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        ordinal: usize,
+        feature_name: &str,
+        step_index: i32,
+        feature_index: i32,
+    ) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let elapsed = self.started.elapsed();
+        let timed_out = self.timeout.is_some_and(|timeout| elapsed >= timeout);
+        let stop_after = self.stop_after.as_ref().is_some_and(|stop_after| {
+            stop_after.matches(ordinal, feature_name, step_index, feature_index)
+        });
+        if timed_out || stop_after {
+            eprintln!(
+                "feature trace stop: chunk=({chunk_x},{chunk_z}) reason={} ordinal={ordinal} name={feature_name} step={step_index} index={feature_index} elapsed_ms={:.2}",
+                if timed_out { "timeout" } else { "stop_after" },
+                duration_ms(elapsed)
+            );
+            return true;
+        }
+        false
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FeatureTraceStopAfter {
+    Name(String),
+    Ordinal(usize),
+    StepIndex { step: i32, index: i32 },
+}
+
+impl FeatureTraceStopAfter {
+    fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        if let Some((step, index)) = value.split_once(':') {
+            return Some(Self::StepIndex {
+                step: step.trim().parse().ok()?,
+                index: index.trim().parse().ok()?,
+            });
+        }
+        if let Some(ordinal) = value
+            .strip_prefix('#')
+            .and_then(|value| value.trim().parse().ok())
+        {
+            return Some(Self::Ordinal(ordinal));
+        }
+        Some(Self::Name(value.to_string()))
+    }
+
+    fn matches(&self, ordinal: usize, feature_name: &str, step_index: i32, feature_index: i32) -> bool {
+        match self {
+            Self::Name(name) => name == feature_name,
+            Self::Ordinal(stop_ordinal) => *stop_ordinal == ordinal,
+            Self::StepIndex { step, index } => *step == step_index && *index == feature_index,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct OverworldOreFeatures {
@@ -768,20 +933,21 @@ impl OverworldOreFeatures {
         let mut profile =
             log::log_enabled!(log::Level::Debug).then(FeaturePlacementProfile::default);
 
-        let trace_features = std::env::var_os("QEXED_WORLDGEN_FEATURE_TRACE").is_some();
-        let trace_stop_after = std::env::var("QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER").ok();
+        let trace = FeatureTrace::from_env();
 
-        for feature_key in self.ordered_feature_keys.iter().copied() {
-            let diagnostic_start = trace_features.then(Instant::now);
+        for (ordinal, feature_key) in self.ordered_feature_keys.iter().copied().enumerate() {
             let feature = self.feature_by_key(feature_key);
             let feature_name = feature.name();
-            if trace_features {
-                eprintln!(
-                    "feature trace start: chunk=({chunk_x},{chunk_z}) feature={feature_name} step={} index={}",
-                    feature.step_index(),
-                    feature.feature_index()
-                );
-            }
+            let step_index = feature.step_index();
+            let feature_index = feature.feature_index();
+            let diagnostic_start = trace.start(
+                chunk_x,
+                chunk_z,
+                ordinal,
+                feature_name,
+                step_index,
+                feature_index,
+            );
             let biome_filter = feature.biome_filter();
             if feature.can_spill_into_neighbor_chunk() {
                 let candidate_indexes = neighbor_sources.candidates(feature);
@@ -1060,15 +1226,24 @@ impl OverworldOreFeatures {
                 }
             }
             if let Some(start) = diagnostic_start {
-                eprintln!(
-                    "feature trace: chunk=({chunk_x},{chunk_z}) feature={feature_name} elapsed_ms={:.2}",
-                    duration_ms(start.elapsed())
+                trace.done(
+                    chunk_x,
+                    chunk_z,
+                    ordinal,
+                    feature_name,
+                    step_index,
+                    feature_index,
+                    start,
                 );
             }
-            if trace_stop_after.as_deref() == Some(feature_name) {
-                eprintln!(
-                    "feature trace stop_after: chunk=({chunk_x},{chunk_z}) feature={feature_name}"
-                );
+            if trace.should_stop(
+                chunk_x,
+                chunk_z,
+                ordinal,
+                feature_name,
+                step_index,
+                feature_index,
+            ) {
                 break;
             }
         }

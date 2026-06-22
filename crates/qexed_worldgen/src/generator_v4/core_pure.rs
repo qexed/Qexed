@@ -217,26 +217,35 @@ impl NoiseSettings {
         chunk_x: i32,
         chunk_z: i32,
     ) -> (NoiseChunkBlocks, NoiseChunkTimings) {
+        let stage_trace = WorldgenStageTrace::from_env(chunk_x, chunk_z);
         let base_start = Instant::now();
+        stage_trace.start("base");
         let (mut chunk, preliminary_surfaces) = self.generate_base_chunk(chunk_x, chunk_z);
         let base = base_start.elapsed();
+        stage_trace.done("base", base);
 
         let carvers_start = Instant::now();
+        stage_trace.start("carvers");
         self.carvers
             .carve_chunk(self, chunk_x, chunk_z, &preliminary_surfaces, &mut chunk);
         let carvers = carvers_start.elapsed();
+        stage_trace.done("carvers", carvers);
 
         self.feature_source_cache
             .insert_generated(chunk_x, chunk_z, chunk.clone());
 
         let features_start = Instant::now();
+        stage_trace.start("features");
         self.ore_features
             .place_chunk(self, chunk_x, chunk_z, &mut chunk);
         let features = features_start.elapsed();
+        stage_trace.done("features", features);
 
         let heightmap_start = Instant::now();
+        stage_trace.start("heightmap");
         chunk.recompute_first_available_heights(self.min_y, self.height);
         let heightmap = heightmap_start.elapsed();
+        stage_trace.done("heightmap", heightmap);
 
         log_feature_source_cache_snapshot(
             chunk_x,
