@@ -36,7 +36,7 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const INITIAL_CHUNK_RADIUS: i32 = 0;
-const CHUNK_SYNC_BATCH_LIMIT: usize = 4;
+const CHUNK_SYNC_BATCH_LIMIT: usize = 16;
 const CHUNK_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const CHUNK_UNLOAD_DELAY: Duration = Duration::from_secs(4);
 static SERVER_SESSION_ID: std::sync::OnceLock<uuid::Uuid> = std::sync::OnceLock::new();
@@ -681,6 +681,7 @@ async fn enter_play(
         spawn_chunk_z,
         INITIAL_CHUNK_RADIUS,
         None,
+        InitialChunkMode::FastVisible,
         qexed_world::ChunkSyncCause::InitialLogin,
     )
     .await?;
@@ -759,9 +760,16 @@ async fn sync_player_chunk_position(
         chunk_z,
         chunk_view.radius(),
         Some(CHUNK_SYNC_BATCH_LIMIT),
+        InitialChunkMode::GenerateMissing,
         qexed_world::ChunkSyncCause::PlayerMove,
     )
     .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitialChunkMode {
+    FastVisible,
+    GenerateMissing,
 }
 
 async fn send_chunk_window(
@@ -772,6 +780,7 @@ async fn send_chunk_window(
     center_chunk_z: i32,
     radius: i32,
     max_new_chunks: Option<usize>,
+    initial_mode: InitialChunkMode,
     cause: qexed_world::ChunkSyncCause,
 ) -> anyhow::Result<()> {
     let mut count = 0;
@@ -810,17 +819,21 @@ async fn send_chunk_window(
             target_chunks.remove(&(chunk_x, chunk_z));
             continue;
         }
-        let worldgen_client = None;
-        let load = runtime
-            .world
-            .ensure_network_chunk_with_event(
-                runtime.local_worldgen.as_deref(),
-                worldgen_client,
-                &dimension,
-                chunk_x,
-                chunk_z,
-            )
-            .await?;
+        let load = if initial_mode == InitialChunkMode::FastVisible {
+            fast_initial_chunk_load(runtime, &dimension, chunk_x, chunk_z)?
+        } else {
+            let worldgen_client = None;
+            runtime
+                .world
+                .ensure_network_chunk_with_event(
+                    runtime.local_worldgen.as_deref(),
+                    worldgen_client,
+                    &dimension,
+                    chunk_x,
+                    chunk_z,
+                )
+                .await?
+        };
         loaded.push(qexed_world::ChunkLoadEvent::new(
             chunk_x,
             chunk_z,
@@ -868,6 +881,25 @@ async fn send_chunk_window(
     log_chunk_sync_event(&sync_event);
     fire_chunk_sync_events(&sync_event).await;
     Ok(())
+}
+
+fn fast_initial_chunk_load(
+    runtime: &crate::bootstrap::RuntimeConfig,
+    dimension: &qexed_save::DimensionId,
+    chunk_x: i32,
+    chunk_z: i32,
+) -> anyhow::Result<qexed_world::NetworkChunkLoad> {
+    if let Some(chunk) = runtime.world.network_chunk(dimension, chunk_x, chunk_z)? {
+        return Ok(qexed_world::NetworkChunkLoad {
+            chunk,
+            source: qexed_world::NetworkChunkLoadSource::Saved,
+        });
+    }
+
+    Ok(qexed_world::NetworkChunkLoad {
+        chunk: qexed_world::empty_chunk_packet(chunk_x, chunk_z)?,
+        source: qexed_world::NetworkChunkLoadSource::EmptyFallback,
+    })
 }
 
 async fn fire_chunk_sync_events(event: &qexed_world::ChunkSyncEvent) {
@@ -1170,6 +1202,7 @@ async fn sustain_play_connection(
                         center_chunk_z,
                         radius,
                         Some(CHUNK_SYNC_BATCH_LIMIT),
+                        InitialChunkMode::GenerateMissing,
                         qexed_world::ChunkSyncCause::CompletionTick,
                     )
                     .await?;
@@ -1728,6 +1761,22 @@ mod tests {
             leaving_chunks,
             vec![(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1)]
         );
+    }
+
+    #[test]
+    fn fast_initial_chunk_load_falls_back_without_generation() {
+        let mut config = runtime_config();
+        let _temp = attach_temp_save(&mut config);
+        let dimension = qexed_save::DimensionId::overworld();
+
+        let load = super::fast_initial_chunk_load(&config, &dimension, 3, -2).unwrap();
+
+        assert_eq!(
+            load.source,
+            qexed_world::NetworkChunkLoadSource::EmptyFallback
+        );
+        assert_eq!(load.chunk.chunk_x, 3);
+        assert_eq!(load.chunk.chunk_z, -2);
     }
 
     #[tokio::test]
