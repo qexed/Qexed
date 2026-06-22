@@ -86,6 +86,11 @@ impl PlacedMonsterRoomFeature {
                 );
                 continue;
             }
+            if self.config.known_chunk_prevents_place(
+                settings, origin_x, origin_z, chunk, world_x, world_y, world_z, shape,
+            ) {
+                continue;
+            }
 
             let (min_x, max_x, min_z, max_z) = shape.bounds(world_x, world_z);
             let context_start = Instant::now();
@@ -218,6 +223,7 @@ impl PlacedMonsterRoomFeature {
         target_chunk: &NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) -> bool {
+        let mut checked_overlapping_attempt = false;
         for _ in 0..self.count.sample(random) {
             let world_x = source_origin_x + random.next_int(16);
             let world_z = source_origin_z + random.next_int(16);
@@ -231,8 +237,9 @@ impl PlacedMonsterRoomFeature {
 
             let shape = self.config.sample_shape(random);
             if !shape.overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
-                return false;
+                continue;
             }
+            checked_overlapping_attempt = true;
             if !self.config.known_chunk_prevents_place(
                 settings,
                 target_origin_x,
@@ -247,7 +254,7 @@ impl PlacedMonsterRoomFeature {
             }
         }
 
-        true
+        checked_overlapping_attempt
     }
 
     #[allow(clippy::too_many_arguments)]

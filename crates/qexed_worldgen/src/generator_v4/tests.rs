@@ -3956,6 +3956,135 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_monster_room_target_precheck_ignores_non_overlapping_attempts() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|_| air.clone())
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+        let target = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let feature = &settings.ore_features.monster_rooms[0];
+        let mut seed = None;
+        for candidate in 0..2_000 {
+            let mut random = FeatureRandom::new(candidate);
+            let mut saw_miss_before_hit = false;
+            for _ in 0..feature.count.sample(&mut random) {
+                let world_x = random.next_int(16);
+                let world_z = random.next_int(16);
+                let world_y = feature.height.sample(&settings, &mut random);
+                if !feature
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+                {
+                    continue;
+                }
+                let shape = feature.config.sample_shape(&mut random);
+                if shape.overlaps_chunk(world_x, world_z, 16, 0) {
+                    if saw_miss_before_hit {
+                        seed = Some(candidate);
+                        break;
+                    }
+                } else {
+                    saw_miss_before_hit = true;
+                }
+            }
+            if seed.is_some() {
+                break;
+            }
+        }
+        let seed = seed.expect("seed range should include a miss followed by prevented overlap");
+        let mut random = FeatureRandom::new(seed);
+
+        assert!(feature.target_precheck_prevents_spillover(
+            &settings,
+            0,
+            0,
+            16,
+            0,
+            &target,
+            &mut random,
+        ));
+    }
+
+    #[test]
+    fn vanilla_noise_monster_room_local_precheck_skips_neighbor_load_when_current_chunk_prevents_place(
+    ) {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let air = BlockLayer::new("minecraft:air");
+        let columns = (0..HEIGHTMAP_ENTRY_COUNT)
+            .map(|_| NoiseColumnBlocks {
+                blocks: (settings.min_y..settings.min_y + settings.height)
+                    .map(|_| air.clone())
+                    .collect(),
+                first_available_height: settings.height,
+            })
+            .collect();
+        let mut chunk = NoiseChunkBlocks {
+            columns,
+            biomes: Vec::new(),
+            block_entities: Vec::new(),
+        };
+        let feature = &settings.ore_features.monster_rooms[0];
+        let mut seed = None;
+        for candidate in 0..2_000 {
+            let mut random = FeatureRandom::new(candidate);
+            for _ in 0..feature.count.sample(&mut random) {
+                let world_x = random.next_int(16);
+                let world_z = random.next_int(16);
+                let world_y = feature.height.sample(&settings, &mut random);
+                if !feature
+                    .biome_filter
+                    .allows_at(&settings.density, world_x, world_y, world_z)
+                {
+                    continue;
+                }
+                let shape = feature.config.sample_shape(&mut random);
+                if !shape.fits_chunk(world_x, world_z, 0, 0)
+                    && feature.config.known_chunk_prevents_place(
+                        &settings, 0, 0, &chunk, world_x, world_y, world_z, shape,
+                    )
+                {
+                    seed = Some(candidate);
+                    break;
+                }
+            }
+            if seed.is_some() {
+                break;
+            }
+        }
+        let seed = seed.expect("seed range should include a prevented cross-boundary room");
+        let mut random = FeatureRandom::new(seed);
+        let mut neighbor_sources = NeighborFeatureSources::new(12345, 0, 0);
+        let mut profile = None;
+
+        feature.place_with_lazy_neighbors(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            &mut random,
+            &mut neighbor_sources,
+            &mut profile,
+            "monster_room",
+        );
+
+        assert!(neighbor_sources
+            .entries
+            .iter()
+            .filter_map(Option::as_ref)
+            .all(|source| source.chunk.is_none()));
+    }
+
+    #[test]
     fn vanilla_noise_glow_lichen_places_on_air_or_water_next_to_rock() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let stone = BlockLayer::new("minecraft:stone");
