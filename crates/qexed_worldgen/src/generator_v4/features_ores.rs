@@ -1690,9 +1690,19 @@ impl OreFeatureConfig {
         let mut tested =
             vec![false; shape.tested_size_x * shape.tested_size_y * shape.tested_size_z];
         let mut placed = false;
-        for sphere in shape.spheres.iter().copied() {
+        for (sphere_index, sphere) in shape.spheres.iter().copied().enumerate() {
             let [x, y, z, radius] = sphere;
             if radius < 0.0 {
+                self.trace_shape_sphere_at_target(
+                    settings,
+                    chunk_min_x,
+                    chunk_min_z,
+                    chunk,
+                    shape,
+                    sphere_index,
+                    sphere,
+                    None,
+                );
                 continue;
             }
 
@@ -1709,6 +1719,16 @@ impl OreFeatureConfig {
             if min_x > max_x || min_z > max_z {
                 continue;
             }
+            self.trace_shape_sphere_at_target(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                shape,
+                sphere_index,
+                sphere,
+                Some((min_x, max_x, min_y, max_y, min_z, max_z)),
+            );
 
             for world_x in min_x..=max_x {
                 let xd = (world_x as f64 + 0.5 - x) / radius;
@@ -1735,6 +1755,18 @@ impl OreFeatureConfig {
                         let tested_index = tested_x
                             + tested_y * shape.tested_stride_x
                             + tested_z * shape.tested_stride_x * shape.tested_stride_y;
+                        self.trace_tested_bit_at_target(
+                            settings,
+                            chunk_min_x,
+                            chunk_min_z,
+                            chunk,
+                            world_x,
+                            world_y,
+                            world_z,
+                            sphere_index,
+                            tested_index,
+                            tested[tested_index],
+                        );
                         if !tested[tested_index] {
                             tested[tested_index] = true;
                         } else {
@@ -1761,6 +1793,152 @@ impl OreFeatureConfig {
         }
 
         placed
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn trace_shape_sphere_at_target(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        shape: &OreBlobShape,
+        sphere_index: usize,
+        sphere: [f64; 4],
+        bounds: Option<(i32, i32, i32, i32, i32, i32)>,
+    ) {
+        let Some(target) = FeatureWriteTraceTarget::from_env() else {
+            return;
+        };
+        if !self.trace_context_is_target_attempt() {
+            return;
+        }
+
+        let [x, y, z, radius] = sphere;
+        let inside = bounds.is_some_and(|(min_x, max_x, min_y, max_y, min_z, max_z)| {
+            if target.x < min_x
+                || target.x > max_x
+                || target.y < min_y
+                || target.y > max_y
+                || target.z < min_z
+                || target.z > max_z
+                || radius <= 0.0
+            {
+                return false;
+            }
+            let xd = (target.x as f64 + 0.5 - x) / radius;
+            let yd = (target.y as f64 + 0.5 - y) / radius;
+            let zd = (target.z as f64 + 0.5 - z) / radius;
+            xd * xd < 1.0 && xd * xd + yd * yd < 1.0 && xd * xd + yd * yd + zd * zd < 1.0
+        });
+        let target_index = if target.x >= shape.min_box_x
+            && target.y >= shape.min_box_y
+            && target.z >= shape.min_box_z
+        {
+            Some(
+                (target.x - shape.min_box_x) as usize
+                    + (target.y - shape.min_box_y) as usize * shape.tested_stride_x
+                    + (target.z - shape.min_box_z) as usize
+                        * shape.tested_stride_x
+                        * shape.tested_stride_y,
+            )
+        } else {
+            None
+        };
+        let previous = local_coords(target.x, target.z, chunk_min_x, chunk_min_z).and_then(
+            |(local_x, local_z)| chunk.layer(local_x, target.y, local_z, settings.min_y),
+        );
+        let target_predicate = previous
+            .and_then(|layer| {
+                self.targets
+                    .iter()
+                    .find(|target| target.predicate.matches(layer))
+                    .map(|target| format!("{:?}", target.predicate))
+            })
+            .unwrap_or_else(|| "none".to_string());
+        let previous = previous
+            .map(|layer| layer.block.as_ref())
+            .unwrap_or("outside_or_missing");
+        let bounds = bounds
+            .map(|(min_x, max_x, min_y, max_y, min_z, max_z)| {
+                format!("x={min_x}..{max_x} y={min_y}..{max_y} z={min_z}..{max_z}")
+            })
+            .unwrap_or_else(|| "culled".to_string());
+
+        eprintln!(
+            "ore blob trace sphere: target=({},{},{}) sphere={} center=({:.6},{:.6},{:.6}) radius={:.6} bounds={} contains_target={} target_bit={:?} tested_dims=({}, {}, {}) tested_strides=({}, {}) previous={} target_predicate={}",
+            target.x,
+            target.y,
+            target.z,
+            sphere_index,
+            x,
+            y,
+            z,
+            radius,
+            bounds,
+            inside,
+            target_index,
+            shape.tested_size_x,
+            shape.tested_size_y,
+            shape.tested_size_z,
+            shape.tested_stride_x,
+            shape.tested_stride_y,
+            previous,
+            target_predicate
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn trace_tested_bit_at_target(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        sphere_index: usize,
+        tested_index: usize,
+        tested_before: bool,
+    ) {
+        if !FeatureWriteTraceTarget::from_env()
+            .is_some_and(|target| target.matches(world_x, world_y, world_z))
+            || !self.trace_context_is_target_attempt()
+        {
+            return;
+        }
+
+        let previous = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+            .and_then(|(local_x, local_z)| chunk.layer(local_x, world_y, local_z, settings.min_y));
+        let target_predicate = previous
+            .and_then(|layer| {
+                self.targets
+                    .iter()
+                    .find(|target| target.predicate.matches(layer))
+                    .map(|target| format!("{:?}", target.predicate))
+            })
+            .unwrap_or_else(|| "none".to_string());
+        let previous = previous
+            .map(|layer| layer.block.as_ref())
+            .unwrap_or("outside_or_missing");
+        eprintln!(
+            "ore blob trace target bit: coord=({world_x},{world_y},{world_z}) sphere={} tested_index={} tested_before={} previous={} target_predicate={}",
+            sphere_index, tested_index, tested_before, previous, target_predicate
+        );
+    }
+
+    fn trace_context_is_target_attempt(&self) -> bool {
+        FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+            current.borrow().as_ref().is_some_and(|context| {
+                context.feature_name == "ore_gravel"
+                    && context.step_index == 6
+                    && context.feature_index == 1
+                    && context.phase == "local"
+                    && context.attempt == Some(3)
+                    && context.attempt_origin == Some((8, -62, 8))
+            })
+        })
     }
 
     fn sample_blob_prefix(
