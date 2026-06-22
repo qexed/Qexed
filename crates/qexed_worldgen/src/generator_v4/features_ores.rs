@@ -1554,6 +1554,8 @@ struct OreBlobPrefix {
     tested_size_x: usize,
     tested_size_y: usize,
     tested_size_z: usize,
+    tested_stride_x: usize,
+    tested_stride_y: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1565,6 +1567,8 @@ struct OreBlobShape {
     tested_size_x: usize,
     tested_size_y: usize,
     tested_size_z: usize,
+    tested_stride_x: usize,
+    tested_stride_y: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1728,9 +1732,9 @@ impl OreFeatureConfig {
                         let tested_x = (world_x - shape.min_box_x) as usize;
                         let tested_y = (world_y - shape.min_box_y) as usize;
                         let tested_z = (world_z - shape.min_box_z) as usize;
-                        let tested_index =
-                            (tested_x * shape.tested_size_y + tested_y) * shape.tested_size_z
-                                + tested_z;
+                        let tested_index = tested_x
+                            + tested_y * shape.tested_stride_x
+                            + tested_z * shape.tested_stride_x * shape.tested_stride_y;
                         if !tested[tested_index] {
                             tested[tested_index] = true;
                         } else {
@@ -1787,6 +1791,8 @@ impl OreFeatureConfig {
             tested_size_x: (2 * (spread_xy_ceil + precheck_radius) + 1) as usize,
             tested_size_y: (2 * (2 + precheck_radius) + 1) as usize,
             tested_size_z: (2 * (spread_xy_ceil + precheck_radius) + 1) as usize,
+            tested_stride_x: (2 * (spread_xy_ceil + precheck_radius)) as usize,
+            tested_stride_y: (2 * (2 + precheck_radius)) as usize,
         }
     }
 
@@ -1839,6 +1845,8 @@ impl OreFeatureConfig {
             tested_size_x: prefix.tested_size_x,
             tested_size_y: prefix.tested_size_y,
             tested_size_z: prefix.tested_size_z,
+            tested_stride_x: prefix.tested_stride_x,
+            tested_stride_y: prefix.tested_stride_y,
         }
     }
 
@@ -2112,7 +2120,7 @@ fn is_adjacent_to_air_with_neighbor(
 
 fn mth_sin(value: f32) -> f32 {
     let index = (value * 10_430.378_f32) as i32 & 65_535;
-    (index as f32 * std::f32::consts::TAU / 65_536.0).sin()
+    ((index as f64 * std::f64::consts::TAU) / 65_536.0).sin() as f32
 }
 
 fn mth_cos(value: f32) -> f32 {
