@@ -2072,12 +2072,7 @@ impl PlacedUndergroundFeature<'_> {
     }
 
     fn can_precheck_spillover_without_source(self) -> bool {
-        !matches!(
-            self,
-            Self::Surface(_)
-                | Self::Ore(_)
-                | Self::BlockColumn(_)
-        )
+        !matches!(self, Self::Surface(_) | Self::BlockColumn(_))
     }
 
     fn may_spill_from_seed(

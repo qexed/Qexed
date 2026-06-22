@@ -75,6 +75,14 @@ impl PlacedOreFeature {
                 continue;
             }
             let mut replay_random = random.clone();
+            let mut spill_random = replay_random.clone();
+            let reaches_target =
+                self.ore
+                    .may_spill_into(target_origin_x, target_origin_z, &mut spill_random, x, y, z);
+            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
+                self.ore.consume_shape_random(random);
+                continue;
+            }
             self.ore.place_with_neighbor(
                 settings,
                 source_origin_x,
@@ -86,17 +94,19 @@ impl PlacedOreFeature {
                 y,
                 z,
             );
-            self.ore.place_with_neighbor(
-                settings,
-                target_origin_x,
-                target_origin_z,
-                target_chunk,
-                Some((source_origin_x, source_origin_z, &*source_chunk)),
-                &mut replay_random,
-                x,
-                y,
-                z,
-            );
+            if reaches_target {
+                self.ore.place_with_neighbor(
+                    settings,
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    Some((source_origin_x, source_origin_z, &*source_chunk)),
+                    &mut replay_random,
+                    x,
+                    y,
+                    z,
+                );
+            }
         }
     }
 
@@ -1768,6 +1778,19 @@ impl OreFeatureConfig {
             false
         } else {
             random.next_float() >= self.discard_chance_on_air_exposure
+        }
+    }
+
+    fn can_skip_non_spilling_blob_replay(&self) -> bool {
+        self.discard_chance_on_air_exposure <= 0.0
+    }
+
+    fn consume_shape_random(&self, random: &mut FeatureRandom) {
+        let _direction = random.next_float();
+        let _y0 = random.next_int(3);
+        let _y1 = random.next_int(3);
+        for _ in 0..self.size {
+            let _radius_noise = random.next_double();
         }
     }
 
