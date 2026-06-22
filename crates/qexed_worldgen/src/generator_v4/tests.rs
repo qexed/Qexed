@@ -307,6 +307,20 @@ mod tests {
                 let mut random = FeatureRandom::for_feature(decoration_seed, 1, 6);
                 let mut source = surface_test_chunk(&settings, settings.min_y + settings.height - 1, "minecraft:deepslate");
                 let mut target = surface_test_chunk(&settings, settings.min_y + settings.height - 1, "minecraft:deepslate");
+                source.set_layer(
+                    5,
+                    -63,
+                    4,
+                    settings.min_y,
+                    BlockLayer::with_properties("minecraft:deepslate", &[("axis", "y")]),
+                );
+                target.set_layer(
+                    5,
+                    -63,
+                    4,
+                    settings.min_y,
+                    BlockLayer::with_properties("minecraft:deepslate", &[("axis", "y")]),
+                );
 
                 if source_chunk_x == 0 && source_chunk_z == 0 {
                     ore.place(
