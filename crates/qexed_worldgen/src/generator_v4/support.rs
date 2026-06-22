@@ -493,6 +493,10 @@ fn can_lake_replace_block(layer: &BlockLayer) -> bool {
     can_feature_replace_block(layer)
 }
 
+fn can_lava_lake_barrier_replace_block(layer: &BlockLayer) -> bool {
+    can_feature_replace_block(layer) && !is_leaf_layer(layer) && !is_log_layer(layer)
+}
+
 fn local_coord(world: i32, origin: i32) -> Option<usize> {
     let local = world - origin;
     (0..16).contains(&local).then_some(local as usize)

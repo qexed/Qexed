@@ -324,7 +324,7 @@ impl LakeFeatureConfig {
                     };
                     if chunk
                         .layer(local_x, world_y, local_z, settings.min_y)
-                        .is_some_and(is_full_solid_layer)
+                        .is_some_and(can_lava_lake_barrier_replace_block)
                     {
                         chunk.set_layer(
                             local_x,
@@ -636,7 +636,7 @@ impl LakeFeatureConfig {
                         world_z,
                         settings.min_y,
                     )
-                    .is_some_and(is_full_solid_layer)
+                    .is_some_and(can_lava_lake_barrier_replace_block)
                     {
                         set_lake_block_in_context(
                             settings,

@@ -63,6 +63,8 @@ const AQUIFER_FLOODEDNESS_AMPLITUDES: [f64; 1] = [1.0];
 const AQUIFER_SPREAD_AMPLITUDES: [f64; 1] = [1.0];
 const AQUIFER_LAVA_AMPLITUDES: [f64; 1] = [1.0];
 const AQUIFER_BARRIER_AMPLITUDES: [f64; 1] = [1.0];
+const OVERWORLD_AQUIFER_GLOBAL_LAVA_LEVEL: i32 = -54;
+const OVERWORLD_AQUIFER_RANDOM_LAVA_MAX_LEVEL: i32 = -10;
 const ORE_VEININESS_AMPLITUDES: [f64; 1] = [1.0];
 const ORE_VEIN_RIDGE_AMPLITUDES: [f64; 1] = [1.0];
 const ORE_GAP_AMPLITUDES: [f64; 1] = [1.0];
@@ -1510,7 +1512,7 @@ impl OverworldAquifer {
     fn global_status(&self, block_y: i32) -> FluidStatus {
         if block_y < self.global_lava_cutoff() {
             FluidStatus {
-                level: -54,
+                level: OVERWORLD_AQUIFER_GLOBAL_LAVA_LEVEL,
                 fluid: AquiferFluid::Lava,
             }
         } else {
@@ -1571,7 +1573,7 @@ impl OverworldAquifer {
     }
 
     fn global_lava_cutoff(&self) -> i32 {
-        self.sea_level.min(-54)
+        self.sea_level.min(OVERWORLD_AQUIFER_GLOBAL_LAVA_LEVEL)
     }
 
     fn fluid_surface_level(
@@ -1634,7 +1636,9 @@ impl OverworldAquifer {
         global_fluid: AquiferFluid,
         fluid_level: i32,
     ) -> AquiferFluid {
-        if fluid_level > -10 || matches!(global_fluid, AquiferFluid::Lava) {
+        if fluid_level > OVERWORLD_AQUIFER_RANDOM_LAVA_MAX_LEVEL
+            || matches!(global_fluid, AquiferFluid::Lava)
+        {
             return global_fluid;
         }
 

@@ -975,7 +975,7 @@ impl NoiseSettings {
         )
     }
 
-    fn feature_source_chunk(&self, chunk_x: i32, chunk_z: i32) -> NoiseChunkBlocks {
+    fn feature_source_chunk(&self, chunk_x: i32, chunk_z: i32) -> Arc<NoiseChunkBlocks> {
         self.feature_source_cache
             .get_or_insert_with(chunk_x, chunk_z, || {
                 let (mut chunk, preliminary_surfaces) = self.generate_base_chunk(chunk_x, chunk_z);

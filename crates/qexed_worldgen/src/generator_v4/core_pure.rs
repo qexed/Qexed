@@ -356,10 +356,10 @@ impl NoiseSettings {
                 let local_y = ((cell / 4) % 4) as i32;
                 let local_z = (cell % 4) as i32;
                 let section_y = WORLD_MIN_SECTION_Y + section_offset as i32;
-                let world_x = chunk_x * 16 + local_x * 4;
-                let world_y = section_y * SECTION_HEIGHT + local_y * 4;
-                let world_z = chunk_z * 16 + local_z * 4;
-                self.density.biome(world_x, world_y, world_z)
+                let quart_x = chunk_x * 4 + local_x;
+                let quart_y = section_y * 4 + local_y;
+                let quart_z = chunk_z * 4 + local_z;
+                self.density.biome_at_quart(quart_x, quart_y, quart_z)
             })
             .collect()
     }
@@ -522,6 +522,16 @@ impl NoiseSettings {
         if density > 0.0 {
             if self.surface_rules.is_bedrock_floor(x, y, z, self.min_y) {
                 return self.bedrock_block.clone();
+            }
+
+            if y < surface_height - 8 {
+                return if self.surface_rules.is_deepslate(x, y, z) {
+                    self.ore_vein_at(x, y, z)
+                        .unwrap_or_else(|| self.deepslate_block.clone())
+                } else {
+                    self.ore_vein_at(x, y, z)
+                        .unwrap_or_else(|| self.default_block.clone())
+                };
             }
 
             let biome = self.density.biome(x, y, z);

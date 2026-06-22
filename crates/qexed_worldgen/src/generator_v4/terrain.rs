@@ -25,8 +25,16 @@ impl TerrainDensity {
         self.terrain_noise.preliminary_surface_height(profile, x, z)
     }
 
+    fn biome_at_block(&self, x: i32, y: i32, z: i32) -> &'static str {
+        self.terrain_noise.biome_at_block(x, y, z)
+    }
+
     fn biome(&self, x: i32, y: i32, z: i32) -> &'static str {
-        self.terrain_noise.biome(x, y, z)
+        self.biome_at_block(x, y, z)
+    }
+
+    fn biome_at_quart(&self, x: i32, y: i32, z: i32) -> &'static str {
+        self.terrain_noise.biome_at_quart(x, y, z)
     }
 
     fn surface_height(
