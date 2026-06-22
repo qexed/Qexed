@@ -1465,10 +1465,10 @@ fn sample_chunk_biomes(density: &TerrainDensity, chunk_x: i32, chunk_z: i32) -> 
         for local_y in 0..4 {
             for local_x in 0..4 {
                 for local_z in 0..4 {
-                    let world_x = chunk_x * 16 + local_x * 4;
-                    let world_y = section_y * SECTION_HEIGHT + local_y * 4;
-                    let world_z = chunk_z * 16 + local_z * 4;
-                    let biome = density.biome(world_x, world_y, world_z);
+                    let quart_x = chunk_x * 4 + local_x;
+                    let quart_y = section_y * 4 + local_y;
+                    let quart_z = chunk_z * 4 + local_z;
+                    let biome = density.biome_at_quart(quart_x, quart_y, quart_z);
                     if !biomes.contains(&biome) {
                         biomes.push(biome);
                     }
