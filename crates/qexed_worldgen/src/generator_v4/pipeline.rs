@@ -106,14 +106,21 @@ mod tests {
         }
 
         let chunks = chunks as f64;
+        let cache = settings.feature_source_cache.snapshot();
         eprintln!(
-            "worldgen v4 perf smoke: chunks={}, avg_total_ms={:.2}, avg_base_ms={:.2}, avg_carvers_ms={:.2}, avg_features_ms={:.2}, avg_heightmap_ms={:.2}",
+            "worldgen v4 perf smoke: chunks={}, avg_total_ms={:.2}, avg_base_ms={:.2}, avg_carvers_ms={:.2}, avg_features_ms={:.2}, avg_heightmap_ms={:.2}, cache_len={}, cache_hits={}, cache_misses={}, cache_waits={}, cache_evictions={}, generated_inserts={}",
             chunks as u32,
             duration_ms(total) / chunks,
             duration_ms(timings.base) / chunks,
             duration_ms(timings.carvers) / chunks,
             duration_ms(timings.features) / chunks,
             duration_ms(timings.heightmap) / chunks,
+            cache.len,
+            cache.hits,
+            cache.misses,
+            cache.waits,
+            cache.evictions,
+            cache.generated_inserts,
         );
     }
 }

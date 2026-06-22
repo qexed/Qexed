@@ -4,6 +4,13 @@ use qexed_nbt::Tag;
 
 use crate::types::ChunkComparison;
 pub fn compare_chunk_nbt(expected: &Tag, actual: &Tag) -> ChunkComparison {
+    if expected == actual {
+        return ChunkComparison {
+            equal: true,
+            differences: Vec::new(),
+        };
+    }
+
     let mut differences = Vec::new();
     compare_chunk_blocks(expected, actual, &mut differences);
     compare_tag("$", expected, actual, &mut differences);
@@ -30,10 +37,10 @@ fn compare_chunk_blocks(expected: &Tag, actual: &Tag, differences: &mut Vec<Stri
         let Some(actual_section) = actual_sections.get(section_y) else {
             continue;
         };
-        let Ok(expected_blocks) = section_blocks(expected_section) else {
+        let Ok(expected_blocks) = section_block_indices(expected_section) else {
             continue;
         };
-        let Ok(actual_blocks) = section_blocks(actual_section) else {
+        let Ok(actual_blocks) = section_block_indices(actual_section) else {
             continue;
         };
         for index in 0..expected_blocks.len().min(actual_blocks.len()) {
@@ -44,9 +51,11 @@ fn compare_chunk_blocks(expected: &Tag, actual: &Tag, differences: &mut Vec<Stri
             let local_z = (index / 16) % 16;
             let local_y = index / 256;
             let world_y = section_y * 16 + local_y as i32;
+            let expected_name = block_name_at_index(expected_section, expected_blocks[index]);
+            let actual_name = block_name_at_index(actual_section, actual_blocks[index]);
             differences.push(format!(
                 "$.blocks[{local_x},{world_y},{local_z}]: expected={} actual={}",
-                expected_blocks[index], actual_blocks[index]
+                expected_name, actual_name
             ));
             if differences.len() >= 16 {
                 return;
@@ -83,6 +92,28 @@ fn section_blocks(section: &HashMap<String, Tag>) -> anyhow::Result<Vec<String>>
                 .unwrap_or_else(|| format!("<palette:{index}>"))
         })
         .collect())
+}
+
+fn section_block_indices(section: &HashMap<String, Tag>) -> anyhow::Result<Vec<usize>> {
+    let container = section
+        .get("block_states")
+        .and_then(compound)
+        .ok_or_else(|| anyhow::anyhow!("missing block_states"))?;
+    let palette_len = list_items(container.get("palette"))
+        .unwrap_or_default()
+        .len();
+    paletted_values(container.get("data"), palette_len, 4096, true)
+}
+
+fn block_name_at_index(section: &HashMap<String, Tag>, index: usize) -> String {
+    section
+        .get("block_states")
+        .and_then(compound)
+        .and_then(|container| list_items(container.get("palette")))
+        .and_then(|palette| palette.get(index))
+        .and_then(compound)
+        .map(block_palette_name)
+        .unwrap_or_else(|| format!("<palette:{index}>"))
 }
 
 fn block_palette(container: &HashMap<String, Tag>) -> Vec<String> {
@@ -427,6 +458,7 @@ mod oracle_diagnostics {
         fs::File,
         io::{Read, Seek, SeekFrom},
         path::Path,
+        time::{Duration, Instant},
     };
 
     use flate2::read::{GzDecoder, ZlibDecoder};
@@ -510,6 +542,57 @@ mod oracle_diagnostics {
         for difference in comparison.differences.iter().take(32) {
             println!("{difference}");
         }
+    }
+
+    #[test]
+    #[ignore = "manual oracle compare perf diagnostic"]
+    fn dump_oracle_compare_perf() {
+        let mut read_total = Duration::ZERO;
+        let mut generate_total = Duration::ZERO;
+        let mut compare_total = Duration::ZERO;
+        let mut compared = 0_usize;
+        let mut unequal = 0_usize;
+
+        for seed in available_oracle_seeds().expect("list oracle seeds") {
+            for &(chunk_x, chunk_z) in ORACLE_SCAN_CHUNKS {
+                let region_path = oracle_region_path(seed, chunk_x, chunk_z);
+                if !region_path.exists() {
+                    continue;
+                }
+
+                let read_start = Instant::now();
+                let expected =
+                    read_region_chunk(&region_path, chunk_x, chunk_z).expect("read oracle chunk");
+                read_total += read_start.elapsed();
+
+                let generate_start = Instant::now();
+                let actual =
+                    crate::generator_v4::generate_overworld_chunk_nbt(seed, chunk_x, chunk_z)
+                        .expect("generate local chunk");
+                generate_total += generate_start.elapsed();
+
+                let compare_start = Instant::now();
+                let comparison = compare_chunk_nbt(&expected, &actual);
+                compare_total += compare_start.elapsed();
+
+                compared += 1;
+                unequal += usize::from(!comparison.equal);
+            }
+        }
+
+        if compared == 0 {
+            println!("oracle compare perf: no oracle chunks found");
+            return;
+        }
+
+        let count = compared as f64;
+        println!(
+            "oracle compare perf: chunks={compared}, unequal={unequal}, avg_read_ms={:.2}, avg_generate_ms={:.2}, avg_compare_ms={:.2}, total_compare_ms={:.2}",
+            duration_ms(read_total) / count,
+            duration_ms(generate_total) / count,
+            duration_ms(compare_total) / count,
+            duration_ms(compare_total),
+        );
     }
 
     fn first_oracle_diff() -> anyhow::Result<Option<OracleDiffCase>> {
@@ -643,6 +726,10 @@ mod oracle_diagnostics {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/worldgen-oracle")
             .join(qexed_config::MC_VERSION)
+    }
+
+    fn duration_ms(duration: Duration) -> f64 {
+        duration.as_secs_f64() * 1000.0
     }
 
     fn print_gravel_summary(label: &str, root: &Tag) {

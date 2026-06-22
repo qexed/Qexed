@@ -769,6 +769,8 @@ impl OverworldOreFeatures {
             log::log_enabled!(log::Level::Debug).then(FeaturePlacementProfile::default);
 
         for feature_key in self.ordered_feature_keys.iter().copied() {
+            let diagnostic_start = std::env::var_os("QEXED_WORLDGEN_FEATURE_TRACE")
+                .map(|_| Instant::now());
             let feature = self.feature_by_key(feature_key);
             let feature_name = feature.name();
             let biome_filter = feature.biome_filter();
@@ -1048,6 +1050,12 @@ impl OverworldOreFeatures {
                     profile.record(feature_name, FeatureProfilePhase::Local, local_elapsed);
                 }
             }
+            if let Some(start) = diagnostic_start {
+                eprintln!(
+                    "feature trace: chunk=({chunk_x},{chunk_z}) feature={feature_name} elapsed_ms={:.2}",
+                    duration_ms(start.elapsed())
+                );
+            }
         }
 
         if let Some(profile) = profile {
@@ -1156,6 +1164,7 @@ impl FeatureSourceCache {
     fn insert_generated(&self, chunk_x: i32, chunk_z: i32, chunk: NoiseChunkBlocks) {
         let key = (chunk_x, chunk_z);
         let mut inner = self.inner.lock().expect("feature source cache poisoned");
+        inner.stats.generated_inserts += 1;
         inner.insert(key, Arc::new(chunk));
     }
 
@@ -1170,14 +1179,17 @@ impl FeatureSourceCache {
             let mut inner = self.inner.lock().expect("feature source cache poisoned");
             loop {
                 if let Some(chunk) = inner.chunks.get(&key).cloned() {
+                    inner.stats.hits += 1;
                     inner.touch(key);
                     return chunk;
                 }
 
                 if inner.in_progress.insert(key) {
+                    inner.stats.misses += 1;
                     break;
                 }
 
+                inner.stats.waits += 1;
                 inner = self
                     .ready
                     .wait(inner)
@@ -1192,6 +1204,19 @@ impl FeatureSourceCache {
         self.ready.notify_all();
         chunk
     }
+
+    fn snapshot(&self) -> FeatureSourceCacheSnapshot {
+        let inner = self.inner.lock().expect("feature source cache poisoned");
+        FeatureSourceCacheSnapshot {
+            len: inner.chunks.len(),
+            in_progress: inner.in_progress.len(),
+            hits: inner.stats.hits,
+            misses: inner.stats.misses,
+            waits: inner.stats.waits,
+            evictions: inner.stats.evictions,
+            generated_inserts: inner.stats.generated_inserts,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1199,6 +1224,27 @@ struct FeatureSourceCacheInner {
     chunks: HashMap<(i32, i32), Arc<NoiseChunkBlocks>>,
     in_progress: HashSet<(i32, i32)>,
     order: VecDeque<(i32, i32)>,
+    stats: FeatureSourceCacheStats,
+}
+
+#[derive(Debug, Default)]
+struct FeatureSourceCacheStats {
+    hits: usize,
+    misses: usize,
+    waits: usize,
+    evictions: usize,
+    generated_inserts: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FeatureSourceCacheSnapshot {
+    len: usize,
+    in_progress: usize,
+    hits: usize,
+    misses: usize,
+    waits: usize,
+    evictions: usize,
+    generated_inserts: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1243,7 +1289,9 @@ impl FeatureSourceCacheInner {
                 break;
             };
             if oldest != key {
-                self.chunks.remove(&oldest);
+                if self.chunks.remove(&oldest).is_some() {
+                    self.stats.evictions += 1;
+                }
             }
         }
     }

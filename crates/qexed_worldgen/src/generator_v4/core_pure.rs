@@ -31,6 +31,28 @@ fn log_noise_chunk_timings(
     );
 }
 
+fn log_feature_source_cache_snapshot(
+    chunk_x: i32,
+    chunk_z: i32,
+    cache: &FeatureSourceCache,
+) {
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+
+    let snapshot = cache.snapshot();
+    log::debug!(
+        "vanilla_noise feature source cache: chunk=({chunk_x}, {chunk_z}), len={}, in_progress={}, hits={}, misses={}, waits={}, evictions={}, generated_inserts={}",
+        snapshot.len,
+        snapshot.in_progress,
+        snapshot.hits,
+        snapshot.misses,
+        snapshot.waits,
+        snapshot.evictions,
+        snapshot.generated_inserts
+    );
+}
+
 fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
 }
@@ -215,6 +237,8 @@ impl NoiseSettings {
         let heightmap_start = Instant::now();
         chunk.recompute_first_available_heights(self.min_y, self.height);
         let heightmap = heightmap_start.elapsed();
+
+        log_feature_source_cache_snapshot(chunk_x, chunk_z, &self.feature_source_cache);
 
         (
             chunk,
