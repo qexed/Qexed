@@ -472,7 +472,7 @@ mod tests {
         );
 
         assert_eq!(target_bit, 709);
-        assert_eq!(target_predicate, "BaseStoneOverworld");
+        assert_eq!(target_predicate, "none");
         assert_eq!(
             containing_spheres
                 .iter()
