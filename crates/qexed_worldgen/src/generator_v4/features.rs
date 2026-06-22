@@ -1093,8 +1093,11 @@ impl OverworldOreFeatures {
             if feature.can_spill_into_neighbor_chunk() {
                 let candidate_indexes = neighbor_sources.candidates(feature);
                 for source_index in candidate_indexes {
-                    let prechecked_spillover =
-                        matches!(feature, PlacedUndergroundFeature::Dripstone(PlacedDripstoneFeature::Large(_)));
+                    let prechecked_spillover = matches!(
+                        feature,
+                        PlacedUndergroundFeature::Dripstone(PlacedDripstoneFeature::Large(_))
+                            | PlacedUndergroundFeature::MonsterRoom(_)
+                    );
                     if prechecked_spillover
                         && !neighbor_sources.may_spill_without_loading(
                             settings,
@@ -1111,7 +1114,10 @@ impl OverworldOreFeatures {
                     }
 
                     let load_start = Instant::now();
-                    let can_place_spillover = if feature.needs_source_neighbor_context() {
+                    let can_place_spillover = if prechecked_spillover {
+                        neighbor_sources.ensure_loaded(settings, source_index);
+                        true
+                    } else if feature.needs_source_neighbor_context() {
                         neighbor_sources.prepare_for_neighbor_context_feature(
                             settings,
                             source_index,

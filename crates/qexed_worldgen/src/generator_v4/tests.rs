@@ -1177,6 +1177,32 @@ mod tests {
     }
 
     #[test]
+    fn monster_room_spillover_precheck_does_not_load_source_chunk_when_unreachable() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = PlacedUndergroundFeature::MonsterRoom(&settings.ore_features.monster_rooms[0]);
+
+        let mut checked = false;
+        for seed in 0..1_000 {
+            let mut sources = NeighborFeatureSources::new(seed, 0, 0);
+            let source_index = sources
+                .candidates(feature)
+                .into_iter()
+                .find(|index| {
+                    !sources.may_spill_without_loading(&settings, *index, feature)
+                        && sources.entries[*index]
+                            .as_ref()
+                            .is_some_and(|source| source.chunk.is_none())
+                });
+            if source_index.is_some() {
+                checked = true;
+                break;
+            }
+        }
+
+        assert!(checked, "seed range should include an unreachable monster room source");
+    }
+
+    #[test]
     fn vanilla_noise_configures_glow_lichen() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let feature = &settings.ore_features.glow_lichen;
