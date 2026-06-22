@@ -16,7 +16,7 @@ pub struct RuntimeConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeEntities {
-    store: std::sync::Arc<std::sync::Mutex<qexed_entity::EntityStore>>,
+    runtime: qexed_entity::EntityRuntime,
 }
 
 impl RuntimeConfig {
@@ -39,26 +39,27 @@ impl RuntimeEntities {
         uuid: uuid::Uuid,
         pose: qexed_entity::EntityPose,
     ) -> qexed_entity::EntitySnapshot {
-        let mut store = self.store.lock().expect("entity store mutex poisoned");
-        let id = store.spawn_with_uuid(uuid, qexed_entity::EntityKind::Player, pose);
-        store
-            .get(id)
-            .expect("spawned player entity must be readable")
-            .snapshot()
+        self.runtime.spawn_player(uuid, pose)
     }
 
     pub fn update_pose(&self, id: qexed_entity::EntityId, pose: qexed_entity::EntityPose) -> bool {
-        self.store
-            .lock()
-            .expect("entity store mutex poisoned")
-            .update_pose(id, pose)
+        self.runtime.update_pose(id, pose)
     }
 
     pub fn despawn(&self, id: qexed_entity::EntityId) -> Option<qexed_entity::Entity> {
-        self.store
-            .lock()
-            .expect("entity store mutex poisoned")
-            .despawn(id)
+        self.runtime.despawn(id)
+    }
+
+    pub fn tick(&self, delta_seconds: f64) -> usize {
+        self.runtime.tick(delta_seconds)
+    }
+
+    pub fn reconcile_view(
+        &self,
+        view: &mut qexed_entity::EntityView,
+        center: qexed_entity::EntityPosition,
+    ) -> qexed_entity::EntityBroadcastBatch {
+        self.runtime.reconcile_view(view, center)
     }
 }
 
