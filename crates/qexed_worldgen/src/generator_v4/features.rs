@@ -958,8 +958,11 @@ impl OverworldOreFeatures {
 
                     let load_start = Instant::now();
                     let can_place_spillover = if feature.needs_source_neighbor_context() {
-                        neighbor_sources.ensure_all(settings);
-                        true
+                        neighbor_sources.prepare_for_neighbor_context_feature(
+                            settings,
+                            source_index,
+                            feature,
+                        )
                     } else {
                         neighbor_sources.prepare_for_feature(settings, source_index, feature)
                     };
@@ -1624,6 +1627,33 @@ impl NeighborFeatureSources {
         true
     }
 
+    fn prepare_for_neighbor_context_feature(
+        &mut self,
+        settings: &NoiseSettings,
+        index: usize,
+        feature: PlacedUndergroundFeature<'_>,
+    ) -> bool {
+        let Some(source) = self.entries[index].as_mut() else {
+            return false;
+        };
+        if source.decoration_seed == 0 {
+            source.decoration_seed =
+                FeatureRandom::decoration_seed(self.seed, source.origin_x, source.origin_z);
+        }
+        if !feature.may_spill_from_seed(
+            settings,
+            source.origin_x,
+            source.origin_z,
+            self.target_origin_x,
+            self.target_origin_z,
+            source.decoration_seed,
+        ) {
+            return false;
+        }
+        self.ensure_all(settings);
+        true
+    }
+
     fn context_chunks(&self) -> Vec<(i32, i32, &NoiseChunkBlocks)> {
         self.entries
             .iter()
@@ -2008,10 +2038,8 @@ impl PlacedUndergroundFeature<'_> {
     fn can_precheck_spillover_without_source(self) -> bool {
         !matches!(
             self,
-            Self::Structure(_)
-                | Self::Surface(_)
+            Self::Surface(_)
                 | Self::Ore(_)
-                | Self::HugeMushroom(_)
                 | Self::BlockColumn(_)
         )
     }
@@ -2135,15 +2163,28 @@ impl PlacedUndergroundFeature<'_> {
                 target_origin_z,
                 random,
             ),
+            Self::Structure(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::HugeMushroom(feature) => feature.may_spill_into(
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
             Self::Spring(_)
             | Self::CaveVines(_)
             | Self::ClassicVines(_)
             | Self::SporeBlossom(_)
             | Self::Dripstone(_)
             | Self::Sculk(_)
-            | Self::Structure(_)
             | Self::Surface(_)
-            | Self::HugeMushroom(_)
             | Self::BlockColumn(_)
             | Self::FreezeTopLayer(_) => true,
         }

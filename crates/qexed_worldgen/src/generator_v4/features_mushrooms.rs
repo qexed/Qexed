@@ -197,6 +197,31 @@ impl PlacedHugeMushroomFeature {
             }
         }
     }
+
+    fn may_spill_into(
+        &self,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            if horizontal_box_overlaps_chunk(
+                world_x - 4,
+                world_x + 4,
+                world_z - 4,
+                world_z + 4,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(Debug, Clone)]

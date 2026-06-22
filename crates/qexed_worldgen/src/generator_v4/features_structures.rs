@@ -135,6 +135,34 @@ impl PlacedStructureFeature {
             ),
         }
     }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        match self {
+            Self::DesertWell(feature) => feature.may_spill_into(
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Fossil(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +381,29 @@ impl PlacedDesertWellFeature {
             world_z,
         );
     }
+
+    fn may_spill_into(
+        &self,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return false;
+        }
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        horizontal_box_overlaps_chunk(
+            world_x - 2,
+            world_x + 2,
+            world_z - 2,
+            world_z + 2,
+            target_origin_x,
+            target_origin_z,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -459,6 +510,37 @@ impl PlacedFossilFeature {
             world_y,
             world_z,
         );
+    }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        if random.next_float() >= 1.0 / self.rarity as f32 {
+            return false;
+        }
+        let world_x = source_origin_x + random.next_int(16);
+        let world_z = source_origin_z + random.next_int(16);
+        let world_y = self.height.sample(settings, random);
+        if !self
+            .biome_filter
+            .allows_at(&settings.density, world_x, world_y, world_z)
+        {
+            return false;
+        }
+        horizontal_box_overlaps_chunk(
+            world_x - 5,
+            world_x + 5,
+            world_z - 5,
+            world_z + 5,
+            target_origin_x,
+            target_origin_z,
+        )
     }
 }
 
