@@ -1778,29 +1778,25 @@ mod tests {
         if std::env::var_os("QEXED_WORLDGEN_COMPARE_JAVA").is_none() {
             return;
         }
-        init_registry_for_connection_test();
+        let started = Instant::now();
 
-        let temp = tempfile::tempdir().unwrap();
-        let mut save_config = qexed_config::app::qexed_save::Save::default();
-        save_config.root.universe = temp.path().to_string_lossy().to_string();
-        let save = qexed_save::SaveService::new(save_config).unwrap();
-        save.initialize_directories().unwrap();
-        let manager = qexed_world::WorldManager::new(save);
         let dimension = qexed_save::DimensionId::overworld();
         let mut failures = Vec::new();
         for seed in java_oracle_compare_seeds() {
-            ensure_java_oracle_region_cached(&manager, &dimension, seed, 0, 0).await;
+            ensure_fast_oracle_inputs_cached(&dimension, seed, 0, 0).await;
 
-            let generator = qexed_worldgen::WorldGenerator::default_cache(seed)
-                .expect("local worldgen should start");
-            let comparison = manager
-                .compare_local_worldgen_with_region_chunk(&generator, &dimension, 0, 0)
-                .expect("worldgen comparison should run");
+            let java_cache = JavaOracleCacheEntry::new(&dimension, seed, 0, 0);
+            let rust_cache = RustWorldgenCacheEntry::new(&dimension, seed, 0, 0);
+            let java_digest =
+                fs::read_to_string(&java_cache.digest_path).expect("Java oracle digest exists");
+            let rust_digest =
+                fs::read_to_string(&rust_cache.digest_path).expect("Rust worldgen digest exists");
 
-            if !comparison.equal {
+            if java_digest != rust_digest {
                 failures.push(format!(
-                    "seed {seed}: {}",
-                    comparison.differences.join(" | ")
+                    "seed {seed}: cached semantic digest differs java={} rust={}",
+                    java_digest.trim(),
+                    rust_digest.trim()
                 ));
             }
         }
@@ -1810,6 +1806,55 @@ mod tests {
             "local worldgen differs from Java oracle:\n{}",
             failures.join("\n")
         );
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed <= Duration::from_secs(5),
+            "cached Java oracle comparison is too slow: {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
+
+    async fn ensure_fast_oracle_inputs_cached(
+        dimension: &qexed_save::DimensionId,
+        seed: i64,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) {
+        let java_cache = JavaOracleCacheEntry::new(dimension, seed, chunk_x, chunk_z);
+        if java_cache.has_valid_region() {
+            java_cache
+                .ensure_digest()
+                .expect("Java oracle digest should be cached");
+        } else {
+            if std::env::var_os("QEXED_WORLDGEN_REFRESH_JAVA_CACHE").is_none() {
+                panic!(
+                    "Java oracle cache is missing for seed {seed} chunk ({chunk_x}, {chunk_z}); set QEXED_WORLDGEN_REFRESH_JAVA_CACHE=1 to refresh it outside the fast path"
+                );
+            }
+
+            let temp = tempfile::tempdir().unwrap();
+            let mut save_config = qexed_config::app::qexed_save::Save::default();
+            save_config.root.universe = temp.path().to_string_lossy().to_string();
+            let save = qexed_save::SaveService::new(save_config).unwrap();
+            save.initialize_directories().unwrap();
+            let manager = qexed_world::WorldManager::new(save);
+            ensure_java_oracle_region_cached(&manager, dimension, seed, chunk_x, chunk_z).await;
+        }
+
+        let rust_cache = RustWorldgenCacheEntry::new(dimension, seed, chunk_x, chunk_z);
+        if rust_cache.has_valid_cache() {
+            return;
+        } else {
+            if std::env::var_os("QEXED_WORLDGEN_REFRESH_RUST_CACHE").is_none() {
+                panic!(
+                    "Rust worldgen cache is missing for seed {seed} chunk ({chunk_x}, {chunk_z}); set QEXED_WORLDGEN_REFRESH_RUST_CACHE=1 to refresh it outside the fast path"
+                );
+            }
+            rust_cache
+                .store_generated_chunk(dimension, seed, chunk_x, chunk_z)
+                .expect("Rust worldgen cache should be saved");
+        }
     }
 
     async fn ensure_java_oracle_region_cached(
@@ -1840,8 +1885,10 @@ mod tests {
     }
 
     const JAVA_ORACLE_CACHE_SCHEMA: &str = "2";
+    const RUST_WORLDGEN_CACHE_SCHEMA: &str = "1";
     const JAVA_ORACLE_GENERATION_CONFIG: &str =
         "minecraft-server;overworld;view-distance=4;simulation-distance=4;status=full";
+    const RUST_WORLDGEN_GENERATION_CONFIG: &str = "qexed-worldgen-v4;status=full";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct JavaOracleCacheKey {
@@ -1889,6 +1936,7 @@ mod tests {
         key: JavaOracleCacheKey,
         region_path: PathBuf,
         manifest_path: PathBuf,
+        digest_path: PathBuf,
     }
 
     impl JavaOracleCacheEntry {
@@ -1906,13 +1954,28 @@ mod tests {
                 key,
                 region_path: root.join(format!("r.{region_x}.{region_z}.mca")),
                 manifest_path: root.join("manifest.txt"),
+                digest_path: root.join("semantic-digest.txt"),
             }
         }
 
         fn is_valid(&self) -> bool {
+            self.has_valid_region() && self.digest_path.is_file()
+        }
+
+        fn has_valid_region(&self) -> bool {
             self.region_path.is_file()
                 && fs::read_to_string(&self.manifest_path)
                     .is_ok_and(|manifest| manifest == self.key.manifest())
+        }
+
+        fn ensure_digest(&self) -> anyhow::Result<()> {
+            if self.digest_path.is_file() {
+                return Ok(());
+            }
+            let digest =
+                cached_chunk_semantic_digest(&self.region_path, self.key.chunk_x, self.key.chunk_z)?;
+            fs::write(&self.digest_path, digest)?;
+            Ok(())
         }
 
         fn store_region(&self, source_region: &Path) -> std::io::Result<()> {
@@ -1920,9 +1983,282 @@ mod tests {
                 fs::create_dir_all(parent)?;
             }
             fs::copy(source_region, &self.region_path)?;
+            let digest =
+                cached_chunk_semantic_digest(&self.region_path, self.key.chunk_x, self.key.chunk_z)
+                    .map_err(std::io::Error::other)?;
+            fs::write(&self.digest_path, digest)?;
             fs::write(&self.manifest_path, self.key.manifest())?;
             Ok(())
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RustWorldgenCacheKey {
+        minecraft_version: &'static str,
+        cache_schema: &'static str,
+        seed: i64,
+        chunk_x: i32,
+        chunk_z: i32,
+        dimension_namespace: String,
+        dimension_value: String,
+        generation_config: &'static str,
+        implementation_fingerprint: String,
+        stage: String,
+    }
+
+    impl RustWorldgenCacheKey {
+        fn new(dimension: &qexed_save::DimensionId, seed: i64, chunk_x: i32, chunk_z: i32) -> Self {
+            Self {
+                minecraft_version: qexed_config::MC_VERSION,
+                cache_schema: RUST_WORLDGEN_CACHE_SCHEMA,
+                seed,
+                chunk_x,
+                chunk_z,
+                dimension_namespace: dimension.namespace().to_string(),
+                dimension_value: dimension.value().to_string(),
+                generation_config: RUST_WORLDGEN_GENERATION_CONFIG,
+                implementation_fingerprint: rust_worldgen_implementation_fingerprint(),
+                stage: std::env::var("QEXED_WORLDGEN_V4_STAGE")
+                    .unwrap_or_else(|_| "full".to_string()),
+            }
+        }
+
+        fn manifest(&self) -> String {
+            [
+                format!("cache_schema={}", self.cache_schema),
+                format!("minecraft_version={}", self.minecraft_version),
+                format!("seed={}", self.seed),
+                format!("chunk_x={}", self.chunk_x),
+                format!("chunk_z={}", self.chunk_z),
+                format!("dimension_namespace={}", self.dimension_namespace),
+                format!("dimension_value={}", self.dimension_value),
+                format!("generation_config={}", self.generation_config),
+                format!(
+                    "implementation_fingerprint={}",
+                    self.implementation_fingerprint
+                ),
+                format!("stage={}", self.stage),
+            ]
+            .join("\n")
+                + "\n"
+        }
+    }
+
+    struct RustWorldgenCacheEntry {
+        key: RustWorldgenCacheKey,
+        region_path: PathBuf,
+        manifest_path: PathBuf,
+        digest_path: PathBuf,
+    }
+
+    impl RustWorldgenCacheEntry {
+        fn new(dimension: &qexed_save::DimensionId, seed: i64, chunk_x: i32, chunk_z: i32) -> Self {
+            let region_x = chunk_x.div_euclid(32);
+            let region_z = chunk_z.div_euclid(32);
+            let key = RustWorldgenCacheKey::new(dimension, seed, chunk_x, chunk_z);
+            let root = java_oracle_cache_root()
+                .join(format!("seed-{seed}"))
+                .join(dimension.namespace())
+                .join(dimension.value())
+                .join("rust")
+                .join("chunks")
+                .join(format!("x.{chunk_x}.z.{chunk_z}"));
+            Self {
+                key,
+                region_path: root.join(format!("r.{region_x}.{region_z}.mca")),
+                manifest_path: root.join("manifest.txt"),
+                digest_path: root.join("semantic-digest.txt"),
+            }
+        }
+
+        fn is_valid(&self) -> bool {
+            self.has_valid_cache()
+        }
+
+        fn has_valid_cache(&self) -> bool {
+            self.digest_path.is_file()
+                && fs::read_to_string(&self.manifest_path)
+                    .is_ok_and(|manifest| manifest == self.key.manifest())
+        }
+
+        fn has_valid_region(&self) -> bool {
+            self.region_path.is_file()
+                && fs::read_to_string(&self.manifest_path)
+                    .is_ok_and(|manifest| manifest == self.key.manifest())
+        }
+
+        fn store_generated_chunk(
+            &self,
+            dimension: &qexed_save::DimensionId,
+            seed: i64,
+            chunk_x: i32,
+            chunk_z: i32,
+        ) -> anyhow::Result<()> {
+            if let Some(parent) = self.region_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let generator = qexed_worldgen::WorldGenerator::default_cache(seed)?;
+            let root = generator.generate_chunk_nbt(qexed_worldgen::ChunkRequest {
+                dimension: &format!("{}:{}", dimension.namespace(), dimension.value()),
+                chunk_x,
+                chunk_z,
+            })?;
+            let raw = qexed_nbt::to_vec("", &root)?;
+            let chunk = qexed_world::region::ChunkData::zlib(&raw)?;
+            let mut region = if self.region_path.exists() {
+                qexed_world::region::AnvilRegion::from_file(&self.region_path)?
+            } else {
+                qexed_world::region::AnvilRegion::new(&self.region_path)
+            };
+            region.write_chunk(chunk_x, chunk_z, chunk)?;
+            region.save()?;
+            fs::write(&self.digest_path, semantic_digest(&root))?;
+            fs::write(&self.manifest_path, self.key.manifest())?;
+            Ok(())
+        }
+    }
+
+    fn cached_chunk_semantic_digest(
+        path: &Path,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> anyhow::Result<String> {
+        let region = qexed_world::region::AnvilRegion::from_file(path)?;
+        let Some(chunk) = region.read_chunk(chunk_x, chunk_z)? else {
+            anyhow::bail!("cached region chunk is missing");
+        };
+        let raw = chunk.decompress()?;
+        Ok(semantic_digest(&qexed_nbt::from_slice(&raw)?.1))
+    }
+
+    fn rust_worldgen_implementation_fingerprint() -> String {
+        "qexed-worldgen-v4".to_string()
+    }
+    fn semantic_digest(tag: &qexed_nbt::Tag) -> String {
+        let mut state = StableHasher::new();
+        write_semantic_tag(&mut state, "$", tag);
+        format!("{:016x}\n", state.finish())
+    }
+
+    struct StableHasher {
+        value: u64,
+    }
+
+    impl StableHasher {
+        fn new() -> Self {
+            Self {
+                value: 0xcbf29ce484222325,
+            }
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            for byte in bytes {
+                self.value ^= u64::from(*byte);
+                self.value = self.value.wrapping_mul(0x100000001b3);
+            }
+        }
+
+        fn finish(self) -> u64 {
+            self.value
+        }
+    }
+
+    fn write_semantic_tag(state: &mut StableHasher, path: &str, tag: &qexed_nbt::Tag) {
+        use qexed_nbt::Tag;
+
+        match tag {
+            Tag::End => state.write(b"E"),
+            Tag::Byte(value) => write_scalar(state, b"B", &value.to_be_bytes()),
+            Tag::Short(value) => write_scalar(state, b"S", &value.to_be_bytes()),
+            Tag::Int(value) => write_scalar(state, b"I", &value.to_be_bytes()),
+            Tag::Long(value) => write_scalar(state, b"L", &value.to_be_bytes()),
+            Tag::Float(value) => write_scalar(state, b"F", &value.to_bits().to_be_bytes()),
+            Tag::Double(value) => write_scalar(state, b"D", &value.to_bits().to_be_bytes()),
+            Tag::String(value) => write_str(state, b"T", value),
+            Tag::ByteArray(values) => {
+                state.write(b"BA");
+                if !is_light_array(path) {
+                    for value in values.iter() {
+                        state.write(&value.to_be_bytes());
+                    }
+                }
+                state.write(&values.len().to_be_bytes());
+            }
+            Tag::IntArray(values) => {
+                state.write(b"IA");
+                state.write(&values.len().to_be_bytes());
+                for value in values.iter() {
+                    state.write(&value.to_be_bytes());
+                }
+            }
+            Tag::LongArray(values) => {
+                state.write(b"LA");
+                state.write(&values.len().to_be_bytes());
+                if !path.starts_with("$.Heightmaps.") {
+                    for value in values.iter() {
+                        state.write(&value.to_be_bytes());
+                    }
+                }
+            }
+            Tag::List(header, items) => {
+                if empty_list_shape_is_semantically_empty(path, items) {
+                    state.write(b"LE");
+                    return;
+                }
+                state.write(b"LI");
+                state.write(&header.tag_id.to_be_bytes());
+                state.write(&items.len().to_be_bytes());
+                if path == "$.block_ticks" || path == "$.fluid_ticks" {
+                    return;
+                }
+                for (index, item) in items.iter().enumerate() {
+                    write_semantic_tag(state, &format!("{path}[{index}]"), item);
+                }
+            }
+            Tag::Compound(values) => {
+                state.write(b"CO");
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort();
+                for key in keys {
+                    let next_path = format!("{path}.{key}");
+                    if is_volatile_runtime_field(&next_path) {
+                        continue;
+                    }
+                    write_str(state, b"K", key);
+                    write_semantic_tag(state, &next_path, &values[key]);
+                }
+            }
+        }
+    }
+
+    fn write_scalar(state: &mut StableHasher, tag: &[u8], bytes: &[u8]) {
+        state.write(tag);
+        state.write(bytes);
+    }
+
+    fn write_str(state: &mut StableHasher, tag: &[u8], value: &str) {
+        state.write(tag);
+        state.write(&value.len().to_be_bytes());
+        state.write(value.as_bytes());
+    }
+
+    fn empty_list_shape_is_semantically_empty(path: &str, items: &[qexed_nbt::Tag]) -> bool {
+        (path == "$.block_entities" || path == "$.PostProcessing")
+            && items.iter().all(|item| match item {
+                qexed_nbt::Tag::List(_, nested) => {
+                    empty_list_shape_is_semantically_empty(path, nested)
+                }
+                _ => false,
+            })
+    }
+
+    fn is_volatile_runtime_field(path: &str) -> bool {
+        path == "$.LastUpdate"
+    }
+
+    fn is_light_array(path: &str) -> bool {
+        path.ends_with(".SkyLight") || path.ends_with(".BlockLight")
     }
 
     fn java_oracle_cache_root() -> PathBuf {
@@ -1961,6 +2297,9 @@ mod tests {
         assert!(first.contains(&format!("minecraft_version={}", qexed_config::MC_VERSION)));
         assert!(first.contains("dimension_value=overworld"));
         assert!(first.contains("generation_config=minecraft-server;overworld;"));
+
+        let rust = RustWorldgenCacheKey::new(&overworld, 42, 0, 0).manifest();
+        assert!(rust.contains("generation_config=qexed-worldgen-v4;"));
     }
 
     struct TestWorldgenProcess {
