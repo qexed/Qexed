@@ -1112,6 +1112,28 @@ impl OverworldOreFeatures {
                     {
                         continue;
                     }
+                    if let PlacedUndergroundFeature::MonsterRoom(feature) = feature {
+                        let source_decoration_seed =
+                            neighbor_sources.ensure_decoration_seed(source_index);
+                        let source_origin_x = neighbor_sources.origin_x(source_index);
+                        let source_origin_z = neighbor_sources.origin_z(source_index);
+                        let mut random = FeatureRandom::for_feature(
+                            source_decoration_seed,
+                            feature.feature_index,
+                            feature.step_index,
+                        );
+                        if feature.target_precheck_prevents_spillover(
+                            settings,
+                            source_origin_x,
+                            source_origin_z,
+                            origin_x,
+                            origin_z,
+                            chunk,
+                            &mut random,
+                        ) {
+                            continue;
+                        }
+                    }
 
                     let load_start = Instant::now();
                     let can_place_spillover = if prechecked_spillover {
@@ -1863,6 +1885,17 @@ impl NeighborFeatureSources {
             self.target_origin_z,
             source.decoration_seed,
         )
+    }
+
+    fn ensure_decoration_seed(&mut self, index: usize) -> i64 {
+        let Some(source) = self.entries[index].as_mut() else {
+            return 0;
+        };
+        if source.decoration_seed == 0 {
+            source.decoration_seed =
+                FeatureRandom::decoration_seed(self.seed, source.origin_x, source.origin_z);
+        }
+        source.decoration_seed
     }
 
     fn prepare_for_neighbor_context_feature(

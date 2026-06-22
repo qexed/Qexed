@@ -208,6 +208,49 @@ impl PlacedMonsterRoomFeature {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn target_precheck_prevents_spillover(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        target_chunk: &NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+
+            let shape = self.config.sample_shape(random);
+            if !shape.overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
+                return false;
+            }
+            if !self.config.known_chunk_prevents_place(
+                settings,
+                target_origin_x,
+                target_origin_z,
+                target_chunk,
+                world_x,
+                world_y,
+                world_z,
+                shape,
+            ) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_with_spillover_lazy_neighbors(
         &self,
         settings: &NoiseSettings,

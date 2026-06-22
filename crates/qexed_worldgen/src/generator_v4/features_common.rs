@@ -1164,6 +1164,64 @@ impl MonsterRoomFeatureConfig {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn known_chunk_prevents_place(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+        shape: MonsterRoomShape,
+    ) -> bool {
+        let mut known_hole_count = 0;
+        for dx in shape.min_x..=shape.max_x {
+            for dy in -1..=4 {
+                for dz in shape.min_z..=shape.max_z {
+                    let world_x = origin_x + dx;
+                    let world_y = origin_y + dy;
+                    let world_z = origin_z + dz;
+                    let Some((local_x, local_z)) =
+                        local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                    else {
+                        continue;
+                    };
+                    let Some(layer) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+                        return true;
+                    };
+                    if (dy == -1 || dy == 4) && !is_full_solid_layer(layer) {
+                        return true;
+                    }
+                    if (dx == shape.min_x
+                        || dx == shape.max_x
+                        || dz == shape.min_z
+                        || dz == shape.max_z)
+                        && dy == 0
+                        && layer.is_air
+                        && is_air_at_world(
+                            chunk,
+                            chunk_min_x,
+                            chunk_min_z,
+                            world_x,
+                            world_y + 1,
+                            world_z,
+                            settings.min_y,
+                        )
+                    {
+                        known_hole_count += 1;
+                        if known_hole_count > 5 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn place_shell_and_room(
         &self,
         settings: &NoiseSettings,
