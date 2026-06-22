@@ -1641,7 +1641,13 @@ impl SimpleVegetationHeightmap {
         local_z: usize,
     ) -> i32 {
         match self {
-            Self::WorldSurfaceWg => chunk.world_surface_wg_height(local_x, local_z, settings.min_y),
+            Self::WorldSurfaceWg => chunk
+                .column(local_x, local_z)
+                .blocks
+                .iter()
+                .rposition(|layer| !layer.is_air)
+                .map(|index| settings.min_y + index as i32 + 1)
+                .unwrap_or(settings.min_y),
             Self::MotionBlocking => chunk
                 .column(local_x, local_z)
                 .blocks

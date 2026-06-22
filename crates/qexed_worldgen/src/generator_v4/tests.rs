@@ -5508,6 +5508,23 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_simple_vegetation_world_surface_wg_scans_column_blocks() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        let column = chunk.column_mut(8, 8);
+        column.blocks[(65 - settings.min_y) as usize] = BlockLayer::new("minecraft:leaf_litter");
+        column.first_available_height = 65 - settings.min_y;
+
+        assert_eq!(
+            SimpleVegetationHeightmap::WorldSurfaceWg.height(&settings, &chunk, 8, 8),
+            66
+        );
+        assert_eq!(
+            SimpleVegetationHeightmap::MotionBlocking.height(&settings, &chunk, 8, 8),
+            65
+        );
+    }
+    #[test]
     fn vanilla_noise_simple_vegetation_motion_blocking_skips_non_blocking_plants() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let mut chunk = grass_surface_test_chunk(&settings, 64);
