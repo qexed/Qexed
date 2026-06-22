@@ -8,3 +8,7 @@ qexed_nbt.workspace = true
 
 serde.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+qexed_block.workspace = true
+serde_json.workspace = true

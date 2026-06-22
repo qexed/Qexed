@@ -1512,8 +1512,10 @@ dependencies = [
 name = "qexed_item"
 version = "0.1.0"
 dependencies = [
+ "qexed_block",
  "qexed_nbt",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
