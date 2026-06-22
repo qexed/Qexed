@@ -2086,10 +2086,15 @@ mod tests {
 
             let java_cache = JavaOracleCacheEntry::new(&dimension, seed, 0, 0);
             let rust_cache = RustWorldgenCacheEntry::new(&dimension, seed, 0, 0);
+            let read_started = Instant::now();
             let java_digest =
                 fs::read_to_string(&java_cache.digest_path).expect("Java oracle digest exists");
             let rust_digest =
                 fs::read_to_string(&rust_cache.digest_path).expect("Rust worldgen digest exists");
+            println!(
+                "worldgen_oracle_compare_stage=read_digests seed={seed} elapsed_ms={:.2}",
+                read_started.elapsed().as_secs_f64() * 1000.0
+            );
 
             if java_digest != rust_digest {
                 failures.push(format!(
@@ -2107,11 +2112,15 @@ mod tests {
         );
 
         let elapsed = started.elapsed();
-        assert!(
-            elapsed <= Duration::from_secs(5),
-            "cached Java oracle comparison is too slow: {:.2}ms",
-            elapsed.as_secs_f64() * 1000.0
-        );
+        if std::env::var_os("QEXED_WORLDGEN_REFRESH_JAVA_CACHE").is_none()
+            && std::env::var_os("QEXED_WORLDGEN_REFRESH_RUST_CACHE").is_none()
+        {
+            assert!(
+                elapsed <= Duration::from_secs(5),
+                "cached Java oracle comparison is too slow: {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
     }
 
     async fn ensure_fast_oracle_inputs_cached(
@@ -2120,11 +2129,17 @@ mod tests {
         chunk_x: i32,
         chunk_z: i32,
     ) {
+        let started = Instant::now();
         let java_cache = JavaOracleCacheEntry::new(dimension, seed, chunk_x, chunk_z);
         if java_cache.has_valid_region() {
+            let digest_started = Instant::now();
             java_cache
                 .ensure_digest()
                 .expect("Java oracle digest should be cached");
+            println!(
+                "worldgen_oracle_compare_stage=java_cache_hit seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                digest_started.elapsed().as_secs_f64() * 1000.0
+            );
         } else {
             if std::env::var_os("QEXED_WORLDGEN_REFRESH_JAVA_CACHE").is_none() {
                 panic!(
@@ -2143,16 +2158,29 @@ mod tests {
 
         let rust_cache = RustWorldgenCacheEntry::new(dimension, seed, chunk_x, chunk_z);
         if std::env::var_os("QEXED_WORLDGEN_REFRESH_RUST_CACHE").is_some() {
+            let refresh_started = Instant::now();
             rust_cache
                 .refresh_generated_cache(dimension, seed, chunk_x, chunk_z)
                 .expect("Rust worldgen cache should be saved");
+            println!(
+                "worldgen_oracle_compare_stage=rust_cache_refresh seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                refresh_started.elapsed().as_secs_f64() * 1000.0
+            );
         } else if rust_cache.has_valid_cache() {
+            println!(
+                "worldgen_oracle_compare_stage=rust_cache_hit seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
             return;
         } else {
             panic!(
                 "Rust worldgen cache is missing for seed {seed} chunk ({chunk_x}, {chunk_z}); set QEXED_WORLDGEN_REFRESH_RUST_CACHE=1 to refresh it outside the fast path"
             );
         }
+        println!(
+            "worldgen_oracle_compare_stage=ensure_inputs_total seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     async fn ensure_java_oracle_region_cached(
@@ -2385,18 +2413,35 @@ mod tests {
             chunk_x: i32,
             chunk_z: i32,
         ) -> anyhow::Result<()> {
+            let total_started = Instant::now();
             if let Some(parent) = self.region_path.parent() {
                 fs::create_dir_all(parent)?;
             }
 
+            let generator_started = Instant::now();
             let generator = qexed_worldgen::WorldGenerator::default_cache(seed)?;
+            println!(
+                "worldgen_oracle_compare_stage=rust_generator_init seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                generator_started.elapsed().as_secs_f64() * 1000.0
+            );
+            let generate_started = Instant::now();
             let root = generator.generate_chunk_nbt(qexed_worldgen::ChunkRequest {
                 dimension: &format!("{}:{}", dimension.namespace(), dimension.value()),
                 chunk_x,
                 chunk_z,
             })?;
+            println!(
+                "worldgen_oracle_compare_stage=rust_generate_chunk_nbt seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                generate_started.elapsed().as_secs_f64() * 1000.0
+            );
+            let encode_started = Instant::now();
             let raw = qexed_nbt::to_vec("", &root)?;
             let chunk = qexed_world::region::ChunkData::zlib(&raw)?;
+            println!(
+                "worldgen_oracle_compare_stage=rust_encode_chunk seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                encode_started.elapsed().as_secs_f64() * 1000.0
+            );
+            let save_started = Instant::now();
             let mut region = if self.region_path.exists() {
                 qexed_world::region::AnvilRegion::from_file(&self.region_path)?
             } else {
@@ -2404,8 +2449,21 @@ mod tests {
             };
             region.write_chunk(chunk_x, chunk_z, chunk)?;
             region.save()?;
+            println!(
+                "worldgen_oracle_compare_stage=rust_save_region seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                save_started.elapsed().as_secs_f64() * 1000.0
+            );
+            let digest_started = Instant::now();
             fs::write(&self.digest_path, semantic_digest(&root))?;
             fs::write(&self.manifest_path, self.key.manifest())?;
+            println!(
+                "worldgen_oracle_compare_stage=rust_write_digest_manifest seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                digest_started.elapsed().as_secs_f64() * 1000.0
+            );
+            println!(
+                "worldgen_oracle_compare_stage=rust_refresh_total seed={seed} chunk=({chunk_x},{chunk_z}) elapsed_ms={:.2}",
+                total_started.elapsed().as_secs_f64() * 1000.0
+            );
             Ok(())
         }
     }

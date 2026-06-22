@@ -82,6 +82,11 @@ if ($WarmRuns -lt 1) {
     throw "WarmRuns must be >= 1"
 }
 
+$effectiveWarmRuns = $WarmRuns
+if (($RefreshJavaCache -or $RefreshRustCache) -and -not $PSBoundParameters.ContainsKey("WarmRuns")) {
+    $effectiveWarmRuns = 0
+}
+
 $existing = Get-BuildProcess
 if ($existing -and -not $AllowExistingBuildProcesses) {
     Write-Host "Existing cargo/rustc/link/qexed test processes detected. Stop them or pass -AllowExistingBuildProcesses."
@@ -95,8 +100,10 @@ try {
         New-Item -ItemType Directory -Force -Path $CargoTargetDir | Out-Null
     }
 
+    Write-Host ("requested_warm_runs={0}" -f $WarmRuns)
+    Write-Host ("effective_warm_runs={0}" -f $effectiveWarmRuns)
     Invoke-TimedCargoTest -Label "cold-or-current-cache"
-    for ($index = 1; $index -le $WarmRuns; $index++) {
+    for ($index = 1; $index -le $effectiveWarmRuns; $index++) {
         Invoke-TimedCargoTest -Label "warm-$index"
     }
 } finally {
