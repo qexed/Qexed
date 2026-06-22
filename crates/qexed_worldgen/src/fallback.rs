@@ -166,7 +166,7 @@ impl WorldGenerator {
                                 slope,
                             };
                             surface_rules
-                                .block_at(context)
+                                .block_at_with_preliminary_surface(context, preliminary_surface)
                                 .map(|block| surface_ids.id(block))
                                 .unwrap_or_else(|| {
                                     default_terrain_block(
@@ -337,7 +337,7 @@ impl TerrainDensity {
     }
 
     fn biome(&self, x: i32, y: i32, z: i32) -> &'static str {
-        self.terrain_noise.biome(x, y, z)
+        self.terrain_noise.biome_at_block(x, y, z)
     }
 
     fn column_sampler<'a>(

@@ -999,10 +999,10 @@ impl NoiseSettings {
                 let local_y = ((cell / 4) % 4) as i32;
                 let local_z = (cell % 4) as i32;
                 let section_y = WORLD_MIN_SECTION_Y + section_offset as i32;
-                let world_x = chunk_x * 16 + local_x * 4;
-                let world_y = section_y * SECTION_HEIGHT + local_y * 4;
-                let world_z = chunk_z * 16 + local_z * 4;
-                self.density.biome(world_x, world_y, world_z)
+                let quart_x = chunk_x * 4 + local_x;
+                let quart_y = section_y * 4 + local_y;
+                let quart_z = chunk_z * 4 + local_z;
+                self.density.biome_at_quart(quart_x, quart_y, quart_z)
             })
             .collect()
     }
@@ -1185,7 +1185,10 @@ impl NoiseSettings {
                 slope: surface_slope,
             };
 
-            if let Some(block) = self.surface_rules.block_at(surface_context) {
+            if let Some(block) = self
+                .surface_rules
+                .block_at_with_preliminary_surface(surface_context, preliminary_surface)
+            {
                 self.surface_block_layer(block)
             } else if self.surface_rules.is_deepslate(x, y, z) {
                 self.ore_vein_at(x, y, z)

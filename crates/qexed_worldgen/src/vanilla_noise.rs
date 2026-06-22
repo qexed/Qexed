@@ -74,6 +74,12 @@ const PACKED_ICE_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const ICE_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const POWDER_SNOW_AMPLITUDES: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const CLAY_BANDS_OFFSET_AMPLITUDES: [f64; 1] = [1.0];
+const WINDSWEPT_HILLS_STONE_SURFACE: f64 = 0.121_212_121_212_121_22;
+const WINDSWEPT_SAVANNA_STONE_SURFACE: f64 = 0.212_121_212_121_212_13;
+const WINDSWEPT_SAVANNA_COARSE_DIRT_SURFACE: f64 = -0.060_606_060_606_060_61;
+const WINDSWEPT_GRAVELLY_GRAVEL_SURFACE: f64 = 0.242_424_242_424_242_43;
+const WINDSWEPT_GRAVELLY_STONE_SURFACE: f64 = 0.121_212_121_212_121_22;
+const WINDSWEPT_GRAVELLY_DIRT_SURFACE: f64 = -0.121_212_121_212_121_22;
 
 #[derive(Clone, Debug)]
 pub(crate) struct BlendedNoise {
@@ -447,8 +453,21 @@ impl OverworldTerrainNoise {
         }
     }
 
-    pub(crate) fn biome(&self, block_x: i32, block_y: i32, block_z: i32) -> &'static str {
+    pub(crate) fn biome_at_block(&self, block_x: i32, block_y: i32, block_z: i32) -> &'static str {
         let climate = self.climate.sample(block_x, block_z);
+        let profile = self.profile(block_x, block_z);
+        select_overworld_biome(&climate, profile.depth(block_y))
+    }
+
+    pub(crate) fn biome(&self, block_x: i32, block_y: i32, block_z: i32) -> &'static str {
+        self.biome_at_block(block_x, block_y, block_z)
+    }
+
+    pub(crate) fn biome_at_quart(&self, quart_x: i32, quart_y: i32, quart_z: i32) -> &'static str {
+        let climate = self.climate.sample(quart_x, quart_z);
+        let block_x = quart_to_block(quart_x);
+        let block_y = quart_to_block(quart_y);
+        let block_z = quart_to_block(quart_z);
         let profile = self.profile(block_x, block_z);
         select_overworld_biome(&climate, profile.depth(block_y))
     }
@@ -770,16 +789,16 @@ impl OverworldSurfaceRules {
             "minecraft:stony_peaks" => self.stony_peak_block(context),
             "minecraft:stony_shore" => self.stony_shore_block(context),
             "minecraft:windswept_hills" => {
-                if self.surface_noise(context) > 1.0 {
+                if self.surface_noise(context) > WINDSWEPT_HILLS_STONE_SURFACE {
                     SurfaceBlock::Stone
                 } else {
                     self.grass_or_dirt(above_water)
                 }
             }
             "minecraft:windswept_savanna" => {
-                if self.surface_noise(context) > 1.75 {
+                if self.surface_noise(context) > WINDSWEPT_SAVANNA_STONE_SURFACE {
                     SurfaceBlock::Stone
-                } else if self.surface_noise(context) > -0.5 {
+                } else if self.surface_noise(context) > WINDSWEPT_SAVANNA_COARSE_DIRT_SURFACE {
                     SurfaceBlock::CoarseDirt
                 } else {
                     self.grass_or_dirt(above_water)
@@ -787,11 +806,11 @@ impl OverworldSurfaceRules {
             }
             "minecraft:windswept_gravelly_hills" => {
                 let noise = self.surface_noise(context);
-                if noise > 2.0 {
+                if noise > WINDSWEPT_GRAVELLY_GRAVEL_SURFACE {
                     SurfaceBlock::Gravel
-                } else if noise > 1.0 {
+                } else if noise > WINDSWEPT_GRAVELLY_STONE_SURFACE {
                     SurfaceBlock::Stone
-                } else if noise > -1.0 {
+                } else if noise > WINDSWEPT_GRAVELLY_DIRT_SURFACE {
                     self.grass_or_dirt(above_water)
                 } else {
                     SurfaceBlock::Gravel
@@ -843,7 +862,7 @@ impl OverworldSurfaceRules {
             "minecraft:stony_peaks" => self.stony_peak_block(context),
             "minecraft:stony_shore" => self.stony_shore_block(context),
             "minecraft:windswept_savanna" => {
-                if self.surface_noise(context) > 1.75 {
+                if self.surface_noise(context) > WINDSWEPT_SAVANNA_STONE_SURFACE {
                     SurfaceBlock::Stone
                 } else {
                     SurfaceBlock::Dirt
@@ -851,11 +870,11 @@ impl OverworldSurfaceRules {
             }
             "minecraft:windswept_gravelly_hills" => {
                 let noise = self.surface_noise(context);
-                if noise > 2.0 {
+                if noise > WINDSWEPT_GRAVELLY_GRAVEL_SURFACE {
                     SurfaceBlock::Gravel
-                } else if noise > 1.0 {
+                } else if noise > WINDSWEPT_GRAVELLY_STONE_SURFACE {
                     SurfaceBlock::Stone
-                } else if noise > -1.0 {
+                } else if noise > WINDSWEPT_GRAVELLY_DIRT_SURFACE {
                     SurfaceBlock::Dirt
                 } else {
                     SurfaceBlock::Gravel
@@ -2384,7 +2403,7 @@ impl XoroshiroRandomSource {
     }
 
     pub(crate) fn next_double(&mut self) -> f64 {
-        (self.random.next_long() >> 11) as f64 * (1.110_223e-16_f32 as f64)
+        (self.random.next_long() >> 11) as f64 * (1.0 / ((1_u64 << 53) as f64))
     }
 
     pub(crate) fn next_float(&mut self) -> f32 {
@@ -2620,6 +2639,10 @@ fn map(value: f64, from_min: f64, from_max: f64, to_min: f64, to_max: f64) -> f6
 
 fn clamped_map(value: f64, from_min: f64, from_max: f64, to_min: f64, to_max: f64) -> f64 {
     clamped_lerp((value - from_min) / (from_max - from_min), to_min, to_max)
+}
+
+fn quart_to_block(quart: i32) -> i32 {
+    quart << 2
 }
 
 fn quantize(value: f64, resolution: i32) -> i32 {
@@ -4613,6 +4636,20 @@ mod tests {
     }
 
     #[test]
+    fn xoroshiro_next_double_uses_unsigned_shift() {
+        let mut random = XoroshiroRandomSource::from_raw_seed(u64::MAX, 1);
+
+        assert_eq!(
+            random.next_long(),
+            0xffff_ffff_ffff_ffff,
+            "test seed must exercise the sign bit"
+        );
+
+        random = XoroshiroRandomSource::from_raw_seed(u64::MAX, 1);
+        assert_eq!(random.next_double().to_bits(), 0x3fef_ffff_ffff_ffff);
+    }
+
+    #[test]
     fn position_seed_matches_vanilla_overflow_math() {
         assert_eq!(position_seed(1, 2, 3), (-33_674_130_277_896_i64) as u64);
         assert_eq!(
@@ -4751,5 +4788,24 @@ mod tests {
             }),
             Some(SurfaceBlock::Dirt)
         );
+    }
+
+    #[test]
+    fn overworld_surface_rules_respect_preliminary_surface_gate() {
+        let rules = OverworldSurfaceRules::new(12345);
+        let context = SurfaceRuleContext {
+            x: 0,
+            y: 80,
+            z: 0,
+            surface_height: 80,
+            above_water: true,
+            sea_level: 63,
+            min_y: -64,
+            biome: "minecraft:plains",
+            slope: 0,
+        };
+
+        assert_eq!(rules.block_at(context), Some(SurfaceBlock::GrassBlock));
+        assert_eq!(rules.block_at_with_preliminary_surface(context, 81), None);
     }
 }
