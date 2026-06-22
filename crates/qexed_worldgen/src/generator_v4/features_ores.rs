@@ -1566,8 +1566,8 @@ impl OreFeatureConfig {
     ) -> bool {
         let direction = random.next_float() * std::f32::consts::PI;
         let spread_xy = self.size as f64 / 8.0;
-        let x_spread = (direction as f64).sin() * spread_xy;
-        let z_spread = (direction as f64).cos() * spread_xy;
+        let x_spread = mth_sin(direction) as f64 * spread_xy;
+        let z_spread = mth_cos(direction) as f64 * spread_xy;
         let x0 = origin_x as f64 + x_spread;
         let x1 = origin_x as f64 - x_spread;
         let z0 = origin_z as f64 + z_spread;
@@ -1577,15 +1577,15 @@ impl OreFeatureConfig {
         let mut spheres = vec![[0.0; 4]; self.size as usize];
 
         for i in 0..self.size {
-            let step = i as f64 / self.size as f64;
+            let step = i as f32 / self.size as f32;
             let radius_noise = random.next_double() * self.size as f64 / 16.0;
             let radius =
-                ((mth_sin(std::f32::consts::PI as f64 * step) + 1.0) as f64 * radius_noise + 1.0)
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
                     / 2.0;
             spheres[i as usize] = [
-                lerp_f64(step, x0, x1),
-                lerp_f64(step, y0, y1),
-                lerp_f64(step, z0, z1),
+                lerp_f64(step as f64, x0, x1),
+                lerp_f64(step as f64, y0, y1),
+                lerp_f64(step as f64, z0, z1),
                 radius,
             ];
         }
@@ -1620,12 +1620,12 @@ impl OreFeatureConfig {
                 continue;
             }
 
-            let min_x = (x - radius).floor() as i32;
-            let max_x = ((x + radius).floor() as i32).max(min_x);
-            let min_y = (y - radius).floor() as i32;
-            let max_y = ((y + radius).floor() as i32).max(min_y);
-            let min_z = (z - radius).floor() as i32;
-            let max_z = ((z + radius).floor() as i32).max(min_z);
+            let min_x = mth_floor(x - radius);
+            let max_x = mth_floor(x + radius);
+            let min_y = mth_floor(y - radius);
+            let max_y = mth_floor(y + radius);
+            let min_z = mth_floor(z - radius);
+            let max_z = mth_floor(z + radius);
 
             for world_x in min_x..=max_x {
                 let xd = (world_x as f64 + 0.5 - x) / radius;
@@ -1680,8 +1680,8 @@ impl OreFeatureConfig {
     ) -> bool {
         let direction = random.next_float() * std::f32::consts::PI;
         let spread_xy = self.size as f64 / 8.0;
-        let x_spread = (direction as f64).sin() * spread_xy;
-        let z_spread = (direction as f64).cos() * spread_xy;
+        let x_spread = mth_sin(direction) as f64 * spread_xy;
+        let z_spread = mth_cos(direction) as f64 * spread_xy;
         let x0 = origin_x as f64 + x_spread;
         let x1 = origin_x as f64 - x_spread;
         let z0 = origin_z as f64 + z_spread;
@@ -1694,14 +1694,14 @@ impl OreFeatureConfig {
         let mut max_z = i32::MIN;
 
         for i in 0..self.size {
-            let step = i as f64 / self.size as f64;
+            let step = i as f32 / self.size as f32;
             let radius_noise = random.next_double() * self.size as f64 / 16.0;
             let radius =
-                ((mth_sin(std::f32::consts::PI as f64 * step) + 1.0) as f64 * radius_noise + 1.0)
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
                     / 2.0;
-            let x = lerp_f64(step, x0, x1);
-            let _y = lerp_f64(step, y0, y1);
-            let z = lerp_f64(step, z0, z1);
+            let x = lerp_f64(step as f64, x0, x1);
+            let _y = lerp_f64(step as f64, y0, y1);
+            let z = lerp_f64(step as f64, z0, z1);
             min_x = min_x.min((x - radius).floor() as i32);
             max_x = max_x.max(((x + radius).floor() as i32).max(min_x));
             min_z = min_z.min((z - radius).floor() as i32);
@@ -1882,9 +1882,22 @@ fn is_adjacent_to_air_with_neighbor(
     })
 }
 
-fn mth_sin(value: f64) -> f32 {
-    let index = ((value * 10_430.378_350_470_453) as i64 & 65_535) as f64;
-    (index * std::f64::consts::TAU / 65_536.0).sin() as f32
+fn mth_sin(value: f32) -> f32 {
+    let index = (value * 10_430.378_f32) as i32 & 65_535;
+    (index as f32 * std::f32::consts::TAU / 65_536.0).sin()
+}
+
+fn mth_cos(value: f32) -> f32 {
+    mth_sin(value + std::f32::consts::FRAC_PI_2)
+}
+
+fn mth_floor(value: f64) -> i32 {
+    let truncated = value as i32;
+    if value < truncated as f64 {
+        truncated - 1
+    } else {
+        truncated
+    }
 }
 
 impl OreTargetPredicate {
@@ -2016,65 +2029,40 @@ impl FeatureRandom {
 
     fn decoration_seed(world_seed: i64, origin_x: i32, origin_z: i32) -> i64 {
         let mut random = Self::new(world_seed);
-        random.set_seed(world_seed);
-        let x_seed = random.next_long() | 1;
-        let z_seed = random.next_long() | 1;
-        let seed = (origin_x as i64)
-            .wrapping_mul(x_seed)
-            .wrapping_add((origin_z as i64).wrapping_mul(z_seed))
-            ^ world_seed;
-        random.set_seed(seed);
-        seed
+        random
+            .source
+            .set_decoration_seed(world_seed, origin_x, origin_z)
     }
 
     fn for_feature(decoration_seed: i64, feature_index: i32, step_index: i32) -> Self {
-        Self::new(
-            decoration_seed
-                .wrapping_add(feature_index as i64)
-                .wrapping_add((10_000 * step_index) as i64),
-        )
+        let mut random = Self::new(decoration_seed);
+        random
+            .source
+            .set_feature_seed(decoration_seed, feature_index, step_index);
+        random
     }
 
     fn set_seed(&mut self, seed: i64) {
         self.source.set_seed(seed);
     }
 
-    fn next_bits(&mut self, bits: i32) -> i32 {
-        ((self.source.next_long() as u64) >> (64 - bits)) as i32
-    }
-
     fn next_int(&mut self, bound: i32) -> i32 {
-        assert!(bound > 0);
-        if bound & (bound - 1) == 0 {
-            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
-        }
-
-        loop {
-            let bits = self.next_bits(31);
-            let value = bits % bound;
-            if bits.wrapping_sub(value).wrapping_add(bound - 1) >= 0 {
-                return value;
-            }
-        }
+        self.source.next_int(bound as usize) as i32
     }
 
     fn next_long(&mut self) -> i64 {
-        let upper = self.next_bits(32) as i64;
-        let lower = self.next_bits(32) as i64;
-        (upper << 32).wrapping_add(lower)
+        self.source.next_long() as i64
     }
 
     fn next_float(&mut self) -> f32 {
-        self.next_bits(24) as f32 * 5.960_464_5e-8_f32
+        self.source.next_float()
     }
 
     fn next_bool(&mut self) -> bool {
-        self.next_bits(1) != 0
+        self.source.next_bool()
     }
 
     fn next_double(&mut self) -> f64 {
-        let upper = self.next_bits(26) as i64;
-        let lower = self.next_bits(27) as i64;
-        ((upper << 27) + lower) as f64 * (1.110_223_024_625_156_5e-16_f64)
+        self.source.next_double()
     }
 }
