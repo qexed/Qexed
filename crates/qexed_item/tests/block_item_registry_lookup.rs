@@ -26,7 +26,9 @@ fn block_state_and_item_stack_resolve_consistent_registry_identity() {
     let default_stone = blocks.default_state_id("stone").unwrap();
     assert_eq!(default_stone, BlockStateId::new(1));
     assert_eq!(
-        blocks.state_id(&BlockState::new("minecraft:stone")).unwrap(),
+        blocks
+            .state_id(&BlockState::new("minecraft:stone"))
+            .unwrap(),
         default_stone
     );
     assert_eq!(
@@ -44,13 +46,15 @@ fn block_state_and_item_stack_resolve_consistent_registry_identity() {
 
     let mut items = ItemRegistry::new();
     let stone_item = ItemId::new("minecraft:stone").unwrap();
-    items
-        .register(ItemDefinition::new(stone_item.clone(), DEFAULT_MAX_STACK_SIZE).unwrap());
+    items.register(ItemDefinition::new(stone_item.clone(), DEFAULT_MAX_STACK_SIZE).unwrap());
 
     let stack_from_id = items.stack(&stone_item, 32).unwrap();
     let stack_from_name = items.stack_by_str("minecraft:stone", 32).unwrap();
 
     assert_eq!(items.get_by_str("minecraft:stone").unwrap().id, stone_item);
     assert_eq!(stack_from_name, stack_from_id);
-    assert_eq!(stack_from_name.item.as_str(), BlockState::new("stone").block().as_str());
+    assert_eq!(
+        stack_from_name.item.as_str(),
+        BlockState::new("stone").block().as_str()
+    );
 }

@@ -18,6 +18,12 @@ pub enum ItemError {
     NotFound(ItemId),
     #[error("incompatible item stacks")]
     IncompatibleStack,
+    #[error("invalid inventory slot {slot}, len {len}")]
+    InvalidSlot { slot: usize, len: usize },
+    #[error("inventory full")]
+    InventoryFull,
+    #[error("insufficient items: requested {requested}, available {available}")]
+    InsufficientItems { requested: u8, available: u8 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -166,6 +172,18 @@ impl ItemStack {
         Ok(moved)
     }
 
+    pub fn add_count(&mut self, count: u8) -> Result<u8, ItemError> {
+        let moved = self.remaining_capacity().min(count);
+        self.count += moved;
+        Ok(moved)
+    }
+
+    pub fn remove_count(&mut self, count: u8) -> u8 {
+        let removed = self.count.min(count);
+        self.count -= removed;
+        removed
+    }
+
     pub fn split(&mut self, count: u8) -> Result<Self, ItemError> {
         let split_count = count.min(self.count);
         self.count -= split_count;
@@ -175,6 +193,164 @@ impl ItemStack {
             self.max_stack_size,
             self.components.clone(),
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Inventory {
+    slots: Vec<Option<ItemStack>>,
+}
+
+impl Inventory {
+    pub fn new(size: usize) -> Self {
+        Self {
+            slots: vec![None; size],
+        }
+    }
+
+    pub fn from_slots(slots: Vec<Option<ItemStack>>) -> Self {
+        Self { slots }
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    pub fn slots(&self) -> &[Option<ItemStack>] {
+        &self.slots
+    }
+
+    pub fn into_slots(self) -> Vec<Option<ItemStack>> {
+        self.slots
+    }
+
+    pub fn get(&self, slot: usize) -> Result<Option<&ItemStack>, ItemError> {
+        self.slot(slot).map(Option::as_ref)
+    }
+
+    pub fn get_mut(&mut self, slot: usize) -> Result<Option<&mut ItemStack>, ItemError> {
+        self.slot_mut(slot).map(Option::as_mut)
+    }
+
+    pub fn set(
+        &mut self,
+        slot: usize,
+        stack: Option<ItemStack>,
+    ) -> Result<Option<ItemStack>, ItemError> {
+        let target = self.slot_mut(slot)?;
+        Ok(std::mem::replace(
+            target,
+            stack.filter(|stack| !stack.is_empty()),
+        ))
+    }
+
+    pub fn take(&mut self, slot: usize) -> Result<Option<ItemStack>, ItemError> {
+        let target = self.slot_mut(slot)?;
+        Ok(target.take())
+    }
+
+    pub fn clear(&mut self, slot: usize) -> Result<(), ItemError> {
+        self.set(slot, None).map(|_| ())
+    }
+
+    pub fn add_stack(&mut self, mut stack: ItemStack) -> Result<Option<ItemStack>, ItemError> {
+        if stack.is_empty() {
+            return Ok(None);
+        }
+
+        for slot in &mut self.slots {
+            let Some(existing) = slot else {
+                continue;
+            };
+            if existing.can_merge_with(&stack) {
+                existing.merge_from(&mut stack)?;
+                if stack.is_empty() {
+                    return Ok(None);
+                }
+            }
+        }
+
+        for slot in &mut self.slots {
+            if slot.is_none() {
+                *slot = Some(stack);
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(stack))
+    }
+
+    pub fn add_stack_all(&mut self, stack: ItemStack) -> Result<(), ItemError> {
+        match self.add_stack(stack)? {
+            Some(_) => Err(ItemError::InventoryFull),
+            None => Ok(()),
+        }
+    }
+
+    pub fn remove_matching(
+        &mut self,
+        template: &ItemStack,
+        count: u8,
+    ) -> Result<ItemStack, ItemError> {
+        let available = self.count_matching(template);
+        if available < count {
+            return Err(ItemError::InsufficientItems {
+                requested: count,
+                available,
+            });
+        }
+
+        let mut remaining = count;
+        for slot in &mut self.slots {
+            let should_remove = slot
+                .as_ref()
+                .is_some_and(|stack| stack.can_merge_with(template));
+            if !should_remove {
+                continue;
+            }
+
+            let stack = slot.as_mut().expect("slot checked above");
+            remaining -= stack.remove_count(remaining);
+            if stack.is_empty() {
+                *slot = None;
+            }
+            if remaining == 0 {
+                break;
+            }
+        }
+
+        ItemStack::with_components(
+            template.item.clone(),
+            count,
+            template.max_stack_size,
+            template.components.clone(),
+        )
+    }
+
+    pub fn count_matching(&self, template: &ItemStack) -> u8 {
+        self.slots
+            .iter()
+            .filter_map(Option::as_ref)
+            .filter(|stack| stack.can_merge_with(template))
+            .fold(0u8, |total, stack| total.saturating_add(stack.count))
+    }
+
+    fn slot(&self, slot: usize) -> Result<&Option<ItemStack>, ItemError> {
+        self.slots.get(slot).ok_or(ItemError::InvalidSlot {
+            slot,
+            len: self.slots.len(),
+        })
+    }
+
+    fn slot_mut(&mut self, slot: usize) -> Result<&mut Option<ItemStack>, ItemError> {
+        let len = self.slots.len();
+        self.slots
+            .get_mut(slot)
+            .ok_or(ItemError::InvalidSlot { slot, len })
     }
 }
 
@@ -335,8 +511,8 @@ fn is_valid_identifier(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ComponentValue, DEFAULT_MAX_STACK_SIZE, ItemComponents, ItemDefinition, ItemError, ItemId,
-        ItemRegistry, ItemStack,
+        ComponentValue, DEFAULT_MAX_STACK_SIZE, Inventory, ItemComponents, ItemDefinition,
+        ItemError, ItemId, ItemRegistry, ItemStack,
     };
 
     #[test]
@@ -483,5 +659,91 @@ mod tests {
         assert_eq!(components.get_f64("qexed:weight"), Some(1.5));
         assert_eq!(components.get_str("minecraft:custom_name"), Some("Pick"));
         assert_eq!(components.get_str("minecraft:damage"), None);
+    }
+
+    #[test]
+    fn inventory_merges_before_filling_empty_slots() {
+        let id = ItemId::new("minecraft:stone").unwrap();
+        let mut inventory = Inventory::new(3);
+        inventory
+            .set(
+                1,
+                Some(ItemStack::new(id.clone(), 60, DEFAULT_MAX_STACK_SIZE).unwrap()),
+            )
+            .unwrap();
+
+        let leftover = inventory
+            .add_stack(ItemStack::new(id, 8, DEFAULT_MAX_STACK_SIZE).unwrap())
+            .unwrap();
+
+        assert_eq!(leftover, None);
+        assert_eq!(
+            inventory.get(1).unwrap().unwrap().count,
+            DEFAULT_MAX_STACK_SIZE
+        );
+        assert_eq!(inventory.get(0).unwrap().unwrap().count, 4);
+    }
+
+    #[test]
+    fn inventory_returns_leftover_when_full() {
+        let mut inventory = Inventory::new(1);
+        inventory
+            .set(
+                0,
+                Some(ItemStack::new(ItemId::new("minecraft:stone").unwrap(), 64, 64).unwrap()),
+            )
+            .unwrap();
+
+        let leftover = inventory
+            .add_stack(ItemStack::new(ItemId::new("minecraft:dirt").unwrap(), 3, 64).unwrap())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(leftover.item.as_str(), "minecraft:dirt");
+        assert_eq!(leftover.count, 3);
+        assert_eq!(
+            inventory.add_stack_all(leftover).unwrap_err(),
+            ItemError::InventoryFull
+        );
+    }
+
+    #[test]
+    fn inventory_removes_matching_items_across_slots() {
+        let id = ItemId::new("minecraft:stone").unwrap();
+        let template = ItemStack::new(id.clone(), 1, DEFAULT_MAX_STACK_SIZE).unwrap();
+        let mut inventory = Inventory::from_slots(vec![
+            Some(ItemStack::new(id.clone(), 3, DEFAULT_MAX_STACK_SIZE).unwrap()),
+            Some(ItemStack::new(id, 4, DEFAULT_MAX_STACK_SIZE).unwrap()),
+        ]);
+
+        let removed = inventory.remove_matching(&template, 5).unwrap();
+
+        assert_eq!(removed.count, 5);
+        assert_eq!(inventory.get(0).unwrap(), None);
+        assert_eq!(inventory.get(1).unwrap().unwrap().count, 2);
+        assert_eq!(inventory.count_matching(&template), 2);
+    }
+
+    #[test]
+    fn inventory_rejects_invalid_slot_and_insufficient_removal() {
+        let mut inventory = Inventory::new(1);
+        let template = ItemStack::new(
+            ItemId::new("minecraft:stone").unwrap(),
+            1,
+            DEFAULT_MAX_STACK_SIZE,
+        )
+        .unwrap();
+
+        assert_eq!(
+            inventory.take(3).unwrap_err(),
+            ItemError::InvalidSlot { slot: 3, len: 1 }
+        );
+        assert_eq!(
+            inventory.remove_matching(&template, 1).unwrap_err(),
+            ItemError::InsufficientItems {
+                requested: 1,
+                available: 0
+            }
+        );
     }
 }
