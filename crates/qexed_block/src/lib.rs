@@ -112,6 +112,10 @@ impl BlockState {
     pub fn properties(&self) -> &BlockProperties {
         &self.properties
     }
+
+    pub fn property(&self, name: &str) -> Option<&str> {
+        self.properties.get(name).map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +132,10 @@ impl BlockDefinition {
 
     pub fn properties(&self) -> &BTreeMap<String, Vec<String>> {
         &self.properties
+    }
+
+    pub fn property_values(&self, name: &str) -> Option<&[String]> {
+        self.properties.get(name).map(Vec::as_slice)
     }
 
     pub fn default_state(&self) -> BlockStateId {
