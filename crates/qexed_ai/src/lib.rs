@@ -63,6 +63,12 @@ pub enum AiCommand<E> {
         dy: f32,
         dz: f32,
     },
+    LookAt {
+        entity: E,
+        x: f64,
+        y: f64,
+        z: f64,
+    },
 }
 
 pub struct AiTickContext<'a, E> {
@@ -92,6 +98,26 @@ pub struct NoopBehavior;
 
 pub struct NoopGoal {
     state: GoalState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AiVec3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetSnapshot<E> {
+    pub entity: E,
+    pub position: AiVec3,
+}
+
+pub struct MoveToNearestTargetBehavior<E> {
+    candidates: Vec<TargetSnapshot<E>>,
+    speed: f32,
+    stop_distance: f64,
+    eye_height: f64,
 }
 
 pub struct Sequence<E> {
@@ -191,6 +217,106 @@ impl<E> Goal<E> for NoopGoal {
             .push(AiCommand::SetGoal(self.state.id().clone()));
         self.state.mark_complete();
         GoalStatus::Complete
+    }
+}
+
+impl AiVec3 {
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+
+    pub fn horizontal_distance_squared(self, other: Self) -> f64 {
+        let dx = other.x - self.x;
+        let dz = other.z - self.z;
+        dx.mul_add(dx, dz * dz)
+    }
+}
+
+impl<E> TargetSnapshot<E> {
+    pub const fn new(entity: E, position: AiVec3) -> Self {
+        Self { entity, position }
+    }
+}
+
+impl<E: Copy + Eq> MoveToNearestTargetBehavior<E> {
+    pub fn new(speed: f32) -> Self {
+        Self {
+            candidates: Vec::new(),
+            speed,
+            stop_distance: 0.25,
+            eye_height: 1.6,
+        }
+    }
+
+    pub fn with_stop_distance(mut self, stop_distance: f64) -> Self {
+        self.stop_distance = stop_distance.max(0.0);
+        self
+    }
+
+    pub fn with_eye_height(mut self, eye_height: f64) -> Self {
+        self.eye_height = eye_height;
+        self
+    }
+
+    pub fn set_candidates(&mut self, candidates: impl IntoIterator<Item = TargetSnapshot<E>>) {
+        self.candidates.clear();
+        self.candidates.extend(candidates);
+    }
+
+    pub fn nearest_target(&self, origin: AiVec3, self_entity: E) -> Option<&TargetSnapshot<E>> {
+        self.candidates
+            .iter()
+            .filter(|candidate| candidate.entity != self_entity)
+            .min_by(|left, right| {
+                origin
+                    .horizontal_distance_squared(left.position)
+                    .partial_cmp(&origin.horizontal_distance_squared(right.position))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+}
+
+impl<E: Copy + Eq + ToString> Behavior<E> for MoveToNearestTargetBehavior<E> {
+    fn tick(&mut self, context: &mut AiTickContext<'_, E>) -> BehaviorStatus {
+        let Some(BlackboardValue::F64(x)) = context.blackboard.get("position.x") else {
+            return BehaviorStatus::Failure;
+        };
+        let Some(BlackboardValue::F64(y)) = context.blackboard.get("position.y") else {
+            return BehaviorStatus::Failure;
+        };
+        let Some(BlackboardValue::F64(z)) = context.blackboard.get("position.z") else {
+            return BehaviorStatus::Failure;
+        };
+
+        let origin = AiVec3::new(*x, *y, *z);
+        let Some(target) = self.nearest_target(origin, context.entity) else {
+            return BehaviorStatus::Failure;
+        };
+
+        let dx = target.position.x - origin.x;
+        let dz = target.position.z - origin.z;
+        let distance = (dx * dx + dz * dz).sqrt();
+        if distance <= self.stop_distance {
+            return BehaviorStatus::Success;
+        }
+
+        let scale = f64::from(self.speed) / distance.max(f64::EPSILON);
+        context.commands.push(AiCommand::MoveBy {
+            entity: context.entity,
+            dx: (dx * scale) as f32,
+            dy: 0.0,
+            dz: (dz * scale) as f32,
+        });
+        context.commands.push(AiCommand::LookAt {
+            entity: context.entity,
+            x: target.position.x,
+            y: target.position.y + self.eye_height,
+            z: target.position.z,
+        });
+        context
+            .memory
+            .remember(context.tick, "last_target", target.entity.to_string());
+        BehaviorStatus::Running
     }
 }
 
@@ -361,8 +487,16 @@ impl<E> AiAgent<E> {
         &self.blackboard
     }
 
+    pub fn blackboard_mut(&mut self) -> &mut Blackboard {
+        &mut self.blackboard
+    }
+
     pub fn memory(&self) -> &Memory {
         &self.memory
+    }
+
+    pub fn memory_mut(&mut self) -> &mut Memory {
+        &mut self.memory
     }
 }
 

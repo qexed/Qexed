@@ -284,6 +284,17 @@ impl EntityStore {
         true
     }
 
+    pub fn update_pose_with(&mut self, id: EntityId, update: impl FnOnce(&mut EntityPose)) -> bool {
+        let Some(entity) = self.entities.get_mut(&id) else {
+            return false;
+        };
+        update(&mut entity.pose);
+        let pose = entity.pose;
+        self.updates
+            .push(EntityUpdateSnapshot::Pose(EntityPoseSnapshot { id, pose }));
+        true
+    }
+
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
         self.entities.get(&id)
     }
