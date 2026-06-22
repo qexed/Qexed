@@ -1602,11 +1602,16 @@ impl OreFeatureConfig {
     }
 
     fn base_stone(size: i32, block: &str) -> Self {
+        let predicate = if block == "minecraft:gravel" {
+            OreTargetPredicate::StoneOreReplaceables
+        } else {
+            OreTargetPredicate::BaseStoneOverworld
+        };
         Self {
             size,
             discard_chance_on_air_exposure: 0.0,
             targets: vec![OreFeatureTarget {
-                predicate: OreTargetPredicate::BaseStoneOverworld,
+                predicate,
                 block: BlockLayer::new(block),
             }],
         }
