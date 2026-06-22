@@ -1425,6 +1425,7 @@ mod tests {
 
         assert_eq!(feature.step_index, 9);
         assert_eq!(feature.feature_index, 2);
+        assert_eq!(feature.heightmap, SimpleVegetationHeightmap::MotionBlocking);
         assert!(feature.noise_threshold.is_none());
         assert_eq!(feature.rarity, 4);
         assert_eq!(feature.inner_count, 24);
@@ -1524,6 +1525,7 @@ mod tests {
 
         assert_eq!(feature.step_index, 9);
         assert_eq!(feature.feature_index, 5);
+        assert_eq!(feature.heightmap, SimpleVegetationHeightmap::WorldSurfaceWg);
         let noise_threshold = feature.noise_threshold.as_ref().unwrap();
         assert_eq!(noise_threshold.noise_level, -0.8);
         assert_eq!(noise_threshold.below_noise, 5);
@@ -1905,6 +1907,7 @@ mod tests {
                     && biomes.contains(&"minecraft:windswept_savanna")
         ));
         assert_eq!(forest.outer_count, 2);
+        assert_eq!(forest.heightmap, SimpleVegetationHeightmap::WorldSurfaceWg);
         assert!(matches!(
             forest.biome_filter,
             FeatureBiomeFilter::Include(biomes)
@@ -2306,6 +2309,10 @@ mod tests {
             .iter()
             .find(|feature| feature.feature_index == 93)
             .unwrap();
+        assert_eq!(
+            forest_flowers.heightmap,
+            SimpleVegetationHeightmap::MotionBlocking
+        );
         assert!(matches!(
             forest_flowers.count_provider,
             SimpleVegetationCountProvider::ClampedUniform {
@@ -2329,6 +2336,10 @@ mod tests {
             .iter()
             .find(|feature| feature.feature_index == 95)
             .unwrap();
+        assert_eq!(
+            leaf_litter.heightmap,
+            SimpleVegetationHeightmap::WorldSurfaceWg
+        );
         assert_eq!(leaf_litter.outer_count, 2);
         assert_eq!(leaf_litter.inner_count, 32);
         assert_eq!(leaf_litter.required_support, Some("minecraft:grass_block"));
@@ -5482,6 +5493,37 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_simple_vegetation_motion_blocking_uses_fluid_surface() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let chunk = underwater_test_chunk(&settings, 60, 63, "minecraft:grass_block");
+
+        assert_eq!(
+            SimpleVegetationHeightmap::MotionBlocking.height(&settings, &chunk, 8, 8),
+            64
+        );
+        assert_eq!(
+            SimpleVegetationHeightmap::WorldSurfaceWg.height(&settings, &chunk, 8, 8),
+            64
+        );
+    }
+
+    #[test]
+    fn vanilla_noise_simple_vegetation_motion_blocking_skips_non_blocking_plants() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = grass_surface_test_chunk(&settings, 64);
+        chunk.set_layer(8, 65, 8, settings.min_y, BlockLayer::new("minecraft:short_grass"));
+
+        assert_eq!(
+            SimpleVegetationHeightmap::WorldSurfaceWg.height(&settings, &chunk, 8, 8),
+            66
+        );
+        assert_eq!(
+            SimpleVegetationHeightmap::MotionBlocking.height(&settings, &chunk, 8, 8),
+            65
+        );
+    }
+
+    #[test]
     fn vanilla_noise_flower_plains_places_noise_selected_flower() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let grass_block = BlockLayer::new("minecraft:grass_block");
@@ -6411,6 +6453,7 @@ mod tests {
             feature_index: 0,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::WorldSurfaceWg,
             noise_threshold: None,
             rarity: 1,
             inner_count: 1,

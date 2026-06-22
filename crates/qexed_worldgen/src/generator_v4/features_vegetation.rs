@@ -4,6 +4,7 @@ struct PlacedSimpleVegetationFeature {
     feature_index: i32,
     outer_count: i32,
     count_provider: SimpleVegetationCountProvider,
+    heightmap: SimpleVegetationHeightmap,
     noise_threshold: Option<NoiseThresholdCount>,
     rarity: i32,
     inner_count: i32,
@@ -22,6 +23,7 @@ impl PlacedSimpleVegetationFeature {
             feature_index,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::WorldSurfaceWg,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 0,
@@ -55,6 +57,7 @@ impl PlacedSimpleVegetationFeature {
             feature_index,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::MotionBlocking,
             noise_threshold: None,
             rarity: 4,
             inner_count: 24,
@@ -84,6 +87,7 @@ impl PlacedSimpleVegetationFeature {
             feature_index,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::WorldSurfaceWg,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 15,
@@ -190,6 +194,7 @@ impl PlacedSimpleVegetationFeature {
             clamp_min: 0,
             clamp_max: max_outer_count,
         })
+        .with_heightmap(SimpleVegetationHeightmap::MotionBlocking)
     }
 
     fn patch_leaf_litter(feature_index: i32) -> Self {
@@ -312,6 +317,7 @@ impl PlacedSimpleVegetationFeature {
             feature_index,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::WorldSurfaceWg,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 5,
@@ -362,6 +368,7 @@ impl PlacedSimpleVegetationFeature {
             feature_index,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::WorldSurfaceWg,
             noise_threshold: Some(NoiseThresholdCount {
                 noise_level: -0.8,
                 below_noise: 5,
@@ -579,6 +586,7 @@ impl PlacedSimpleVegetationFeature {
             feature_index,
             outer_count: 1,
             count_provider: SimpleVegetationCountProvider::Fixed,
+            heightmap: SimpleVegetationHeightmap::WorldSurfaceWg,
             noise_threshold,
             rarity,
             inner_count,
@@ -600,6 +608,11 @@ impl PlacedSimpleVegetationFeature {
     fn with_outer_count_provider(mut self, provider: SimpleVegetationCountProvider) -> Self {
         self.outer_count = provider.display_count(self.outer_count);
         self.count_provider = provider;
+        self
+    }
+
+    fn with_heightmap(mut self, heightmap: SimpleVegetationHeightmap) -> Self {
+        self.heightmap = heightmap;
         self
     }
 
@@ -653,7 +666,9 @@ impl PlacedSimpleVegetationFeature {
             else {
                 continue;
             };
-            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            let base_y = self
+                .heightmap
+                .height(settings, chunk, base_local_x, base_local_z);
             if base_y <= settings.min_y
                 || !self
                     .biome_filter
@@ -700,7 +715,9 @@ impl PlacedSimpleVegetationFeature {
             else {
                 continue;
             };
-            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            let base_y = self
+                .heightmap
+                .height(settings, chunk, base_local_x, base_local_z);
             if base_y <= settings.min_y
                 || !self
                     .biome_filter
@@ -751,7 +768,8 @@ impl PlacedSimpleVegetationFeature {
                 continue;
             };
             let base_y =
-                source_chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+                self.heightmap
+                    .height(settings, source_chunk, base_local_x, base_local_z);
             if base_y <= settings.min_y
                 || !self
                     .biome_filter
@@ -1606,6 +1624,68 @@ impl SimpleVegetationCountProvider {
             Self::ClampedUniform { clamp_max, .. } => clamp_max,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SimpleVegetationHeightmap {
+    WorldSurfaceWg,
+    MotionBlocking,
+}
+
+impl SimpleVegetationHeightmap {
+    fn height(
+        self,
+        settings: &NoiseSettings,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        local_z: usize,
+    ) -> i32 {
+        match self {
+            Self::WorldSurfaceWg => chunk.world_surface_wg_height(local_x, local_z, settings.min_y),
+            Self::MotionBlocking => chunk
+                .column(local_x, local_z)
+                .blocks
+                .iter()
+                .rposition(is_motion_blocking_heightmap_layer)
+                .map(|index| settings.min_y + index as i32 + 1)
+                .unwrap_or(settings.min_y),
+        }
+    }
+}
+
+fn is_motion_blocking_heightmap_layer(layer: &BlockLayer) -> bool {
+    is_fluid_layer(layer) || (!layer.is_air && !is_non_motion_blocking_vegetation_layer(layer))
+}
+
+fn is_non_motion_blocking_vegetation_layer(layer: &BlockLayer) -> bool {
+    is_small_flower_layer(layer)
+        || matches!(
+            layer.block.as_ref(),
+            "minecraft:short_grass"
+                | "minecraft:tall_grass"
+                | "minecraft:fern"
+                | "minecraft:large_fern"
+                | "minecraft:dead_bush"
+                | "minecraft:bush"
+                | "minecraft:firefly_bush"
+                | "minecraft:leaf_litter"
+                | "minecraft:short_dry_grass"
+                | "minecraft:tall_dry_grass"
+                | "minecraft:seagrass"
+                | "minecraft:tall_seagrass"
+                | "minecraft:kelp"
+                | "minecraft:kelp_plant"
+                | "minecraft:vine"
+                | "minecraft:glow_lichen"
+                | "minecraft:hanging_roots"
+                | "minecraft:crimson_roots"
+                | "minecraft:warped_roots"
+                | "minecraft:nether_sprouts"
+                | "minecraft:moss_carpet"
+                | "minecraft:pale_moss_carpet"
+                | "minecraft:wildflowers"
+                | "minecraft:pink_petals"
+        )
 }
 
 #[derive(Debug, Clone, Copy)]
