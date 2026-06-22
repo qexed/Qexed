@@ -2070,40 +2070,22 @@ impl FeatureRandom {
 
     fn next_int(&mut self, bound: i32) -> i32 {
         assert!(bound > 0);
-        if (bound & -bound) == bound {
-            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
-        }
-
-        loop {
-            let sample = self.next_bits(31) as i32;
-            let modulo = sample % bound;
-            if sample.wrapping_sub(modulo).wrapping_add(bound - 1) >= 0 {
-                return modulo;
-            }
-        }
+        self.source.next_int(bound as usize) as i32
     }
 
     fn next_long(&mut self) -> i64 {
-        let upper = self.next_bits(32) as i32 as i64;
-        let lower = self.next_bits(32) as i32 as i64;
-        (upper << 32).wrapping_add(lower)
+        self.source.next_long() as i64
     }
 
     fn next_float(&mut self) -> f32 {
-        self.next_bits(24) as f32 * 5.960_464_5e-8_f32
+        self.source.next_float()
     }
 
     fn next_bool(&mut self) -> bool {
-        self.next_bits(1) != 0
+        self.source.next_bool()
     }
 
     fn next_double(&mut self) -> f64 {
-        let upper = self.next_bits(26) as i64;
-        let lower = self.next_bits(27) as i64;
-        ((upper << 27) + lower) as f64 * (1.0 / ((1_u64 << 53) as f64))
-    }
-
-    fn next_bits(&mut self, bits: u32) -> u64 {
-        self.source.next_long() >> (64 - bits)
+        self.source.next_double()
     }
 }

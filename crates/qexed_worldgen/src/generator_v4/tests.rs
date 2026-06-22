@@ -291,15 +291,14 @@ mod tests {
     }
 
     #[test]
-    fn vanilla_noise_seed_zero_gravel_ore_spillover_reaches_oracle_diff() {
+    fn vanilla_noise_seed_zero_gravel_ore_does_not_replace_oracle_deepslate() {
         let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
         let target_origin_x = 0;
         let target_origin_z = 0;
-        let target_x = 1;
-        let target_y = -30;
+        let target_x = 2;
+        let target_y = -63;
         let target_z = 0;
         let ore = &settings.ore_features.features[1];
-        let mut matching_sources = Vec::new();
 
         for source_chunk_x in -1..=1 {
             for source_chunk_z in -1..=1 {
@@ -336,12 +335,12 @@ mod tests {
                     .layer(target_x, target_y, target_z, settings.min_y)
                     .is_some_and(|layer| layer.is("minecraft:gravel"))
                 {
-                    matching_sources.push((source_chunk_x, source_chunk_z));
+                    panic!(
+                        "ore_gravel from source chunk ({source_chunk_x},{source_chunk_z}) replaced ({target_x},{target_y},{target_z})"
+                    );
                 }
             }
         }
-
-        assert!(!matching_sources.is_empty());
     }
 
     #[test]
