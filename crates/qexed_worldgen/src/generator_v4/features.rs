@@ -952,7 +952,20 @@ impl OverworldOreFeatures {
             if feature.can_spill_into_neighbor_chunk() {
                 let candidate_indexes = neighbor_sources.candidates(feature);
                 for source_index in candidate_indexes {
-                    if !neighbor_sources.can_match_biome(settings, source_index, biome_filter) {
+                    let prechecked_spillover =
+                        matches!(feature, PlacedUndergroundFeature::Dripstone(PlacedDripstoneFeature::Large(_)));
+                    if prechecked_spillover
+                        && !neighbor_sources.may_spill_without_loading(
+                            settings,
+                            source_index,
+                            feature,
+                        )
+                    {
+                        continue;
+                    }
+                    if !prechecked_spillover
+                        && !neighbor_sources.can_match_biome(settings, source_index, biome_filter)
+                    {
                         continue;
                     }
 
@@ -1625,6 +1638,29 @@ impl NeighborFeatureSources {
             source.chunk = Some(settings.feature_source_chunk(source.chunk_x, source.chunk_z));
         }
         true
+    }
+
+    fn may_spill_without_loading(
+        &mut self,
+        settings: &NoiseSettings,
+        index: usize,
+        feature: PlacedUndergroundFeature<'_>,
+    ) -> bool {
+        let Some(source) = self.entries[index].as_mut() else {
+            return false;
+        };
+        if source.decoration_seed == 0 {
+            source.decoration_seed =
+                FeatureRandom::decoration_seed(self.seed, source.origin_x, source.origin_z);
+        }
+        feature.may_spill_from_seed(
+            settings,
+            source.origin_x,
+            source.origin_z,
+            self.target_origin_x,
+            self.target_origin_z,
+            source.decoration_seed,
+        )
     }
 
     fn prepare_for_neighbor_context_feature(

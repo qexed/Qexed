@@ -94,6 +94,28 @@ impl PlacedDripstoneFeature {
             ),
         }
     }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        match self {
+            Self::Large(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
+            Self::Cluster(_) | Self::Pointed(_) => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +148,8 @@ impl PlacedLargeDripstoneFeature {
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        let count = self.count.sample(random);
+        for _ in 0..count {
             let world_x = origin_x + random.next_int(16);
             let world_z = origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
@@ -154,7 +177,8 @@ impl PlacedLargeDripstoneFeature {
         target_chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        let count = self.count.sample(random);
+        for _ in 0..count {
             let world_x = source_origin_x + random.next_int(16);
             let world_z = source_origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
@@ -178,6 +202,39 @@ impl PlacedLargeDripstoneFeature {
                 world_z,
             );
         }
+    }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            let world_y = self.height.sample(settings, random);
+            if !self
+                .biome_filter
+                .allows_at(&settings.density, world_x, world_y, world_z)
+            {
+                continue;
+            }
+            if horizontal_box_reaches_chunk(
+                world_x - self.config.column_radius.max,
+                world_x + self.config.column_radius.max,
+                world_z - self.config.column_radius.max,
+                world_z + self.config.column_radius.max,
+                target_origin_x,
+                target_origin_z,
+            ) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -685,6 +742,7 @@ impl LargeDripstoneFeatureConfig {
             root_y: resolved.ceiling_y - 1,
             pointing_up: false,
             radius: resolved.radius,
+            max_height: resolved.ceiling_y - resolved.floor_y - 1,
             bluntness: resolved.stalactite_bluntness,
             scale: resolved.scale,
         };
@@ -692,6 +750,7 @@ impl LargeDripstoneFeatureConfig {
             root_y: resolved.floor_y + 1,
             pointing_up: true,
             radius: resolved.radius,
+            max_height: resolved.ceiling_y - resolved.floor_y - 1,
             bluntness: resolved.stalagmite_bluntness,
             scale: resolved.scale,
         };
@@ -1615,6 +1674,7 @@ struct LargeDripstoneCone {
     root_y: i32,
     pointing_up: bool,
     radius: i32,
+    max_height: i32,
     bluntness: f64,
     scale: f64,
 }
@@ -1639,12 +1699,20 @@ impl LargeDripstoneCone {
         let mut placed = false;
         for dx in -self.radius..=self.radius {
             for dz in -self.radius..=self.radius {
+                let world_x = root_x + dx;
+                let world_z = root_z + dz;
+                let Some((local_x, local_z)) =
+                    local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+                else {
+                    continue;
+                };
+
                 let current_radius = ((dx * dx + dz * dz) as f64).sqrt();
                 if current_radius > self.radius as f64 {
                     continue;
                 }
 
-                let mut height = self.height_at_radius(current_radius);
+                let mut height = self.height_at_radius(current_radius).min(self.max_height);
                 if height <= 0 {
                     continue;
                 }
@@ -1654,9 +1722,7 @@ impl LargeDripstoneCone {
 
                 let mut has_been_out_of_stone = false;
                 for step in 0..height {
-                    let world_x = root_x + dx;
                     let world_y = self.root_y + direction.dy() * step;
-                    let world_z = root_z + dz;
                     if !(settings.min_y..settings.min_y + settings.height).contains(&world_y) {
                         break;
                     }
@@ -1675,18 +1741,14 @@ impl LargeDripstoneCone {
                         || current.is("minecraft:dripstone_block")
                     {
                         has_been_out_of_stone = true;
-                        if let Some((local_x, local_z)) =
-                            local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
-                        {
-                            chunk.set_layer(
-                                local_x,
-                                world_y,
-                                local_z,
-                                settings.min_y,
-                                BlockLayer::new("minecraft:dripstone_block"),
-                            );
-                            placed = true;
-                        }
+                        chunk.set_layer(
+                            local_x,
+                            world_y,
+                            local_z,
+                            settings.min_y,
+                            BlockLayer::new("minecraft:dripstone_block"),
+                        );
+                        placed = true;
                     } else if has_been_out_of_stone && is_base_stone_overworld(current) {
                         break;
                     }
@@ -2279,6 +2341,20 @@ fn is_empty_or_water_at_world(
         min_y,
     )
     .is_some_and(is_air_or_water_layer)
+}
+
+fn horizontal_box_reaches_chunk(
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+) -> bool {
+    max_x >= chunk_min_x
+        && min_x <= chunk_min_x + 15
+        && max_z >= chunk_min_z
+        && min_z <= chunk_min_z + 15
 }
 
 fn is_lava_at_world(
