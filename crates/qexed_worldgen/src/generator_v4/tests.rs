@@ -512,7 +512,10 @@ mod tests {
             let precheck = redstone_lower
                 .ore
                 .precheck_passes(&settings, 0, 0, &chunk, None, x, y, z);
-            let shape = redstone_lower.ore.sample_blob_shape(&mut random, prefix);
+            let shape_diag = redstone_lower
+                .ore
+                .sample_blob_shape_diagnostic(&mut random, prefix);
+            let shape = shape_diag.shape.clone();
             let target = (6, -61, 0);
             let mut containing_spheres = Vec::new();
             for (sphere_index, [sx, sy, sz, radius]) in shape.spheres.iter().copied().enumerate() {
@@ -582,6 +585,40 @@ mod tests {
                 shape.tested_stride_y,
                 target_predicate
             );
+            if attempt == 3 {
+                eprintln!(
+                    "seed0 ore_redstone_lower attempt=3 prefix x0={:.17} x1={:.17} y0={:.17} y1={:.17} z0={:.17} z1={:.17} min_box=({},{},{}) tested_dims=({}, {}, {}) tested_strides=({}, {})",
+                    shape_diag.prefix.x0,
+                    shape_diag.prefix.x1,
+                    shape_diag.prefix.y0,
+                    shape_diag.prefix.y1,
+                    shape_diag.prefix.z0,
+                    shape_diag.prefix.z1,
+                    shape_diag.prefix.min_box_x,
+                    shape_diag.prefix.min_box_y,
+                    shape_diag.prefix.min_box_z,
+                    shape_diag.prefix.tested_size_x,
+                    shape_diag.prefix.tested_size_y,
+                    shape_diag.prefix.tested_size_z,
+                    shape_diag.prefix.tested_stride_x,
+                    shape_diag.prefix.tested_stride_y,
+                );
+                for sphere in &shape_diag.spheres {
+                    eprintln!(
+                        "seed0 ore_redstone_lower attempt=3 sphere={} step={:.9} sin={:.9} radius_noise={:.17} center=({:.17},{:.17},{:.17}) radius_before_cull={:.17} radius_after_cull={:.17}",
+                        sphere.index,
+                        sphere.step,
+                        sphere.sin,
+                        sphere.radius_noise,
+                        sphere.x,
+                        sphere.y,
+                        sphere.z,
+                        sphere.radius_before_cull,
+                        sphere.radius_after_cull
+                    );
+                }
+                assert_eq!((x, y, z), (7, -59, 1));
+            }
             redstone_lower.ore.place_shape_with_neighbor(
                 &settings,
                 0,
@@ -592,6 +629,25 @@ mod tests {
                 &shape,
             );
         }
+    }
+
+    #[test]
+    fn vanilla_noise_ore_math_matches_java_bits() {
+        assert_eq!(mth_sin(0.0).to_bits(), 0.0_f32.to_bits());
+        assert_eq!(mth_sin(std::f32::consts::FRAC_PI_2).to_bits(), 1.0_f32.to_bits());
+        assert_eq!(mth_sin(std::f32::consts::PI).to_bits(), 0x250d_3132);
+        assert_eq!(
+            mth_sin(std::f32::consts::PI * 3.0 / 8.0).to_bits(),
+            0x3f6c_835e
+        );
+
+        let mut random = FeatureRandom::new(0);
+        assert_eq!(random.next_float().to_bits(), 0x3e28_b290);
+        assert_eq!(random.next_double().to_bits(), 0x3fe9_9784_5ae5_d2f8);
+
+        let mut raw = vanilla_noise::XoroshiroRandomSource::new(0);
+        assert_eq!(raw.next_float().to_bits(), 0x3e28_b290);
+        assert_eq!(raw.next_double().to_bits(), 0x3fe9_9784_5ae5_d2f8);
     }
 
     #[test]

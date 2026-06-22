@@ -1571,6 +1571,28 @@ struct OreBlobShape {
     tested_stride_y: usize,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone)]
+struct OreSphereDiagnostic {
+    index: i32,
+    step: f32,
+    sin: f32,
+    radius_noise: f64,
+    x: f64,
+    y: f64,
+    z: f64,
+    radius_before_cull: f64,
+    radius_after_cull: f64,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+struct OreBlobShapeDiagnostic {
+    prefix: OreBlobPrefix,
+    spheres: Vec<OreSphereDiagnostic>,
+    shape: OreBlobShape,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum OreTargetPredicate {
     StoneOreReplaceables,
@@ -2068,6 +2090,78 @@ impl OreFeatureConfig {
             tested_size_z: prefix.tested_size_z,
             tested_stride_x: prefix.tested_stride_x,
             tested_stride_y: prefix.tested_stride_y,
+        }
+    }
+
+    #[cfg(test)]
+    fn sample_blob_shape_diagnostic(
+        &self,
+        random: &mut FeatureRandom,
+        prefix: OreBlobPrefix,
+    ) -> OreBlobShapeDiagnostic {
+        let mut spheres = vec![[0.0; 4]; self.size as usize];
+        let mut diagnostics = Vec::with_capacity(self.size as usize);
+
+        for i in 0..self.size {
+            let step = i as f32 / self.size as f32;
+            let sin = mth_sin(std::f32::consts::PI * step);
+            let radius_noise = random.next_double() * self.size as f64 / 16.0;
+            let radius = ((sin + 1.0) as f64 * radius_noise + 1.0) / 2.0;
+            let x = lerp_f64(step as f64, prefix.x0, prefix.x1);
+            let y = lerp_f64(step as f64, prefix.y0, prefix.y1);
+            let z = lerp_f64(step as f64, prefix.z0, prefix.z1);
+            spheres[i as usize] = [x, y, z, radius];
+            diagnostics.push(OreSphereDiagnostic {
+                index: i,
+                step,
+                sin,
+                radius_noise,
+                x,
+                y,
+                z,
+                radius_before_cull: radius,
+                radius_after_cull: radius,
+            });
+        }
+
+        for i1 in 0..self.size as usize {
+            if spheres[i1][3] <= 0.0 {
+                continue;
+            }
+            for i2 in i1 + 1..self.size as usize {
+                if spheres[i2][3] <= 0.0 {
+                    continue;
+                }
+                let dx = spheres[i1][0] - spheres[i2][0];
+                let dy = spheres[i1][1] - spheres[i2][1];
+                let dz = spheres[i1][2] - spheres[i2][2];
+                let dr = spheres[i1][3] - spheres[i2][3];
+                if dr * dr > dx * dx + dy * dy + dz * dz {
+                    if dr > 0.0 {
+                        spheres[i2][3] = -1.0;
+                        diagnostics[i2].radius_after_cull = -1.0;
+                    } else {
+                        spheres[i1][3] = -1.0;
+                        diagnostics[i1].radius_after_cull = -1.0;
+                    }
+                }
+            }
+        }
+
+        OreBlobShapeDiagnostic {
+            prefix: prefix.clone(),
+            spheres: diagnostics,
+            shape: OreBlobShape {
+                spheres,
+                min_box_x: prefix.min_box_x,
+                min_box_y: prefix.min_box_y,
+                min_box_z: prefix.min_box_z,
+                tested_size_x: prefix.tested_size_x,
+                tested_size_y: prefix.tested_size_y,
+                tested_size_z: prefix.tested_size_z,
+                tested_stride_x: prefix.tested_stride_x,
+                tested_stride_y: prefix.tested_stride_y,
+            },
         }
     }
 
