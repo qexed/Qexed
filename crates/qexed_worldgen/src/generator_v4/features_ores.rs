@@ -1656,16 +1656,29 @@ impl OreFeatureConfig {
         origin_z: i32,
     ) -> bool {
         let prefix = self.sample_blob_prefix(random, origin_x, origin_y, origin_z);
-        if !self.precheck_passes(
-            settings,
-            chunk_min_x,
-            chunk_min_z,
-            chunk,
-            neighbor,
-            origin_x,
-            origin_y,
-            origin_z,
-        ) {
+        let precheck_passes = if neighbor.is_some() {
+            self.precheck_passes(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                neighbor,
+                origin_x,
+                origin_y,
+                origin_z,
+            )
+        } else {
+            self.precheck_passes_in_chunk(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                origin_x,
+                origin_y,
+                origin_z,
+            )
+        };
+        if !precheck_passes {
             return false;
         }
 
@@ -2247,6 +2260,43 @@ impl OreFeatureConfig {
                         world_z,
                     )
                 {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn precheck_passes_in_chunk(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let spread_xy = self.size as f32 / 8.0;
+        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
+        let precheck_radius = precheck_radius.ceil() as i32;
+        let spread_xy = spread_xy.ceil() as i32;
+        let min_x = (origin_x - spread_xy - precheck_radius).max(chunk_min_x);
+        let max_x = (origin_x + spread_xy + precheck_radius).min(chunk_min_x + 15);
+        let min_y = origin_y - 2 - precheck_radius;
+        let min_z = (origin_z - spread_xy - precheck_radius).max(chunk_min_z);
+        let max_z = (origin_z + spread_xy + precheck_radius).min(chunk_min_z + 15);
+        if min_x > max_x || min_z > max_z {
+            return false;
+        }
+
+        for world_x in min_x..=max_x {
+            let local_x = (world_x - chunk_min_x) as usize;
+            for world_z in min_z..=max_z {
+                let local_z = (world_z - chunk_min_z) as usize;
+                if min_y <= chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y) {
                     return true;
                 }
             }
