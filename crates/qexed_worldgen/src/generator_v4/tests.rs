@@ -3365,6 +3365,49 @@ mod tests {
     }
 
     #[test]
+    fn vanilla_noise_ore_shape_uses_java_bitset_strides() {
+        let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
+        let mut chunk = surface_test_chunk(&settings, 80, "minecraft:stone");
+        let ore = OreFeatureConfig::new(
+            2,
+            0.0,
+            "minecraft:gold_ore",
+            "minecraft:deepslate_gold_ore",
+        );
+        let shape = OreBlobShape {
+            spheres: vec![
+                [2.5, 48.5, 0.5, 0.51],
+                [0.5, 49.5, 0.5, 0.51],
+            ],
+            min_box_x: 0,
+            min_box_y: 48,
+            min_box_z: 0,
+            tested_size_x: 3,
+            tested_size_y: 3,
+            tested_size_z: 1,
+            tested_stride_x: 2,
+            tested_stride_y: 2,
+        };
+
+        assert!(ore.place_shape_with_neighbor(
+            &settings,
+            0,
+            0,
+            &mut chunk,
+            None,
+            &mut FeatureRandom::new(0),
+            &shape,
+        ));
+
+        assert!(chunk
+            .layer(2, 48, 0, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:gold_ore")));
+        assert!(chunk
+            .layer(0, 49, 0, settings.min_y)
+            .is_some_and(|layer| layer.is("minecraft:stone")));
+    }
+
+    #[test]
     fn vanilla_noise_underwater_magma_spillover_uses_source_solid_neighbor() {
         let settings = NoiseSettings::overworld(12345, vanilla_noise::OverworldNoiseKind::Default);
         let feature = PlacedUnderwaterMagmaFeature {
