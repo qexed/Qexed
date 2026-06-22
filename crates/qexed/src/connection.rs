@@ -2047,17 +2047,16 @@ mod tests {
         }
 
         let rust_cache = RustWorldgenCacheEntry::new(dimension, seed, chunk_x, chunk_z);
-        if rust_cache.has_valid_cache() {
+        if std::env::var_os("QEXED_WORLDGEN_REFRESH_RUST_CACHE").is_some() {
+            rust_cache
+                .refresh_generated_cache(dimension, seed, chunk_x, chunk_z)
+                .expect("Rust worldgen cache should be saved");
+        } else if rust_cache.has_valid_cache() {
             return;
         } else {
-            if std::env::var_os("QEXED_WORLDGEN_REFRESH_RUST_CACHE").is_none() {
-                panic!(
-                    "Rust worldgen cache is missing for seed {seed} chunk ({chunk_x}, {chunk_z}); set QEXED_WORLDGEN_REFRESH_RUST_CACHE=1 to refresh it outside the fast path"
-                );
-            }
-            rust_cache
-                .store_generated_chunk(dimension, seed, chunk_x, chunk_z)
-                .expect("Rust worldgen cache should be saved");
+            panic!(
+                "Rust worldgen cache is missing for seed {seed} chunk ({chunk_x}, {chunk_z}); set QEXED_WORLDGEN_REFRESH_RUST_CACHE=1 to refresh it outside the fast path"
+            );
         }
     }
 
@@ -2176,8 +2175,11 @@ mod tests {
             if self.digest_path.is_file() {
                 return Ok(());
             }
-            let digest =
-                cached_chunk_semantic_digest(&self.region_path, self.key.chunk_x, self.key.chunk_z)?;
+            let digest = cached_chunk_semantic_digest(
+                &self.region_path,
+                self.key.chunk_x,
+                self.key.chunk_z,
+            )?;
             fs::write(&self.digest_path, digest)?;
             Ok(())
         }
@@ -2275,23 +2277,13 @@ mod tests {
             }
         }
 
-        fn is_valid(&self) -> bool {
-            self.has_valid_cache()
-        }
-
         fn has_valid_cache(&self) -> bool {
             self.digest_path.is_file()
                 && fs::read_to_string(&self.manifest_path)
                     .is_ok_and(|manifest| manifest == self.key.manifest())
         }
 
-        fn has_valid_region(&self) -> bool {
-            self.region_path.is_file()
-                && fs::read_to_string(&self.manifest_path)
-                    .is_ok_and(|manifest| manifest == self.key.manifest())
-        }
-
-        fn store_generated_chunk(
+        fn refresh_generated_cache(
             &self,
             dimension: &qexed_save::DimensionId,
             seed: i64,
@@ -2339,6 +2331,7 @@ mod tests {
     fn rust_worldgen_implementation_fingerprint() -> String {
         "qexed-worldgen-v4".to_string()
     }
+
     fn semantic_digest(tag: &qexed_nbt::Tag) -> String {
         let mut state = StableHasher::new();
         write_semantic_tag(&mut state, "$", tag);
