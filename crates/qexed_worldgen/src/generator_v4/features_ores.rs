@@ -1627,11 +1627,11 @@ impl OreFeatureConfig {
             }
 
             let min_x = mth_floor(x - radius).max(min_box_x);
-            let max_x = mth_floor(x + radius);
+            let max_x = mth_floor(x + radius) - 1;
             let min_y = mth_floor(y - radius).max(min_box_y);
-            let max_y = mth_floor(y + radius);
+            let max_y = mth_floor(y + radius) - 1;
             let min_z = mth_floor(z - radius).max(min_box_z);
-            let max_z = mth_floor(z + radius);
+            let max_z = mth_floor(z + radius) - 1;
 
             for world_x in min_x..=max_x {
                 let xd = (world_x as f64 + 0.5 - x) / radius;

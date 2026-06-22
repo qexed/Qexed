@@ -295,9 +295,7 @@ mod tests {
         let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
         let target_origin_x = 0;
         let target_origin_z = 0;
-        let target_x = 2;
-        let target_y = -63;
-        let target_z = 0;
+        let target_positions = [(2, -63, 0), (5, -63, 4)];
         let ore = &settings.ore_features.features[1];
 
         for source_chunk_x in -1..=1 {
@@ -331,13 +329,15 @@ mod tests {
                     );
                 }
 
-                if target
-                    .layer(target_x, target_y, target_z, settings.min_y)
-                    .is_some_and(|layer| layer.is("minecraft:gravel"))
-                {
-                    panic!(
-                        "ore_gravel from source chunk ({source_chunk_x},{source_chunk_z}) replaced ({target_x},{target_y},{target_z})"
-                    );
+                for (target_x, target_y, target_z) in target_positions {
+                    if target
+                        .layer(target_x, target_y, target_z, settings.min_y)
+                        .is_some_and(|layer| layer.is("minecraft:gravel"))
+                    {
+                        panic!(
+                            "ore_gravel from source chunk ({source_chunk_x},{source_chunk_z}) replaced ({target_x},{target_y},{target_z})"
+                        );
+                    }
                 }
             }
         }
