@@ -519,6 +519,11 @@ impl LakeFeatureConfig {
                         world_z,
                         settings.min_y,
                     ) else {
+                        if overlaps_chunk(world_x, world_z, source_min_x, source_min_z)
+                            || overlaps_chunk(world_x, world_z, target_min_x, target_min_z)
+                        {
+                            return false;
+                        }
                         continue;
                     };
                     if yy >= 4 && is_fluid_layer(layer) {
