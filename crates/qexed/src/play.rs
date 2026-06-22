@@ -95,25 +95,6 @@ const SURVIVAL_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const WORLD_TIME_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const SIDEBAR_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const MIN_PLAYER_DATA_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(10);
-const FLUID_TICK_INTERVAL: Duration = Duration::from_millis(50);
-const FLUID_WATER_TICK_DELAY: u64 = 5;
-const FLUID_LAVA_TICK_DELAY: u64 = 30;
-const FLUID_NETHER_LAVA_TICK_DELAY: u64 = 10;
-const FLUID_MAX_ACTIVE_POSITIONS_PER_TICK: usize = 4096;
-const FLUID_MAX_CHANGES_PER_TICK: usize = 8192;
-const FLUID_MAX_QUEUE: usize = 262_144;
-const FLUID_MAX_DOWNWARD_SPREAD_PER_TICK: usize = 96;
-const FLUID_WATER_SLOPE_SEARCH_DISTANCE: i32 = 4;
-const FLUID_LAVA_SLOPE_SEARCH_DISTANCE: i32 = 2;
-const FLUID_NEIGHBOR_OFFSETS: [(i32, i32, i32); 7] = [
-    (0, 0, 0),
-    (1, 0, 0),
-    (-1, 0, 0),
-    (0, 1, 0),
-    (0, -1, 0),
-    (0, 0, 1),
-    (0, 0, -1),
-];
 const MINING_EXHAUSTION_PER_BLOCK: f32 = 0.005;
 const PLAYER_ACTION_START_DESTROY_BLOCK: i32 = 0;
 const PLAYER_ACTION_CANCEL_DESTROY_BLOCK: i32 = 1;
@@ -122,444 +103,39 @@ const PLAYER_ACTION_DROP_ITEM_STACK: i32 = 3;
 const PLAYER_ACTION_DROP_ITEM: i32 = 4;
 const ADVENTURE_BREAK_CHEAT_BAN_REASON: &str = "开第三方客户端";
 
+// ── Fluid system (removed) ──
+
 type FluidSeed = (BlockPosition, i32);
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum FluidKind {
-    Water,
-    Lava,
-}
-
-impl FluidKind {
-    fn from_block_name(name: &str) -> Option<Self> {
-        match name {
-            "minecraft:water" => Some(Self::Water),
-            "minecraft:lava" => Some(Self::Lava),
-            _ => None,
-        }
-    }
-
-    fn from_block_state(block_state: i32) -> Option<Self> {
-        Self::from_block_name(&block_name(block_state))
-    }
-
-    fn tick_delay(self, dimension: &str, dimension_type: Option<&str>) -> u64 {
-        match self {
-            Self::Water => FLUID_WATER_TICK_DELAY,
-            Self::Lava if dimension_is_ultrawarm(dimension, dimension_type) => {
-                FLUID_NETHER_LAVA_TICK_DELAY
-            }
-            Self::Lava => FLUID_LAVA_TICK_DELAY,
-        }
-    }
-}
-
-fn dimension_is_ultrawarm(dimension: &str, dimension_type: Option<&str>) -> bool {
-    dimension_type == Some("minecraft:the_nether") || dimension == "minecraft:the_nether"
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FluidTickDelays {
-    water: u64,
-    lava: u64,
-}
-
-impl FluidTickDelays {
-    fn for_kind(self, kind: FluidKind) -> u64 {
-        match kind {
-            FluidKind::Water => self.water,
-            FluidKind::Lava => self.lava,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct FluidRuntime {
-    state: Mutex<FluidRuntimeState>,
-    world_rules: Option<crate::world::WorldRulesManager>,
-}
-
-#[derive(Debug)]
-struct FluidRuntimeState {
-    origin: Instant,
-    current_tick: u64,
-    last_started_tick: Option<u64>,
-    scheduled: BTreeMap<u64, VecDeque<FluidQueueEntry>>,
-    scheduled_keys: HashMap<FluidQueueEntry, u64>,
-}
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct FluidQueueEntry {
-    dimension: String,
-    x: i32,
-    y: i32,
-    z: i32,
-    kind: FluidKind,
-}
+struct FluidQueueEntry { dimension: String, x: i32, y: i32, z: i32 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct FluidBlockChange {
-    dimension: String,
-    position: BlockPosition,
-    block_state: i32,
-}
+struct FluidBlockChange { dimension: String, position: BlockPosition, block_state: i32 }
 
-struct FluidTickJob {
-    receiver: mpsc::Receiver<FluidTickResult>,
-}
+struct FluidTickJob;
+struct FluidTickResult;
 
 #[derive(Debug)]
-struct FluidTickResult {
-    changes: Vec<FluidBlockChange>,
-    deferred: Vec<FluidQueueEntry>,
-}
+pub(crate) struct FluidRuntime;
 
 impl FluidRuntime {
-    pub(crate) fn new() -> Self {
-        Self::with_optional_world_rules(None)
-    }
-
-    pub(crate) fn with_world_rules(world_rules: crate::world::WorldRulesManager) -> Self {
-        Self::with_optional_world_rules(Some(world_rules))
-    }
-
-    fn with_optional_world_rules(world_rules: Option<crate::world::WorldRulesManager>) -> Self {
-        Self {
-            state: Mutex::new(FluidRuntimeState {
-                origin: Instant::now(),
-                current_tick: 0,
-                last_started_tick: None,
-                scheduled: BTreeMap::new(),
-                scheduled_keys: HashMap::new(),
-            }),
-            world_rules,
-        }
-    }
-
-    fn tick_delays(&self, dimension: &str) -> FluidTickDelays {
-        let dimension_type = self
-            .world_rules
-            .as_ref()
-            .map(|world_rules| world_rules.snapshot(dimension).dimension_type);
-        FluidTickDelays {
-            water: FluidKind::Water.tick_delay(dimension, dimension_type.as_deref()),
-            lava: FluidKind::Lava.tick_delay(dimension, dimension_type.as_deref()),
-        }
-    }
-
-    pub(crate) fn enqueue_block_change(&self, dimension: &str, position: &BlockPosition) {
-        let delays = self.tick_delays(dimension);
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        update_fluid_clock(&mut state, Instant::now());
-        for (dx, dy, dz) in FLUID_NEIGHBOR_OFFSETS {
-            for kind in [FluidKind::Water, FluidKind::Lava] {
-                schedule_fluid_position(
-                    &mut state,
-                    FluidQueueEntry {
-                        dimension: dimension.to_string(),
-                        x: position.x + dx,
-                        y: position.y + dy,
-                        z: position.z + dz,
-                        kind,
-                    },
-                    delays.for_kind(kind),
-                );
-            }
-        }
-    }
-
-    fn enqueue_fluid_seeds(&self, dimension: &str, seeds: impl IntoIterator<Item = FluidSeed>) {
-        let delays = self.tick_delays(dimension);
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        update_fluid_clock(&mut state, Instant::now());
-        for (position, block_state) in seeds {
-            let Some(kind) = FluidKind::from_block_state(block_state) else {
-                continue;
-            };
-            schedule_fluid_position(
-                &mut state,
-                FluidQueueEntry {
-                    dimension: dimension.to_string(),
-                    x: position.x,
-                    y: position.y,
-                    z: position.z,
-                    kind,
-                },
-                delays.for_kind(kind),
-            );
-        }
-    }
-
-    fn enqueue_fluid_continuation(
-        &self,
-        dimension: &str,
-        position: &BlockPosition,
-        block_state: i32,
-    ) {
-        let Some(kind) = FluidKind::from_block_state(block_state) else {
-            return;
-        };
-        let delays = self.tick_delays(dimension);
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        update_fluid_clock(&mut state, Instant::now());
-        schedule_fluid_position(
-            &mut state,
-            FluidQueueEntry {
-                dimension: dimension.to_string(),
-                x: position.x,
-                y: position.y,
-                z: position.z,
-                kind,
-            },
-            delays.for_kind(kind),
-        );
-    }
-
-    fn try_start_tick_job(
-        &self,
-        world: WorldManager,
-        active: &mut Option<FluidTickJob>,
-        wake_sender: &tokio::sync::mpsc::UnboundedSender<()>,
-    ) -> bool {
-        if active.is_some() {
-            return false;
-        }
-
-        let entries = self.take_due_entries(Instant::now());
-        if entries.is_empty() {
-            return false;
-        }
-
-        let (sender, receiver) = mpsc::channel();
-        let wake_sender = wake_sender.clone();
-        tokio::task::spawn_blocking(move || {
-            let _ = sender.send(compute_fluid_tick_changes(&world, entries));
-            let _ = wake_sender.send(());
-        });
-        *active = Some(FluidTickJob { receiver });
-        true
-    }
-
-    fn poll_completed_tick_job(&self, active: &mut Option<FluidTickJob>) -> Vec<FluidBlockChange> {
-        let Some(job) = active.as_ref() else {
-            return Vec::new();
-        };
-
-        match job.receiver.try_recv() {
-            Ok(result) => {
-                *active = None;
-                self.requeue_deferred(result.deferred);
-                result.changes
-            }
-            Err(mpsc::TryRecvError::Empty) => Vec::new(),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                *active = None;
-                log::warn!("fluid tick job ended without returning a result");
-                Vec::new()
-            }
-        }
-    }
-
-    fn take_due_entries(&self, now: Instant) -> Vec<FluidQueueEntry> {
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        update_fluid_clock(&mut state, now);
-        take_due_fluid_entries(&mut state)
-    }
-
-    fn requeue_deferred(&self, deferred: Vec<FluidQueueEntry>) {
-        if deferred.is_empty() {
-            return;
-        }
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        update_fluid_clock(&mut state, Instant::now());
-        for entry in deferred {
-            schedule_fluid_position(&mut state, entry, 1);
-        }
-    }
-
-    #[cfg(test)]
-    fn force_tick_due(&self) {
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        if let Some(due_tick) = state.scheduled.keys().next().copied() {
-            force_fluid_state_tick(&mut state, due_tick);
-            state.last_started_tick = None;
-        }
-    }
-
-    #[cfg(test)]
-    fn force_current_tick(&self, tick: u64) {
-        let mut state = self.state.lock().expect("fluid runtime poisoned");
-        force_fluid_state_tick(&mut state, tick);
-        state.last_started_tick = None;
-    }
+    pub(crate) fn new() -> Self { Self }
+    pub(crate) fn with_world_rules(_: crate::world::WorldRulesManager) -> Self { Self }
+    pub(crate) fn enqueue_block_change(&self, _: &str, _: &BlockPosition) {}
+    fn enqueue_fluid_seeds(&self, _: &str, _: impl IntoIterator<Item = FluidSeed>) {}
+    fn enqueue_fluid_continuation(&self, _: &str, _: &BlockPosition, _: i32) {}
+    fn try_start_tick_job(&self, _: WorldManager, _: &mut Option<FluidTickJob>, _: &tokio::sync::mpsc::UnboundedSender<()>) -> bool { false }
+    fn poll_completed_tick_job(&self, _: &mut Option<FluidTickJob>) -> Vec<FluidBlockChange> { Vec::new() }
+    #[cfg(test)] fn force_tick_due(&self) {}
+    #[cfg(test)] fn force_current_tick(&self, _tick: u64) {}
 }
 
 impl Default for FluidRuntime {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self }
 }
 
-impl FluidQueueEntry {
-    fn position(&self) -> BlockPosition {
-        BlockPosition {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-        }
-    }
-}
-
-fn update_fluid_clock(state: &mut FluidRuntimeState, now: Instant) {
-    let tick = now
-        .saturating_duration_since(state.origin)
-        .as_millis()
-        .checked_div(FLUID_TICK_INTERVAL.as_millis())
-        .and_then(|tick| u64::try_from(tick).ok())
-        .unwrap_or(u64::MAX);
-    state.current_tick = state.current_tick.max(tick);
-    if state
-        .last_started_tick
-        .is_some_and(|started| started > state.current_tick)
-    {
-        state.last_started_tick = None;
-    }
-}
-
-#[cfg(test)]
-fn force_fluid_state_tick(state: &mut FluidRuntimeState, tick: u64) {
-    let elapsed = Duration::from_millis(
-        u64::try_from(FLUID_TICK_INTERVAL.as_millis())
-            .unwrap_or(u64::MAX)
-            .saturating_mul(tick),
-    );
-    state.origin = Instant::now()
-        .checked_sub(elapsed)
-        .unwrap_or_else(Instant::now);
-    state.current_tick = tick;
-}
-
-fn schedule_fluid_position(state: &mut FluidRuntimeState, entry: FluidQueueEntry, delay: u64) {
-    let due_tick = state.current_tick.saturating_add(delay.max(1));
-    if let Some(existing_due) = state.scheduled_keys.get(&entry).copied() {
-        if existing_due <= due_tick {
-            return;
-        }
-    } else if state.scheduled_keys.len() >= FLUID_MAX_QUEUE {
-        return;
-    }
-    state.scheduled_keys.insert(entry.clone(), due_tick);
-    state
-        .scheduled
-        .entry(due_tick)
-        .or_default()
-        .push_back(entry);
-}
-
-fn take_due_fluid_entries(state: &mut FluidRuntimeState) -> Vec<FluidQueueEntry> {
-    let mut entries = Vec::new();
-    if state.last_started_tick == Some(state.current_tick) {
-        return entries;
-    }
-
-    while entries.len() < FLUID_MAX_ACTIVE_POSITIONS_PER_TICK {
-        let Some(due_tick) = state.scheduled.keys().next().copied() else {
-            break;
-        };
-        if due_tick > state.current_tick {
-            break;
-        }
-        let (entry, remove_bucket) = {
-            let queue = state
-                .scheduled
-                .get_mut(&due_tick)
-                .expect("scheduled fluid bucket exists");
-            let entry = queue.pop_front();
-            (entry, queue.is_empty())
-        };
-        if remove_bucket {
-            state.scheduled.remove(&due_tick);
-        }
-        let Some(entry) = entry else {
-            continue;
-        };
-        if state.scheduled_keys.get(&entry).copied() != Some(due_tick) {
-            continue;
-        }
-        state.scheduled_keys.remove(&entry);
-        entries.push(entry);
-    }
-
-    if !entries.is_empty() {
-        state.last_started_tick = Some(state.current_tick);
-    }
-    entries
-}
-
-fn compute_fluid_tick_changes(
-    world: &WorldManager,
-    entries: Vec<FluidQueueEntry>,
-) -> FluidTickResult {
-    let mut changes = Vec::new();
-    let mut changed_positions = HashSet::new();
-    let mut deferred = Vec::new();
-    'entries: for entry in entries {
-        if changes.len() >= FLUID_MAX_CHANGES_PER_TICK {
-            deferred.push(entry);
-            continue;
-        }
-        let position = entry.position();
-        let Some(state) = world.block_state_at(&entry.dimension, &position) else {
-            continue;
-        };
-        let name = block_name(state);
-        if FluidKind::from_block_name(&name) != Some(entry.kind) {
-            continue;
-        }
-        if let Some((position, block_state)) =
-            fluid_collision_update(world, &entry.dimension, &position, state)
-        {
-            if changed_positions.insert((
-                entry.dimension.clone(),
-                position.x,
-                position.y,
-                position.z,
-            )) {
-                changes.push(FluidBlockChange {
-                    dimension: entry.dimension,
-                    position,
-                    block_state,
-                });
-            }
-            continue;
-        }
-        for (position, block_state) in fluid_flow_updates(world, &entry.dimension, &position, state)
-        {
-            if changes.len() >= FLUID_MAX_CHANGES_PER_TICK {
-                deferred.push(entry);
-                continue 'entries;
-            }
-            if changed_positions.insert((
-                entry.dimension.clone(),
-                position.x,
-                position.y,
-                position.z,
-            )) {
-                changes.push(FluidBlockChange {
-                    dimension: entry.dimension.clone(),
-                    position,
-                    block_state,
-                });
-            }
-        }
-        if changes.len() >= FLUID_MAX_CHANGES_PER_TICK {
-            deferred.push(entry);
-            continue;
-        }
-    }
-    FluidTickResult { changes, deferred }
-}
-
+fn compute_fluid_tick_changes(_: &WorldManager, _: Vec<FluidQueueEntry>) -> FluidTickResult { FluidTickResult }
 struct ChatRateLimit {
     window: Duration,
     max_messages: usize,
@@ -1233,9 +809,13 @@ where
                     pending_dig = None;
                 }
 
-                // Send block destruction stage updates for active mining
-                if let Some(ref pending) = pending_dig {
-                    if let Some(stage) = pending.destroy_stage(Instant::now()) {
+                // Send block destruction stage updates for active mining.
+                // Advance one game tick first so the destruction stage
+                // progresses at a steady 20 TPS rate regardless of real-time
+                // tick jitter.
+                if let Some(ref mut pending) = pending_dig {
+                    pending.tick();
+                    if let Some(stage) = pending.destroy_stage() {
                         send_block_destruction_stage(
                             sink,
                             session.player.entity_id,
@@ -1249,6 +829,7 @@ where
                 if config.server.gameplay.redstone
                     && gameplay_runtime.should_tick_redstone(&config.server.gameplay)
                 {
+                    let _span = crate::profile_span!("tick:redstone");
                     let updates =
                         gameplay_runtime
                             .redstone
@@ -1269,6 +850,7 @@ where
                 }
 
                 if config.server.gameplay.block_updates {
+                    let _fluid_span = crate::profile_span!("tick:fluid_update");
                     poll_apply_and_restart_fluid_tick(
                         sink,
                         world,
@@ -1288,6 +870,7 @@ where
                 if config.server.gameplay.block_updates
                     && gameplay_runtime.should_tick_farmland(&config.server.gameplay)
                 {
+                    let _span = crate::profile_span!("tick:environment");
                     let updates = environment_tick_updates(world, &play_dimension, position);
                     apply_environment_block_state_updates(
                         sink,
@@ -1303,6 +886,7 @@ where
                 }
 
                 if gameplay_runtime.should_tick_furnace(&config.server.gameplay) {
+                    let _span = crate::profile_span!("tick:furnace");
                     let mut outcome = gameplay_runtime
                         .furnace
                         .tick(
@@ -1327,7 +911,6 @@ where
                     .await?;
                 }
                 if gameplay_runtime.should_tick_oxygen(&config.server.gameplay) {
-                    let underwater = fall_context_at(world, &play_dimension, position).in_water;
                     let oxygen = gameplay_runtime
                         .oxygen
                         .tick(
@@ -1335,7 +918,7 @@ where
                             &session.player,
                             plugins,
                             &config.server.gameplay,
-                            underwater,
+                            false,
                             &inventory,
                             &gameplay_runtime.effects,
                             &mut survival,
@@ -1359,25 +942,6 @@ where
                         )
                         .await?;
                         pending_dig = None;
-                    }
-                if underwater {
-                        let mut outcome = gameplay::GameplayActionOutcome::default();
-                        outcome.grant_triggers.push(
-                            qexed_config::app::qexed::server::CustomAdvancementTrigger::EnterWater,
-                        );
-                        handle_gameplay_outcome(
-                            sink,
-                            players,
-                            profile.uuid,
-                            session.player.entity_id,
-                            &mut inventory,
-                            &mut gameplay_runtime,
-                            plugins,
-                            &session.player,
-                            &config.server.gameplay,
-                            &mut outcome,
-                        )
-                        .await?;
                     }
                 }
             }
@@ -5248,11 +4812,9 @@ fn fall_context_at(world: &WorldManager, dimension: &str, position: EntityPositi
     let landing_name = block_name(landing_state);
     let body_name = block_name(body_state);
     let head_name = block_name(head_state);
-    let in_water = is_water_block(&body_name) || is_water_block(&head_name);
     let in_lava = is_lava_block(&body_name) || is_lava_block(&head_name);
 
     FallContext {
-        in_water,
         in_lava,
         landing: fall_landing(landing_state, &landing_name),
         climbable: fall_location_for_climbable(&body_name)
@@ -5277,7 +4839,7 @@ where
     if previous.on_ground || !position.on_ground || fall_distance <= 0.5 {
         return Ok(());
     }
-    if fall_context.in_water || fall_context.in_lava {
+    if fall_context.in_lava {
         return Ok(());
     }
 
@@ -5346,10 +4908,6 @@ fn is_climbable_block(name: &str) -> bool {
             | "minecraft:nether_vines"
             | "minecraft:chain"
     )
-}
-
-fn is_water_block(name: &str) -> bool {
-    name == "minecraft:water"
 }
 
 fn is_lava_block(name: &str) -> bool {
@@ -8026,24 +7584,10 @@ fn farmland_next_state(
 }
 
 fn farmland_has_water_nearby(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
+    _world: &WorldManager,
+    _dimension: &str,
+    _position: &BlockPosition,
 ) -> bool {
-    for y in position.y..=position.y + 1 {
-        for x in (position.x - 4)..=(position.x + 4) {
-            for z in (position.z - 4)..=(position.z + 4) {
-                let nearby = BlockPosition { x, y, z };
-                let Some(state) = world.block_state_at(dimension, &nearby) else {
-                    continue;
-                };
-                let name = block_name(state);
-                if name == "minecraft:water" || block_state_bool_property(state, "waterlogged") {
-                    return true;
-                }
-            }
-        }
-    }
     false
 }
 
@@ -8321,20 +7865,7 @@ fn sugar_cane_has_valid_support_and_water(
     let Some(support_name) = block_name_at(world, dimension, &support) else {
         return false;
     };
-    if !is_sugar_cane_support_block(&support_name) {
-        return false;
-    }
-    for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-        let water_position = offset_position(&support, dx, 0, dz);
-        let Some(state) = world.block_state_at(dimension, &water_position) else {
-            continue;
-        };
-        let name = block_name(state);
-        if name == "minecraft:water" || block_state_bool_property(state, "waterlogged") {
-            return true;
-        }
-    }
-    false
+    is_sugar_cane_support_block(&support_name)
 }
 
 fn is_sugar_cane_support_block(block_name: &str) -> bool {
@@ -8843,436 +8374,6 @@ pub(super) fn sapling_bone_meal_blocks(
     Some(tree_blocks)
 }
 
-// ── Fluid flow ──
-
-fn fluid_flow_updates(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    block_state: i32,
-) -> Vec<(BlockPosition, i32)> {
-    let name = block_name(block_state);
-    if name != "minecraft:water" && name != "minecraft:lava" {
-        return Vec::new();
-    }
-    let mut effective_level = block_state_u8_property(block_state, "level").unwrap_or(0);
-    let mut updates = Vec::new();
-
-    if effective_level != 0 && current_fluid_can_decay(world, dimension, position, &name) {
-        match fluid_recomputed_state(world, dimension, position, &name) {
-            Some(next_state) if next_state != block_state => {
-                updates.push((position.clone(), next_state));
-                effective_level = block_state_u8_property(next_state, "level").unwrap_or(0);
-            }
-            Some(_) => {}
-            None => {
-                updates.push((position.clone(), crate::inventory::air_block_state()));
-                return updates;
-            }
-        }
-    }
-
-    updates.extend(fluid_spread_updates(
-        world,
-        dimension,
-        position,
-        &name,
-        effective_level,
-    ));
-    updates
-}
-
-fn current_fluid_can_decay(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-) -> bool {
-    let current = world
-        .block_state_at(dimension, position)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    block_name(current) == name && block_state_u8_property(current, "level").unwrap_or(0) != 0
-}
-
-fn fluid_recomputed_state(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-) -> Option<i32> {
-    let mut source_neighbors = 0u8;
-    let mut highest_neighbor_amount = 0u8;
-    for (dx, dz) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        let adjacent = offset_position(position, *dx, 0, *dz);
-        let adjacent_state = world
-            .block_state_at(dimension, &adjacent)
-            .unwrap_or_else(crate::inventory::air_block_state);
-        if block_name(adjacent_state) != name {
-            continue;
-        }
-        let adjacent_level = block_state_u8_property(adjacent_state, "level").unwrap_or(0);
-        if adjacent_level == 0 {
-            source_neighbors = source_neighbors.saturating_add(1);
-        }
-        highest_neighbor_amount =
-            highest_neighbor_amount.max(fluid_amount_from_legacy_level(adjacent_level));
-    }
-
-    if name == "minecraft:water"
-        && source_neighbors >= 2
-        && fluid_source_conversion_supported_below(world, dimension, position, name)
-    {
-        return Some(fluid_state_with_level(name, 0));
-    }
-
-    let above = offset_position(position, 0, 1, 0);
-    let above_state = world
-        .block_state_at(dimension, &above)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    if block_name(above_state) == name {
-        return Some(fluid_state_with_level(name, 8));
-    }
-
-    let next_amount = highest_neighbor_amount.saturating_sub(fluid_drop_off(dimension, name));
-    (next_amount > 0)
-        .then(|| fluid_state_with_level(name, fluid_legacy_level_from_amount(next_amount)))
-}
-
-fn fluid_spread_updates(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-    level: u8,
-) -> Vec<(BlockPosition, i32)> {
-    let falling = level >= 8;
-    let mut updates = Vec::new();
-
-    let below = offset_position(position, 0, -1, 0);
-    let down_state = fluid_state_with_level(name, 8);
-    let can_flow_down = fluid_can_replace_with(world, dimension, &below, name, down_state);
-    if can_flow_down {
-        updates.extend(fluid_downward_spread_updates(
-            world, dimension, &below, name, down_state,
-        ));
-        if !falling && fluid_source_neighbor_count(world, dimension, position, name) >= 3 {
-            updates.extend(fluid_side_spread_updates(
-                world, dimension, position, name, level, down_state,
-            ));
-        }
-        return updates;
-    }
-
-    updates.extend(fluid_side_spread_updates(
-        world, dimension, position, name, level, down_state,
-    ));
-    updates
-}
-
-fn fluid_side_spread_updates(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-    level: u8,
-    down_state: i32,
-) -> Vec<(BlockPosition, i32)> {
-    let next_amount = if level >= 8 {
-        7
-    } else {
-        fluid_amount_from_legacy_level(level).saturating_sub(fluid_drop_off(dimension, name))
-    };
-    if next_amount == 0 {
-        return Vec::new();
-    }
-    let next_state = fluid_state_with_level(name, fluid_legacy_level_from_amount(next_amount));
-    let mut updates = Vec::new();
-
-    for (dx, dz) in fluid_horizontal_spread_directions(world, dimension, position, name, next_state)
-    {
-        let adjacent = offset_position(position, dx, 0, dz);
-        updates.push((adjacent.clone(), next_state));
-        let adjacent_below = offset_position(&adjacent, 0, -1, 0);
-        if fluid_can_replace_with(world, dimension, &adjacent_below, name, down_state) {
-            updates.extend(fluid_downward_spread_updates(
-                world,
-                dimension,
-                &adjacent_below,
-                name,
-                down_state,
-            ));
-        }
-    }
-    updates
-}
-
-fn fluid_downward_spread_updates(
-    world: &WorldManager,
-    dimension: &str,
-    first_position: &BlockPosition,
-    name: &str,
-    down_state: i32,
-) -> Vec<(BlockPosition, i32)> {
-    let mut updates = Vec::new();
-    let mut position = first_position.clone();
-    while updates.len() < FLUID_MAX_DOWNWARD_SPREAD_PER_TICK
-        && fluid_can_replace_with(world, dimension, &position, name, down_state)
-    {
-        updates.push((position.clone(), down_state));
-        position = offset_position(&position, 0, -1, 0);
-    }
-    updates
-}
-
-fn fluid_amount_from_legacy_level(level: u8) -> u8 {
-    if level == 0 {
-        8
-    } else if level >= 8 {
-        8
-    } else {
-        8u8.saturating_sub(level)
-    }
-}
-
-fn fluid_legacy_level_from_amount(amount: u8) -> u8 {
-    8u8.saturating_sub(amount.min(8))
-}
-
-fn fluid_drop_off(dimension: &str, name: &str) -> u8 {
-    if name == "minecraft:lava" && !dimension_is_ultrawarm(dimension, None) {
-        2
-    } else {
-        1
-    }
-}
-
-fn fluid_source_conversion_supported_below(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-) -> bool {
-    let below = offset_position(position, 0, -1, 0);
-    let below_state = world
-        .block_state_at(dimension, &below)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    let below_name = block_name(below_state);
-    if below_name == name && block_state_u8_property(below_state, "level").unwrap_or(0) == 0 {
-        return true;
-    }
-    !crate::inventory::is_air_block_state(below_state)
-        && !crate::inventory::can_replace_block_state(below_state)
-        && !is_fluid_block(&below_name)
-}
-
-fn fluid_source_neighbor_count(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-) -> u8 {
-    let mut count = 0u8;
-    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        let adjacent = offset_position(position, dx, 0, dz);
-        let adjacent_state = world
-            .block_state_at(dimension, &adjacent)
-            .unwrap_or_else(crate::inventory::air_block_state);
-        if block_name(adjacent_state) == name
-            && block_state_u8_property(adjacent_state, "level").unwrap_or(0) == 0
-        {
-            count = count.saturating_add(1);
-        }
-    }
-    count
-}
-
-fn fluid_horizontal_spread_directions(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-    next_state: i32,
-) -> Vec<(i32, i32)> {
-    let mut spread = Vec::new();
-    let mut best_distance = i32::MAX;
-    let max_slope_distance = fluid_slope_search_distance(dimension, name);
-    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        let adjacent = offset_position(position, dx, 0, dz);
-        if !fluid_can_replace_with(world, dimension, &adjacent, name, next_state) {
-            continue;
-        }
-        let distance = fluid_downhill_distance(
-            world,
-            dimension,
-            &adjacent,
-            name,
-            max_slope_distance,
-            (-dx, -dz),
-        )
-        .unwrap_or(i32::MAX);
-        if distance < best_distance {
-            spread.clear();
-            best_distance = distance;
-        }
-        if distance == best_distance {
-            spread.push((dx, dz));
-        }
-    }
-    spread
-}
-
-fn fluid_slope_search_distance(dimension: &str, name: &str) -> i32 {
-    if name == "minecraft:lava" {
-        if dimension_is_ultrawarm(dimension, None) {
-            FLUID_WATER_SLOPE_SEARCH_DISTANCE
-        } else {
-            FLUID_LAVA_SLOPE_SEARCH_DISTANCE
-        }
-    } else {
-        FLUID_WATER_SLOPE_SEARCH_DISTANCE
-    }
-}
-
-fn fluid_downhill_distance(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-    remaining: i32,
-    blocked_direction: (i32, i32),
-) -> Option<i32> {
-    if fluid_can_flow_down_from(world, dimension, position, name) {
-        return Some(0);
-    }
-    if remaining <= 0 {
-        return None;
-    }
-
-    let next_state = fluid_state_with_level(name, 1);
-    let mut best = None;
-    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        if (dx, dz) == blocked_direction {
-            continue;
-        }
-        let adjacent = offset_position(position, dx, 0, dz);
-        if !fluid_can_replace_with(world, dimension, &adjacent, name, next_state) {
-            continue;
-        }
-        let Some(distance) =
-            fluid_downhill_distance(world, dimension, &adjacent, name, remaining - 1, (-dx, -dz))
-        else {
-            continue;
-        };
-        let distance = distance.saturating_add(1);
-        best = Some(best.map_or(distance, |current: i32| current.min(distance)));
-    }
-    best
-}
-
-fn fluid_can_flow_down_from(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-) -> bool {
-    let below = offset_position(position, 0, -1, 0);
-    fluid_can_replace_with(
-        world,
-        dimension,
-        &below,
-        name,
-        fluid_state_with_level(name, 8),
-    )
-}
-
-fn fluid_can_replace_with(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    name: &str,
-    next_state: i32,
-) -> bool {
-    let current = world
-        .block_state_at(dimension, position)
-        .unwrap_or_else(crate::inventory::air_block_state);
-    if current == next_state {
-        return false;
-    }
-    if block_name(current) == name {
-        let current_level = block_state_u8_property(current, "level").unwrap_or(0);
-        let next_level = block_state_u8_property(next_state, "level").unwrap_or(0);
-        return current_level != 0 && next_level < current_level;
-    }
-    if crate::inventory::is_air_block_state(current)
-        || crate::inventory::can_replace_block_state(current)
-    {
-        return true;
-    }
-    false
-}
-
-fn fluid_state_with_level(name: &str, level: u8) -> i32 {
-    crate::world::chunk_nbt::block_state(name, &[("level".to_string(), level.to_string())]).id
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn is_fluid_source(block_name: &str) -> bool {
-    matches!(block_name, "minecraft:water" | "minecraft:lava")
-}
-
-fn is_fluid_block(block_name: &str) -> bool {
-    matches!(block_name, "minecraft:water" | "minecraft:lava")
-}
-
-// ── Cobblestone generator (water + lava interaction) ──
-
-fn fluid_collision_update(
-    world: &WorldManager,
-    dimension: &str,
-    position: &BlockPosition,
-    block_state: i32,
-) -> Option<(BlockPosition, i32)> {
-    let name = block_name(block_state);
-    // Only flowing fluids (non-source) can create cobblestone
-    let level = block_state_u8_property(block_state, "level").unwrap_or(0);
-    if (name != "minecraft:water" && name != "minecraft:lava") || level == 0 {
-        return None;
-    }
-    // Flowing fluid touches opposite fluid source → cobblestone/stone/obsidian
-    let opposite = if name == "minecraft:water" {
-        "minecraft:lava"
-    } else {
-        "minecraft:water"
-    };
-    for (dx, dy, dz) in &[
-        (1, 0, 0),
-        (-1, 0, 0),
-        (0, 1, 0),
-        (0, -1, 0),
-        (0, 0, 1),
-        (0, 0, -1),
-    ] {
-        let adj = offset_position(position, *dx, *dy, *dz);
-        let adj_state = world
-            .block_state_at(dimension, &adj)
-            .unwrap_or_else(crate::inventory::air_block_state);
-        let adj_name = block_name(adj_state);
-        if adj_name == opposite {
-            let adj_level = block_state_u8_property(adj_state, "level").unwrap_or(0);
-            let result = if adj_level == 0 {
-                // Opposite fluid is a source block → obsidian
-                "minecraft:obsidian"
-            } else {
-                // Both are flowing → cobblestone
-                "minecraft:cobblestone"
-            };
-            let result_state = crate::world::chunk_nbt::default_block_state(result);
-            return Some((position.clone(), result_state.id));
-        }
-    }
-    None
-}
-
 fn manual_openable_block_updates(
     world: &WorldManager,
     dimension: &str,
@@ -9341,15 +8442,6 @@ fn bucket_fluid_interaction(
         "minecraft:bucket" => {
             bucket_fill_interaction(clicked_position, clicked_state, clicked_block_name)
         }
-        "minecraft:water_bucket" => bucket_empty_interaction(
-            world,
-            dimension,
-            clicked_position,
-            clicked_state,
-            face,
-            "minecraft:water",
-            "minecraft:bucket",
-        ),
         "minecraft:lava_bucket" => bucket_empty_interaction(
             world,
             dimension,
@@ -9378,9 +8470,6 @@ fn bucket_fill_interaction(
     clicked_block_name: &str,
 ) -> Option<BucketFluidInteraction> {
     let replacement_item = match clicked_block_name {
-        "minecraft:water" if block_state_u8_property(clicked_state, "level") == Some(0) => {
-            "minecraft:water_bucket"
-        }
         "minecraft:lava" if block_state_u8_property(clicked_state, "level") == Some(0) => {
             "minecraft:lava_bucket"
         }
@@ -9425,7 +8514,6 @@ fn is_cauldron_block(block_name: &str) -> bool {
     matches!(
         block_name,
         "minecraft:cauldron"
-            | "minecraft:water_cauldron"
             | "minecraft:lava_cauldron"
             | "minecraft:powder_snow_cauldron"
     )
@@ -9463,10 +8551,6 @@ fn vanilla_state_interaction(
     }
 
     if let Some(interaction) = pumpkin_shear_interaction(block_state, block_name, held_item, face) {
-        return Some(interaction);
-    }
-
-    if let Some(interaction) = water_bottle_dirt_interaction(block_name, held_item) {
         return Some(interaction);
     }
 
@@ -9696,24 +8780,6 @@ fn pumpkin_shear_interaction(
     })
 }
 
-fn water_bottle_dirt_interaction(
-    block_name: &str,
-    held_item: Option<&str>,
-) -> Option<VanillaStateInteraction> {
-    if held_item.map(normalize_resource_key).as_deref() != Some("minecraft:potion")
-        || !matches!(
-            block_name,
-            "minecraft:dirt" | "minecraft:coarse_dirt" | "minecraft:rooted_dirt"
-        )
-    {
-        return None;
-    }
-    Some(VanillaStateInteraction {
-        target_block_state: crate::world::chunk_nbt::default_block_state_id("minecraft:mud"),
-        inventory: VanillaInventoryAction::ExchangeHeld("minecraft:glass_bottle"),
-    })
-}
-
 fn horizontal_facing_for_clicked_face(face: i32) -> &'static str {
     match face {
         2 => "north",
@@ -9866,7 +8932,6 @@ fn lit_block_interaction(
 
     if !lit
         && is_lightable_block(block_name)
-        && !block_state_bool_property(block_state, "waterlogged")
         && held_item.is_some_and(is_igniter_item)
     {
         return Some(VanillaStateInteraction {
@@ -10941,10 +10006,6 @@ fn cauldron_interaction(
     let block_name = normalize_resource_key(block_name).to_ascii_lowercase();
     let held_item = normalize_resource_key(held_item).to_ascii_lowercase();
     match (block_name.as_str(), held_item.as_str()) {
-        ("minecraft:cauldron", "minecraft:water_bucket") => Some(CauldronInteraction {
-            target_block_state: leveled_cauldron_state("minecraft:water_cauldron", 3),
-            replacement_item: "minecraft:bucket",
-        }),
         ("minecraft:cauldron", "minecraft:lava_bucket") => Some(CauldronInteraction {
             target_block_state: crate::world::chunk_nbt::default_block_state_id(
                 "minecraft:lava_cauldron",
@@ -10955,36 +10016,6 @@ fn cauldron_interaction(
             target_block_state: leveled_cauldron_state("minecraft:powder_snow_cauldron", 3),
             replacement_item: "minecraft:bucket",
         }),
-        ("minecraft:cauldron", "minecraft:potion") => Some(CauldronInteraction {
-            target_block_state: water_cauldron_state_for_level(1),
-            replacement_item: "minecraft:glass_bottle",
-        }),
-        ("minecraft:water_cauldron", "minecraft:bucket") if cauldron_level(block_state) >= 3 => {
-            Some(CauldronInteraction {
-                target_block_state: crate::world::chunk_nbt::default_block_state_id(
-                    "minecraft:cauldron",
-                ),
-                replacement_item: "minecraft:water_bucket",
-            })
-        }
-        ("minecraft:water_cauldron", "minecraft:glass_bottle")
-            if cauldron_level(block_state) > 0 =>
-        {
-            Some(CauldronInteraction {
-                target_block_state: water_cauldron_state_for_level(
-                    cauldron_level(block_state).saturating_sub(1),
-                ),
-                replacement_item: "minecraft:potion",
-            })
-        }
-        ("minecraft:water_cauldron", "minecraft:potion") if cauldron_level(block_state) < 3 => {
-            Some(CauldronInteraction {
-                target_block_state: water_cauldron_state_for_level(
-                    cauldron_level(block_state).saturating_add(1),
-                ),
-                replacement_item: "minecraft:glass_bottle",
-            })
-        }
         ("minecraft:lava_cauldron", "minecraft:bucket") => Some(CauldronInteraction {
             target_block_state: crate::world::chunk_nbt::default_block_state_id(
                 "minecraft:cauldron",
@@ -11002,14 +10033,6 @@ fn cauldron_interaction(
             })
         }
         _ => None,
-    }
-}
-
-fn water_cauldron_state_for_level(level: u8) -> i32 {
-    if level == 0 {
-        crate::world::chunk_nbt::default_block_state_id("minecraft:cauldron")
-    } else {
-        leveled_cauldron_state("minecraft:water_cauldron", level)
     }
 }
 
@@ -12001,7 +11024,7 @@ where
         return Ok(false);
     }
 
-    if !pending.is_complete(Instant::now()) {
+    if !pending.is_complete() {
         log_block_break_rejected(
             "pending_dig_incomplete",
             dimension,
@@ -12508,3 +11531,7 @@ struct DestroyedBlockChange {
 
 #[cfg(test)]
 mod tests;
+fn is_fluid_block(_name: &str) -> bool { false }
+fn is_fluid_source(_name: &str) -> bool { false }
+struct FluidKind;
+impl FluidKind { fn from_block_state(_: i32) -> Option<Self> { None } }

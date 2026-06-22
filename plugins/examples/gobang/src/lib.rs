@@ -16,6 +16,7 @@ qexed_plugin_sdk::qexed_plugin_manifest!(PluginManifest {
     version: "0.1.0".to_string(),
     depends: Vec::new(),
     optional_depends: Vec::new(),
+    load_after: Vec::new(),
     services: Vec::new(),
 });
 

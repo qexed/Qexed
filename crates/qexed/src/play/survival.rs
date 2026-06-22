@@ -58,7 +58,6 @@ pub(super) enum FallLocation {
     TwistingVines,
     Scaffolding,
     OtherClimbable,
-    Water,
 }
 
 impl FallLocation {
@@ -71,14 +70,12 @@ impl FallLocation {
             Self::TwistingVines => "death.fell.accident.twisting_vines",
             Self::Scaffolding => "death.fell.accident.scaffolding",
             Self::OtherClimbable => "death.fell.accident.other_climbable",
-            Self::Water => "death.fell.accident.water",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct FallContext {
-    pub in_water: bool,
     pub in_lava: bool,
     pub landing: FallLanding,
     pub climbable: Option<FallLocation>,
@@ -87,7 +84,6 @@ pub(super) struct FallContext {
 impl Default for FallContext {
     fn default() -> Self {
         Self {
-            in_water: false,
             in_lava: false,
             landing: FallLanding::Generic,
             climbable: None,
@@ -314,7 +310,6 @@ impl SurvivalState {
 
         let fall_location = fall_context
             .climbable
-            .or_else(|| fall_context.in_water.then_some(FallLocation::Water))
             .unwrap_or(FallLocation::Generic);
         let (effective_distance, damage_modifier, death_message) =
             fall_damage_profile(fall_distance, fall_context.landing, fall_location);
@@ -378,7 +373,7 @@ impl SurvivalState {
         current: EntityPosition,
         fall_context: FallContext,
     ) -> Option<f64> {
-        if fall_context.in_water || fall_context.in_lava {
+        if fall_context.in_lava {
             self.fall_start_y = None;
             return None;
         }
@@ -508,45 +503,6 @@ mod tests {
                 GameMode::Survival,
                 position(70.0, false),
                 position(67.0, true),
-                normal_fall()
-            ),
-            SurvivalDamage::None
-        );
-
-        assert_eq!(state.health, MAX_HEALTH);
-        assert!(!state.is_dead());
-    }
-
-    #[test]
-    fn water_resets_fall_distance_before_landing() {
-        let mut state = survival();
-
-        assert_eq!(
-            state.apply_movement(
-                GameMode::Survival,
-                position(90.0, true),
-                position(90.0, false),
-                normal_fall()
-            ),
-            SurvivalDamage::None
-        );
-        assert_eq!(
-            state.apply_movement(
-                GameMode::Survival,
-                position(90.0, false),
-                position(40.0, false),
-                FallContext {
-                    in_water: true,
-                    ..FallContext::default()
-                }
-            ),
-            SurvivalDamage::None
-        );
-        assert_eq!(
-            state.apply_movement(
-                GameMode::Survival,
-                position(40.0, false),
-                position(39.0, true),
                 normal_fall()
             ),
             SurvivalDamage::None

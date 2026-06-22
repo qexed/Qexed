@@ -304,6 +304,7 @@ impl PluginInstance {
                 version: String::new(),
                 depends: Vec::new(),
                 optional_depends: Vec::new(),
+                load_after: Vec::new(),
                 services: Vec::new(),
             }
         });
@@ -542,6 +543,7 @@ fn default_manifest(name: &str) -> PluginManifest {
         version: String::new(),
         depends: Vec::new(),
         optional_depends: Vec::new(),
+        load_after: Vec::new(),
         services: Vec::new(),
     }
 }

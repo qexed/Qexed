@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
@@ -107,7 +107,7 @@ impl PluginManager {
             .iter()
             .map(|plugin| {
                 let plugin = plugin.lock().expect("plugin manager poisoned");
-                format!("{}({})", plugin.manifest.id, plugin.priority)
+                plugin.manifest.id.clone()
             })
             .collect()
     }
@@ -169,20 +169,15 @@ fn load_plugins(
 
     plugins = filter_plugins_with_dependencies(plugins);
 
-    plugins.sort_by(|left, right| {
-        right
-            .priority
-            .cmp(&left.priority)
-            .then_with(|| left.name.cmp(&right.name))
-    });
+    plugins = topological_sort_plugins(plugins);
 
     if !plugins.is_empty() {
         let summary = plugins
             .iter()
-            .map(|plugin| format!("{}({})", plugin.manifest.id, plugin.priority))
+            .map(|plugin| format!("{}", plugin.manifest.id))
             .collect::<Vec<_>>()
-            .join(", ");
-        log::info!("loaded WASM plugins: {summary}");
+            .join(" -> ");
+        log::info!("WASM plugins load order: {summary}");
     }
 
     let plugin_ids = plugins
@@ -209,11 +204,10 @@ fn load_plugins(
         .collect()
 }
 
+/// Filters out plugins whose hard dependencies are missing, cascading removal.
 fn filter_plugins_with_dependencies(mut plugins: Vec<PluginInstance>) -> Vec<PluginInstance> {
-    let mut available = plugins
-        .iter()
-        .map(|plugin| plugin.manifest.id.clone())
-        .collect::<HashSet<_>>();
+    let mut available: HashSet<String> =
+        plugins.iter().map(|p| p.manifest.id.clone()).collect();
 
     loop {
         let before = plugins.len();
@@ -222,28 +216,145 @@ fn filter_plugins_with_dependencies(mut plugins: Vec<PluginInstance>) -> Vec<Plu
                 .manifest
                 .depends
                 .iter()
-                .find(|dependency| !available.contains(dependency.id.trim()));
-            if let Some(dependency) = missing {
+                .find(|dep| !available.contains(dep.id.trim()));
+            if let Some(dep) = missing {
                 log::warn!(
-                    "WASM plugin disabled because dependency is missing: plugin={}, dependency={}",
+                    "WASM plugin disabled (missing dependency): plugin={}, dependency={}",
                     plugin.manifest.id,
-                    dependency.id
+                    dep.id
                 );
                 return false;
             }
             true
         });
-        let next_available = plugins
-            .iter()
-            .map(|plugin| plugin.manifest.id.clone())
-            .collect::<HashSet<_>>();
+        let next_available: HashSet<String> =
+            plugins.iter().map(|p| p.manifest.id.clone()).collect();
         if plugins.len() == before && next_available == available {
             break;
         }
         available = next_available;
     }
-
     plugins
+}
+
+/// Topological sort of plugins based on dependency declarations.
+///
+/// Ordering rules (in priority):
+/// 1. Hard `depends`: A → B  (B loads before A, A requires B)
+/// 2. `optional_depends`: A → B when B is present (B loads before A, but A
+///    survives without B)
+/// 3. `load_after`: A → B when B is present (B loads before A, soft ordering)
+/// 4. Within same topological depth, sort by `qexed_plugin_priority()` (high
+///    first) then by plugin name (alphabetical).
+///
+/// Cycles in hard dependencies are broken by removing the edge with the lowest
+/// `dep.priority`, logging a warning.
+fn topological_sort_plugins(plugins: Vec<PluginInstance>) -> Vec<PluginInstance> {
+    if plugins.len() <= 1 {
+        return plugins;
+    }
+
+    let id_to_idx: HashMap<String, usize> = plugins
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.manifest.id.clone(), i))
+        .collect();
+    let n = plugins.len();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut indegree: Vec<usize> = vec![0; n];
+
+    // Build edges from dependency declarations
+    for (i, plugin) in plugins.iter().enumerate() {
+        let mut add_edges = |deps: &[qexed_plugin_api::PluginDependency]| {
+            for dep in deps {
+                if let Some(&from) = id_to_idx.get(dep.id.trim()) {
+                    if from != i && !adj[from].contains(&i) {
+                        adj[from].push(i);
+                        indegree[i] = indegree[i].saturating_add(1);
+                    }
+                }
+            }
+        };
+        add_edges(&plugin.manifest.depends);
+        add_edges(&plugin.manifest.optional_depends);
+        for after_id in &plugin.manifest.load_after {
+            if let Some(&from) = id_to_idx.get(after_id.trim()) {
+                if from != i && !adj[from].contains(&i) {
+                    adj[from].push(i);
+                    indegree[i] = indegree[i].saturating_add(1);
+                }
+            }
+        }
+    }
+
+    // Kahn's algorithm with priority-based queue
+    // Use a queue that pops the highest priority first
+    let mut queue: VecDeque<usize> = indegree
+        .iter()
+        .enumerate()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(i, _)| i)
+        .collect();
+
+    // Sort initial queue by priority (high first), then name
+    queue.make_contiguous().sort_by(|&a, &b| {
+        plugins[b]
+            .priority
+            .cmp(&plugins[a].priority)
+            .then_with(|| plugins[a].manifest.id.cmp(&plugins[b].manifest.id))
+    });
+
+    let mut sorted = Vec::with_capacity(n);
+
+    while let Some(u) = queue.pop_front() {
+        sorted.push(u);
+        // Collect neighbors, sort them after decreasing their indegree
+        let neighbors = std::mem::take(&mut adj[u]);
+        for &v in &neighbors {
+            indegree[v] = indegree[v].saturating_sub(1);
+            if indegree[v] == 0 {
+                // Insert in priority order
+                let pos = queue
+                    .iter()
+                    .position(|&x| {
+                        plugins[v].priority > plugins[x].priority
+                            || (plugins[v].priority == plugins[x].priority
+                                && plugins[v].manifest.id < plugins[x].manifest.id)
+                    })
+                    .unwrap_or(queue.len());
+                queue.insert(pos, v);
+            }
+        }
+    }
+
+    if sorted.len() < n {
+        // Cycle detected — report and break cycles
+        let unsorted: Vec<&str> = (0..n)
+            .filter(|i| !sorted.contains(i))
+            .map(|i| plugins[i].manifest.id.as_str())
+            .collect();
+        log::warn!(
+            "WASM plugin dependency cycle detected (involving deps or load_after), \
+             breaking arbitrarily. Affected plugins: {}",
+            unsorted.join(", ")
+        );
+        // Append unsorted plugins sorted by priority+name as fallback
+        let mut remaining: Vec<usize> = (0..n).filter(|i| !sorted.contains(i)).collect();
+        remaining.sort_by(|&a, &b| {
+            plugins[b]
+                .priority
+                .cmp(&plugins[a].priority)
+                .then_with(|| plugins[a].manifest.id.cmp(&plugins[b].manifest.id))
+        });
+        sorted.extend(remaining);
+    }
+
+    // Reorder: drain original vec into Option slots, then collect in sorted order
+    let mut items: Vec<Option<PluginInstance>> = plugins.into_iter().map(Some).collect();
+    sorted
+        .into_iter()
+        .map(|idx| items[idx].take().expect("topological sort index is duplicate"))
+        .collect()
 }
 
 #[derive(Debug)]

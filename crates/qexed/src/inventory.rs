@@ -669,7 +669,6 @@ pub fn block_state_for_placement(default_state: i32, context: PlacementContext) 
     };
 
     let mut desired = default_properties.clone();
-    set_property_if_present(&mut desired, "waterlogged", "false");
     set_property_if_present(&mut desired, "powered", "false");
     set_property_if_present(&mut desired, "lit", "false");
     set_property_if_present(&mut desired, "shape", "straight");

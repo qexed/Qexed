@@ -25,4 +25,5 @@ members = [
     "skyblock",
     "backpack",
     "digfight",
+    "pve_entity",
 ]

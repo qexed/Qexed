@@ -1,0 +1,23 @@
+// ── Fluid system (removed) ──
+
+type FluidSeed = (BlockPosition, i32);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct FluidQueueEntry { dimension: String, x: i32, y: i32, z: i32 }
+
+#[derive(Debug)]
+pub(crate) struct FluidRuntime;
+
+impl FluidRuntime {
+    pub(crate) fn new() -> Self { Self }
+    pub(crate) fn with_world_rules(_: crate::world::WorldRulesManager) -> Self { Self }
+    pub(crate) fn enqueue_block_change(&self, _: &str, _: &BlockPosition) {}
+    fn enqueue_fluid_seeds(&self, _: &str, _: impl IntoIterator<Item = FluidSeed>) {}
+    fn enqueue_fluid_continuation(&self, _: &str, _: &BlockPosition, _: i32) {}
+    fn try_start_tick_job(&self, _: WorldManager, _: &mut Option<()>, _: &tokio::sync::mpsc::UnboundedSender<()>) -> bool { false }
+    fn poll_completed_tick_job(&self, _: &mut Option<()>) -> Vec<()> { Vec::new() }
+}
+
+impl Default for FluidRuntime {
+    fn default() -> Self { Self }
+}

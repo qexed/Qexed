@@ -10,8 +10,10 @@ qexed_plugin_sdk::qexed_plugin_manifest!(PluginManifest {
     depends: vec![PluginDependency {
         id: "qexed.demo.provider".to_string(),
         version: "0.1.0".to_string(),
+        priority: 100,
     }],
     optional_depends: Vec::new(),
+    load_after: Vec::new(),
     services: Vec::new(),
 });
 

@@ -2278,88 +2278,6 @@ fn vanilla_zombie_burns_in_daylight() {
 }
 
 #[test]
-fn vanilla_fish_takes_damage_out_of_water() {
-    let (manager, players) = test_manager_and_players();
-    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
-    let world = empty_world();
-    spawn_vanilla_entity(
-        &manager,
-        "dry-cod",
-        "minecraft:cod",
-        test_position(0.0, 64.0, 0.0),
-        Default::default(),
-    );
-
-    tick_entities(&manager, &players, &world);
-
-    assert!(
-        manager
-            .entity_health_for_tests("dry-cod")
-            .is_some_and(|health| health < 6.0),
-        "fish should take environment damage when out of water"
-    );
-}
-
-#[test]
-fn vanilla_fish_does_not_take_out_of_water_damage_in_water() {
-    let (manager, players) = test_manager_and_players();
-    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
-    let world = empty_world();
-    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
-    for x in -1..=1 {
-        for z in -1..=1 {
-            world.set_runtime_block(
-                "minecraft:overworld",
-                qexed_packet::net_types::Position { x, y: 64, z },
-                water,
-            );
-        }
-    }
-    let mut ai_params = BTreeMap::new();
-    ai_params.insert("stroll_chance".to_string(), serde_json::json!(0.0));
-    spawn_vanilla_entity(
-        &manager,
-        "wet-cod",
-        "minecraft:cod",
-        test_position(0.0, 64.0, 0.0),
-        ai_params,
-    );
-
-    tick_entities(&manager, &players, &world);
-
-    assert_eq!(manager.entity_health_for_tests("wet-cod"), Some(6.0));
-}
-
-#[test]
-fn vanilla_blaze_takes_water_contact_damage() {
-    let (manager, players) = test_manager_and_players();
-    let _session = join_test_player(&players, "Viewer", test_position(4.0, 64.0, 0.0));
-    let world = empty_world();
-    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
-    world.set_runtime_block(
-        "minecraft:overworld",
-        qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
-        water,
-    );
-    spawn_vanilla_entity(
-        &manager,
-        "wet-blaze",
-        "minecraft:blaze",
-        test_position(0.0, 64.0, 0.0),
-        Default::default(),
-    );
-
-    tick_entities(&manager, &players, &world);
-
-    assert!(
-        manager
-            .entity_health_for_tests("wet-blaze")
-            .is_some_and(|health| health < 20.0),
-        "blaze should take damage while touching water"
-    );
-}
-
-#[test]
 fn vanilla_enderman_teleports_towards_far_target() {
     let (manager, players) = test_manager_and_players();
     let mut target_position = test_position(24.0, 64.0, 0.0);
@@ -2456,57 +2374,6 @@ fn vanilla_enderman_attacks_player_staring_at_it() {
     assert_eq!(
         damage,
         Some((7.0, crate::players::PlayerDamageKind::MobAttack))
-    );
-}
-
-#[test]
-fn vanilla_enderman_takes_water_damage_and_teleports_to_dry_ground() {
-    let (manager, players) = test_manager_and_players();
-    let _session = join_test_player(&players, "Viewer", test_position(8.0, 64.0, 0.0));
-    let world = empty_world();
-    place_stone_floor(&world, -2, 2, -2, 2, 63);
-    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
-    for y in 63..=65 {
-        world.set_runtime_block(
-            "minecraft:overworld",
-            qexed_packet::net_types::Position { x: 0, y, z: 0 },
-            water,
-        );
-    }
-    let mut ai_params = BTreeMap::new();
-    ai_params.insert(
-        "enderman_teleport_chance".to_string(),
-        serde_json::json!(0.0),
-    );
-    ai_params.insert("stroll_chance".to_string(), serde_json::json!(0.0));
-    ai_params.insert(
-        "enderman_water_teleport_radius".to_string(),
-        serde_json::json!(2),
-    );
-    spawn_vanilla_entity(
-        &manager,
-        "wet-enderman",
-        "minecraft:enderman",
-        test_position(0.0, 64.0, 0.0),
-        ai_params,
-    );
-
-    tick_entities(&manager, &players, &world);
-
-    let entity = manager.entity_by_key("wet-enderman").unwrap();
-    let feet = qexed_packet::net_types::Position {
-        x: entity.position.x.floor() as i32,
-        y: entity.position.y.floor() as i32,
-        z: entity.position.z.floor() as i32,
-    };
-    assert_ne!(
-        world.block_state_at("minecraft:overworld", &feet),
-        Some(water)
-    );
-    assert!(
-        manager
-            .entity_health_for_tests("wet-enderman")
-            .is_some_and(|health| health < 40.0)
     );
 }
 
@@ -2656,35 +2523,6 @@ fn vanilla_phantom_flies_without_falling_in_open_air() {
     assert!(
         entity.position.y >= 69.99,
         "phantom should use flying physics instead of gravity, got {:?}",
-        entity.position
-    );
-}
-
-#[test]
-fn vanilla_guardian_swims_without_sinking_in_water() {
-    let (manager, players) = test_manager_and_players();
-    let _session = join_test_player(&players, "Target", test_position(6.0, 64.0, 0.0));
-    let world = empty_world();
-    let water = crate::world::chunk_nbt::default_block_state_id("minecraft:water");
-    world.set_runtime_block(
-        "minecraft:overworld",
-        qexed_packet::net_types::Position { x: 0, y: 64, z: 0 },
-        water,
-    );
-    spawn_vanilla_entity(
-        &manager,
-        "swimming-guardian",
-        "minecraft:guardian",
-        test_position(0.0, 64.0, 0.0),
-        Default::default(),
-    );
-
-    tick_entities(&manager, &players, &world);
-
-    let entity = manager.entity_by_key("swimming-guardian").unwrap();
-    assert!(
-        entity.position.y >= 63.99,
-        "guardian should use swimming physics in water, got {:?}",
         entity.position
     );
 }

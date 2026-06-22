@@ -387,6 +387,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pve_entity"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qexed_plugin_api"
 version = "0.1.0"
 dependencies = [

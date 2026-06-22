@@ -1695,7 +1695,7 @@ fn default_gameplay_crafting_table() -> bool {
 }
 
 fn default_gameplay_furnace() -> bool {
-    true
+    false
 }
 
 fn default_gameplay_furnace_blocks() -> Vec<String> {
@@ -1716,7 +1716,7 @@ fn default_gameplay_cauldron_blocks() -> Vec<String> {
 }
 
 fn default_gameplay_redstone() -> bool {
-    true
+    false
 }
 
 fn default_gameplay_crafting() -> bool {
@@ -1732,7 +1732,7 @@ fn default_gameplay_combat() -> bool {
 }
 
 fn default_gameplay_oxygen() -> bool {
-    true
+    false
 }
 
 fn default_gameplay_sounds() -> bool {

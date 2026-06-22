@@ -50,7 +50,7 @@ const ENTITY_DEATH_REMOVE_DELAY: Duration = Duration::from_millis(1_000);
 const ENTITY_AI_MAX_ENTITIES_PER_TICK: usize = 256;
 const ENTITY_PLUGIN_AI_DEFAULT_INTERVAL: Duration = Duration::from_millis(500);
 const ENTITY_PLUGIN_AI_CALLS_PER_TICK: usize = 16;
-const ENTITY_PLUGIN_AI_NEARBY_RANGE: f64 = 64.0;
+const ENTITY_PLUGIN_AI_NEARBY_RANGE: f64 = 32.0;
 const ENTITY_FIRE_DAMAGE_INTERVAL_TICKS: i32 = 20;
 const ENTITY_FIRE_DAMAGE: f32 = 1.0;
 const ENTITY_DAYLIGHT_FIRE_TICKS: i32 = 160;
@@ -2055,7 +2055,7 @@ impl EntityManager {
                     }
                 }
 
-                if ai == EntityAiKind::Vanilla {
+                if ai == EntityAiKind::Vanilla || ai == EntityAiKind::Plugin {
                     remove |= apply_vanilla_ai_effects(
                         &entity,
                         &viewers,
@@ -4640,7 +4640,7 @@ fn resolved_vanilla_ai_profile(
 fn vanilla_movement_mode_override(value: &str) -> Option<VanillaMovementMode> {
     match value.trim() {
         "ground" | "walk" | "walking" => Some(VanillaMovementMode::Ground),
-        "swim" | "swimming" | "water" | "aquatic" => Some(VanillaMovementMode::Swimming),
+        "swim" | "swimming" | "aquatic" => Some(VanillaMovementMode::Swimming),
         "fly" | "flying" | "air" => Some(VanillaMovementMode::Flying),
         _ => None,
     }
@@ -7512,7 +7512,8 @@ fn entity_ai_query(
     viewers: &[crate::players::OnlinePlayer],
     tick_ms: u64,
 ) -> crate::plugins::EntityAiTickQuery {
-    let nearby_players = viewers
+    const MAX_NEARBY: usize = 8;
+    let mut nearby_players: Vec<_> = viewers
         .iter()
         .filter(|player| player.dimension == entity.dimension)
         .filter(|player| {
@@ -7522,8 +7523,16 @@ fn entity_ai_query(
                 ENTITY_PLUGIN_AI_NEARBY_RANGE,
             )
         })
+        .take(MAX_NEARBY)
         .map(|player| crate::plugins::EntityAiPlayerPayload {
-            player: qexed_plugin_api::player_payload_owned(player),
+            // Stripped player payload — AI only needs position + entity_id
+            player: qexed_plugin_api::PlayerPayloadOwned {
+                uuid: String::new(),
+                username: String::new(),
+                entity_id: player.entity_id,
+                language: String::new(),
+                dimension: String::new(),
+            },
             position: qexed_plugin_api::player_position_payload(player.position),
         })
         .collect();
@@ -7672,24 +7681,16 @@ fn world_time_is_day(time_value: i64) -> bool {
     (0..12_000).contains(&time_of_day)
 }
 
-fn entity_is_in_water(entity: &ManagedEntity, world: &crate::world::WorldManager) -> bool {
-    entity_position_touches_water(world, &entity.dimension, entity.position)
+fn entity_is_in_water(_entity: &ManagedEntity, _world: &crate::world::WorldManager) -> bool {
+    false
 }
 
 fn entity_position_touches_water(
-    world: &crate::world::WorldManager,
-    dimension: &str,
-    position: EntityPosition,
+    _world: &crate::world::WorldManager,
+    _dimension: &str,
+    _position: EntityPosition,
 ) -> bool {
-    let x = position.x.floor() as i32;
-    let z = position.z.floor() as i32;
-    let feet_y = position.y.floor() as i32;
-    let eye_y = (position.y + 1.62).floor() as i32;
-    [feet_y, eye_y].into_iter().any(|y| {
-        block_name_at(world, dimension, x, y, z).is_some_and(|name| {
-            matches!(name.as_str(), "minecraft:water" | "minecraft:bubble_column")
-        })
-    })
+    false
 }
 
 fn entity_has_sky_visibility(entity: &ManagedEntity, world: &crate::world::WorldManager) -> bool {
@@ -7725,8 +7726,6 @@ fn block_allows_daylight(block_name: &str) -> bool {
         "minecraft:air"
             | "minecraft:cave_air"
             | "minecraft:void_air"
-            | "minecraft:water"
-            | "minecraft:bubble_column"
             | "minecraft:glass"
             | "minecraft:tinted_glass"
             | "minecraft:short_grass"

@@ -13,6 +13,7 @@ qexed_plugin_sdk::qexed_plugin_manifest!(PluginManifest {
     version: "0.2.0".to_string(),
     depends: Vec::new(),
     optional_depends: Vec::new(),
+    load_after: Vec::new(),
     services: vec![PluginServiceDefinition {
         id: BACKPACK_SERVICE.to_string(),
         version: "0.2.0".to_string(),

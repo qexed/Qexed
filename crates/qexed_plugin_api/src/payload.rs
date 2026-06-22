@@ -2,6 +2,34 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Serde helper: serializes BTreeMap<String, Value> as a JSON string (postcard-compatible)
+mod ai_params_serde {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(
+        params: &BTreeMap<String, serde_json::Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let json = serde_json::to_string(params).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&json)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<String, serde_json::Value>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let json: String = serde::Deserialize::deserialize(deserializer)?;
+        serde_json::from_str(&json).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerPayload {
     pub uuid: String,
@@ -521,10 +549,19 @@ pub struct PluginManifest {
     pub id: String,
     #[serde(default)]
     pub version: String,
+    /// Hard dependencies: plugin will be disabled if any of these are missing.
+    /// The load order is determined by dependency graph topological sort.
     #[serde(default)]
     pub depends: Vec<PluginDependency>,
+    /// Optional dependencies: loaded first if available, but plugin is not
+    /// disabled when they are missing.
     #[serde(default)]
     pub optional_depends: Vec<PluginDependency>,
+    /// Soft ordering: load after the listed plugins (without version constraint).
+    /// Missing plugins are silently ignored. Used when a plugin wants to run
+    /// after another plugin but doesn't strictly depend on it.
+    #[serde(default)]
+    pub load_after: Vec<String>,
     #[serde(default)]
     pub services: Vec<PluginServiceDefinition>,
 }
@@ -534,6 +571,11 @@ pub struct PluginDependency {
     pub id: String,
     #[serde(default)]
     pub version: String,
+    /// Ordering priority within the dependency layer. Higher values mean the
+    /// dependency should be loaded earlier relative to other dependencies at
+    /// the same depth. Defaults to 0.
+    #[serde(default)]
+    pub priority: i32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -722,6 +764,7 @@ pub struct CustomEntityDefinition {
     #[serde(default)]
     pub ai: String,
     #[serde(default)]
+    #[serde(with = "ai_params_serde")]
     pub ai_params: BTreeMap<String, serde_json::Value>,
 }
 
@@ -751,6 +794,7 @@ pub struct EntityAiEntityPayload {
     #[serde(default)]
     pub spawn_rule: String,
     #[serde(default)]
+    #[serde(with = "ai_params_serde")]
     pub ai_params: BTreeMap<String, serde_json::Value>,
     pub dimension: String,
     pub position: PlayerPositionPayload,

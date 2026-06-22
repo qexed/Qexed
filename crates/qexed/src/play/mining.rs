@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::OnceLock,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use qexed_packet::net_types::Position as BlockPosition;
@@ -10,6 +10,9 @@ use qexed_protocol::types::{ComponentsToAdd, Slot};
 use crate::plugins::{
     BlockDropPosition, BlockDropQuery, ItemEnchantment, MiningSpeedQuery, PluginEnchantment,
 };
+
+/// Duration of a single gameplay tick (20 TPS).
+pub(super) const TICK_DURATION: Duration = Duration::from_millis(50);
 
 const TICK_SECONDS: f64 = 0.05;
 const DEFAULT_HARDNESS: f32 = 1.0;
@@ -25,7 +28,9 @@ pub(super) struct PendingDig {
     pub(super) block_state: i32,
     pub(super) held_signature: HeldItemSignature,
     pub(super) required: Duration,
-    started_at: Instant,
+    /// Accumulated game ticks elapsed since mining started.
+    /// Incremented by [`tick()`] once per gameplay tick (20 TPS).
+    elapsed: Duration,
 }
 
 impl PendingDig {
@@ -40,8 +45,13 @@ impl PendingDig {
             block_state,
             held_signature: HeldItemSignature::from_slot(held_item),
             required,
-            started_at: Instant::now(),
+            elapsed: Duration::ZERO,
         }
+    }
+
+    /// Advance one gameplay tick (50 ms of game time).
+    pub(super) fn tick(&mut self) {
+        self.elapsed = self.elapsed.saturating_add(TICK_DURATION);
     }
 
     pub(super) fn matches(
@@ -55,20 +65,23 @@ impl PendingDig {
             && self.held_signature == HeldItemSignature::from_slot(held_item)
     }
 
-    pub(super) fn is_complete(&self, now: Instant) -> bool {
-        now.duration_since(self.started_at)
+    pub(super) fn is_complete(&self) -> bool {
+        // Allow up to 1.5 ticks early to compensate for latency between the
+        // client finishing its local progress and the STOP_DESTROY_BLOCK
+        // packet reaching the server.
+        self.elapsed
             .saturating_add(Duration::from_millis(75))
             >= self.required
     }
 
-    /// Calculate the block destruction stage (0-9) based on elapsed time.
-    /// Returns None if breaking hasn't started or the required time is zero.
-    pub(super) fn destroy_stage(&self, now: Instant) -> Option<i8> {
+    /// Calculate the block destruction stage (0-9) based on accumulated tick
+    /// time.  Returns None if breaking hasn't started or the required time is
+    /// zero.
+    pub(super) fn destroy_stage(&self) -> Option<i8> {
         if self.required.is_zero() {
             return None;
         }
-        let elapsed = now.duration_since(self.started_at);
-        let progress = elapsed.as_secs_f64() / self.required.as_secs_f64();
+        let progress = self.elapsed.as_secs_f64() / self.required.as_secs_f64();
         let stage = (progress * 10.0).floor() as i8;
         Some(stage.min(9))
     }
