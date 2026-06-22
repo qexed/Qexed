@@ -331,7 +331,7 @@ function Get-ProcessTreeSnapshot {
         }
     }
 
-    return @($owned)
+    return $owned.ToArray()
 }
 
 function Stop-OwnedProcessTree {
@@ -438,8 +438,8 @@ function Get-ObservedBenchmarkState {
     $clientText = "$clientOut`n$clientErr"
     $chunkMetrics = Get-ChunkSyncMetrics -LogText $serverText
     $serverJoin = Get-FirstLogLineInfo -Text $serverText -Pattern "joined qexed-v5"
-    $clientJoin = Get-FirstLogLineInfo -Text $clientText -Pattern "(?i)\b(joined|connected|spawn|login)\b"
-    $joinSeen = [bool]($serverJoin -or $clientJoin)
+    $clientJoin = Get-FirstLogLineInfo -Text $clientText -Pattern "(?i)\b(joined|spawned|logged in|login successful)\b"
+    $joinSeen = [bool]($serverJoin -or $chunkMetrics -or $clientJoin)
     $connectionMs = $null
     if ($serverJoin -and $serverJoin.Time) {
         $connectionMs = Get-ElapsedMillisecondsOrNull -Start $ClientStartedAt -End $serverJoin.Time
