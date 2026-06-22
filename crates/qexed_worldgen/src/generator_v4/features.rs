@@ -768,11 +768,20 @@ impl OverworldOreFeatures {
         let mut profile =
             log::log_enabled!(log::Level::Debug).then(FeaturePlacementProfile::default);
 
+        let trace_features = std::env::var_os("QEXED_WORLDGEN_FEATURE_TRACE").is_some();
+        let trace_stop_after = std::env::var("QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER").ok();
+
         for feature_key in self.ordered_feature_keys.iter().copied() {
-            let diagnostic_start = std::env::var_os("QEXED_WORLDGEN_FEATURE_TRACE")
-                .map(|_| Instant::now());
+            let diagnostic_start = trace_features.then(Instant::now);
             let feature = self.feature_by_key(feature_key);
             let feature_name = feature.name();
+            if trace_features {
+                eprintln!(
+                    "feature trace start: chunk=({chunk_x},{chunk_z}) feature={feature_name} step={} index={}",
+                    feature.step_index(),
+                    feature.feature_index()
+                );
+            }
             let biome_filter = feature.biome_filter();
             if feature.can_spill_into_neighbor_chunk() {
                 let candidate_indexes = neighbor_sources.candidates(feature);
@@ -1055,6 +1064,12 @@ impl OverworldOreFeatures {
                     "feature trace: chunk=({chunk_x},{chunk_z}) feature={feature_name} elapsed_ms={:.2}",
                     duration_ms(start.elapsed())
                 );
+            }
+            if trace_stop_after.as_deref() == Some(feature_name) {
+                eprintln!(
+                    "feature trace stop_after: chunk=({chunk_x},{chunk_z}) feature={feature_name}"
+                );
+                break;
             }
         }
 
