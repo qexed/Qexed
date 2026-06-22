@@ -110,6 +110,98 @@ mod diagnostics {
             }
         }
     }
+
+    #[test]
+    #[ignore = "manual ore_tuff spillover precheck diagnostic"]
+    fn dump_seed0_ore_tuff_source_1_minus1_chunk00_precheck() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let feature = &settings.ore_features.features[8];
+        let source_origin_x = 16;
+        let source_origin_z = -16;
+        let target_origin_x = 0;
+        let target_origin_z = 0;
+        let decoration_seed = FeatureRandom::decoration_seed(
+            settings.ore_features.seed,
+            source_origin_x,
+            source_origin_z,
+        );
+        let underground = PlacedUndergroundFeature::Ore(feature);
+        let candidate = feature_can_reach_chunk(
+            underground,
+            source_origin_x,
+            source_origin_z,
+            target_origin_x,
+            target_origin_z,
+            underground.max_horizontal_spillover(),
+        );
+        let may_spill = underground.may_spill_from_seed(
+            &settings,
+            source_origin_x,
+            source_origin_z,
+            target_origin_x,
+            target_origin_z,
+            decoration_seed,
+        );
+        println!(
+            "ore_tuff_precheck seed=0 source_chunk=(1,-1) source_origin=({source_origin_x},{source_origin_z}) target_chunk=(0,0) target_origin=({target_origin_x},{target_origin_z}) step={} index={} decoration_seed={decoration_seed} candidate={candidate} may_spill_from_seed={may_spill} prepare_for_feature_equivalent={}",
+            feature.step_index,
+            feature.feature_index,
+            candidate && may_spill
+        );
+
+        let mut random =
+            FeatureRandom::for_feature(decoration_seed, feature.feature_index, feature.step_index);
+        let count = feature.count.sample(&mut random);
+        println!("ore_tuff_attempt_count={count}");
+        for attempt in 0..count {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let y = feature.height.sample(&settings, &mut random);
+            let reaches = feature.ore.may_spill_into(
+                target_origin_x,
+                target_origin_z,
+                &mut random,
+                x,
+                y,
+                z,
+            );
+            println!(
+                "ore_tuff_attempt attempt={attempt} origin=({x},{y},{z}) may_spill_into_target={reaches}"
+            );
+        }
+
+        let seed_inputs = [
+            ("origin", source_origin_x, source_origin_z),
+            ("chunk", 1, -1),
+            ("chunk16plus8", 24, -8),
+        ];
+        for (seed_label, seed_x, seed_z) in seed_inputs {
+            let decoration_seed =
+                FeatureRandom::decoration_seed(settings.ore_features.seed, seed_x, seed_z);
+            for step_index in [5, 6, 7] {
+                for feature_index in 6..=10 {
+                    let mut random =
+                        FeatureRandom::for_feature(decoration_seed, feature_index, step_index);
+                    let count = feature.count.sample(&mut random);
+                    let mut origins = Vec::new();
+                    for attempt in 0..count {
+                        let x = source_origin_x + random.next_int(16);
+                        let z = source_origin_z + random.next_int(16);
+                        let y = feature.height.sample(&settings, &mut random);
+                        origins.push((attempt, x, y, z));
+                    }
+                    if origins
+                        .iter()
+                        .any(|(_, x, y, z)| (*x, *y, *z) == (19, -49, -5))
+                    {
+                        println!(
+                            "ore_tuff_java_origin_match seed_input={seed_label} seed_coords=({seed_x},{seed_z}) step={step_index} index={feature_index} decoration_seed={decoration_seed} origins={origins:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {

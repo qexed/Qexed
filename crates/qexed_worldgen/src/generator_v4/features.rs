@@ -8,6 +8,7 @@ const FEATURE_PROFILE_ENV: &str = "QEXED_WORLDGEN_FEATURE_PROFILE";
 const FEATURE_TRACE_STOP_AFTER_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_STOP_AFTER";
 const FEATURE_TRACE_TIMEOUT_MS_ENV: &str = "QEXED_WORLDGEN_FEATURE_TRACE_TIMEOUT_MS";
 const FEATURE_WRITE_TRACE_TARGET_ENV: &str = "QEXED_WORLDGEN_FEATURE_WRITE_TRACE_TARGET";
+const FEATURE_WRITE_TRACE_FILTER_ENV: &str = "QEXED_WORLDGEN_FEATURE_WRITE_TRACE_FILTER";
 const FULL_DIAGNOSTIC_TEST_NAME: &str = "v4_pipeline_full_chunk_manual_diagnostic";
 
 fn should_profile_to_stderr() -> bool {
@@ -46,6 +47,63 @@ impl FeatureWriteTraceTarget {
 }
 
 #[derive(Debug, Clone)]
+struct FeatureWriteTraceFilter {
+    feature_name: Option<String>,
+    step_index: Option<i32>,
+    feature_index: Option<i32>,
+    phase: Option<String>,
+    attempt: Option<i32>,
+}
+
+impl FeatureWriteTraceFilter {
+    fn from_env() -> Option<Self> {
+        static FILTER: OnceLock<Option<FeatureWriteTraceFilter>> = OnceLock::new();
+        FILTER
+            .get_or_init(|| {
+                let value = std::env::var(FEATURE_WRITE_TRACE_FILTER_ENV).ok()?;
+                let mut filter = Self {
+                    feature_name: None,
+                    step_index: None,
+                    feature_index: None,
+                    phase: None,
+                    attempt: None,
+                };
+
+                for entry in value.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+                    let Some((key, value)) = entry.split_once('=') else {
+                        return None;
+                    };
+                    match key.trim() {
+                        "name" => filter.feature_name = Some(value.trim().to_string()),
+                        "step" => filter.step_index = value.trim().parse().ok(),
+                        "index" => filter.feature_index = value.trim().parse().ok(),
+                        "phase" => filter.phase = Some(value.trim().to_string()),
+                        "attempt" => filter.attempt = value.trim().parse().ok(),
+                        _ => return None,
+                    }
+                }
+
+                Some(filter)
+            })
+            .clone()
+    }
+
+    fn matches(&self, context: &FeatureWriteTraceContext) -> bool {
+        self.feature_name
+            .as_deref()
+            .is_none_or(|name| name == context.feature_name)
+            && self
+                .step_index
+                .is_none_or(|step_index| step_index == context.step_index)
+            && self
+                .feature_index
+                .is_none_or(|feature_index| feature_index == context.feature_index)
+            && self.phase.as_deref().is_none_or(|phase| phase == context.phase)
+            && self.attempt.is_none_or(|attempt| context.attempt == Some(attempt))
+    }
+}
+
+#[derive(Debug, Clone)]
 struct FeatureWriteTraceContext {
     chunk_x: i32,
     chunk_z: i32,
@@ -69,6 +127,18 @@ struct FeatureWriteTraceContext {
 
 thread_local! {
     static FEATURE_WRITE_TRACE_CONTEXT: std::cell::RefCell<Option<FeatureWriteTraceContext>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[derive(Debug, Clone, Default)]
+struct OrePlacementCountTrace {
+    target_predicate_matches: usize,
+    should_skip_air_check_next_float_calls: usize,
+    set_block_state_writes: usize,
+}
+
+thread_local! {
+    static ORE_PLACEMENT_COUNT_TRACE: std::cell::RefCell<Option<OrePlacementCountTrace>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -112,6 +182,9 @@ fn trace_feature_write_at_target(
 
     FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
         if let Some(context) = current.borrow().as_ref() {
+            if FeatureWriteTraceFilter::from_env().is_some_and(|filter| !filter.matches(context)) {
+                return;
+            }
             eprintln!(
                 "feature write trace: chunk=({},{}) coord=({world_x},{world_y},{world_z}) local=({local_x},{world_y},{local_z}) phase={} ordinal={} name={} step={} index={} source_chunk=({},{}) source_origin=({},{}) target_chunk=({},{}) target_origin=({},{}) write_origin=({chunk_origin_x},{chunk_origin_z}) decoration_seed={} attempt={} attempt_origin={} previous={} replacement={}",
                 context.chunk_x,

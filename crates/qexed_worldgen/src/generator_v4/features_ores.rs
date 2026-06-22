@@ -134,6 +134,7 @@ impl PlacedOreFeature {
                 continue;
             }
             let shape = self.ore.sample_blob_shape(random, prefix);
+            self.ore.start_count_trace_if_enabled();
             let mut replay_random = random.clone();
             if self.ore.needs_source_spillover_replay() {
                 let stats =
@@ -173,6 +174,7 @@ impl PlacedOreFeature {
                     diagnostic.target_writes += usize::from(placed);
                 }
             }
+            self.ore.finish_count_trace_if_enabled();
         }
         if let Some(diagnostic) = diagnostic {
             print_ore_spillover_diagnostic(
@@ -204,11 +206,10 @@ impl PlacedOreFeature {
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
-            let mut replay_random = random.clone();
             if self.ore.may_spill_into(
                 target_origin_x,
                 target_origin_z,
-                &mut replay_random,
+                random,
                 x,
                 y,
                 z,
@@ -269,6 +270,34 @@ fn print_ore_spillover_diagnostic(
             diagnostic.target_scans,
             diagnostic.target_writes,
         );
+    });
+}
+
+fn trace_ore_target_predicate_match(world_x: i32, world_y: i32, world_z: i32, current: &BlockLayer) {
+    ORE_PLACEMENT_COUNT_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.target_predicate_matches += 1;
+            eprintln!(
+                "rust ore count predicate match: coord=({world_x},{world_y},{world_z}) current={}",
+                current.block
+            );
+        }
+    });
+}
+
+fn trace_ore_should_skip_air_check_next_float() {
+    ORE_PLACEMENT_COUNT_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.should_skip_air_check_next_float_calls += 1;
+        }
+    });
+}
+
+fn trace_ore_set_block_state_write() {
+    ORE_PLACEMENT_COUNT_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.set_block_state_writes += 1;
+        }
     });
 }
 
@@ -1764,16 +1793,11 @@ impl OreFeatureConfig {
     }
 
     fn base_stone(size: i32, block: &str) -> Self {
-        let predicate = if block == "minecraft:gravel" {
-            OreTargetPredicate::StoneOreReplaceables
-        } else {
-            OreTargetPredicate::BaseStoneOverworld
-        };
         Self {
             size,
             discard_chance_on_air_exposure: 0.0,
             targets: vec![OreFeatureTarget {
-                predicate,
+                predicate: OreTargetPredicate::BaseStoneOverworld,
                 block: BlockLayer::new(block),
             }],
         }
@@ -1840,12 +1864,14 @@ impl OreFeatureConfig {
                 origin_z,
             )
         };
+        self.trace_precheck_if_enabled(precheck_passes);
         if !precheck_passes {
             return false;
         }
 
         let shape = self.sample_blob_shape(random, prefix);
-        self.place_shape_with_neighbor(
+        self.start_count_trace_if_enabled();
+        let placed = self.place_shape_with_neighbor(
             settings,
             chunk_min_x,
             chunk_min_z,
@@ -1853,7 +1879,9 @@ impl OreFeatureConfig {
             neighbor,
             random,
             &shape,
-        )
+        );
+        self.finish_count_trace_if_enabled();
+        placed
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2152,12 +2180,7 @@ impl OreFeatureConfig {
     fn trace_context_is_target_attempt(&self) -> bool {
         FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
             current.borrow().as_ref().is_some_and(|context| {
-                context.feature_name == "ore_redstone_lower"
-                    && context.step_index == 6
-                    && context.feature_index == 17
-                    && context.phase == "local"
-                    && context.attempt == Some(3)
-                    && context.attempt_origin == Some((7, -59, 1))
+                FeatureWriteTraceFilter::from_env().is_none_or(|filter| filter.matches(context))
             })
         })
     }
@@ -2414,6 +2437,7 @@ impl OreFeatureConfig {
         let Some(ore) = self.target_ore(current).cloned() else {
             return false;
         };
+        trace_ore_target_predicate_match(world_x, world_y, world_z, current);
         if !self.should_skip_air_check(random)
             && is_adjacent_to_air_with_neighbor(
                 settings,
@@ -2441,6 +2465,7 @@ impl OreFeatureConfig {
             &ore,
         );
         chunk.set_layer(local_x, world_y, local_z, settings.min_y, ore);
+        trace_ore_set_block_state_write();
         true
     }
 
@@ -2457,8 +2482,101 @@ impl OreFeatureConfig {
         } else if self.discard_chance_on_air_exposure >= 1.0 {
             false
         } else {
+            trace_ore_should_skip_air_check_next_float();
             random.next_float() >= self.discard_chance_on_air_exposure
         }
+    }
+
+    fn start_count_trace_if_enabled(&self) {
+        FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+            let Some(context) = current.borrow().clone() else {
+                return;
+            };
+            if FeatureWriteTraceFilter::from_env().is_some_and(|filter| filter.matches(&context)) {
+                eprintln!(
+                    "rust ore count start: source_origin=({},{}) source_chunk=({},{}) step={} index={} attempt={} origin={}",
+                    context.source_origin_x,
+                    context.source_origin_z,
+                    context.source_chunk_x,
+                    context.source_chunk_z,
+                    context.step_index,
+                    context.feature_index,
+                    context
+                        .attempt
+                        .map(|attempt| attempt.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    context
+                        .attempt_origin
+                        .map(|(x, y, z)| format!("({x},{y},{z})"))
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                ORE_PLACEMENT_COUNT_TRACE
+                    .with(|trace| trace.replace(Some(OrePlacementCountTrace::default())));
+            }
+        });
+    }
+
+    fn finish_count_trace_if_enabled(&self) {
+        FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+            let Some(context) = current.borrow().clone() else {
+                return;
+            };
+            ORE_PLACEMENT_COUNT_TRACE.with(|trace| {
+                let Some(count) = trace.replace(None) else {
+                    return;
+                };
+                eprintln!(
+                    "rust ore count summary: source_origin=({},{}) source_chunk=({},{}) step={} index={} attempt={} origin={} target_predicate_matches={} shouldSkipAirCheck_nextFloat_calls={} setBlockState_writes={}",
+                    context.source_origin_x,
+                    context.source_origin_z,
+                    context.source_chunk_x,
+                    context.source_chunk_z,
+                    context.step_index,
+                    context.feature_index,
+                    context
+                        .attempt
+                        .map(|attempt| attempt.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    context
+                        .attempt_origin
+                        .map(|(x, y, z)| format!("({x},{y},{z})"))
+                        .unwrap_or_else(|| "none".to_string()),
+                    count.target_predicate_matches,
+                    count.should_skip_air_check_next_float_calls,
+                    count.set_block_state_writes
+                );
+            });
+        });
+    }
+
+    fn trace_precheck_if_enabled(&self, precheck_passes: bool) {
+        FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+            let current = current.borrow();
+            let Some(context) = current.as_ref() else {
+                return;
+            };
+            if FeatureWriteTraceFilter::from_env().is_some_and(|filter| filter.matches(context)) {
+                eprintln!(
+                    "rust ore precheck: source_origin=({},{}) source_chunk=({},{}) step={} index={} phase={} attempt={} origin={} passes={}",
+                    context.source_origin_x,
+                    context.source_origin_z,
+                    context.source_chunk_x,
+                    context.source_chunk_z,
+                    context.step_index,
+                    context.feature_index,
+                    context.phase,
+                    context
+                        .attempt
+                        .map(|attempt| attempt.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    context
+                        .attempt_origin
+                        .map(|(x, y, z)| format!("({x},{y},{z})"))
+                        .unwrap_or_else(|| "none".to_string()),
+                    precheck_passes
+                );
+            }
+        });
     }
 
     fn can_skip_non_spilling_blob_replay(&self) -> bool {

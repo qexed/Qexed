@@ -10,7 +10,7 @@ impl HeightAnchor {
         match self {
             Self::Absolute(y) => y,
             Self::AboveBottom(offset) => settings.min_y + offset,
-            Self::BelowTop(offset) => settings.min_y + settings.height - offset,
+            Self::BelowTop(offset) => settings.min_y + settings.height - 1 - offset,
         }
     }
 }

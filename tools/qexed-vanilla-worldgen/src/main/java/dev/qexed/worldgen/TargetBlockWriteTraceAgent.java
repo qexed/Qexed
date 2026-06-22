@@ -25,13 +25,45 @@ public final class TargetBlockWriteTraceAgent {
             Collections.synchronizedMap(new IdentityHashMap<>());
     private static final Map<Object, FeatureSeedInfo> FEATURE_SEEDS =
             Collections.synchronizedMap(new IdentityHashMap<>());
+    private static final Map<Object, Integer> FEATURE_ATTEMPTS =
+            Collections.synchronizedMap(new IdentityHashMap<>());
     private static final ThreadLocal<FeatureSeedInfo> CURRENT_FEATURE_SEED = new ThreadLocal<>();
+    private static final ThreadLocal<FeaturePlaceInfo> CURRENT_FEATURE_PLACE = new ThreadLocal<>();
+    private static final ThreadLocal<OreDoPlaceCount> CURRENT_ORE_COUNT = new ThreadLocal<>();
+    private static int traceTargetX = 6;
+    private static int traceTargetY = -61;
+    private static int traceTargetZ = 0;
 
     private TargetBlockWriteTraceAgent() {
     }
 
     public static void premain(String args, Instrumentation instrumentation) {
+        parseTarget(args);
         instrumentation.addTransformer(new Transformer(args));
+    }
+
+    private static void parseTarget(String args) {
+        if (args == null) {
+            return;
+        }
+        int start = args.indexOf("target(");
+        if (start < 0) {
+            return;
+        }
+        int end = args.indexOf(')', start);
+        if (end < 0) {
+            return;
+        }
+        String[] parts = args.substring(start + "target(".length(), end).split(",");
+        if (parts.length != 3) {
+            return;
+        }
+        try {
+            traceTargetX = Integer.parseInt(parts[0].trim());
+            traceTargetY = Integer.parseInt(parts[1].trim());
+            traceTargetZ = Integer.parseInt(parts[2].trim());
+        } catch (NumberFormatException ignored) {
+        }
     }
 
     public static void trace(String owner, Object chunk, Object pos, Object replacement) {
@@ -91,12 +123,16 @@ public final class TargetBlockWriteTraceAgent {
         String replacementText = String.valueOf(replacement);
         if (!replacementText.contains("redstone")
                 && !replacementText.contains("deepslate")
+                && !replacementText.contains("gravel")
+                && !replacementText.contains("iron")
+                && !replacementText.contains("tuff")
                 && !replacementText.contains("air")) {
             return;
         }
 
+        FeaturePlaceInfo place = CURRENT_FEATURE_PLACE.get();
         System.out.printf(
-                "java target section write trace: owner=%s coord=(%d,%d,%d) local=(%d,%d,%d) replacement=%s%n",
+                "java target section write trace: owner=%s coord=(%d,%d,%d) local=(%d,%d,%d) replacement=%s feature=%s%n",
                 owner,
                 worldX,
                 worldY,
@@ -104,7 +140,8 @@ public final class TargetBlockWriteTraceAgent {
                 localX,
                 localY,
                 localZ,
-                replacement);
+                replacement,
+                place == null ? "unknown" : place.describe());
         for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
             String className = frame.getClassName();
             if (className.startsWith("java.")
@@ -141,10 +178,13 @@ public final class TargetBlockWriteTraceAgent {
                 : previous.withFeature(decorationSeed, featureIndex, stepIndex);
         FEATURE_SEEDS.put(random, info);
         innerRandom(random).ifPresent(inner -> FEATURE_SEEDS.put(inner, info));
+        FEATURE_ATTEMPTS.put(random, 0);
+        innerRandom(random).ifPresent(inner -> FEATURE_ATTEMPTS.put(inner, 0));
         CURRENT_FEATURE_SEED.set(info);
-        if (isRedstoneLowerFeature(featureIndex, stepIndex)) {
+        if (isTracedOreFeature(featureIndex, stepIndex)) {
             System.out.printf(
-                    "java feature seed trace: name=ore_redstone_lower source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d%n",
+                    "java feature seed trace: name=%s source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d%n",
+                    oreFeatureName(featureIndex, stepIndex),
                     info.originX,
                     info.originZ,
                     Math.floorDiv(info.originX, 16),
@@ -161,7 +201,7 @@ public final class TargetBlockWriteTraceAgent {
             Object origin = context.getClass().getMethod("origin").invoke(context);
             Object config = context.getClass().getMethod("config").invoke(context);
             String configText = String.valueOf(config);
-            if (!configText.contains("redstone_ore")) {
+            if (!configText.contains("redstone_ore") && !configText.contains("diamond_ore")) {
                 return;
             }
             Class<?> vec3i = Class.forName("net.minecraft.core.Vec3i", false, origin.getClass().getClassLoader());
@@ -187,25 +227,136 @@ public final class TargetBlockWriteTraceAgent {
         }
     }
 
+    public static void traceTargetPredicateResult(boolean matches) {
+        OreDoPlaceCount count = CURRENT_ORE_COUNT.get();
+        if (count != null && matches) {
+            count.targetPredicateMatches++;
+        }
+    }
+
+    public static void traceCanPlaceOreTargetPredicate(boolean matches, Object blockState, Object targetState, Object orePos) {
+        OreDoPlaceCount count = CURRENT_ORE_COUNT.get();
+        if (count == null) {
+            return;
+        }
+        int x;
+        int y;
+        int z;
+        try {
+            Class<?> vec3i = Class.forName("net.minecraft.core.Vec3i", false, orePos.getClass().getClassLoader());
+            x = (Integer) vec3i.getMethod("getX").invoke(orePos);
+            y = (Integer) vec3i.getMethod("getY").invoke(orePos);
+            z = (Integer) vec3i.getMethod("getZ").invoke(orePos);
+        } catch (ReflectiveOperationException error) {
+            System.out.printf("java ore_diamond_medium canPlaceOre coord trace failed: %s%n", error);
+            return;
+        }
+        if (matches) {
+            count.targetPredicateMatches++;
+        }
+        if (matches || isRequestedRustCoord(x, y, z)) {
+            System.out.printf(
+                    "java ore_diamond_medium canPlaceOre predicate: source_origin=(%d,%d) source_chunk=(%d,%d) step=%d index=%d attempt=%d origin=(%d,%d,%d) coord=(%d,%d,%d) current=%s targetState=%s predicate=%s%n",
+                    count.info.originX,
+                    count.info.originZ,
+                    Math.floorDiv(count.info.originX, 16),
+                    Math.floorDiv(count.info.originZ, 16),
+                    count.info.stepIndex,
+                    count.info.featureIndex,
+                    count.attempt,
+                    count.originX,
+                    count.originY,
+                    count.originZ,
+                    x,
+                    y,
+                    z,
+                    blockState,
+                    targetState,
+                    matches);
+        }
+    }
+
+    public static void traceShouldSkipAirCheckNextFloat(float value) {
+        OreDoPlaceCount count = CURRENT_ORE_COUNT.get();
+        if (count != null) {
+            count.shouldSkipAirCheckNextFloatCalls++;
+        }
+    }
+
+    public static void traceOreSetBlockState(Object ignoredPreviousState) {
+        OreDoPlaceCount count = CURRENT_ORE_COUNT.get();
+        if (count != null) {
+            count.setBlockStateWrites++;
+        }
+    }
+
+    public static void finishOreDoPlace(boolean placedAny) {
+        OreDoPlaceCount count = CURRENT_ORE_COUNT.get();
+        if (count == null) {
+            return;
+        }
+        System.out.printf(
+                "java %s count summary: source_origin=(%d,%d) source_chunk=(%d,%d) step=%d index=%d attempt=%d origin=(%d,%d,%d) entered_doPlace=true target_predicate_matches=%d shouldSkipAirCheck_nextFloat_calls=%d setBlockState_writes=%d doPlace_result=%s%n",
+                featureLabel(count.info),
+                count.info.originX,
+                count.info.originZ,
+                Math.floorDiv(count.info.originX, 16),
+                Math.floorDiv(count.info.originZ, 16),
+                count.info.stepIndex,
+                count.info.featureIndex,
+                count.attempt,
+                count.originX,
+                count.originY,
+                count.originZ,
+                count.targetPredicateMatches,
+                count.shouldSkipAirCheckNextFloatCalls,
+                count.setBlockStateWrites,
+                placedAny);
+        CURRENT_ORE_COUNT.remove();
+    }
+
     public static void traceFeaturePlace(Object config, Object random, Object origin) {
         try {
             FeatureSeedInfo info = FEATURE_SEEDS.get(random);
             if (info == null) {
                 info = CURRENT_FEATURE_SEED.get();
             }
-            if (info == null || !isRedstoneLowerFeature(info.featureIndex, info.stepIndex)) {
+            if (info == null) {
                 return;
             }
             String configClass = config.getClass().getName();
-            if (!"net.minecraft.world.level.levelgen.feature.configurations.OreConfiguration".equals(configClass)) {
-                return;
-            }
             Class<?> vec3i = Class.forName("net.minecraft.core.Vec3i", false, origin.getClass().getClassLoader());
             int x = (Integer) vec3i.getMethod("getX").invoke(origin);
             int y = (Integer) vec3i.getMethod("getY").invoke(origin);
             int z = (Integer) vec3i.getMethod("getZ").invoke(origin);
+            int attempt = nextFeatureAttempt(random);
+            CURRENT_FEATURE_PLACE.set(new FeaturePlaceInfo(info, attempt, x, y, z, configClass, compactConfig(String.valueOf(config))));
+            if (!isTracedOreFeature(info.featureIndex, info.stepIndex)) {
+                return;
+            }
+            if (!"net.minecraft.world.level.levelgen.feature.configurations.OreConfiguration".equals(configClass)) {
+                return;
+            }
+            if (isTrackedCountAttempt(info, attempt)) {
+                OreDoPlaceCount count = new OreDoPlaceCount(info, attempt, x, y, z);
+                CURRENT_ORE_COUNT.set(count);
+                System.out.printf(
+                        "java %s count start: source_origin=(%d,%d) source_chunk=(%d,%d) step=%d index=%d attempt=%d origin=(%d,%d,%d) precheck=Feature.place_entered%n",
+                        featureLabel(info),
+                        info.originX,
+                        info.originZ,
+                        Math.floorDiv(info.originX, 16),
+                        Math.floorDiv(info.originZ, 16),
+                        info.stepIndex,
+                        info.featureIndex,
+                        attempt,
+                        x,
+                        y,
+                        z);
+            }
             System.out.printf(
-                    "java ore_redstone_lower real place: source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d origin=(%d,%d,%d)%n",
+                    "java %s real place: source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d attempt=%d origin=(%d,%d,%d)%n",
+                    oreFeatureName(info.featureIndex, info.stepIndex),
                     info.originX,
                     info.originZ,
                     Math.floorDiv(info.originX, 16),
@@ -213,6 +364,7 @@ public final class TargetBlockWriteTraceAgent {
                     info.decorationSeed,
                     info.stepIndex,
                     info.featureIndex,
+                    attempt,
                     x,
                     y,
                     z);
@@ -223,6 +375,48 @@ public final class TargetBlockWriteTraceAgent {
 
     private static boolean isRedstoneLowerFeature(int featureIndex, int stepIndex) {
         return stepIndex == 6 && featureIndex == 17;
+    }
+
+    private static boolean isTracedOreFeature(int featureIndex, int stepIndex) {
+        return isRedstoneLowerFeature(featureIndex, stepIndex)
+                || (stepIndex == 6 && featureIndex == 1)
+                || (stepIndex == 6 && featureIndex == 8)
+                || (stepIndex == 6 && featureIndex >= 11 && featureIndex <= 13)
+                || (stepIndex == 6 && featureIndex >= 18 && featureIndex <= 21);
+    }
+
+    private static String oreFeatureName(int featureIndex, int stepIndex) {
+        if (stepIndex == 6 && featureIndex == 18) {
+            return "ore_diamond";
+        }
+        if (stepIndex == 6 && featureIndex == 1) {
+            return "ore_gravel";
+        }
+        if (stepIndex == 6 && featureIndex == 8) {
+            return "ore_tuff";
+        }
+        if (stepIndex == 6 && featureIndex == 11) {
+            return "ore_iron_upper";
+        }
+        if (stepIndex == 6 && featureIndex == 12) {
+            return "ore_iron_middle";
+        }
+        if (stepIndex == 6 && featureIndex == 13) {
+            return "ore_iron_small";
+        }
+        if (stepIndex == 6 && featureIndex == 19) {
+            return "ore_diamond_medium";
+        }
+        if (stepIndex == 6 && featureIndex == 20) {
+            return "ore_diamond_large";
+        }
+        if (stepIndex == 6 && featureIndex == 21) {
+            return "ore_diamond_buried";
+        }
+        if (isRedstoneLowerFeature(featureIndex, stepIndex)) {
+            return "ore_redstone_lower";
+        }
+        return "ore_unknown";
     }
 
     private static String compactConfig(String configText) {
@@ -239,16 +433,61 @@ public final class TargetBlockWriteTraceAgent {
         }
     }
 
+    private static int nextFeatureAttempt(Object random) {
+        if (random == null) {
+            return -1;
+        }
+        int attempt = FEATURE_ATTEMPTS.getOrDefault(random, 0);
+        FEATURE_ATTEMPTS.put(random, attempt + 1);
+        innerRandom(random).ifPresent(inner -> FEATURE_ATTEMPTS.put(inner, attempt + 1));
+        return attempt;
+    }
+
+    private static boolean isTargetDiamondMediumAttempt(FeatureSeedInfo info, int attempt) {
+        return info != null
+                && info.stepIndex == 6
+                && info.featureIndex == 19
+                && attempt == 0
+                && Math.floorDiv(info.originX, 16) == 0
+                && Math.floorDiv(info.originZ, 16) == 0;
+    }
+
+    private static boolean isTargetOreGravelAttempt(FeatureSeedInfo info, int attempt) {
+        return info != null
+                && info.stepIndex == 6
+                && info.featureIndex == 1
+                && attempt >= 0
+                && attempt <= 3
+                && Math.floorDiv(info.originX, 16) == 0
+                && Math.floorDiv(info.originZ, 16) == 0;
+    }
+
+    private static boolean isTrackedCountAttempt(FeatureSeedInfo info, int attempt) {
+        return isTargetDiamondMediumAttempt(info, attempt) || isTargetOreGravelAttempt(info, attempt);
+    }
+
+    private static String featureLabel(FeatureSeedInfo info) {
+        if (info.stepIndex == 6 && info.featureIndex == 1) {
+            return "ore_gravel";
+        }
+        return oreFeatureName(info.featureIndex, info.stepIndex);
+    }
+
+    private static boolean isRequestedRustCoord(int x, int y, int z) {
+        return z == 7 && (x == 10 || x == 11) && (y == -28 || y == -27)
+                || z == 8 && (x == 10 || x == 11) && (y == -28 || y == -27);
+    }
+
     private static int targetX() {
-        return Integer.getInteger("qexed.traceBlock.x", 6);
+        return Integer.getInteger("qexed.traceBlock.x", traceTargetX);
     }
 
     private static int targetY() {
-        return Integer.getInteger("qexed.traceBlock.y", -61);
+        return Integer.getInteger("qexed.traceBlock.y", traceTargetY);
     }
 
     private static int targetZ() {
-        return Integer.getInteger("qexed.traceBlock.z", 0);
+        return Integer.getInteger("qexed.traceBlock.z", traceTargetZ);
     }
 
     private static final class Transformer implements ClassFileTransformer {
@@ -356,6 +595,94 @@ public final class TargetBlockWriteTraceAgent {
                     }
                 };
             }
+            if ("net/minecraft/world/level/levelgen/feature/OreFeature".equals(className)
+                    && "doPlace".equals(name)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitInsn(int opcode) {
+                        if (opcode == Opcodes.IRETURN) {
+                            visitInsn(Opcodes.DUP);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                    "finishOreDoPlace",
+                                    "(Z)V",
+                                    false);
+                        }
+                        super.visitInsn(opcode);
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String methodName, String methodDescriptor, boolean isInterface) {
+                        super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                        if ("net/minecraft/world/level/levelgen/structure/templatesystem/RuleTest".equals(owner)
+                                && "test".equals(methodName)
+                                && "(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/util/RandomSource;)Z".equals(methodDescriptor)) {
+                            visitInsn(Opcodes.DUP);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                    "traceTargetPredicateResult",
+                                    "(Z)V",
+                                    false);
+                        }
+                        if ("net/minecraft/world/level/chunk/LevelChunkSection".equals(owner)
+                                && METHOD_NAME.equals(methodName)
+                                && SECTION_METHOD_DESC.equals(methodDescriptor)) {
+                            visitInsn(Opcodes.DUP);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                    "traceOreSetBlockState",
+                                    "(Ljava/lang/Object;)V",
+                                    false);
+                        }
+                    }
+                };
+            }
+            if ("net/minecraft/world/level/levelgen/feature/OreFeature".equals(className)
+                    && "shouldSkipAirCheck".equals(name)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String methodName, String methodDescriptor, boolean isInterface) {
+                        super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                        if ("net/minecraft/util/RandomSource".equals(owner)
+                                && "nextFloat".equals(methodName)
+                                && "()F".equals(methodDescriptor)) {
+                            visitInsn(Opcodes.DUP);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                    "traceShouldSkipAirCheckNextFloat",
+                                    "(F)V",
+                                    false);
+                        }
+                    }
+                };
+            }
+            if ("net/minecraft/world/level/levelgen/feature/OreFeature".equals(className)
+                    && "canPlaceOre".equals(name)) {
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String methodName, String methodDescriptor, boolean isInterface) {
+                        super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                        if ("net/minecraft/world/level/levelgen/structure/templatesystem/RuleTest".equals(owner)
+                                && "test".equals(methodName)
+                                && "(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/util/RandomSource;)Z".equals(methodDescriptor)) {
+                            visitInsn(Opcodes.DUP);
+                            visitVarInsn(Opcodes.ALOAD, 0);
+                            visitVarInsn(Opcodes.ALOAD, 4);
+                            visitVarInsn(Opcodes.ALOAD, 5);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    "dev/qexed/worldgen/TargetBlockWriteTraceAgent",
+                                    "traceCanPlaceOreTargetPredicate",
+                                    "(ZLjava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V",
+                                    false);
+                        }
+                    }
+                };
+            }
             if ("net/minecraft/world/level/levelgen/feature/Feature".equals(className)
                     && "place".equals(name)
                     && FEATURE_PLACE_DESC.equals(descriptor)) {
@@ -445,6 +772,52 @@ public final class TargetBlockWriteTraceAgent {
     private record FeatureSeedInfo(long worldSeed, int originX, int originZ, long decorationSeed, int featureIndex, int stepIndex) {
         private FeatureSeedInfo withFeature(long nextDecorationSeed, int nextFeatureIndex, int nextStepIndex) {
             return new FeatureSeedInfo(worldSeed, originX, originZ, nextDecorationSeed, nextFeatureIndex, nextStepIndex);
+        }
+    }
+
+    private record FeaturePlaceInfo(
+            FeatureSeedInfo info,
+            int attempt,
+            int originX,
+            int originY,
+            int originZ,
+            String configClass,
+            String configText) {
+        private String describe() {
+            return String.format(
+                    "source_origin=(%d,%d) source_chunk=(%d,%d) decoration_seed=%d step=%d index=%d attempt=%d origin=(%d,%d,%d) configClass=%s config=%s",
+                    info.originX,
+                    info.originZ,
+                    Math.floorDiv(info.originX, 16),
+                    Math.floorDiv(info.originZ, 16),
+                    info.decorationSeed,
+                    info.stepIndex,
+                    info.featureIndex,
+                    attempt,
+                    originX,
+                    originY,
+                    originZ,
+                    configClass,
+                    configText);
+        }
+    }
+
+    private static final class OreDoPlaceCount {
+        private final FeatureSeedInfo info;
+        private final int attempt;
+        private final int originX;
+        private final int originY;
+        private final int originZ;
+        private int targetPredicateMatches;
+        private int shouldSkipAirCheckNextFloatCalls;
+        private int setBlockStateWrites;
+
+        private OreDoPlaceCount(FeatureSeedInfo info, int attempt, int originX, int originY, int originZ) {
+            this.info = info;
+            this.attempt = attempt;
+            this.originX = originX;
+            this.originY = originY;
+            this.originZ = originZ;
         }
     }
 }

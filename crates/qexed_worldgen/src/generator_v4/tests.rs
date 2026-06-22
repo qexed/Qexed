@@ -243,11 +243,11 @@ mod tests {
         assert_eq!(HeightAnchor::AboveBottom(0).resolve(&settings), settings.min_y);
         assert_eq!(
             HeightAnchor::BelowTop(0).resolve(&settings),
-            settings.min_y + settings.height
+            settings.min_y + settings.height - 1
         );
         assert_eq!(
             HeightAnchor::BelowTop(8).resolve(&settings),
-            settings.min_y + settings.height - 8
+            settings.min_y + settings.height - 1 - 8
         );
     }
 

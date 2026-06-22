@@ -19,6 +19,9 @@ public final class TargetBlockWriteTraceDiagnostic {
         long seed = args.length > 0 ? Long.parseLong(args[0]) : 0L;
         int chunkX = args.length > 1 ? Integer.parseInt(args[1]) : 0;
         int chunkZ = args.length > 2 ? Integer.parseInt(args[2]) : 0;
+        int targetX = args.length > 3 ? Integer.parseInt(args[3]) : 6;
+        int targetY = args.length > 4 ? Integer.parseInt(args[4]) : -61;
+        int targetZ = args.length > 5 ? Integer.parseInt(args[5]) : 0;
         Path outputRoot = Files.createTempDirectory("qexed-target-block-trace-");
         Path regionPath = outputRoot.resolve("region").resolve("r.0.0.mca");
         Files.createDirectories(regionPath.getParent());
@@ -32,13 +35,16 @@ public final class TargetBlockWriteTraceDiagnostic {
                     outputRoot.resolve("world/dimensions/minecraft/overworld").toString(),
                     regionPath.toString()));
         }
-        Optional<String> finalBlock = readBlockState(regionPath, chunkX, chunkZ, 6, -61, 0);
+        Optional<String> finalBlock = readBlockState(regionPath, chunkX, chunkZ, targetX, targetY, targetZ);
         System.out.printf("java target write trace diagnostic done seed=%d chunk=(%d,%d) region=%s%n",
                 seed,
                 chunkX,
                 chunkZ,
                 regionPath);
-        System.out.printf("java target write trace final coord=(6,-61,0) block=%s%n",
+        System.out.printf("java target write trace final coord=(%d,%d,%d) block=%s%n",
+                targetX,
+                targetY,
+                targetZ,
                 finalBlock.orElse("missing"));
     }
 
