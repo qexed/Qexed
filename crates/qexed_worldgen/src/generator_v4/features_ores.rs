@@ -8,6 +8,21 @@ struct PlacedOreFeature {
     biome_filter: FeatureBiomeFilter,
 }
 
+#[derive(Debug, Default)]
+struct OreSpilloverDiagnostic {
+    attempts: i32,
+    biome_skips: i32,
+    prefix_reaches_target: i32,
+    precheck_passes: i32,
+    precheck_scans: usize,
+    source_spheres: usize,
+    source_scans: usize,
+    source_writes: usize,
+    target_spheres: usize,
+    target_scans: usize,
+    target_writes: usize,
+}
+
 impl PlacedOreFeature {
     fn new(
         feature_index: i32,
@@ -68,11 +83,20 @@ impl PlacedOreFeature {
         target_chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        let diagnose = ore_spillover_diagnostic_enabled(self.step_index, self.feature_index);
+        let mut diagnostic = diagnose.then(OreSpilloverDiagnostic::default);
+        for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
             let y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, x, y, z);
+            if let Some(diagnostic) = diagnostic.as_mut() {
+                diagnostic.attempts += 1;
+            }
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                if let Some(diagnostic) = diagnostic.as_mut() {
+                    diagnostic.biome_skips += 1;
+                }
                 continue;
             }
             let prefix = self.ore.sample_blob_prefix(random, x, y, z);
@@ -83,11 +107,14 @@ impl PlacedOreFeature {
                 &mut spill_random,
                 &prefix,
             );
+            if reaches_target && let Some(diagnostic) = diagnostic.as_mut() {
+                diagnostic.prefix_reaches_target += 1;
+            }
             if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
                 self.ore.consume_blob_shape_random(random);
                 continue;
             }
-            if !self.ore.precheck_passes(
+            let (precheck_passes, precheck_scans) = self.ore.precheck_passes_counted(
                 settings,
                 source_origin_x,
                 source_origin_z,
@@ -96,13 +123,23 @@ impl PlacedOreFeature {
                 x,
                 y,
                 z,
-            ) {
+            );
+            if let Some(diagnostic) = diagnostic.as_mut() {
+                diagnostic.precheck_scans += precheck_scans;
+                if precheck_passes {
+                    diagnostic.precheck_passes += 1;
+                }
+            }
+            if !precheck_passes {
                 continue;
             }
             let shape = self.ore.sample_blob_shape(random, prefix);
             let mut replay_random = random.clone();
             if self.ore.needs_source_spillover_replay() {
-                self.ore.place_shape_with_neighbor(
+                let stats =
+                    self.ore
+                        .shape_scan_stats(settings, source_origin_x, source_origin_z, &shape);
+                let placed = self.ore.place_shape_with_neighbor(
                     settings,
                     source_origin_x,
                     source_origin_z,
@@ -111,9 +148,17 @@ impl PlacedOreFeature {
                     random,
                     &shape,
                 );
+                if let Some(diagnostic) = diagnostic.as_mut() {
+                    diagnostic.source_spheres += stats.spheres;
+                    diagnostic.source_scans += stats.scans;
+                    diagnostic.source_writes += usize::from(placed);
+                }
             }
             if reaches_target {
-                self.ore.place_shape_with_neighbor(
+                let stats =
+                    self.ore
+                        .shape_scan_stats(settings, target_origin_x, target_origin_z, &shape);
+                let placed = self.ore.place_shape_with_neighbor(
                     settings,
                     target_origin_x,
                     target_origin_z,
@@ -122,7 +167,23 @@ impl PlacedOreFeature {
                     &mut replay_random,
                     &shape,
                 );
+                if let Some(diagnostic) = diagnostic.as_mut() {
+                    diagnostic.target_spheres += stats.spheres;
+                    diagnostic.target_scans += stats.scans;
+                    diagnostic.target_writes += usize::from(placed);
+                }
             }
+        }
+        if let Some(diagnostic) = diagnostic {
+            print_ore_spillover_diagnostic(
+                self.step_index,
+                self.feature_index,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                &diagnostic,
+            );
         }
     }
 
@@ -157,7 +218,58 @@ impl PlacedOreFeature {
         }
         false
     }
+}
 
+fn ore_spillover_diagnostic_enabled(step_index: i32, feature_index: i32) -> bool {
+    const ENV: &str = "QEXED_WORLDGEN_ORE_SPILLOVER_DIAG";
+    std::env::var(ENV).ok().is_some_and(|value| {
+        let value = value.trim();
+        value == "1" || value == format!("{step_index}:{feature_index}")
+    })
+}
+
+fn print_ore_spillover_diagnostic(
+    step_index: i32,
+    feature_index: i32,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    diagnostic: &OreSpilloverDiagnostic,
+) {
+    FEATURE_WRITE_TRACE_CONTEXT.with(|current| {
+        let context = current.borrow();
+        let (chunk_x, chunk_z, ordinal, name, source_chunk_x, source_chunk_z, target_chunk_x, target_chunk_z) =
+            context
+                .as_ref()
+                .map(|context| {
+                    (
+                        context.chunk_x,
+                        context.chunk_z,
+                        context.ordinal,
+                        context.feature_name,
+                        context.source_chunk_x,
+                        context.source_chunk_z,
+                        context.target_chunk_x,
+                        context.target_chunk_z,
+                    )
+                })
+                .unwrap_or((0, 0, 0, "unknown", source_origin_x / 16, source_origin_z / 16, target_origin_x / 16, target_origin_z / 16));
+        eprintln!(
+            "ore spillover diag: chunk=({chunk_x},{chunk_z}) ordinal={ordinal} name={name} step={step_index} index={feature_index} source_chunk=({source_chunk_x},{source_chunk_z}) source_origin=({source_origin_x},{source_origin_z}) target_chunk=({target_chunk_x},{target_chunk_z}) target_origin=({target_origin_x},{target_origin_z}) attempts={} biome_skips={} prefix_reaches_target={} precheck_passes={} precheck_scans={} source_spheres={} source_scans={} source_writes={} target_spheres={} target_scans={} target_writes={}",
+            diagnostic.attempts,
+            diagnostic.biome_skips,
+            diagnostic.prefix_reaches_target,
+            diagnostic.precheck_passes,
+            diagnostic.precheck_scans,
+            diagnostic.source_spheres,
+            diagnostic.source_scans,
+            diagnostic.source_writes,
+            diagnostic.target_spheres,
+            diagnostic.target_scans,
+            diagnostic.target_writes,
+        );
+    });
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -480,9 +592,12 @@ impl PlacedUnderwaterMagmaFeature {
             if !(0..16).contains(&neighbor_x) || !(0..16).contains(&neighbor_z) {
                 return false;
             }
-            let Some(neighbor) =
-                chunk.layer(neighbor_x as usize, world_y, neighbor_z as usize, settings.min_y)
-            else {
+            let Some(neighbor) = chunk.layer(
+                neighbor_x as usize,
+                world_y,
+                neighbor_z as usize,
+                settings.min_y,
+            ) else {
                 return false;
             };
             if !is_full_solid_layer(neighbor) {
@@ -1397,18 +1512,16 @@ impl SpringFeatureConfig {
             return false;
         }
 
-        let Some(current) =
-            self.context_layer(
-                settings,
-                chunk,
-                chunk_min_x,
-                chunk_min_z,
-                neighbor,
-                world_x,
-                world_y,
-                world_z,
-            )
-        else {
+        let Some(current) = self.context_layer(
+            settings,
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            neighbor,
+            world_x,
+            world_y,
+            world_z,
+        ) else {
             return false;
         };
         if !current.is_air && !self.valid_blocks.contains(&current.block.as_ref()) {
@@ -1483,7 +1596,7 @@ impl SpringFeatureConfig {
             world_y,
             world_z,
         )
-            .is_some_and(|layer| self.valid_blocks.contains(&layer.block.as_ref()))
+        .is_some_and(|layer| self.valid_blocks.contains(&layer.block.as_ref()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1524,7 +1637,6 @@ impl SpringFeatureConfig {
         }
         settings.terrain_layer_at(world_x, world_y, world_z)
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -1569,6 +1681,12 @@ struct OreBlobShape {
     tested_size_z: usize,
     tested_stride_x: usize,
     tested_stride_y: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct OreShapeScanStats {
+    spheres: usize,
+    scans: usize,
 }
 
 #[cfg(test)]
@@ -1728,17 +1846,13 @@ impl OreFeatureConfig {
         shape: &OreBlobShape,
     ) -> bool {
         let tested_min_x = shape.min_box_x.max(chunk_min_x);
-        let tested_max_x =
-            (shape.min_box_x + shape.tested_size_x as i32 - 1).min(chunk_min_x + 15);
+        let tested_max_x = (shape.min_box_x + shape.tested_size_x as i32 - 1).min(chunk_min_x + 15);
         let tested_min_y = shape.min_box_y.max(settings.min_y);
         let tested_max_y = (shape.min_box_y + shape.tested_size_y as i32 - 1)
             .min(settings.min_y + settings.height - 1);
         let tested_min_z = shape.min_box_z.max(chunk_min_z);
-        let tested_max_z =
-            (shape.min_box_z + shape.tested_size_z as i32 - 1).min(chunk_min_z + 15);
-        if tested_min_x > tested_max_x
-            || tested_min_y > tested_max_y
-            || tested_min_z > tested_max_z
+        let tested_max_z = (shape.min_box_z + shape.tested_size_z as i32 - 1).min(chunk_min_z + 15);
+        if tested_min_x > tested_max_x || tested_min_y > tested_max_y || tested_min_z > tested_max_z
         {
             return false;
         }
@@ -1818,8 +1932,9 @@ impl OreFeatureConfig {
                         let compact_index = compact_x
                             + compact_y * tested_size_x
                             + compact_z * tested_size_x * tested_size_y;
-                        let tested =
-                            tested.get_or_insert_with(|| vec![false; tested_size_x * tested_size_y * tested_size_z]);
+                        let tested = tested.get_or_insert_with(|| {
+                            vec![false; tested_size_x * tested_size_y * tested_size_z]
+                        });
                         self.trace_tested_bit_at_target(
                             settings,
                             chunk_min_x,
@@ -1837,19 +1952,17 @@ impl OreFeatureConfig {
                         } else {
                             continue;
                         }
-                        if self
-                            .try_place_block_with_neighbor(
-                                settings,
-                                chunk_min_x,
-                                chunk_min_z,
-                                chunk,
-                                neighbor,
-                                random,
-                                world_x,
-                                world_y,
-                                world_z,
-                            )
-                        {
+                        if self.try_place_block_with_neighbor(
+                            settings,
+                            chunk_min_x,
+                            chunk_min_z,
+                            chunk,
+                            neighbor,
+                            random,
+                            world_x,
+                            world_y,
+                            world_z,
+                        ) {
                             placed = true;
                         }
                     }
@@ -1910,9 +2023,8 @@ impl OreFeatureConfig {
         } else {
             None
         };
-        let previous = local_coords(target.x, target.z, chunk_min_x, chunk_min_z).and_then(
-            |(local_x, local_z)| chunk.layer(local_x, target.y, local_z, settings.min_y),
-        );
+        let previous = local_coords(target.x, target.z, chunk_min_x, chunk_min_z)
+            .and_then(|(local_x, local_z)| chunk.layer(local_x, target.y, local_z, settings.min_y));
         let target_predicate = previous
             .and_then(|layer| {
                 self.targets
@@ -2039,19 +2151,14 @@ impl OreFeatureConfig {
         }
     }
 
-    fn sample_blob_shape(
-        &self,
-        random: &mut FeatureRandom,
-        prefix: OreBlobPrefix,
-    ) -> OreBlobShape {
+    fn sample_blob_shape(&self, random: &mut FeatureRandom, prefix: OreBlobPrefix) -> OreBlobShape {
         let mut spheres = vec![[0.0; 4]; self.size as usize];
 
         for i in 0..self.size {
             let step = i as f32 / self.size as f32;
             let radius_noise = random.next_double() * self.size as f64 / 16.0;
             let radius =
-                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
-                    / 2.0;
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0) / 2.0;
             let x = lerp_f64(step as f64, prefix.x0, prefix.x1);
             let y = lerp_f64(step as f64, prefix.y0, prefix.y1);
             let z = lerp_f64(step as f64, prefix.z0, prefix.z1);
@@ -2181,8 +2288,7 @@ impl OreFeatureConfig {
             let step = i as f32 / self.size as f32;
             let radius_noise = random.next_double() * self.size as f64 / 16.0;
             let radius =
-                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
-                    / 2.0;
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0) / 2.0;
             let x = lerp_f64(step as f64, prefix.x0, prefix.x1);
             let z = lerp_f64(step as f64, prefix.z0, prefix.z1);
             min_x = min_x.min(mth_floor(x - radius));
@@ -2228,8 +2334,7 @@ impl OreFeatureConfig {
             let step = i as f32 / self.size as f32;
             let radius_noise = random.next_double() * self.size as f64 / 16.0;
             let radius =
-                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0)
-                    / 2.0;
+                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0) / 2.0;
             let x = lerp_f64(step as f64, x0, x1);
             let _y = lerp_f64(step as f64, y0, y1);
             let z = lerp_f64(step as f64, z0, z1);
@@ -2332,6 +2437,31 @@ impl OreFeatureConfig {
         origin_y: i32,
         origin_z: i32,
     ) -> bool {
+        self.precheck_passes_counted(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbor,
+            origin_x,
+            origin_y,
+            origin_z,
+        )
+        .0
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn precheck_passes_counted(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> (bool, usize) {
         let spread_xy = self.size as f32 / 8.0;
         let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
         let precheck_radius = precheck_radius.ceil() as i32;
@@ -2340,9 +2470,11 @@ impl OreFeatureConfig {
         let min_y = origin_y - 2 - precheck_radius;
         let min_z = origin_z - spread_xy - precheck_radius;
         let horizontal_size = 2 * (spread_xy + precheck_radius);
+        let mut scans = 0;
 
         for world_x in min_x..=min_x + horizontal_size {
             for world_z in min_z..=min_z + horizontal_size {
+                scans += 1;
                 if min_y
                     <= ocean_floor_wg_height_at(
                         settings,
@@ -2354,12 +2486,12 @@ impl OreFeatureConfig {
                         world_z,
                     )
                 {
-                    return true;
+                    return (true, scans);
                 }
             }
         }
 
-        false
+        (false, scans)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2403,6 +2535,43 @@ impl OreFeatureConfig {
         (self.size / 8 + self.size / 16 + 2).max(2)
     }
 
+    fn shape_scan_stats(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        shape: &OreBlobShape,
+    ) -> OreShapeScanStats {
+        let mut stats = OreShapeScanStats::default();
+        for sphere in shape.spheres.iter().copied() {
+            let [x, y, z, radius] = sphere;
+            if radius < 0.0 {
+                continue;
+            }
+
+            let raw_min_x = mth_floor(x - radius).max(shape.min_box_x);
+            let raw_max_x = mth_floor(x + radius).max(raw_min_x);
+            let min_x = raw_min_x.max(chunk_min_x);
+            let max_x = raw_max_x.min(chunk_min_x + 15);
+            let raw_min_y = mth_floor(y - radius).max(shape.min_box_y);
+            let raw_max_y = mth_floor(y + radius).max(raw_min_y);
+            let min_y = raw_min_y.max(settings.min_y);
+            let max_y = raw_max_y.min(settings.min_y + settings.height - 1);
+            let raw_min_z = mth_floor(z - radius).max(shape.min_box_z);
+            let raw_max_z = mth_floor(z + radius).max(raw_min_z);
+            let min_z = raw_min_z.max(chunk_min_z);
+            let max_z = raw_max_z.min(chunk_min_z + 15);
+            if min_x > max_x || min_y > max_y || min_z > max_z {
+                continue;
+            }
+
+            stats.spheres += 1;
+            stats.scans += (max_x - min_x + 1) as usize
+                * (max_y - min_y + 1) as usize
+                * (max_z - min_z + 1) as usize;
+        }
+        stats
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2456,13 +2625,21 @@ fn is_adjacent_to_air_with_neighbor(
             return false;
         }
 
-        if let Some(layer) = layer_at_world(chunk, chunk_min_x, chunk_min_z, x, y, z, settings.min_y)
+        if let Some(layer) =
+            layer_at_world(chunk, chunk_min_x, chunk_min_z, x, y, z, settings.min_y)
         {
             return layer.is_air;
         }
         if let Some((neighbor_min_x, neighbor_min_z, neighbor_chunk)) = neighbor
-            && let Some(layer) =
-                layer_at_world(neighbor_chunk, neighbor_min_x, neighbor_min_z, x, y, z, settings.min_y)
+            && let Some(layer) = layer_at_world(
+                neighbor_chunk,
+                neighbor_min_x,
+                neighbor_min_z,
+                x,
+                y,
+                z,
+                settings.min_y,
+            )
         {
             return layer.is_air;
         }
