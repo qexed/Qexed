@@ -483,6 +483,118 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual redstone lower attempt diagnostic"]
+    fn seed_zero_redstone_lower_attempt_three_shape_diagnostic() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let redstone_lower = &settings.ore_features.features[17];
+        let mut random = FeatureRandom::for_feature(
+            FeatureRandom::decoration_seed(settings.ore_features.seed, 0, 0),
+            redstone_lower.feature_index,
+            redstone_lower.step_index,
+        );
+        let count = redstone_lower.count.sample(&mut random);
+        eprintln!(
+            "seed0 ore_redstone_lower count={} step={} index={}",
+            count, redstone_lower.step_index, redstone_lower.feature_index
+        );
+        assert_eq!(count, 8);
+
+        let (mut chunk, preliminary_surfaces) = settings.generate_base_chunk(0, 0);
+        settings
+            .carvers
+            .carve_chunk(&settings, 0, 0, &preliminary_surfaces, &mut chunk);
+
+        for attempt in 0..count {
+            let x = random.next_int(16);
+            let z = random.next_int(16);
+            let y = redstone_lower.height.sample(&settings, &mut random);
+            let prefix = redstone_lower.ore.sample_blob_prefix(&mut random, x, y, z);
+            let precheck = redstone_lower
+                .ore
+                .precheck_passes(&settings, 0, 0, &chunk, None, x, y, z);
+            let shape = redstone_lower.ore.sample_blob_shape(&mut random, prefix);
+            let target = (6, -61, 0);
+            let mut containing_spheres = Vec::new();
+            for (sphere_index, [sx, sy, sz, radius]) in shape.spheres.iter().copied().enumerate() {
+                if radius <= 0.0 {
+                    continue;
+                }
+                let xd = (target.0 as f64 + 0.5 - sx) / radius;
+                let yd = (target.1 as f64 + 0.5 - sy) / radius;
+                let zd = (target.2 as f64 + 0.5 - sz) / radius;
+                if xd * xd < 1.0
+                    && xd * xd + yd * yd < 1.0
+                    && xd * xd + yd * yd + zd * zd < 1.0
+                {
+                    containing_spheres.push((sphere_index, [sx, sy, sz, radius]));
+                }
+            }
+
+            let target_layer = chunk.layer(
+                target.0 as usize,
+                target.1,
+                target.2 as usize,
+                settings.min_y,
+            );
+            let target_predicate = target_layer
+                .and_then(|layer| {
+                    redstone_lower
+                        .ore
+                        .targets
+                        .iter()
+                        .find(|target| target.predicate.matches(layer))
+                        .map(|target| format!("{:?}", target.predicate))
+                })
+                .unwrap_or_else(|| "none".to_string());
+            let target_bit = if target.0 >= shape.min_box_x
+                && target.1 >= shape.min_box_y
+                && target.2 >= shape.min_box_z
+                && target.0 < shape.min_box_x + shape.tested_size_x as i32
+                && target.1 < shape.min_box_y + shape.tested_size_y as i32
+                && target.2 < shape.min_box_z + shape.tested_size_z as i32
+            {
+                Some(
+                    (target.0 - shape.min_box_x) as usize
+                        + (target.1 - shape.min_box_y) as usize * shape.tested_stride_x
+                        + (target.2 - shape.min_box_z) as usize
+                            * shape.tested_stride_x
+                            * shape.tested_stride_y,
+                )
+            } else {
+                None
+            };
+            eprintln!(
+                "seed0 ore_redstone_lower attempt={} origin=({},{},{}) precheck={} target=({},{},{}) containing_spheres={:?} tested_bit={:?} tested_dims=({}, {}, {}) tested_strides=({}, {}) target_predicate={}",
+                attempt,
+                x,
+                y,
+                z,
+                precheck,
+                target.0,
+                target.1,
+                target.2,
+                containing_spheres,
+                target_bit,
+                shape.tested_size_x,
+                shape.tested_size_y,
+                shape.tested_size_z,
+                shape.tested_stride_x,
+                shape.tested_stride_y,
+                target_predicate
+            );
+            redstone_lower.ore.place_shape_with_neighbor(
+                &settings,
+                0,
+                0,
+                &mut chunk,
+                None,
+                &mut random,
+                &shape,
+            );
+        }
+    }
+
+    #[test]
     fn vanilla_noise_basic_nether_places_ores_and_patches() {
         let chunk = basic_dimension_chunk(NoiseDimension::Nether, 12345, 0, 0);
         let quartz = chunk_nbt::default_block_state_id("minecraft:nether_quartz_ore");
