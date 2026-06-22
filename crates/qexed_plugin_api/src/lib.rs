@@ -199,6 +199,115 @@ pub struct PluginLoadFinishEvent;
 
 impl Event for PluginLoadFinishEvent {}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlayerInfo {
+    pub uuid: String,
+    pub username: String,
+    pub entity_id: i32,
+    pub dimension: String,
+}
+
+impl PlayerInfo {
+    pub fn new(
+        uuid: impl Into<String>,
+        username: impl Into<String>,
+        entity_id: i32,
+        dimension: impl Into<String>,
+    ) -> Self {
+        Self {
+            uuid: uuid.into(),
+            username: username.into(),
+            entity_id,
+            dimension: dimension.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayerPosition {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: bool,
+}
+
+impl PlayerPosition {
+    pub fn new(x: f64, y: f64, z: f64, yaw: f32, pitch: f32, on_ground: bool) -> Self {
+        Self {
+            x,
+            y,
+            z,
+            yaw,
+            pitch,
+            on_ground,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlockPosition {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+impl BlockPosition {
+    pub fn new(x: i32, y: i32, z: i32) -> Self {
+        Self { x, y, z }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlayerJoinEvent {
+    pub player: PlayerInfo,
+}
+
+impl PlayerJoinEvent {
+    pub fn new(player: PlayerInfo) -> Self {
+        Self { player }
+    }
+}
+
+impl Event for PlayerJoinEvent {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlayerLeaveEvent {
+    pub player: PlayerInfo,
+}
+
+impl PlayerLeaveEvent {
+    pub fn new(player: PlayerInfo) -> Self {
+        Self { player }
+    }
+}
+
+impl Event for PlayerLeaveEvent {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerMoveEvent {
+    pub player: PlayerInfo,
+    pub previous_position: PlayerPosition,
+    pub position: PlayerPosition,
+}
+
+impl PlayerMoveEvent {
+    pub fn new(
+        player: PlayerInfo,
+        previous_position: PlayerPosition,
+        position: PlayerPosition,
+    ) -> Self {
+        Self {
+            player,
+            previous_position,
+            position,
+        }
+    }
+}
+
+impl Event for PlayerMoveEvent {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkChunkLoadSource {
     Saved,
@@ -291,6 +400,142 @@ impl ChunkSyncEvent {
 }
 
 impl Event for ChunkSyncEvent {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlayerHand {
+    Main,
+    Off,
+    Other(i32),
+}
+
+impl PlayerHand {
+    pub fn from_protocol(value: i32) -> Self {
+        match value {
+            0 => Self::Main,
+            1 => Self::Off,
+            other => Self::Other(other),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockFace {
+    Bottom,
+    Top,
+    North,
+    South,
+    West,
+    East,
+    Other(i32),
+}
+
+impl BlockFace {
+    pub fn from_protocol(value: i32) -> Self {
+        match value {
+            0 => Self::Bottom,
+            1 => Self::Top,
+            2 => Self::North,
+            3 => Self::South,
+            4 => Self::West,
+            5 => Self::East,
+            other => Self::Other(other),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockHit {
+    pub position: BlockPosition,
+    pub face: BlockFace,
+    pub cursor_x: f32,
+    pub cursor_y: f32,
+    pub cursor_z: f32,
+    pub inside_block: bool,
+    pub world_border_hit: bool,
+}
+
+impl BlockHit {
+    pub fn new(
+        position: BlockPosition,
+        face: BlockFace,
+        cursor_x: f32,
+        cursor_y: f32,
+        cursor_z: f32,
+        inside_block: bool,
+        world_border_hit: bool,
+    ) -> Self {
+        Self {
+            position,
+            face,
+            cursor_x,
+            cursor_y,
+            cursor_z,
+            inside_block,
+            world_border_hit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerBlockInteractEvent {
+    pub player: PlayerInfo,
+    pub player_position: PlayerPosition,
+    pub hand: PlayerHand,
+    pub hit: BlockHit,
+    pub sequence: i32,
+}
+
+impl PlayerBlockInteractEvent {
+    pub fn new(
+        player: PlayerInfo,
+        player_position: PlayerPosition,
+        hand: PlayerHand,
+        hit: BlockHit,
+        sequence: i32,
+    ) -> Self {
+        Self {
+            player,
+            player_position,
+            hand,
+            hit,
+            sequence,
+        }
+    }
+}
+
+impl Event for PlayerBlockInteractEvent {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerUseItemEvent {
+    pub player: PlayerInfo,
+    pub player_position: PlayerPosition,
+    pub hand: PlayerHand,
+    pub sequence: i32,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl PlayerUseItemEvent {
+    pub fn new(
+        player: PlayerInfo,
+        player_position: PlayerPosition,
+        hand: PlayerHand,
+        sequence: i32,
+        yaw: f32,
+        pitch: f32,
+    ) -> Self {
+        Self {
+            player,
+            player_position,
+            hand,
+            sequence,
+            yaw,
+            pitch,
+        }
+    }
+}
+
+impl Event for PlayerUseItemEvent {}
 
 /// 事件处理器 —— 插件实现此 trait 来订阅特定事件。
 #[async_trait]
