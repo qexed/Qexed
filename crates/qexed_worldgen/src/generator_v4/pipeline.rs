@@ -19,9 +19,9 @@ pub(crate) fn generate_overworld_chunk_nbt(seed: i64, chunk_x: i32, chunk_z: i32
         }
         _ => settings.generate_chunk_profiled(chunk_x, chunk_z).0,
     };
-    let mut root = noise_chunk_root(&chunk, settings.biome.as_str());
+    let mut root = noise_chunk_root(chunk_x, chunk_z, &chunk, settings.biome.as_str());
     append_block_entities_to_chunk_root(&mut root, &chunk);
-    normalize_chunk_root(root, chunk_x, chunk_z)
+    Ok(root)
 }
 
 fn cached_noise_settings(preset: &str, seed: i64) -> Arc<NoiseSettings> {
@@ -53,65 +53,6 @@ fn cached_noise_settings(preset: &str, seed: i64) -> Arc<NoiseSettings> {
             vanilla_noise::OverworldNoiseKind::Default,
         )),
     }
-}
-
-fn normalize_chunk_root(root: Tag, chunk_x: i32, chunk_z: i32) -> Result<Tag> {
-    let Tag::Compound(fields) = root else {
-        anyhow::bail!("generated chunk root is not compound");
-    };
-    let mut fields = (*fields).clone();
-    fields.insert("DataVersion".to_string(), Tag::Int(DATA_VERSION));
-    fields.insert("xPos".to_string(), Tag::Int(chunk_x));
-    fields.insert("yPos".to_string(), Tag::Int(WORLD_MIN_SECTION_Y));
-    fields.insert("zPos".to_string(), Tag::Int(chunk_z));
-    fields.insert("LastUpdate".to_string(), Tag::Long(0));
-    fields.insert("InhabitedTime".to_string(), Tag::Long(0));
-    fields.insert(
-        "Status".to_string(),
-        Tag::String(Arc::from("minecraft:full")),
-    );
-    fields
-        .entry("block_entities".to_string())
-        .or_insert_with(empty_compound_list);
-    fields.insert("block_ticks".to_string(), empty_compound_list());
-    fields.insert("fluid_ticks".to_string(), empty_compound_list());
-    fields.insert("PostProcessing".to_string(), empty_nested_list());
-    fields.insert("structures".to_string(), structures_tag());
-    fields.insert("isLightOn".to_string(), Tag::Byte(1));
-    Ok(Tag::Compound(Arc::new(fields)))
-}
-
-fn empty_compound_list() -> Tag {
-    Tag::List(
-        ListHeader {
-            tag_id: tag_id::COMPOUND,
-            length: 0,
-        },
-        Arc::new([]),
-    )
-}
-
-fn empty_nested_list() -> Tag {
-    Tag::List(
-        ListHeader {
-            tag_id: tag_id::LIST,
-            length: 0,
-        },
-        Arc::new([]),
-    )
-}
-
-fn structures_tag() -> Tag {
-    Tag::Compound(Arc::new(HashMap::from([
-        (
-            "starts".to_string(),
-            Tag::Compound(Arc::new(HashMap::new())),
-        ),
-        (
-            "References".to_string(),
-            Tag::Compound(Arc::new(HashMap::new())),
-        ),
-    ])))
 }
 
 #[cfg(test)]

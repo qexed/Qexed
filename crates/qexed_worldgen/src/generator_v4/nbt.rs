@@ -241,18 +241,51 @@ fn expand_layers(settings: Vec<FlatLayerSetting>) -> Vec<FlatLayer> {
     layers
 }
 
-fn flat_chunk_root(layers: &[FlatLayer], biome: &str) -> Tag {
-    compound_tag([
-        ("sections", sections_tag(layers, biome)),
-        ("Heightmaps", heightmaps_tag(layers)),
-    ])
+fn flat_chunk_root(chunk_x: i32, chunk_z: i32, layers: &[FlatLayer], biome: &str) -> Tag {
+    chunk_root_fields(
+        chunk_x,
+        chunk_z,
+        compound_tag([
+            ("sections", sections_tag(layers, biome)),
+            ("Heightmaps", heightmaps_tag(layers)),
+            ("block_entities", empty_compound_list_tag()),
+        ]),
+    )
 }
 
-fn noise_chunk_root(chunk: &NoiseChunkBlocks, _biome: &str) -> Tag {
-    compound_tag([
-        ("sections", noise_sections_tag(chunk)),
-        ("Heightmaps", noise_heightmaps_tag(chunk)),
-    ])
+fn noise_chunk_root(chunk_x: i32, chunk_z: i32, chunk: &NoiseChunkBlocks, _biome: &str) -> Tag {
+    chunk_root_fields(
+        chunk_x,
+        chunk_z,
+        compound_tag([
+            ("sections", noise_sections_tag(chunk)),
+            ("Heightmaps", noise_heightmaps_tag(chunk)),
+            ("block_entities", empty_compound_list_tag()),
+        ]),
+    )
+}
+
+fn chunk_root_fields(chunk_x: i32, chunk_z: i32, root: Tag) -> Tag {
+    let Tag::Compound(fields) = root else {
+        return root;
+    };
+    let mut fields = (*fields).clone();
+    fields.insert("DataVersion".to_string(), Tag::Int(DATA_VERSION));
+    fields.insert("xPos".to_string(), Tag::Int(chunk_x));
+    fields.insert("yPos".to_string(), Tag::Int(WORLD_MIN_SECTION_Y));
+    fields.insert("zPos".to_string(), Tag::Int(chunk_z));
+    fields.insert("LastUpdate".to_string(), Tag::Long(0));
+    fields.insert("InhabitedTime".to_string(), Tag::Long(0));
+    fields.insert(
+        "Status".to_string(),
+        Tag::String(Arc::from("minecraft:full")),
+    );
+    fields.insert("block_ticks".to_string(), empty_compound_list_tag());
+    fields.insert("fluid_ticks".to_string(), empty_compound_list_tag());
+    fields.insert("PostProcessing".to_string(), empty_post_processing_tag());
+    fields.insert("structures".to_string(), structures_tag());
+    fields.insert("isLightOn".to_string(), Tag::Byte(1));
+    Tag::Compound(Arc::new(fields))
 }
 
 fn append_block_entities_to_chunk_root(root: &mut Tag, chunk: &NoiseChunkBlocks) {
@@ -303,9 +336,6 @@ fn sections_tag(layers: &[FlatLayer], biome: &str) -> Tag {
         let start_layer = ((section_y * SECTION_HEIGHT) - WORLD_MIN_Y) as usize;
         let end_layer = start_layer + SECTION_HEIGHT as usize;
         let section_layers = &layers[start_layer.min(layers.len())..end_layer.min(layers.len())];
-        if section_layers.iter().all(|layer| layer.is_air) {
-            continue;
-        }
         sections.push(section_tag(section_y, section_layers, biome));
     }
 
@@ -577,6 +607,24 @@ fn list_tag(item_tag_id: u8, items: Vec<Tag>) -> Tag {
         },
         Arc::from(items),
     )
+}
+
+fn empty_compound_list_tag() -> Tag {
+    list_tag(tag_id::COMPOUND, Vec::new())
+}
+
+fn empty_post_processing_tag() -> Tag {
+    let sections = (0..section_count())
+        .map(|_| list_tag(tag_id::END, Vec::new()))
+        .collect::<Vec<_>>();
+    list_tag(tag_id::LIST, sections)
+}
+
+fn structures_tag() -> Tag {
+    compound_tag([
+        ("starts", Tag::Compound(Arc::new(HashMap::new()))),
+        ("References", Tag::Compound(Arc::new(HashMap::new()))),
+    ])
 }
 
 fn list_item_tag_id(items: &[Tag], empty_tag_id: u8) -> u8 {
