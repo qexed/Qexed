@@ -50,12 +50,6 @@ impl PlacedOreFeature {
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
-            if !self
-                .ore
-                .precheck_passes(settings, origin_x, origin_z, chunk, None, x, y, z)
-            {
-                continue;
-            }
             self.ore
                 .place(settings, origin_x, origin_z, chunk, random, x, y, z);
         }
@@ -80,19 +74,6 @@ impl PlacedOreFeature {
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
-            if !self.ore.precheck_passes(
-                settings,
-                source_origin_x,
-                source_origin_z,
-                source_chunk,
-                Some((target_origin_x, target_origin_z, &*target_chunk)),
-                x,
-                y,
-                z,
-            ) {
-                continue;
-            }
-
             let mut replay_random = random.clone();
             self.ore.place_with_neighbor(
                 settings,
@@ -146,6 +127,7 @@ impl PlacedOreFeature {
         }
         false
     }
+
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1572,14 +1554,27 @@ impl OreFeatureConfig {
         let min_box_x = origin_x - spread_xy_ceil - precheck_radius;
         let min_box_y = origin_y - 2 - precheck_radius;
         let min_box_z = origin_z - spread_xy_ceil - precheck_radius;
-        let x_spread = mth_sin(direction) as f64 * spread_xy;
-        let z_spread = mth_cos(direction) as f64 * spread_xy;
+        let x_spread = (direction as f64).sin() * spread_xy;
+        let z_spread = (direction as f64).cos() * spread_xy;
         let x0 = origin_x as f64 + x_spread;
         let x1 = origin_x as f64 - x_spread;
         let z0 = origin_z as f64 + z_spread;
         let z1 = origin_z as f64 - z_spread;
         let y0 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
         let y1 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
+        if !self.precheck_passes(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            neighbor,
+            origin_x,
+            origin_y,
+            origin_z,
+        ) {
+            return false;
+        }
+
         let mut spheres = vec![[0.0; 4]; self.size as usize];
 
         for i in 0..self.size {
@@ -1627,11 +1622,11 @@ impl OreFeatureConfig {
             }
 
             let min_x = mth_floor(x - radius).max(min_box_x);
-            let max_x = mth_floor(x + radius) - 1;
+            let max_x = mth_floor(x + radius).max(min_x);
             let min_y = mth_floor(y - radius).max(min_box_y);
-            let max_y = mth_floor(y + radius) - 1;
+            let max_y = mth_floor(y + radius).max(min_y);
             let min_z = mth_floor(z - radius).max(min_box_z);
-            let max_z = mth_floor(z + radius) - 1;
+            let max_z = mth_floor(z + radius).max(min_z);
 
             for world_x in min_x..=max_x {
                 let xd = (world_x as f64 + 0.5 - x) / radius;
@@ -1686,8 +1681,8 @@ impl OreFeatureConfig {
     ) -> bool {
         let direction = random.next_float() * std::f32::consts::PI;
         let spread_xy = self.size as f64 / 8.0;
-        let x_spread = mth_sin(direction) as f64 * spread_xy;
-        let z_spread = mth_cos(direction) as f64 * spread_xy;
+        let x_spread = (direction as f64).sin() * spread_xy;
+        let z_spread = (direction as f64).cos() * spread_xy;
         let x0 = origin_x as f64 + x_spread;
         let x1 = origin_x as f64 - x_spread;
         let z0 = origin_z as f64 + z_spread;
@@ -1708,10 +1703,10 @@ impl OreFeatureConfig {
             let x = lerp_f64(step as f64, x0, x1);
             let _y = lerp_f64(step as f64, y0, y1);
             let z = lerp_f64(step as f64, z0, z1);
-            min_x = min_x.min((x - radius).floor() as i32);
-            max_x = max_x.max(((x + radius).floor() as i32).max(min_x));
-            min_z = min_z.min((z - radius).floor() as i32);
-            max_z = max_z.max(((z + radius).floor() as i32).max(min_z));
+            min_x = min_x.min(mth_floor(x - radius));
+            max_x = max_x.max(mth_floor(x + radius).max(min_x));
+            min_z = min_z.min(mth_floor(z - radius));
+            max_z = max_z.max(mth_floor(z + radius).max(min_z));
         }
 
         horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
@@ -1821,6 +1816,7 @@ impl OreFeatureConfig {
     fn max_horizontal_spillover(&self) -> i32 {
         (self.size / 8 + self.size / 16 + 2).max(2)
     }
+
 }
 
 #[allow(clippy::too_many_arguments)]
