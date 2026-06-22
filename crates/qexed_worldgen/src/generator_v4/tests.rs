@@ -358,6 +358,131 @@ mod tests {
     }
 
     #[test]
+    fn seed_zero_ore_gravel_attempt_three_shape_diagnostic() {
+        fn attempt_three_shape(
+            settings: &NoiseSettings,
+            origin_x: i32,
+            origin_z: i32,
+            chunk: &mut NoiseChunkBlocks,
+        ) -> Option<((i32, i32, i32), OreBlobShape)> {
+            let ore_gravel = &settings.ore_features.features[1];
+            let mut random = FeatureRandom::for_feature(
+                FeatureRandom::decoration_seed(settings.ore_features.seed, origin_x, origin_z),
+                ore_gravel.feature_index,
+                ore_gravel.step_index,
+            );
+            let count = ore_gravel.count.sample(&mut random);
+            assert!(count > 3);
+
+            for attempt in 0..count {
+                let x = origin_x + random.next_int(16);
+                let z = origin_z + random.next_int(16);
+                let y = ore_gravel.height.sample(settings, &mut random);
+                if !ore_gravel.biome_filter.allows_at(&settings.density, x, y, z) {
+                    continue;
+                }
+
+                let prefix = ore_gravel.ore.sample_blob_prefix(&mut random, x, y, z);
+                if !ore_gravel.ore.precheck_passes(
+                    settings,
+                    origin_x,
+                    origin_z,
+                    chunk,
+                    None,
+                    x,
+                    y,
+                    z,
+                ) {
+                    continue;
+                }
+
+                let shape = ore_gravel.ore.sample_blob_shape(&mut random, prefix);
+                if attempt == 3 {
+                    return Some(((x, y, z), shape));
+                }
+                ore_gravel.ore.place_shape_with_neighbor(
+                    settings,
+                    origin_x,
+                    origin_z,
+                    chunk,
+                    None,
+                    &mut random,
+                    &shape,
+                );
+            }
+
+            None
+        }
+
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let ore_gravel = &settings.ore_features.features[1];
+        let (mut chunk, preliminary_surfaces) = settings.generate_base_chunk(0, 0);
+        settings
+            .carvers
+            .carve_chunk(&settings, 0, 0, &preliminary_surfaces, &mut chunk);
+
+        let Some((origin, shape)) = attempt_three_shape(&settings, 0, 0, &mut chunk) else {
+            panic!("seed0 local ore_gravel attempt=3 did not place a blob");
+        };
+        assert_eq!(origin, (8, -62, 8));
+        let target = (5, -63, 4);
+        let target_bit = (target.0 - shape.min_box_x) as usize
+            + (target.1 - shape.min_box_y) as usize * shape.tested_stride_x
+            + (target.2 - shape.min_box_z) as usize
+                * shape.tested_stride_x
+                * shape.tested_stride_y;
+        let target_layer = BlockLayer::with_properties("minecraft:deepslate", &[("axis", "y")]);
+        let target_predicate = ore_gravel
+            .ore
+            .targets
+            .iter()
+            .find(|target| target.predicate.matches(&target_layer))
+            .map(|target| format!("{:?}", target.predicate))
+            .unwrap_or_else(|| "none".to_string());
+
+        let mut containing_spheres = Vec::new();
+        for (sphere_index, [x, y, z, radius]) in shape.spheres.iter().copied().enumerate() {
+            if radius <= 0.0 {
+                continue;
+            }
+            let xd = (target.0 as f64 + 0.5 - x) / radius;
+            let yd = (target.1 as f64 + 0.5 - y) / radius;
+            let zd = (target.2 as f64 + 0.5 - z) / radius;
+            if xd * xd < 1.0 && xd * xd + yd * yd < 1.0 && xd * xd + yd * yd + zd * zd < 1.0 {
+                containing_spheres.push((sphere_index, [x, y, z, radius]));
+            }
+        }
+
+        eprintln!(
+            "seed0 ore_gravel attempt=3 origin=({},{},{}) target=({},{},{}) containing_spheres={:?} tested_bit={} tested_dims=({}, {}, {}) tested_strides=({}, {}) target_predicate={}",
+            origin.0,
+            origin.1,
+            origin.2,
+            target.0,
+            target.1,
+            target.2,
+            containing_spheres,
+            target_bit,
+            shape.tested_size_x,
+            shape.tested_size_y,
+            shape.tested_size_z,
+            shape.tested_stride_x,
+            shape.tested_stride_y,
+            target_predicate
+        );
+
+        assert_eq!(target_bit, 709);
+        assert_eq!(target_predicate, "BaseStoneOverworld");
+        assert_eq!(
+            containing_spheres
+                .iter()
+                .map(|(sphere_index, _)| *sphere_index)
+                .collect::<Vec<_>>(),
+            vec![29, 31]
+        );
+    }
+
+    #[test]
     fn vanilla_noise_basic_nether_places_ores_and_patches() {
         let chunk = basic_dimension_chunk(NoiseDimension::Nether, 12345, 0, 0);
         let quartz = chunk_nbt::default_block_state_id("minecraft:nether_quartz_ore");
