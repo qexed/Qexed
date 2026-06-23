@@ -39,10 +39,11 @@ impl PlacedMonsterRoomFeature {
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let world_x = origin_x + random.next_int(16);
             let world_z = origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, world_x, world_y, world_z);
             if !self
                 .biome_filter
                 .allows_at(&settings.density, world_x, world_y, world_z)
@@ -68,10 +69,11 @@ impl PlacedMonsterRoomFeature {
         feature_name: &'static str,
     ) -> Duration {
         let started = Instant::now();
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let world_x = origin_x + random.next_int(16);
             let world_z = origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, world_x, world_y, world_z);
             if !self
                 .biome_filter
                 .allows_at(&settings.density, world_x, world_y, world_z)
@@ -193,10 +195,11 @@ impl PlacedMonsterRoomFeature {
         target_origin_z: i32,
         random: &mut FeatureRandom,
     ) -> bool {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let world_x = source_origin_x + random.next_int(16);
             let world_z = source_origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, world_x, world_y, world_z);
             if !self
                 .biome_filter
                 .allows_at(&settings.density, world_x, world_y, world_z)
@@ -285,12 +288,14 @@ impl PlacedMonsterRoomFeature {
 
             let shape = self.config.sample_shape(random);
             if !shape.overlaps_chunk(world_x, world_z, target_origin_x, target_origin_z) {
-                self.config.place_resolved(
+                self.place_source_room_with_lazy_neighbors(
                     settings,
                     source_origin_x,
                     source_origin_z,
                     source_chunk,
                     random,
+                    profile,
+                    feature_name,
                     world_x,
                     world_y,
                     world_z,
@@ -309,12 +314,14 @@ impl PlacedMonsterRoomFeature {
                 world_z,
                 shape,
             ) {
-                self.config.place_resolved(
+                self.place_source_room_with_lazy_neighbors(
                     settings,
                     source_origin_x,
                     source_origin_z,
                     source_chunk,
                     random,
+                    profile,
+                    feature_name,
                     world_x,
                     world_y,
                     world_z,
@@ -326,8 +333,17 @@ impl PlacedMonsterRoomFeature {
             let mut replay_random = random.clone();
             let (min_x, max_x, min_z, max_z) = shape.bounds(world_x, world_z);
             let context_start = Instant::now();
-            let source_neighbors =
-                neighbor_sources.context_for_box(settings, min_x, max_x, min_z, max_z);
+            let source_neighbors = source_room_context_chunks(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+            );
             if let Some(profile) = profile.as_mut() {
                 profile.record(
                     feature_name,
@@ -337,8 +353,12 @@ impl PlacedMonsterRoomFeature {
             }
             let source_context: Vec<_> = source_neighbors
                 .iter()
-                .copied()
-                .chain(std::iter::once((target_origin_x, target_origin_z, &*target_chunk)))
+                .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
+                .chain(std::iter::once((
+                    target_origin_x,
+                    target_origin_z,
+                    &*target_chunk,
+                )))
                 .collect();
             if self.config.place_resolved_with_neighbors(
                 settings,
@@ -354,8 +374,12 @@ impl PlacedMonsterRoomFeature {
             ) {
                 let target_context: Vec<_> = source_neighbors
                     .iter()
-                    .copied()
-                    .chain(std::iter::once((source_origin_x, source_origin_z, &*source_chunk)))
+                    .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
+                    .chain(std::iter::once((
+                        source_origin_x,
+                        source_origin_z,
+                        &*source_chunk,
+                    )))
                     .collect();
                 self.config.place_spillover_with_neighbors(
                     settings,
@@ -372,6 +396,126 @@ impl PlacedMonsterRoomFeature {
             }
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_source_room_with_lazy_neighbors(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+        profile: &mut Option<FeaturePlacementProfile>,
+        feature_name: &'static str,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+        shape: MonsterRoomShape,
+    ) {
+        if shape.fits_chunk(world_x, world_z, source_origin_x, source_origin_z) {
+            self.config.place_resolved(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                shape,
+            );
+            return;
+        }
+
+        if self.config.known_chunk_prevents_place(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            world_x,
+            world_y,
+            world_z,
+            shape,
+        ) {
+            return;
+        }
+
+        let (min_x, max_x, min_z, max_z) = shape.bounds(world_x, world_z);
+        let context_start = Instant::now();
+        let source_neighbors = source_room_context_chunks(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            i32::MIN,
+            i32::MIN,
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+        );
+        if let Some(profile) = profile.as_mut() {
+            profile.record(
+                feature_name,
+                FeatureProfilePhase::NeighborLoad,
+                context_start.elapsed(),
+            );
+        }
+        let source_context: Vec<_> = source_neighbors
+            .iter()
+            .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
+            .collect();
+        self.config.place_resolved_with_neighbors(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            source_chunk,
+            &source_context,
+            random,
+            world_x,
+            world_y,
+            world_z,
+            shape,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn source_room_context_chunks(
+    settings: &NoiseSettings,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_origin_x: i32,
+    target_origin_z: i32,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+) -> Vec<(i32, i32, std::sync::Arc<NoiseChunkBlocks>)> {
+    let source_chunk_x = source_origin_x.div_euclid(16);
+    let source_chunk_z = source_origin_z.div_euclid(16);
+    let mut chunks = Vec::new();
+
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            let chunk_x = source_chunk_x + dx;
+            let chunk_z = source_chunk_z + dz;
+            let origin_x = chunk_x * 16;
+            let origin_z = chunk_z * 16;
+            if (origin_x == source_origin_x && origin_z == source_origin_z)
+                || (origin_x == target_origin_x && origin_z == target_origin_z)
+                || !horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, origin_x, origin_z)
+            {
+                continue;
+            }
+            chunks.push((
+                origin_x,
+                origin_z,
+                settings.feature_source_chunk(chunk_x, chunk_z),
+            ));
+        }
+    }
+
+    chunks
 }
 
 #[derive(Debug, Clone)]
@@ -442,8 +586,9 @@ impl PlacedCaveVinesFeature {
             {
                 continue;
             }
-            self.config
-                .place(settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z);
+            self.config.place(
+                settings, origin_x, origin_z, chunk, random, world_x, world_y, world_z,
+            );
         }
     }
 }
@@ -775,7 +920,13 @@ impl PlacedSporeBlossomFeature {
             else {
                 continue;
             };
-            chunk.set_layer(local_x, world_y, local_z, settings.min_y, self.block.clone());
+            chunk.set_layer(
+                local_x,
+                world_y,
+                local_z,
+                settings.min_y,
+                self.block.clone(),
+            );
         }
     }
 }

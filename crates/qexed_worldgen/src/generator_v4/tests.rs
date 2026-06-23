@@ -180,6 +180,74 @@ mod tests {
         chunk
     }
 
+    #[test]
+    #[ignore = "manual stage diagnostic for seed0 chunk(0,0) block (2,-63,0)"]
+    fn seed_zero_target_block_stage_diagnostic() {
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let target = (2, -63, 0);
+        let profile = settings.density.profile(target.0, target.2);
+        let surface_height = settings.surface_height_with_profile(target.0, target.2, &profile);
+        let preliminary_surface =
+            settings.preliminary_surface_with_profile(target.0, target.2, &profile);
+        let surface_slope = settings.surface_slope(target.0, target.2, surface_height);
+        let water_height = settings.water_height(
+            target.0,
+            target.2,
+            surface_height,
+            preliminary_surface,
+            &profile,
+        );
+        let density = settings
+            .density
+            .sample_with_profile(target.0, target.1, target.2, &profile);
+        let surface_rule = settings.surface_rules.block_at_with_preliminary_surface(
+            vanilla_noise::SurfaceRuleContext {
+                x: target.0,
+                y: target.1,
+                z: target.2,
+                surface_height,
+                above_water: settings.above_water(target.1, water_height),
+                sea_level: settings.sea_level,
+                min_y: settings.min_y,
+                biome: settings.density.biome(target.0, target.1, target.2),
+                slope: surface_slope,
+            },
+            preliminary_surface,
+        );
+        let ore_vein = settings.ore_vein_at(target.0, target.1, target.2);
+        eprintln!(
+            "target diag inputs: coord={target:?} density={density:.17} surface_height={surface_height} preliminary_surface={preliminary_surface} slope={surface_slope} water_height={water_height:?} biome={} surface_rule={surface_rule:?} ore_vein={:?}",
+            settings.density.biome(target.0, target.1, target.2),
+            ore_vein.as_ref().map(|layer| layer.block.as_ref())
+        );
+
+        let (mut chunk, preliminary_surfaces) = settings.generate_base_chunk(0, 0);
+        eprintln!(
+            "target diag stage=base block={:?}",
+            chunk
+                .layer(target.0 as usize, target.1, target.2 as usize, settings.min_y)
+                .map(|layer| (layer.block.as_ref(), layer.properties.as_ref()))
+        );
+
+        settings
+            .carvers
+            .carve_chunk(&settings, 0, 0, &preliminary_surfaces, &mut chunk);
+        eprintln!(
+            "target diag stage=carvers block={:?}",
+            chunk
+                .layer(target.0 as usize, target.1, target.2 as usize, settings.min_y)
+                .map(|layer| (layer.block.as_ref(), layer.properties.as_ref()))
+        );
+
+        settings.ore_features.place_chunk(&settings, 0, 0, &mut chunk);
+        eprintln!(
+            "target diag stage=features block={:?}",
+            chunk
+                .layer(target.0 as usize, target.1, target.2 as usize, settings.min_y)
+                .map(|layer| (layer.block.as_ref(), layer.properties.as_ref()))
+        );
+    }
+
     fn boundary_tree_block_count(chunk: &NoiseChunkBlocks) -> usize {
         let mut count = 0;
         for z in 0..16 {
@@ -1175,10 +1243,8 @@ mod tests {
                 let x = random.next_int(16);
                 let z = random.next_int(16);
                 let y = redstone_lower.height.sample(&settings, &mut random);
-                let _prefix = redstone_lower.ore.sample_blob_prefix(&mut random, x, y, z);
-                redstone_lower
-                    .ore
-                    .consume_blob_shape_random(&mut random);
+                let prefix = redstone_lower.ore.sample_blob_prefix(&mut random, x, y, z);
+                let _shape = redstone_lower.ore.sample_blob_shape(&mut random, prefix);
                 (x, y, z)
             })
             .collect::<Vec<_>>();

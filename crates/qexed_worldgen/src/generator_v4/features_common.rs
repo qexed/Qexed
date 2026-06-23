@@ -379,9 +379,8 @@ impl MultifaceGrowthFeatureConfig {
             {
                 continue;
             }
-            let visible_target =
-                local_coords(world_x, world_z, chunk_min_x, chunk_min_z).is_some()
-                    && (settings.min_y..settings.min_y + settings.height).contains(&world_y);
+            let visible_target = local_coords(world_x, world_z, chunk_min_x, chunk_min_z).is_some()
+                && (settings.min_y..settings.min_y + settings.height).contains(&world_y);
             let placed = visible_target
                 && self.try_place_face(
                     settings,
@@ -713,18 +712,20 @@ impl MultifaceGrowthFeatureConfig {
             return self.can_be_placed_on.contains(&layer.block.as_ref());
         }
 
-        neighbors.iter().any(|(neighbor_min_x, neighbor_min_z, neighbor_chunk)| {
-            layer_at_world(
-                neighbor_chunk,
-                *neighbor_min_x,
-                *neighbor_min_z,
-                world_x,
-                world_y,
-                world_z,
-                min_y,
-            )
-            .is_some_and(|layer| self.can_be_placed_on.contains(&layer.block.as_ref()))
-        })
+        neighbors
+            .iter()
+            .any(|(neighbor_min_x, neighbor_min_z, neighbor_chunk)| {
+                layer_at_world(
+                    neighbor_chunk,
+                    *neighbor_min_x,
+                    *neighbor_min_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    min_y,
+                )
+                .is_some_and(|layer| self.can_be_placed_on.contains(&layer.block.as_ref()))
+            })
     }
 
     fn shuffled_directions(
@@ -1277,9 +1278,13 @@ impl MonsterRoomFeatureConfig {
                         {
                             self.set_room_block(
                                 chunk,
+                                chunk_min_x,
+                                chunk_min_z,
                                 local_x,
+                                world_x,
                                 world_y,
                                 local_z,
+                                world_z,
                                 settings.min_y,
                                 self.cave_air.clone(),
                             );
@@ -1291,9 +1296,13 @@ impl MonsterRoomFeatureConfig {
                             };
                             self.set_room_block(
                                 chunk,
+                                chunk_min_x,
+                                chunk_min_z,
                                 local_x,
+                                world_x,
                                 world_y,
                                 local_z,
+                                world_z,
                                 settings.min_y,
                                 block,
                             );
@@ -1301,9 +1310,13 @@ impl MonsterRoomFeatureConfig {
                     } else if !current.is("minecraft:chest") && !current.is("minecraft:spawner") {
                         self.set_room_block(
                             chunk,
+                            chunk_min_x,
+                            chunk_min_z,
                             local_x,
+                            world_x,
                             world_y,
                             local_z,
+                            world_z,
                             settings.min_y,
                             self.cave_air.clone(),
                         );
@@ -1371,9 +1384,13 @@ impl MonsterRoomFeatureConfig {
                             if let Some((local_x, local_z)) = local {
                                 self.set_room_block(
                                     chunk,
+                                    chunk_min_x,
+                                    chunk_min_z,
                                     local_x,
+                                    world_x,
                                     world_y,
                                     local_z,
+                                    world_z,
                                     settings.min_y,
                                     self.cave_air.clone(),
                                 );
@@ -1387,9 +1404,13 @@ impl MonsterRoomFeatureConfig {
                             if let Some((local_x, local_z)) = local {
                                 self.set_room_block(
                                     chunk,
+                                    chunk_min_x,
+                                    chunk_min_z,
                                     local_x,
+                                    world_x,
                                     world_y,
                                     local_z,
+                                    world_z,
                                     settings.min_y,
                                     block,
                                 );
@@ -1399,9 +1420,13 @@ impl MonsterRoomFeatureConfig {
                         if let Some((local_x, local_z)) = local {
                             self.set_room_block(
                                 chunk,
+                                chunk_min_x,
+                                chunk_min_z,
                                 local_x,
+                                world_x,
                                 world_y,
                                 local_z,
+                                world_z,
                                 settings.min_y,
                                 self.cave_air.clone(),
                             );
@@ -1621,12 +1646,29 @@ impl MonsterRoomFeatureConfig {
     fn set_room_block(
         &self,
         chunk: &mut NoiseChunkBlocks,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
         local_x: usize,
+        world_x: i32,
         world_y: i32,
         local_z: usize,
+        world_z: i32,
         min_y: i32,
         block: BlockLayer,
     ) {
+        if let Some(previous) = chunk.layer(local_x, world_y, local_z, min_y) {
+            trace_feature_write_at_target(
+                world_x,
+                world_y,
+                world_z,
+                chunk_min_x,
+                chunk_min_z,
+                local_x,
+                local_z,
+                previous,
+                &block,
+            );
+        }
         chunk.set_layer(local_x, world_y, local_z, min_y, block);
     }
 }
@@ -2032,7 +2074,10 @@ impl WeightedHeight {
 
     fn big_dripleaf_stem() -> Self {
         Self {
-            entries: vec![(UniformInt { min: 0, max: 4 }, 2), (UniformInt { min: 0, max: 0 }, 1)],
+            entries: vec![
+                (UniformInt { min: 0, max: 4 }, 2),
+                (UniformInt { min: 0, max: 0 }, 1),
+            ],
             total_weight: 3,
         }
     }

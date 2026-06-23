@@ -12,7 +12,7 @@ struct PlacedOreFeature {
 struct OreSpilloverDiagnostic {
     attempts: i32,
     biome_skips: i32,
-    prefix_reaches_target: i32,
+    shape_reaches_target: i32,
     precheck_passes: i32,
     precheck_scans: usize,
     source_spheres: usize,
@@ -83,8 +83,58 @@ impl PlacedOreFeature {
         target_chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
+        self.place_with_spillover_context(
+            settings,
+            source_origin_x,
+            source_origin_z,
+            target_origin_x,
+            target_origin_z,
+            source_chunk,
+            target_chunk,
+            &[],
+            random,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_with_spillover_context(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_chunk: &mut NoiseChunkBlocks,
+        context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+    ) {
         let diagnose = ore_spillover_diagnostic_enabled(self.step_index, self.feature_index);
         let mut diagnostic = diagnose.then(OreSpilloverDiagnostic::default);
+        let owned_context_chunks = self.ore.needs_source_spillover_replay().then(|| {
+            source_region_context_chunks(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+            )
+        });
+        let owned_context_refs = owned_context_chunks
+            .as_ref()
+            .map(|chunks| {
+                chunks
+                    .iter()
+                    .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let replay_context_chunks = if owned_context_refs.is_empty() {
+            context_chunks
+        } else {
+            owned_context_refs.as_slice()
+        };
+
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
@@ -101,18 +151,14 @@ impl PlacedOreFeature {
             }
             let prefix = self.ore.sample_blob_prefix(random, x, y, z);
             let mut spill_random = random.clone();
-            let reaches_target = self.ore.blob_prefix_may_spill_into(
-                target_origin_x,
-                target_origin_z,
-                &mut spill_random,
-                &prefix,
-            );
+            let spill_shape = self
+                .ore
+                .sample_blob_shape(&mut spill_random, prefix.clone());
+            let reaches_target =
+                self.ore
+                    .shape_may_spill_into(target_origin_x, target_origin_z, &spill_shape);
             if reaches_target && let Some(diagnostic) = diagnostic.as_mut() {
-                diagnostic.prefix_reaches_target += 1;
-            }
-            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
-                self.ore.consume_blob_shape_random(random);
-                continue;
+                diagnostic.shape_reaches_target += 1;
             }
             let (precheck_passes, precheck_scans) = self.ore.precheck_passes_counted(
                 settings,
@@ -134,28 +180,41 @@ impl PlacedOreFeature {
                 continue;
             }
             let shape = self.ore.sample_blob_shape(random, prefix);
+            if !reaches_target && self.ore.can_skip_non_spilling_blob_replay() {
+                continue;
+            }
             self.ore.start_count_trace_if_enabled();
-            let mut replay_random = random.clone();
             if self.ore.needs_source_spillover_replay() {
-                let stats =
-                    self.ore
-                        .shape_scan_stats(settings, source_origin_x, source_origin_z, &shape);
-                let placed = self.ore.place_shape_with_neighbor(
+                let stats = self.ore.shape_scan_stats_for_context(
+                    settings,
+                    &shape,
+                    source_origin_x,
+                    source_origin_z,
+                    target_origin_x,
+                    target_origin_z,
+                    replay_context_chunks,
+                );
+                let (source_placed, target_placed) = self.ore.place_shape_with_context_chunks(
                     settings,
                     source_origin_x,
                     source_origin_z,
                     source_chunk,
-                    Some((target_origin_x, target_origin_z, &*target_chunk)),
+                    target_origin_x,
+                    target_origin_z,
+                    target_chunk,
+                    replay_context_chunks,
                     random,
                     &shape,
                 );
                 if let Some(diagnostic) = diagnostic.as_mut() {
                     diagnostic.source_spheres += stats.spheres;
                     diagnostic.source_scans += stats.scans;
-                    diagnostic.source_writes += usize::from(placed);
+                    diagnostic.source_writes += usize::from(source_placed);
+                    diagnostic.target_spheres += stats.spheres;
+                    diagnostic.target_scans += stats.scans;
+                    diagnostic.target_writes += usize::from(target_placed);
                 }
-            }
-            if reaches_target {
+            } else if reaches_target {
                 let stats =
                     self.ore
                         .shape_scan_stats(settings, target_origin_x, target_origin_z, &shape);
@@ -165,7 +224,7 @@ impl PlacedOreFeature {
                     target_origin_z,
                     target_chunk,
                     Some((source_origin_x, source_origin_z, &*source_chunk)),
-                    &mut replay_random,
+                    random,
                     &shape,
                 );
                 if let Some(diagnostic) = diagnostic.as_mut() {
@@ -198,6 +257,10 @@ impl PlacedOreFeature {
         target_origin_z: i32,
         random: &mut FeatureRandom,
     ) -> bool {
+        if self.ore.needs_source_spillover_replay() {
+            return true;
+        }
+
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
@@ -206,14 +269,10 @@ impl PlacedOreFeature {
             if !self.biome_filter.allows_at(&settings.density, x, y, z) {
                 continue;
             }
-            if self.ore.may_spill_into(
-                target_origin_x,
-                target_origin_z,
-                random,
-                x,
-                y,
-                z,
-            ) {
+            if self
+                .ore
+                .may_spill_into(target_origin_x, target_origin_z, random, x, y, z)
+            {
                 return true;
             }
         }
@@ -257,10 +316,10 @@ fn print_ore_spillover_diagnostic(
                 })
                 .unwrap_or((0, 0, 0, "unknown", source_origin_x / 16, source_origin_z / 16, target_origin_x / 16, target_origin_z / 16));
         eprintln!(
-            "ore spillover diag: chunk=({chunk_x},{chunk_z}) ordinal={ordinal} name={name} step={step_index} index={feature_index} source_chunk=({source_chunk_x},{source_chunk_z}) source_origin=({source_origin_x},{source_origin_z}) target_chunk=({target_chunk_x},{target_chunk_z}) target_origin=({target_origin_x},{target_origin_z}) attempts={} biome_skips={} prefix_reaches_target={} precheck_passes={} precheck_scans={} source_spheres={} source_scans={} source_writes={} target_spheres={} target_scans={} target_writes={}",
+            "ore spillover diag: chunk=({chunk_x},{chunk_z}) ordinal={ordinal} name={name} step={step_index} index={feature_index} source_chunk=({source_chunk_x},{source_chunk_z}) source_origin=({source_origin_x},{source_origin_z}) target_chunk=({target_chunk_x},{target_chunk_z}) target_origin=({target_origin_x},{target_origin_z}) attempts={} biome_skips={} shape_reaches_target={} precheck_passes={} precheck_scans={} source_spheres={} source_scans={} source_writes={} target_spheres={} target_scans={} target_writes={}",
             diagnostic.attempts,
             diagnostic.biome_skips,
-            diagnostic.prefix_reaches_target,
+            diagnostic.shape_reaches_target,
             diagnostic.precheck_passes,
             diagnostic.precheck_scans,
             diagnostic.source_spheres,
@@ -273,7 +332,12 @@ fn print_ore_spillover_diagnostic(
     });
 }
 
-fn trace_ore_target_predicate_match(world_x: i32, world_y: i32, world_z: i32, current: &BlockLayer) {
+fn trace_ore_target_predicate_match(
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+    current: &BlockLayer,
+) {
     ORE_PLACEMENT_COUNT_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.target_predicate_matches += 1;
@@ -1740,6 +1804,14 @@ struct OreSphereTraceBounds {
     iter_max_z: i32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ChunkContextBounds {
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone)]
 struct OreSphereDiagnostic {
@@ -1992,6 +2064,8 @@ impl OreFeatureConfig {
                             chunk_min_x,
                             chunk_min_z,
                             chunk,
+                            neighbor,
+                            &[],
                             world_x,
                             world_y,
                             world_z,
@@ -2023,6 +2097,194 @@ impl OreFeatureConfig {
         }
 
         placed
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_shape_with_context_chunks(
+        &self,
+        settings: &NoiseSettings,
+        source_min_x: i32,
+        source_min_z: i32,
+        source_chunk: &mut NoiseChunkBlocks,
+        target_min_x: i32,
+        target_min_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        shape: &OreBlobShape,
+    ) -> (bool, bool) {
+        let mut tested = None;
+        let mut source_placed = false;
+        let mut target_placed = false;
+        let bounds = chunk_context_bounds(
+            source_min_x,
+            source_min_z,
+            target_min_x,
+            target_min_z,
+            context_chunks,
+        );
+
+        for (sphere_index, sphere) in shape.spheres.iter().copied().enumerate() {
+            let [x, y, z, radius] = sphere;
+            if radius < 0.0 {
+                self.trace_shape_sphere_at_target(
+                    settings,
+                    target_min_x,
+                    target_min_z,
+                    target_chunk,
+                    shape,
+                    sphere_index,
+                    sphere,
+                    None,
+                );
+                continue;
+            }
+
+            let raw_min_x = mth_floor(x - radius).max(shape.min_box_x);
+            let raw_max_x = mth_floor(x + radius).max(raw_min_x);
+            let min_x = raw_min_x.max(bounds.min_x);
+            let max_x = raw_max_x.min(bounds.max_x);
+            let raw_min_y = mth_floor(y - radius).max(shape.min_box_y);
+            let raw_max_y = mth_floor(y + radius).max(raw_min_y);
+            let min_y = raw_min_y.max(settings.min_y);
+            let max_y = raw_max_y.min(settings.min_y + settings.height - 1);
+            let raw_min_z = mth_floor(z - radius).max(shape.min_box_z);
+            let raw_max_z = mth_floor(z + radius).max(raw_min_z);
+            let min_z = raw_min_z.max(bounds.min_z);
+            let max_z = raw_max_z.min(bounds.max_z);
+            if min_x > max_x || min_y > max_y || min_z > max_z {
+                continue;
+            }
+
+            self.trace_shape_sphere_at_target(
+                settings,
+                target_min_x,
+                target_min_z,
+                target_chunk,
+                shape,
+                sphere_index,
+                sphere,
+                Some(OreSphereTraceBounds {
+                    floor_min_x: mth_floor(x - radius),
+                    floor_max_x: mth_floor(x + radius),
+                    floor_min_y: mth_floor(y - radius),
+                    floor_max_y: mth_floor(y + radius),
+                    floor_min_z: mth_floor(z - radius),
+                    floor_max_z: mth_floor(z + radius),
+                    raw_min_x,
+                    raw_max_x,
+                    raw_min_y,
+                    raw_max_y,
+                    raw_min_z,
+                    raw_max_z,
+                    iter_min_x: min_x,
+                    iter_max_x: max_x,
+                    iter_min_y: min_y,
+                    iter_max_y: max_y,
+                    iter_min_z: min_z,
+                    iter_max_z: max_z,
+                }),
+            );
+
+            for world_x in min_x..=max_x {
+                let xd = (world_x as f64 + 0.5 - x) / radius;
+                if xd * xd >= 1.0 {
+                    continue;
+                }
+
+                for world_y in min_y..=max_y {
+                    let yd = (world_y as f64 + 0.5 - y) / radius;
+                    if xd * xd + yd * yd >= 1.0 {
+                        continue;
+                    }
+
+                    for world_z in min_z..=max_z {
+                        let zd = (world_z as f64 + 0.5 - z) / radius;
+                        if xd * xd + yd * yd + zd * zd >= 1.0 {
+                            continue;
+                        }
+                        let tested_x = (world_x - shape.min_box_x) as usize;
+                        let tested_y = (world_y - shape.min_box_y) as usize;
+                        let tested_z = (world_z - shape.min_box_z) as usize;
+                        let tested_index = tested_x
+                            + tested_y * shape.tested_stride_x
+                            + tested_z * shape.tested_stride_x * shape.tested_stride_y;
+                        let tested = tested.get_or_insert_with(|| {
+                            vec![
+                                false;
+                                shape.tested_size_x * shape.tested_size_y * shape.tested_size_z
+                            ]
+                        });
+                        self.trace_tested_bit_at_target(
+                            settings,
+                            source_min_x,
+                            source_min_z,
+                            source_chunk,
+                            Some((target_min_x, target_min_z, &*target_chunk)),
+                            context_chunks,
+                            world_x,
+                            world_y,
+                            world_z,
+                            sphere_index,
+                            tested_index,
+                            tested[tested_index],
+                        );
+                        if !tested[tested_index] {
+                            tested[tested_index] = true;
+                        } else {
+                            continue;
+                        }
+
+                        if local_coords(world_x, world_z, source_min_x, source_min_z).is_some() {
+                            if self.try_place_block_with_neighbor(
+                                settings,
+                                source_min_x,
+                                source_min_z,
+                                source_chunk,
+                                Some((target_min_x, target_min_z, &*target_chunk)),
+                                random,
+                                world_x,
+                                world_y,
+                                world_z,
+                            ) {
+                                source_placed = true;
+                            }
+                        } else if local_coords(world_x, world_z, target_min_x, target_min_z)
+                            .is_some()
+                            && self.try_place_block_with_neighbor(
+                                settings,
+                                target_min_x,
+                                target_min_z,
+                                target_chunk,
+                                Some((source_min_x, source_min_z, &*source_chunk)),
+                                random,
+                                world_x,
+                                world_y,
+                                world_z,
+                            )
+                        {
+                            target_placed = true;
+                        } else if let Some((context_min_x, context_min_z, context_chunk)) =
+                            context_chunk_at(context_chunks, world_x, world_z)
+                        {
+                            self.try_consume_block_with_context(
+                                settings,
+                                context_min_x,
+                                context_min_z,
+                                context_chunk,
+                                context_chunks,
+                                random,
+                                world_x,
+                                world_y,
+                                world_z,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        (source_placed, target_placed)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2144,6 +2406,8 @@ impl OreFeatureConfig {
         chunk_min_x: i32,
         chunk_min_z: i32,
         chunk: &NoiseChunkBlocks,
+        neighbor: Option<(i32, i32, &NoiseChunkBlocks)>,
+        context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
         world_x: i32,
         world_y: i32,
         world_z: i32,
@@ -2158,8 +2422,43 @@ impl OreFeatureConfig {
             return;
         }
 
-        let previous = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
-            .and_then(|(local_x, local_z)| chunk.layer(local_x, world_y, local_z, settings.min_y));
+        let previous = layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            settings.min_y,
+        )
+        .or_else(|| {
+            neighbor.and_then(|(neighbor_min_x, neighbor_min_z, neighbor_chunk)| {
+                layer_at_world(
+                    neighbor_chunk,
+                    neighbor_min_x,
+                    neighbor_min_z,
+                    world_x,
+                    world_y,
+                    world_z,
+                    settings.min_y,
+                )
+            })
+        })
+        .or_else(|| {
+            context_chunk_at(context_chunks, world_x, world_z).and_then(
+                |(context_min_x, context_min_z, context_chunk)| {
+                    layer_at_world(
+                        context_chunk,
+                        context_min_x,
+                        context_min_z,
+                        world_x,
+                        world_y,
+                        world_z,
+                        settings.min_y,
+                    )
+                },
+            )
+        });
         let target_predicate = previous
             .and_then(|layer| {
                 self.targets
@@ -2339,38 +2638,32 @@ impl OreFeatureConfig {
         }
     }
 
-    fn blob_prefix_may_spill_into(
+    fn shape_may_spill_into(
         &self,
         target_origin_x: i32,
         target_origin_z: i32,
-        random: &mut FeatureRandom,
-        prefix: &OreBlobPrefix,
+        shape: &OreBlobShape,
     ) -> bool {
         let mut min_x = i32::MAX;
         let mut max_x = i32::MIN;
         let mut min_z = i32::MAX;
         let mut max_z = i32::MIN;
 
-        for i in 0..self.size {
-            let step = i as f32 / self.size as f32;
-            let radius_noise = random.next_double() * self.size as f64 / 16.0;
-            let radius =
-                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0) / 2.0;
-            let x = lerp_f64(step as f64, prefix.x0, prefix.x1);
-            let z = lerp_f64(step as f64, prefix.z0, prefix.z1);
+        for [x, _y, z, radius] in shape.spheres.iter().copied() {
+            if radius < 0.0 {
+                continue;
+            }
             min_x = min_x.min(mth_floor(x - radius));
             max_x = max_x.max(mth_floor(x + radius).max(min_x));
             min_z = min_z.min(mth_floor(z - radius));
             max_z = max_z.max(mth_floor(z + radius).max(min_z));
         }
 
-        horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
-    }
-
-    fn consume_blob_shape_random(&self, random: &mut FeatureRandom) {
-        for _ in 0..self.size {
-            let _radius_noise = random.next_double();
+        if min_x == i32::MAX {
+            return false;
         }
+
+        horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
     }
 
     fn may_spill_into(
@@ -2382,36 +2675,9 @@ impl OreFeatureConfig {
         origin_y: i32,
         origin_z: i32,
     ) -> bool {
-        let direction = random.next_float() * std::f32::consts::PI;
-        let spread_xy = self.size as f64 / 8.0;
-        let x_spread = (direction as f64).sin() * spread_xy;
-        let z_spread = (direction as f64).cos() * spread_xy;
-        let x0 = origin_x as f64 + x_spread;
-        let x1 = origin_x as f64 - x_spread;
-        let z0 = origin_z as f64 + z_spread;
-        let z1 = origin_z as f64 - z_spread;
-        let y0 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
-        let y1 = origin_y as f64 + random.next_int(3) as f64 - 2.0;
-        let mut min_x = i32::MAX;
-        let mut max_x = i32::MIN;
-        let mut min_z = i32::MAX;
-        let mut max_z = i32::MIN;
-
-        for i in 0..self.size {
-            let step = i as f32 / self.size as f32;
-            let radius_noise = random.next_double() * self.size as f64 / 16.0;
-            let radius =
-                ((mth_sin(std::f32::consts::PI * step) + 1.0) as f64 * radius_noise + 1.0) / 2.0;
-            let x = lerp_f64(step as f64, x0, x1);
-            let _y = lerp_f64(step as f64, y0, y1);
-            let z = lerp_f64(step as f64, z0, z1);
-            min_x = min_x.min(mth_floor(x - radius));
-            max_x = max_x.max(mth_floor(x + radius).max(min_x));
-            min_z = min_z.min(mth_floor(z - radius));
-            max_z = max_z.max(mth_floor(z + radius).max(min_z));
-        }
-
-        horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, target_origin_x, target_origin_z)
+        let prefix = self.sample_blob_prefix(random, origin_x, origin_y, origin_z);
+        let shape = self.sample_blob_shape(random, prefix);
+        self.shape_may_spill_into(target_origin_x, target_origin_z, &shape)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2427,6 +2693,16 @@ impl OreFeatureConfig {
         world_y: i32,
         world_z: i32,
     ) -> bool {
+        self.trace_candidate_block(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            "mutable",
+            world_x,
+            world_y,
+            world_z,
+        );
         let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
         else {
             return false;
@@ -2476,6 +2752,53 @@ impl OreFeatureConfig {
             .map(|target| &target.block)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn try_consume_block_with_context(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+        random: &mut FeatureRandom,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) {
+        self.trace_candidate_block(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            "context",
+            world_x,
+            world_y,
+            world_z,
+        );
+        let Some((local_x, local_z)) = local_coords(world_x, world_z, chunk_min_x, chunk_min_z)
+        else {
+            return;
+        };
+        let Some(current) = chunk.layer(local_x, world_y, local_z, settings.min_y) else {
+            return;
+        };
+        if self.target_ore(current).is_none() {
+            return;
+        }
+        trace_ore_target_predicate_match(world_x, world_y, world_z, current);
+        let _ = self.should_skip_air_check(random)
+            || is_adjacent_to_air_in_context(
+                settings,
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                context_chunks,
+                world_x,
+                world_y,
+                world_z,
+            );
+    }
+
     fn should_skip_air_check(&self, random: &mut FeatureRandom) -> bool {
         if self.discard_chance_on_air_exposure <= 0.0 {
             true
@@ -2485,6 +2808,44 @@ impl OreFeatureConfig {
             trace_ore_should_skip_air_check_next_float();
             random.next_float() >= self.discard_chance_on_air_exposure
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn trace_candidate_block(
+        &self,
+        settings: &NoiseSettings,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        chunk: &NoiseChunkBlocks,
+        owner: &str,
+        world_x: i32,
+        world_y: i32,
+        world_z: i32,
+    ) {
+        let Some(target) = FeatureWriteTraceTarget::from_env() else {
+            return;
+        };
+        if !self.trace_context_is_target_attempt() || !target.near(world_x, world_y, world_z, 64) {
+            return;
+        }
+
+        let local = local_coords(world_x, world_z, chunk_min_x, chunk_min_z);
+        let current = local
+            .and_then(|(local_x, local_z)| chunk.layer(local_x, world_y, local_z, settings.min_y));
+        let predicate = current
+            .and_then(|layer| {
+                self.targets
+                    .iter()
+                    .find(|target| target.predicate.matches(layer))
+                    .map(|target| format!("{:?}", target.predicate))
+            })
+            .unwrap_or_else(|| "none".to_string());
+        let block = current
+            .map(|layer| layer.block.as_ref())
+            .unwrap_or("outside_or_missing");
+        eprintln!(
+            "ore blob trace candidate: owner={owner} chunk_origin=({chunk_min_x},{chunk_min_z}) coord=({world_x},{world_y},{world_z}) local={local:?} block={block} target_predicate={predicate}"
+        );
     }
 
     fn start_count_trace_if_enabled(&self) {
@@ -2721,6 +3082,54 @@ impl OreFeatureConfig {
         }
         stats
     }
+
+    fn shape_scan_stats_for_context(
+        &self,
+        settings: &NoiseSettings,
+        shape: &OreBlobShape,
+        source_min_x: i32,
+        source_min_z: i32,
+        target_min_x: i32,
+        target_min_z: i32,
+        context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+    ) -> OreShapeScanStats {
+        let bounds = chunk_context_bounds(
+            source_min_x,
+            source_min_z,
+            target_min_x,
+            target_min_z,
+            context_chunks,
+        );
+        let mut stats = OreShapeScanStats::default();
+        for sphere in shape.spheres.iter().copied() {
+            let [x, y, z, radius] = sphere;
+            if radius < 0.0 {
+                continue;
+            }
+
+            let raw_min_x = mth_floor(x - radius).max(shape.min_box_x);
+            let raw_max_x = mth_floor(x + radius).max(raw_min_x);
+            let min_x = raw_min_x.max(bounds.min_x);
+            let max_x = raw_max_x.min(bounds.max_x);
+            let raw_min_y = mth_floor(y - radius).max(shape.min_box_y);
+            let raw_max_y = mth_floor(y + radius).max(raw_min_y);
+            let min_y = raw_min_y.max(settings.min_y);
+            let max_y = raw_max_y.min(settings.min_y + settings.height - 1);
+            let raw_min_z = mth_floor(z - radius).max(shape.min_box_z);
+            let raw_max_z = mth_floor(z + radius).max(raw_min_z);
+            let min_z = raw_min_z.max(bounds.min_z);
+            let max_z = raw_max_z.min(bounds.max_z);
+            if min_x > max_x || min_y > max_y || min_z > max_z {
+                continue;
+            }
+
+            stats.spheres += 1;
+            stats.scans += (max_x - min_x + 1) as usize
+                * (max_y - min_y + 1) as usize
+                * (max_z - min_z + 1) as usize;
+        }
+        stats
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2794,6 +3203,123 @@ fn is_adjacent_to_air_with_neighbor(
         }
         false
     })
+}
+
+fn is_adjacent_to_air_in_context(
+    settings: &NoiseSettings,
+    chunk: &NoiseChunkBlocks,
+    chunk_min_x: i32,
+    chunk_min_z: i32,
+    context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+    world_x: i32,
+    world_y: i32,
+    world_z: i32,
+) -> bool {
+    const DIRECTIONS: [(i32, i32, i32); 6] = [
+        (1, 0, 0),
+        (-1, 0, 0),
+        (0, 1, 0),
+        (0, -1, 0),
+        (0, 0, 1),
+        (0, 0, -1),
+    ];
+
+    DIRECTIONS.into_iter().any(|(dx, dy, dz)| {
+        let x = world_x + dx;
+        let y = world_y + dy;
+        let z = world_z + dz;
+        if !(settings.min_y..settings.min_y + settings.height).contains(&y) {
+            return false;
+        }
+
+        if let Some(layer) =
+            layer_at_world(chunk, chunk_min_x, chunk_min_z, x, y, z, settings.min_y)
+        {
+            return layer.is_air;
+        }
+        for (context_min_x, context_min_z, context_chunk) in context_chunks.iter().copied() {
+            if let Some(layer) = layer_at_world(
+                context_chunk,
+                context_min_x,
+                context_min_z,
+                x,
+                y,
+                z,
+                settings.min_y,
+            ) {
+                return layer.is_air;
+            }
+        }
+        false
+    })
+}
+
+fn chunk_context_bounds(
+    source_min_x: i32,
+    source_min_z: i32,
+    target_min_x: i32,
+    target_min_z: i32,
+    context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+) -> ChunkContextBounds {
+    let mut bounds = ChunkContextBounds {
+        min_x: source_min_x.min(target_min_x),
+        max_x: (source_min_x + 15).max(target_min_x + 15),
+        min_z: source_min_z.min(target_min_z),
+        max_z: (source_min_z + 15).max(target_min_z + 15),
+    };
+    for (chunk_min_x, chunk_min_z, _) in context_chunks.iter().copied() {
+        bounds.min_x = bounds.min_x.min(chunk_min_x);
+        bounds.max_x = bounds.max_x.max(chunk_min_x + 15);
+        bounds.min_z = bounds.min_z.min(chunk_min_z);
+        bounds.max_z = bounds.max_z.max(chunk_min_z + 15);
+    }
+    bounds
+}
+
+fn context_chunk_at<'a>(
+    context_chunks: &'a [(i32, i32, &'a NoiseChunkBlocks)],
+    world_x: i32,
+    world_z: i32,
+) -> Option<(i32, i32, &'a NoiseChunkBlocks)> {
+    context_chunks
+        .iter()
+        .copied()
+        .find(|(chunk_min_x, chunk_min_z, _)| {
+            local_coords(world_x, world_z, *chunk_min_x, *chunk_min_z).is_some()
+        })
+}
+
+fn source_region_context_chunks(
+    settings: &NoiseSettings,
+    source_origin_x: i32,
+    source_origin_z: i32,
+    target_origin_x: i32,
+    target_origin_z: i32,
+) -> Vec<(i32, i32, std::sync::Arc<NoiseChunkBlocks>)> {
+    let source_chunk_x = source_origin_x.div_euclid(16);
+    let source_chunk_z = source_origin_z.div_euclid(16);
+    let mut chunks = Vec::with_capacity(7);
+
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            let chunk_x = source_chunk_x + dx;
+            let chunk_z = source_chunk_z + dz;
+            let origin_x = chunk_x * 16;
+            let origin_z = chunk_z * 16;
+            if (origin_x == source_origin_x && origin_z == source_origin_z)
+                || (origin_x == target_origin_x && origin_z == target_origin_z)
+            {
+                continue;
+            }
+            chunks.push((
+                origin_x,
+                origin_z,
+                settings.feature_source_chunk(chunk_x, chunk_z),
+            ));
+        }
+    }
+
+    chunks
 }
 
 fn mth_sin(value: f32) -> f32 {
@@ -2978,7 +3504,17 @@ impl FeatureRandom {
 
     fn next_int(&mut self, bound: i32) -> i32 {
         assert!(bound > 0);
-        self.source.next_int(bound as usize) as i32
+        if bound & (bound - 1) == 0 {
+            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
+        }
+
+        loop {
+            let sample = self.next_bits(31) as i32;
+            let modulo = sample % bound;
+            if sample.wrapping_sub(modulo).wrapping_add(bound - 1) >= 0 {
+                return modulo;
+            }
+        }
     }
 
     fn next_long(&mut self) -> i64 {

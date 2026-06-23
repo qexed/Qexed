@@ -379,6 +379,7 @@ public final class TargetBlockWriteTraceAgent {
 
     private static boolean isTracedOreFeature(int featureIndex, int stepIndex) {
         return isRedstoneLowerFeature(featureIndex, stepIndex)
+                || isGlowLichenFeature(featureIndex, stepIndex)
                 || (stepIndex == 6 && featureIndex == 1)
                 || (stepIndex == 6 && featureIndex == 8)
                 || (stepIndex == 6 && featureIndex >= 11 && featureIndex <= 13)
@@ -416,7 +417,14 @@ public final class TargetBlockWriteTraceAgent {
         if (isRedstoneLowerFeature(featureIndex, stepIndex)) {
             return "ore_redstone_lower";
         }
+        if (isGlowLichenFeature(featureIndex, stepIndex)) {
+            return "glow_lichen";
+        }
         return "ore_unknown";
+    }
+
+    private static boolean isGlowLichenFeature(int featureIndex, int stepIndex) {
+        return stepIndex == 9 && featureIndex == 0;
     }
 
     private static String compactConfig(String configText) {
@@ -446,10 +454,9 @@ public final class TargetBlockWriteTraceAgent {
     private static boolean isTargetDiamondMediumAttempt(FeatureSeedInfo info, int attempt) {
         return info != null
                 && info.stepIndex == 6
-                && info.featureIndex == 19
-                && attempt == 0
-                && Math.floorDiv(info.originX, 16) == 0
-                && Math.floorDiv(info.originZ, 16) == 0;
+                && info.featureIndex >= 18
+                && info.featureIndex <= 21
+                && attempt >= 0;
     }
 
     private static boolean isTargetOreGravelAttempt(FeatureSeedInfo info, int attempt) {
@@ -462,8 +469,20 @@ public final class TargetBlockWriteTraceAgent {
                 && Math.floorDiv(info.originZ, 16) == 0;
     }
 
+    private static boolean isTargetOreIronSmallAttempt(FeatureSeedInfo info, int attempt) {
+        return info != null
+                && info.stepIndex == 6
+                && info.featureIndex == 13
+                && attempt >= 0
+                && attempt <= 9
+                && Math.floorDiv(info.originX, 16) == 0
+                && Math.floorDiv(info.originZ, 16) == 0;
+    }
+
     private static boolean isTrackedCountAttempt(FeatureSeedInfo info, int attempt) {
-        return isTargetDiamondMediumAttempt(info, attempt) || isTargetOreGravelAttempt(info, attempt);
+        return isTargetDiamondMediumAttempt(info, attempt)
+                || isTargetOreGravelAttempt(info, attempt)
+                || isTargetOreIronSmallAttempt(info, attempt);
     }
 
     private static String featureLabel(FeatureSeedInfo info) {
@@ -474,8 +493,7 @@ public final class TargetBlockWriteTraceAgent {
     }
 
     private static boolean isRequestedRustCoord(int x, int y, int z) {
-        return z == 7 && (x == 10 || x == 11) && (y == -28 || y == -27)
-                || z == 8 && (x == 10 || x == 11) && (y == -28 || y == -27);
+        return x == targetX() && y == targetY() && z == targetZ();
     }
 
     private static int targetX() {
