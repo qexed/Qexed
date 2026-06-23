@@ -111,9 +111,6 @@ impl PlacedOreFeature {
     ) {
         let diagnose = ore_spillover_diagnostic_enabled(self.step_index, self.feature_index);
         let mut diagnostic = diagnose.then(OreSpilloverDiagnostic::default);
-        let mut owned_context_chunks = None;
-        let mut owned_context_refs = Vec::new();
-
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
@@ -164,26 +161,19 @@ impl PlacedOreFeature {
             }
             self.ore.start_count_trace_if_enabled();
             if self.ore.needs_source_spillover_replay() {
-                if owned_context_chunks.is_none() {
-                    owned_context_chunks = Some(source_region_context_chunks(
-                        settings,
-                        source_origin_x,
-                        source_origin_z,
-                        target_origin_x,
-                        target_origin_z,
-                    ));
-                    owned_context_refs = owned_context_chunks
-                        .as_ref()
-                        .expect("source region context chunks are initialized")
-                        .iter()
-                        .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
-                        .collect();
-                }
-                let replay_context_chunks = if owned_context_refs.is_empty() {
-                    context_chunks
-                } else {
-                    owned_context_refs.as_slice()
-                };
+                let owned_context_chunks = source_region_context_chunks_for_shape(
+                    settings,
+                    source_origin_x,
+                    source_origin_z,
+                    target_origin_x,
+                    target_origin_z,
+                    &shape,
+                );
+                let owned_context_refs = owned_context_chunks
+                    .iter()
+                    .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
+                    .collect::<Vec<_>>();
+                let replay_context_chunks = owned_context_refs.as_slice();
                 let stats = self.ore.shape_scan_stats_for_context(
                     settings,
                     &shape,
@@ -3374,13 +3364,17 @@ fn context_chunk_at<'a>(
         })
 }
 
-fn source_region_context_chunks(
+fn source_region_context_chunks_for_shape(
     settings: &NoiseSettings,
     source_origin_x: i32,
     source_origin_z: i32,
     target_origin_x: i32,
     target_origin_z: i32,
+    shape: &OreBlobShape,
 ) -> Vec<(i32, i32, std::sync::Arc<NoiseChunkBlocks>)> {
+    let Some((min_x, max_x, min_z, max_z)) = ore_shape_horizontal_bounds(shape) else {
+        return Vec::new();
+    };
     let source_chunk_x = source_origin_x.div_euclid(16);
     let source_chunk_z = source_origin_z.div_euclid(16);
     let mut chunks = Vec::with_capacity(7);
@@ -3393,6 +3387,7 @@ fn source_region_context_chunks(
             let origin_z = chunk_z * 16;
             if (origin_x == source_origin_x && origin_z == source_origin_z)
                 || (origin_x == target_origin_x && origin_z == target_origin_z)
+                || !horizontal_box_overlaps_chunk(min_x, max_x, min_z, max_z, origin_x, origin_z)
             {
                 continue;
             }
@@ -3405,6 +3400,25 @@ fn source_region_context_chunks(
     }
 
     chunks
+}
+
+fn ore_shape_horizontal_bounds(shape: &OreBlobShape) -> Option<(i32, i32, i32, i32)> {
+    let mut min_x = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut min_z = i32::MAX;
+    let mut max_z = i32::MIN;
+
+    for [x, _y, z, radius] in shape.spheres.iter().copied() {
+        if radius < 0.0 {
+            continue;
+        }
+        min_x = min_x.min(mth_floor(x - radius));
+        max_x = max_x.max(mth_floor(x + radius).max(min_x));
+        min_z = min_z.min(mth_floor(z - radius));
+        max_z = max_z.max(mth_floor(z + radius).max(min_z));
+    }
+
+    (min_x != i32::MAX).then_some((min_x - 1, max_x + 1, min_z - 1, max_z + 1))
 }
 
 fn mth_sin(value: f32) -> f32 {
