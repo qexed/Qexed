@@ -106,7 +106,7 @@ impl PlacedOreFeature {
         target_origin_z: i32,
         source_chunk: &mut NoiseChunkBlocks,
         target_chunk: &mut NoiseChunkBlocks,
-        context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
+        _context_chunks: &[(i32, i32, &NoiseChunkBlocks)],
         random: &mut FeatureRandom,
     ) {
         let diagnose = ore_spillover_diagnostic_enabled(self.step_index, self.feature_index);

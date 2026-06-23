@@ -34,7 +34,7 @@ fn compare_chunk_blocks(expected: &Tag, actual: &Tag, differences: &mut Vec<Stri
     section_ys.sort_unstable();
 
     for section_y in section_ys {
-        let Some(expected_section) = expected_sections.get(section_y) else {
+        let Some(expected_section) = expected_sections.get(&section_y) else {
             continue;
         };
         let Some(actual_section) = actual_sections.get(&section_y) else {
