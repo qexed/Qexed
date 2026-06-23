@@ -915,17 +915,12 @@ impl NoiseSettings {
             }
         }
 
-        let column_density = (0..HEIGHTMAP_ENTRY_COUNT)
-            .into_par_iter()
-            .map(|column| {
-                let x = (column % 16) as i32;
-                let z = (column / 16) as i32;
-                let world_x = chunk_x * 16 + x;
-                let world_z = chunk_z * 16 + z;
-                let index = (z * 17 + x) as usize;
-                self.column_density_cache(world_x, world_z, &profiles[index])
-            })
-            .collect::<Vec<_>>();
+        let column_density = self.density.chunk_density_cache(
+            chunk_x * 16,
+            chunk_z * 16,
+            self.min_y,
+            self.height,
+        );
 
         let mut surface_heights = vec![self.min_y; (17 * 17) as usize];
         for z in 0..=16 {

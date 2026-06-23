@@ -4,6 +4,9 @@ struct TerrainDensity {
     terrain_noise: vanilla_noise::OverworldTerrainNoise,
 }
 
+const TERRAIN_NOISE_CELL_WIDTH: i32 = 4;
+const TERRAIN_NOISE_CELL_HEIGHT: i32 = 8;
+
 impl TerrainDensity {
     fn overworld(seed: i64, noise_kind: vanilla_noise::OverworldNoiseKind) -> Self {
         Self {
@@ -61,6 +64,70 @@ impl TerrainDensity {
         self.terrain_noise.final_density(profile, x, y, z, base_3d)
     }
 
+    fn chunk_density_cache(
+        &self,
+        chunk_min_x: i32,
+        chunk_min_z: i32,
+        min_y: i32,
+        height: i32,
+    ) -> Vec<ColumnDensityCache> {
+        let cell_count_xz = 16 / TERRAIN_NOISE_CELL_WIDTH;
+        let cell_count_y = height / TERRAIN_NOISE_CELL_HEIGHT;
+        let lattice_xz = cell_count_xz + 1;
+        let lattice_y = cell_count_y + 1;
+        let mut lattice =
+            vec![0.0; (lattice_xz * lattice_xz * lattice_y) as usize];
+
+        for cell_z in 0..lattice_xz {
+            for cell_x in 0..lattice_xz {
+                let x = chunk_min_x + cell_x * TERRAIN_NOISE_CELL_WIDTH;
+                let z = chunk_min_z + cell_z * TERRAIN_NOISE_CELL_WIDTH;
+                let profile = self.profile(x, z);
+                let density_column = self.column_sampler(x, z, &profile);
+                for cell_y in 0..lattice_y {
+                    let y = min_y + cell_y * TERRAIN_NOISE_CELL_HEIGHT;
+                    lattice[noise_lattice_index(
+                        cell_x,
+                        cell_y,
+                        cell_z,
+                        lattice_xz,
+                        lattice_y,
+                    )] = density_column.sample(y);
+                }
+            }
+        }
+
+        (0..16 * 16)
+            .map(|column| {
+                let x = column % 16;
+                let z = column / 16;
+                let mut densities = Vec::with_capacity(height as usize);
+                for y in min_y..min_y + height {
+                    densities.push(interpolate_noise_lattice(
+                        &lattice,
+                        x,
+                        y - min_y,
+                        z,
+                        lattice_xz,
+                        lattice_y,
+                    ));
+                }
+
+                let surface_height = densities
+                    .iter()
+                    .rposition(|density| *density > 0.0)
+                    .map(|index| min_y + index as i32)
+                    .unwrap_or(min_y)
+                    .clamp(min_y + 1, min_y + height - 1);
+
+                ColumnDensityCache {
+                    surface_height,
+                    densities,
+                }
+            })
+            .collect()
+    }
+
     fn column_sampler<'a>(
         &'a self,
         x: i32,
@@ -72,6 +139,57 @@ impl TerrainDensity {
             terrain_noise: self.terrain_noise.column_sampler(profile, x, z),
         }
     }
+}
+
+fn noise_lattice_index(
+    cell_x: i32,
+    cell_y: i32,
+    cell_z: i32,
+    lattice_xz: i32,
+    lattice_y: i32,
+) -> usize {
+    ((cell_z * lattice_xz + cell_x) * lattice_y + cell_y) as usize
+}
+
+fn interpolate_noise_lattice(
+    lattice: &[f64],
+    local_x: i32,
+    local_y: i32,
+    local_z: i32,
+    lattice_xz: i32,
+    lattice_y: i32,
+) -> f64 {
+    let cell_x = local_x / TERRAIN_NOISE_CELL_WIDTH;
+    let cell_y = local_y / TERRAIN_NOISE_CELL_HEIGHT;
+    let cell_z = local_z / TERRAIN_NOISE_CELL_WIDTH;
+    let factor_x =
+        (local_x % TERRAIN_NOISE_CELL_WIDTH) as f64 / TERRAIN_NOISE_CELL_WIDTH as f64;
+    let factor_y =
+        (local_y % TERRAIN_NOISE_CELL_HEIGHT) as f64 / TERRAIN_NOISE_CELL_HEIGHT as f64;
+    let factor_z =
+        (local_z % TERRAIN_NOISE_CELL_WIDTH) as f64 / TERRAIN_NOISE_CELL_WIDTH as f64;
+
+    let at = |dx, dy, dz| {
+        lattice[noise_lattice_index(
+            cell_x + dx,
+            cell_y + dy,
+            cell_z + dz,
+            lattice_xz,
+            lattice_y,
+        )]
+    };
+
+    let y00 = terrain_density_lerp(factor_y, at(0, 0, 0), at(0, 1, 0));
+    let y10 = terrain_density_lerp(factor_y, at(1, 0, 0), at(1, 1, 0));
+    let y01 = terrain_density_lerp(factor_y, at(0, 0, 1), at(0, 1, 1));
+    let y11 = terrain_density_lerp(factor_y, at(1, 0, 1), at(1, 1, 1));
+    let x0 = terrain_density_lerp(factor_x, y00, y10);
+    let x1 = terrain_density_lerp(factor_x, y01, y11);
+    terrain_density_lerp(factor_z, x0, x1)
+}
+
+fn terrain_density_lerp(delta: f64, start: f64, end: f64) -> f64 {
+    start + delta * (end - start)
 }
 
 struct TerrainDensityColumn<'a> {
