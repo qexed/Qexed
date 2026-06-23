@@ -2041,10 +2041,18 @@ mod tests {
                 read_started.elapsed().as_secs_f64() * 1000.0
             );
             if java_digest != rust_digest {
+                let diff_summary = cached_chunk_diff_summary(
+                    &java_cache.region_path,
+                    &rust_cache.region_path,
+                    0,
+                    0,
+                )
+                .unwrap_or_else(|err| format!("failed to diff cached chunks: {err}"));
                 failures.push(format!(
-                    "seed {seed}: cached semantic digest differs java={} rust={}",
+                    "seed {seed}: cached semantic digest differs java={} rust={}\n{}",
                     java_digest.trim(),
-                    rust_digest.trim()
+                    rust_digest.trim(),
+                    diff_summary
                 ));
             }
         }
@@ -2391,12 +2399,41 @@ mod tests {
         chunk_x: i32,
         chunk_z: i32,
     ) -> anyhow::Result<String> {
+        Ok(semantic_digest(&read_cached_chunk_nbt(
+            path, chunk_x, chunk_z,
+        )?))
+    }
+    fn cached_chunk_diff_summary(
+        expected_path: &Path,
+        actual_path: &Path,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> anyhow::Result<String> {
+        let expected = read_cached_chunk_nbt(expected_path, chunk_x, chunk_z)?;
+        let actual = read_cached_chunk_nbt(actual_path, chunk_x, chunk_z)?;
+        let comparison = qexed_worldgen::compare_chunk_nbt(&expected, &actual);
+        if comparison.equal {
+            return Ok("cached chunks are structurally equal after digest mismatch".to_string());
+        }
+        Ok(comparison
+            .differences
+            .iter()
+            .take(16)
+            .map(|difference| format!("  {difference}"))
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+    fn read_cached_chunk_nbt(
+        path: &Path,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> anyhow::Result<qexed_nbt::Tag> {
         let region = qexed_world::region::AnvilRegion::from_file(path)?;
         let Some(chunk) = region.read_chunk(chunk_x, chunk_z)? else {
             anyhow::bail!("cached region chunk is missing");
         };
         let raw = chunk.decompress()?;
-        Ok(semantic_digest(&qexed_nbt::from_slice(&raw)?.1))
+        Ok(qexed_nbt::from_slice(&raw)?.1)
     }
     fn rust_worldgen_implementation_fingerprint() -> String {
         "qexed-worldgen-v4".to_string()
