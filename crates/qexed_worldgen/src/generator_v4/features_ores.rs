@@ -308,7 +308,7 @@ impl PlacedOreFeature {
         target_origin_z: i32,
         random: &mut FeatureRandom,
     ) -> bool {
-        if self.ore.needs_source_spillover_replay() {
+        if self.ore.needs_conservative_spillover_precheck() {
             return true;
         }
 
@@ -2997,6 +2997,14 @@ impl OreFeatureConfig {
 
     fn needs_source_spillover_replay(&self) -> bool {
         self.discard_chance_on_air_exposure > 0.0
+    }
+
+    fn needs_conservative_spillover_precheck(&self) -> bool {
+        self.needs_source_spillover_replay()
+            || self
+                .targets
+                .iter()
+                .any(|target| target.predicate == OreTargetPredicate::BaseStoneOverworld)
     }
 
     fn can_replay_target_without_source(&self) -> bool {
