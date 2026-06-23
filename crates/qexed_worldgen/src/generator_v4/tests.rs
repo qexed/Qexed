@@ -2302,6 +2302,7 @@ mod tests {
 
         assert_eq!(normal_cane.step_index, 9);
         assert_eq!(normal_cane.rarity, 6);
+        assert_eq!(normal_cane.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert_eq!(normal_cane.inner_count, 20);
         assert_eq!(normal_cane.xz_offset.min, -4);
         assert_eq!(normal_cane.xz_offset.max, 4);
@@ -2319,6 +2320,7 @@ mod tests {
         ));
 
         assert_eq!(badlands_cane.rarity, 5);
+        assert_eq!(badlands_cane.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert!(matches!(
             badlands_cane.biome_filter,
             FeatureBiomeFilter::Include(biomes)
@@ -2326,17 +2328,20 @@ mod tests {
                     && biomes.contains(&"minecraft:wooded_badlands")
         ));
         assert_eq!(desert_cane.rarity, 1);
+        assert_eq!(desert_cane.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert!(matches!(
             desert_cane.biome_filter,
             FeatureBiomeFilter::Include(biomes) if biomes == SUGAR_CANE_DESERT_BIOMES
         ));
         assert_eq!(swamp_cane.rarity, 3);
+        assert_eq!(swamp_cane.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert!(matches!(
             swamp_cane.biome_filter,
             FeatureBiomeFilter::Include(biomes) if biomes == SUGAR_CANE_SWAMP_BIOMES
         ));
 
         assert_eq!(desert_cactus.rarity, 6);
+        assert_eq!(desert_cactus.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert_eq!(desert_cactus.inner_count, 10);
         assert_eq!(desert_cactus.xz_offset.min, -7);
         assert_eq!(desert_cactus.y_offset.min, -3);
@@ -2355,6 +2360,7 @@ mod tests {
             FeatureBiomeFilter::Include(biomes) if biomes == CACTUS_DESERT_BIOMES
         ));
         assert_eq!(badlands_cactus.rarity, 13);
+        assert_eq!(badlands_cactus.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert!(matches!(
             badlands_cactus.biome_filter,
             FeatureBiomeFilter::Include(biomes)
@@ -2363,6 +2369,7 @@ mod tests {
         ));
 
         assert_eq!(bamboo_light.rarity, 4);
+        assert_eq!(bamboo_light.heightmap, BlockColumnHeightmap::MotionBlocking);
         assert!(bamboo_light.column.block.is("minecraft:bamboo"));
         assert!(matches!(
             bamboo_light.column.kind,
@@ -2376,6 +2383,10 @@ mod tests {
         ));
 
         assert_eq!(bamboo_some_podzol.rarity, 1);
+        assert_eq!(
+            bamboo_some_podzol.heightmap,
+            BlockColumnHeightmap::WorldSurfaceWg
+        );
         assert!(matches!(
             bamboo_some_podzol.outer_count,
             BlockColumnOuterCount::NoiseBased {
@@ -7288,6 +7299,7 @@ mod tests {
             inner_count: 1,
             xz_offset: TrapezoidInt::new(16, 16, 0),
             y_offset: TrapezoidInt::new(0, 0, 0),
+            heightmap: BlockColumnHeightmap::WorldSurfaceWg,
             column: BlockColumnFeatureConfig::cactus(),
             biome_filter: FeatureBiomeFilter::All,
         };

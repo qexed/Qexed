@@ -7,6 +7,7 @@ struct PlacedBlockColumnFeature {
     inner_count: i32,
     xz_offset: TrapezoidInt,
     y_offset: TrapezoidInt,
+    heightmap: BlockColumnHeightmap,
     column: BlockColumnFeatureConfig,
     biome_filter: FeatureBiomeFilter,
 }
@@ -21,6 +22,7 @@ impl PlacedBlockColumnFeature {
             inner_count: 20,
             xz_offset: TrapezoidInt::new(-4, 4, 0),
             y_offset: TrapezoidInt::new(0, 0, 0),
+            heightmap: BlockColumnHeightmap::MotionBlocking,
             column: BlockColumnFeatureConfig::sugar_cane(),
             biome_filter: FeatureBiomeFilter::All,
         }
@@ -35,6 +37,7 @@ impl PlacedBlockColumnFeature {
             inner_count: 10,
             xz_offset: TrapezoidInt::new(-7, 7, 0),
             y_offset: TrapezoidInt::new(-3, 3, 0),
+            heightmap: BlockColumnHeightmap::MotionBlocking,
             column: BlockColumnFeatureConfig::cactus(),
             biome_filter: FeatureBiomeFilter::All,
         }
@@ -49,6 +52,7 @@ impl PlacedBlockColumnFeature {
             inner_count: 1,
             xz_offset: TrapezoidInt::new(0, 0, 0),
             y_offset: TrapezoidInt::new(0, 0, 0),
+            heightmap: BlockColumnHeightmap::MotionBlocking,
             column: BlockColumnFeatureConfig::bamboo(0.0),
             biome_filter: FeatureBiomeFilter::All,
         }
@@ -67,6 +71,7 @@ impl PlacedBlockColumnFeature {
             inner_count: 1,
             xz_offset: TrapezoidInt::new(0, 0, 0),
             y_offset: TrapezoidInt::new(0, 0, 0),
+            heightmap: BlockColumnHeightmap::WorldSurfaceWg,
             column: BlockColumnFeatureConfig::bamboo(0.2),
             biome_filter: FeatureBiomeFilter::All,
         }
@@ -109,7 +114,9 @@ impl PlacedBlockColumnFeature {
             else {
                 continue;
             };
-            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            let base_y = self
+                .heightmap
+                .height(settings, chunk, base_local_x, base_local_z);
             if base_y <= settings.min_y
                 || !self
                     .biome_filter
@@ -151,7 +158,9 @@ impl PlacedBlockColumnFeature {
             else {
                 continue;
             };
-            let base_y = chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+            let base_y = self
+                .heightmap
+                .height(settings, chunk, base_local_x, base_local_z);
             if base_y <= settings.min_y
                 || !self
                     .biome_filter
@@ -197,7 +206,8 @@ impl PlacedBlockColumnFeature {
                 continue;
             };
             let base_y =
-                source_chunk.world_surface_wg_height(base_local_x, base_local_z, settings.min_y);
+                self.heightmap
+                    .height(settings, source_chunk, base_local_x, base_local_z);
             if base_y <= settings.min_y
                 || !self
                     .biome_filter
@@ -338,6 +348,35 @@ impl BlockColumnOuterCount {
                 * noise_to_count_ratio as f64)
                 .ceil()
                 .max(0.0) as i32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockColumnHeightmap {
+    WorldSurfaceWg,
+    MotionBlocking,
+}
+
+impl BlockColumnHeightmap {
+    fn height(
+        self,
+        settings: &NoiseSettings,
+        chunk: &NoiseChunkBlocks,
+        local_x: usize,
+        local_z: usize,
+    ) -> i32 {
+        match self {
+            Self::WorldSurfaceWg => {
+                chunk.world_surface_wg_height(local_x, local_z, settings.min_y)
+            }
+            Self::MotionBlocking => chunk
+                .column(local_x, local_z)
+                .blocks
+                .iter()
+                .rposition(is_motion_blocking_heightmap_layer)
+                .map(|index| settings.min_y + index as i32 + 1)
+                .unwrap_or(settings.min_y),
         }
     }
 }
