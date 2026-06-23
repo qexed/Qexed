@@ -2667,30 +2667,17 @@ impl OreFeatureConfig {
         origin_y: i32,
         origin_z: i32,
     ) -> bool {
-        let spread_xy = self.size as f32 / 8.0;
-        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
-        let precheck_radius = precheck_radius.ceil() as i32;
-        let spread_xy = spread_xy.ceil() as i32;
-        let min_x = (origin_x - spread_xy - precheck_radius).max(chunk_min_x);
-        let max_x = (origin_x + spread_xy + precheck_radius).min(chunk_min_x + 15);
-        let min_y = origin_y - 2 - precheck_radius;
-        let min_z = (origin_z - spread_xy - precheck_radius).max(chunk_min_z);
-        let max_z = (origin_z + spread_xy + precheck_radius).min(chunk_min_z + 15);
-        if min_x > max_x || min_z > max_z {
-            return false;
-        }
-
-        for world_x in min_x..=max_x {
-            let local_x = (world_x - chunk_min_x) as usize;
-            for world_z in min_z..=max_z {
-                let local_z = (world_z - chunk_min_z) as usize;
-                if min_y <= chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y) {
-                    return true;
-                }
-            }
-        }
-
-        false
+        self.precheck_passes_counted(
+            settings,
+            chunk_min_x,
+            chunk_min_z,
+            chunk,
+            None,
+            origin_x,
+            origin_y,
+            origin_z,
+        )
+        .0
     }
 
     fn max_horizontal_spillover(&self) -> i32 {
@@ -2991,17 +2978,7 @@ impl FeatureRandom {
 
     fn next_int(&mut self, bound: i32) -> i32 {
         assert!(bound > 0);
-        if bound & (bound - 1) == 0 {
-            return (((bound as i64) * (self.next_bits(31) as i64)) >> 31) as i32;
-        }
-
-        loop {
-            let bits = self.next_bits(31) as i32;
-            let value = bits % bound;
-            if bits - value + (bound - 1) >= 0 {
-                return value;
-            }
-        }
+        self.source.next_int(bound as usize) as i32
     }
 
     fn next_long(&mut self) -> i64 {
