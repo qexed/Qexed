@@ -31,11 +31,7 @@ fn log_noise_chunk_timings(
     );
 }
 
-fn log_feature_source_cache_snapshot(
-    chunk_x: i32,
-    chunk_z: i32,
-    cache: &FeatureSourceCache,
-) {
+fn log_feature_source_cache_snapshot(chunk_x: i32, chunk_z: i32, cache: &FeatureSourceCache) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
@@ -143,6 +139,7 @@ struct NoiseSettings {
     lava_lake_barrier_block: BlockLayer,
     cave_air_block: BlockLayer,
     feature_source_cache: FeatureSourceCache,
+    terrain_ocean_floor_cache: Arc<Mutex<HashMap<(i32, i32), i32>>>,
 }
 
 impl NoiseSettings {
@@ -200,6 +197,7 @@ impl NoiseSettings {
             lava_lake_barrier_block: BlockLayer::new("minecraft:stone"),
             cave_air_block: BlockLayer::new("minecraft:cave_air"),
             feature_source_cache: FeatureSourceCache::default(),
+            terrain_ocean_floor_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -247,11 +245,7 @@ impl NoiseSettings {
         let heightmap = heightmap_start.elapsed();
         stage_trace.done("heightmap", heightmap);
 
-        log_feature_source_cache_snapshot(
-            chunk_x,
-            chunk_z,
-            &self.feature_source_cache,
-        );
+        log_feature_source_cache_snapshot(chunk_x, chunk_z, &self.feature_source_cache);
 
         (
             chunk,
@@ -284,12 +278,9 @@ impl NoiseSettings {
             }
         }
 
-        let column_density = self.density.chunk_density_cache(
-            chunk_x * 16,
-            chunk_z * 16,
-            self.min_y,
-            self.height,
-        );
+        let column_density =
+            self.density
+                .chunk_density_cache(chunk_x * 16, chunk_z * 16, self.min_y, self.height);
 
         let mut surface_heights = vec![self.min_y; (17 * 17) as usize];
         for z in 0..=16 {
@@ -343,13 +334,8 @@ impl NoiseSettings {
         self.feature_source_cache
             .get_or_insert_with(chunk_x, chunk_z, || {
                 let (mut chunk, preliminary_surfaces) = self.generate_base_chunk(chunk_x, chunk_z);
-                self.carvers.carve_chunk(
-                    self,
-                    chunk_x,
-                    chunk_z,
-                    &preliminary_surfaces,
-                    &mut chunk,
-                );
+                self.carvers
+                    .carve_chunk(self, chunk_x, chunk_z, &preliminary_surfaces, &mut chunk);
                 chunk
             })
     }
@@ -443,8 +429,23 @@ impl NoiseSettings {
     }
 
     fn terrain_ocean_floor_wg_height(&self, x: i32, z: i32) -> i32 {
+        if let Some(height) = self
+            .terrain_ocean_floor_cache
+            .lock()
+            .expect("terrain ocean floor cache poisoned")
+            .get(&(x, z))
+            .copied()
+        {
+            return height;
+        }
+
         let profile = self.density.profile(x, z);
-        self.surface_height_with_profile(x, z, &profile) + 1
+        let height = self.surface_height_with_profile(x, z, &profile) + 1;
+        self.terrain_ocean_floor_cache
+            .lock()
+            .expect("terrain ocean floor cache poisoned")
+            .insert((x, z), height);
+        height
     }
 
     fn preliminary_surface_with_profile(

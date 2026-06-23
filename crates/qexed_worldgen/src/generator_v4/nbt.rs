@@ -174,6 +174,7 @@ fn load_noise_settings(preset: &str, seed: i64) -> Result<NoiseSettings> {
         lava_lake_barrier_block: BlockLayer::new("minecraft:stone"),
         cave_air_block: BlockLayer::new("minecraft:cave_air"),
         feature_source_cache: FeatureSourceCache::default(),
+        terrain_ocean_floor_cache: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 
@@ -246,9 +247,9 @@ fn flat_chunk_root(chunk_x: i32, chunk_z: i32, layers: &[FlatLayer], biome: &str
         chunk_x,
         chunk_z,
         compound_tag([
-        ("sections", sections_tag(layers, biome)),
-        ("Heightmaps", heightmaps_tag(layers)),
-        ("block_entities", empty_compound_list_tag()),
+            ("sections", sections_tag(layers, biome)),
+            ("Heightmaps", heightmaps_tag(layers)),
+            ("block_entities", empty_compound_list_tag()),
         ]),
     )
 }
@@ -258,9 +259,9 @@ fn noise_chunk_root(chunk_x: i32, chunk_z: i32, chunk: &NoiseChunkBlocks, _biome
         chunk_x,
         chunk_z,
         compound_tag([
-        ("sections", noise_sections_tag(chunk)),
-        ("Heightmaps", noise_heightmaps_tag(chunk)),
-        ("block_entities", empty_compound_list_tag()),
+            ("sections", noise_sections_tag(chunk)),
+            ("Heightmaps", noise_heightmaps_tag(chunk)),
+            ("block_entities", empty_compound_list_tag()),
         ]),
     )
 }
@@ -407,12 +408,13 @@ fn noise_block_states_tag(chunk: &NoiseChunkBlocks, section_y: i32) -> Tag {
                     continue;
                 };
                 let next_index = palette.len();
-                let palette_index = *index_by_block
-                    .entry(layer.block_state_id)
-                    .or_insert_with(|| {
-                    palette.push(block_state_tag(&layer.block, &layer.properties));
-                    next_index
-                });
+                let palette_index =
+                    *index_by_block
+                        .entry(layer.block_state_id)
+                        .or_insert_with(|| {
+                            palette.push(block_state_tag(&layer.block, &layer.properties));
+                            next_index
+                        });
                 values[(local_y * 16 + z) * 16 + x] = palette_index as i32;
             }
         }
