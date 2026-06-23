@@ -49,6 +49,13 @@ pub struct Entity {
     pub pose: EntityPose,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntitySpawnRequest {
+    pub uuid: Option<uuid::Uuid>,
+    pub kind: EntityKind,
+    pub pose: EntityPose,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityIdAllocator {
     next: i32,
@@ -286,6 +293,21 @@ impl Entity {
     }
 }
 
+impl EntitySpawnRequest {
+    pub fn new(kind: EntityKind, pose: EntityPose) -> Self {
+        Self {
+            uuid: None,
+            kind,
+            pose,
+        }
+    }
+
+    pub fn with_uuid(mut self, uuid: uuid::Uuid) -> Self {
+        self.uuid = Some(uuid);
+        self
+    }
+}
+
 impl EntityStore {
     pub fn new() -> Self {
         Self::default()
@@ -308,6 +330,16 @@ impl EntityStore {
         let entity = Entity::with_uuid(id, uuid, kind, pose);
         self.insert_allocated(entity);
         id
+    }
+
+    pub fn spawn_from_request(&mut self, request: EntitySpawnRequest) -> EntitySnapshot {
+        let id = match request.uuid {
+            Some(uuid) => self.spawn_with_uuid(uuid, request.kind, request.pose),
+            None => self.spawn(request.kind, request.pose),
+        };
+        self.get(id)
+            .expect("spawned entity must be readable")
+            .snapshot()
     }
 
     pub fn insert(&mut self, entity: Entity) -> Result<(), InsertEntityError> {
@@ -492,6 +524,13 @@ impl EntityRuntime {
             .snapshot()
     }
 
+    pub fn spawn_from_request(&self, request: EntitySpawnRequest) -> EntitySnapshot {
+        self.store
+            .lock()
+            .expect("entity store mutex poisoned")
+            .spawn_from_request(request)
+    }
+
     pub fn update_pose(&self, id: EntityId, pose: EntityPose) -> bool {
         self.store
             .lock()
@@ -534,8 +573,8 @@ fn is_in_range(position: EntityPosition, center: EntityPosition, radius_blocks: 
 mod tests {
     use super::{
         Entity, EntityDespawnSnapshot, EntityId, EntityIdAllocator, EntityKind, EntityPose,
-        EntityPosition, EntityStore, EntityTypeId, EntityUpdateSnapshot, EntityVelocity,
-        EntityView, InsertEntityError,
+        EntityPosition, EntitySpawnRequest, EntityStore, EntityTypeId, EntityUpdateSnapshot,
+        EntityVelocity, EntityView, InsertEntityError,
     };
 
     #[test]
@@ -637,6 +676,34 @@ mod tests {
 
         let id = store.spawn(EntityKind::Player, EntityPose::default());
         assert_eq!(id, EntityId::new(11));
+    }
+
+    #[test]
+    fn spawn_request_preserves_optional_uuid_and_pose() {
+        let mut store = EntityStore::new();
+        let uuid = uuid::Uuid::from_u128(42);
+        let pose = EntityPose {
+            position: EntityPosition {
+                x: 4.0,
+                y: 70.0,
+                z: -2.0,
+            },
+            ..EntityPose::default()
+        };
+        let request = EntitySpawnRequest::new(
+            EntityKind::Mob {
+                type_id: EntityTypeId::new(5),
+            },
+            pose,
+        )
+        .with_uuid(uuid);
+
+        let snapshot = store.spawn_from_request(request);
+
+        assert_eq!(snapshot.id, EntityId::new(1));
+        assert_eq!(snapshot.uuid, uuid);
+        assert_eq!(snapshot.pose, pose);
+        assert!(matches!(store.updates(), [EntityUpdateSnapshot::Spawn(_)]));
     }
 
     #[test]
