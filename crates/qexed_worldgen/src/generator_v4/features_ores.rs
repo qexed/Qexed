@@ -263,6 +263,7 @@ impl PlacedOreFeature {
         random: &mut FeatureRandom,
     ) {
         debug_assert!(self.can_place_target_spillover_without_source());
+        let mut terrain_height_cache = HashMap::new();
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
@@ -283,7 +284,10 @@ impl PlacedOreFeature {
             {
                 continue;
             }
-            if !self.ore.precheck_passes_terrain(settings, x, y, z) {
+            if !self
+                .ore
+                .precheck_passes_terrain(settings, &mut terrain_height_cache, x, y, z)
+            {
                 continue;
             }
 
@@ -3094,6 +3098,7 @@ impl OreFeatureConfig {
     fn precheck_passes_terrain(
         &self,
         settings: &NoiseSettings,
+        terrain_height_cache: &mut HashMap<(i32, i32), i32>,
         origin_x: i32,
         origin_y: i32,
         origin_z: i32,
@@ -3109,7 +3114,10 @@ impl OreFeatureConfig {
 
         for world_x in min_x..=min_x + horizontal_size {
             for world_z in min_z..=min_z + horizontal_size {
-                if min_y <= settings.terrain_ocean_floor_wg_height(world_x, world_z) {
+                let height = *terrain_height_cache
+                    .entry((world_x, world_z))
+                    .or_insert_with(|| settings.terrain_ocean_floor_wg_height(world_x, world_z));
+                if min_y <= height {
                     return true;
                 }
             }
