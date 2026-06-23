@@ -111,29 +111,8 @@ impl PlacedOreFeature {
     ) {
         let diagnose = ore_spillover_diagnostic_enabled(self.step_index, self.feature_index);
         let mut diagnostic = diagnose.then(OreSpilloverDiagnostic::default);
-        let owned_context_chunks = self.ore.needs_source_spillover_replay().then(|| {
-            source_region_context_chunks(
-                settings,
-                source_origin_x,
-                source_origin_z,
-                target_origin_x,
-                target_origin_z,
-            )
-        });
-        let owned_context_refs = owned_context_chunks
-            .as_ref()
-            .map(|chunks| {
-                chunks
-                    .iter()
-                    .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let replay_context_chunks = if owned_context_refs.is_empty() {
-            context_chunks
-        } else {
-            owned_context_refs.as_slice()
-        };
+        let mut owned_context_chunks = None;
+        let mut owned_context_refs = Vec::new();
 
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
@@ -185,6 +164,26 @@ impl PlacedOreFeature {
             }
             self.ore.start_count_trace_if_enabled();
             if self.ore.needs_source_spillover_replay() {
+                if owned_context_chunks.is_none() {
+                    owned_context_chunks = Some(source_region_context_chunks(
+                        settings,
+                        source_origin_x,
+                        source_origin_z,
+                        target_origin_x,
+                        target_origin_z,
+                    ));
+                    owned_context_refs = owned_context_chunks
+                        .as_ref()
+                        .expect("source region context chunks are initialized")
+                        .iter()
+                        .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
+                        .collect();
+                }
+                let replay_context_chunks = if owned_context_refs.is_empty() {
+                    context_chunks
+                } else {
+                    owned_context_refs.as_slice()
+                };
                 let stats = self.ore.shape_scan_stats_for_context(
                     settings,
                     &shape,
@@ -257,10 +256,6 @@ impl PlacedOreFeature {
         target_origin_z: i32,
         random: &mut FeatureRandom,
     ) -> bool {
-        if self.ore.needs_source_spillover_replay() {
-            return true;
-        }
-
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);

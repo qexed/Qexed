@@ -2417,7 +2417,7 @@ impl PlacedUndergroundFeature<'_> {
     }
 
     fn can_precheck_spillover_without_source(self) -> bool {
-        !matches!(self, Self::Surface(_) | Self::BlockColumn(_))
+        !matches!(self, Self::BlockColumn(_))
     }
 
     fn may_spill_from_seed(
@@ -2547,6 +2547,14 @@ impl PlacedUndergroundFeature<'_> {
                 target_origin_z,
                 random,
             ),
+            Self::Surface(feature) => feature.may_spill_into(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                target_origin_x,
+                target_origin_z,
+                random,
+            ),
             Self::Dripstone(feature) => feature.may_spill_into(
                 settings,
                 source_origin_x,
@@ -2567,7 +2575,6 @@ impl PlacedUndergroundFeature<'_> {
             | Self::ClassicVines(_)
             | Self::SporeBlossom(_)
             | Self::Sculk(_)
-            | Self::Surface(_)
             | Self::BlockColumn(_)
             | Self::FreezeTopLayer(_) => true,
         }

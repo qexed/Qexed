@@ -130,9 +130,13 @@ impl PlacedSurfaceFeature {
         random: &mut FeatureRandom,
     ) {
         for _ in 0..self.count.sample(random) {
-            let Some((world_x, world_y, world_z)) =
-                self.sample_origin(settings, source_origin_x, source_origin_z, source_chunk, random)
-            else {
+            let Some((world_x, world_y, world_z)) = self.sample_origin(
+                settings,
+                source_origin_x,
+                source_origin_z,
+                source_chunk,
+                random,
+            ) else {
                 continue;
             };
             self.config.place_spillover_resolved(
@@ -173,10 +177,40 @@ impl PlacedSurfaceFeature {
         {
             return None;
         }
-        let world_y =
-            self.config
-                .resolve_origin_y(settings, origin_x, origin_z, chunk, world_x, world_y, world_z)?;
+        let world_y = self.config.resolve_origin_y(
+            settings, origin_x, origin_z, chunk, world_x, world_y, world_z,
+        )?;
         Some((world_x, world_y, world_z))
+    }
+
+    fn may_spill_into(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        random: &mut FeatureRandom,
+    ) -> bool {
+        for _ in 0..self.count.sample(random) {
+            let world_x = source_origin_x + random.next_int(16);
+            let world_z = source_origin_z + random.next_int(16);
+            if let Some(world_y) = self.heightmap.sample_height_for_precheck(settings, random)
+                && (world_y <= settings.min_y
+                    || !self
+                        .biome_filter
+                        .allows_at(&settings.density, world_x, world_y, world_z))
+            {
+                continue;
+            }
+            if self
+                .config
+                .may_spill_into(world_x, world_z, target_origin_x, target_origin_z)
+            {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -210,6 +244,18 @@ impl SurfaceHeightmap {
             Self::HeightRange(height) => height.sample(settings, random),
         }
     }
+
+    fn sample_height_for_precheck(
+        self,
+        settings: &NoiseSettings,
+        random: &mut FeatureRandom,
+    ) -> Option<i32> {
+        match self {
+            Self::MotionBlocking | Self::MotionBlockingNoLeaves => None,
+            Self::SeaLevel => Some(settings.sea_level),
+            Self::HeightRange(height) => Some(height.sample(settings, random)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +269,35 @@ enum SurfaceFeatureConfig {
 }
 
 impl SurfaceFeatureConfig {
+    fn horizontal_spillover_radius(&self) -> i32 {
+        match self {
+            Self::BlockBlob(_) => 4,
+            Self::IceSpike(_) => 8,
+            Self::Disk(config) => config.radius.max,
+            Self::VegetationPatch(config) => config.xz_radius.max + 1,
+            Self::Iceberg(_) => 16,
+            Self::BlueIce(_) => 1,
+        }
+    }
+
+    fn may_spill_into(
+        &self,
+        world_x: i32,
+        world_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+    ) -> bool {
+        let radius = self.horizontal_spillover_radius();
+        horizontal_box_overlaps_chunk(
+            world_x - radius,
+            world_x + radius,
+            world_z - radius,
+            world_z + radius,
+            target_origin_x,
+            target_origin_z,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn resolve_origin_y(
         &self,
@@ -254,7 +329,13 @@ impl SurfaceFeatureConfig {
                 world_z,
             ),
             Self::Disk(config) => config.resolve_origin_y(
-                settings, chunk_min_x, chunk_min_z, chunk, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                world_x,
+                world_y,
+                world_z,
             ),
             Self::VegetationPatch(_) => Some(world_y),
             Self::Iceberg(_) => Some(settings.sea_level),
@@ -276,22 +357,64 @@ impl SurfaceFeatureConfig {
     ) -> bool {
         match self {
             Self::BlockBlob(config) => config.place_resolved(
-                settings, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             ),
             Self::IceSpike(config) => config.place_resolved(
-                settings, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             ),
             Self::Disk(config) => config.place(
-                settings, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             ),
             Self::VegetationPatch(config) => config.place(
-                settings, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             ),
             Self::Iceberg(config) => config.place(
-                settings, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             ),
             Self::BlueIce(config) => config.place(
-                settings, chunk_min_x, chunk_min_z, chunk, random, world_x, world_y, world_z,
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
             ),
         }
     }
@@ -627,7 +750,8 @@ impl IceSpikeSurfaceConfig {
                     let z_distance = dz.abs() as f64 - 0.25;
                     let is_center = dx == 0 && dz == 0;
                     let is_edge = dx == -radius || dx == radius || dz == -radius || dz == radius;
-                    if (is_center || x_distance * x_distance + z_distance * z_distance <= scale * scale)
+                    if (is_center
+                        || x_distance * x_distance + z_distance * z_distance <= scale * scale)
                         && (!is_edge || random.next_float() <= 0.75)
                     {
                         let x = world_x + dx;
@@ -674,9 +798,15 @@ impl IceSpikeSurfaceConfig {
                 };
 
                 while y > 50 {
-                    let Some(layer) =
-                        layer_at_world(chunk, chunk_min_x, chunk_min_z, world_x + dx, y, world_z + dz, settings.min_y)
-                    else {
+                    let Some(layer) = layer_at_world(
+                        chunk,
+                        chunk_min_x,
+                        chunk_min_z,
+                        world_x + dx,
+                        y,
+                        world_z + dz,
+                        settings.min_y,
+                    ) else {
                         break;
                     };
                     if !layer.is_air
@@ -858,9 +988,15 @@ impl IceSpikeSurfaceConfig {
         world_z: i32,
         min_y: i32,
     ) -> bool {
-        let Some(current) =
-            layer_at_world(chunk, chunk_min_x, chunk_min_z, world_x, world_y, world_z, min_y)
-        else {
+        let Some(current) = layer_at_world(
+            chunk,
+            chunk_min_x,
+            chunk_min_z,
+            world_x,
+            world_y,
+            world_z,
+            min_y,
+        ) else {
             return false;
         };
         if !current.is_air && !is_ice_spike_replaceable_layer(current) {
@@ -965,8 +1101,8 @@ impl SurfaceDiskConfig {
             world_z,
             settings.min_y,
         )
-            .is_some_and(|layer| layer.is(self.required_anchor))
-            .then_some(world_y)
+        .is_some_and(|layer| layer.is(self.required_anchor))
+        .then_some(world_y)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1201,15 +1337,13 @@ impl IcebergSurfaceConfig {
 
         for dx in -max_radius..max_radius {
             for dz in -max_radius..max_radius {
-                for y_offset in (-under_height + 1..= -1).rev() {
+                for y_offset in (-under_height + 1..=-1).rev() {
                     let steep_radius =
                         height_dependent_radius_steep(random, -y_offset, under_height, width);
                     let current_a = if is_ellipse {
                         ceil_i32(
                             shape_ellipse_a as f64
-                                * (1.0
-                                    - (y_offset * y_offset) as f64
-                                        / (under_height * 8) as f64),
+                                * (1.0 - (y_offset * y_offset) as f64 / (under_height * 8) as f64),
                         )
                     } else {
                         max_radius
@@ -1364,9 +1498,7 @@ impl IcebergSurfaceConfig {
                     let current_a = if is_ellipse {
                         ceil_i32(
                             shape_ellipse_a as f64
-                                * (1.0
-                                    - (y_offset * y_offset) as f64
-                                        / (under_height * 8) as f64),
+                                * (1.0 - (y_offset * y_offset) as f64 / (under_height * 8) as f64),
                         )
                     } else {
                         max_radius
@@ -1759,7 +1891,7 @@ impl IcebergSurfaceConfig {
         }
 
         let min_under_y = -height + random.next_int(5) + 1;
-        for y_offset in (min_under_y..= -1).rev() {
+        for y_offset in (min_under_y..=-1).rev() {
             let radius = height_dependent_radius_steep(random, -y_offset, height, width);
             self.carve(
                 settings,
@@ -1899,15 +2031,8 @@ impl IcebergSurfaceConfig {
         let c = (radius - 3).min(3) + shape_ellipse_c / 2 - 1;
         for dx in -a..a {
             for dz in -a..a {
-                if signed_distance_ellipse(
-                    dx,
-                    dz,
-                    local_origin_x,
-                    local_origin_z,
-                    a,
-                    c,
-                    angle,
-                ) >= 0.0
+                if signed_distance_ellipse(dx, dz, local_origin_x, local_origin_z, a, c, angle)
+                    >= 0.0
                 {
                     continue;
                 }
@@ -1984,15 +2109,8 @@ impl IcebergSurfaceConfig {
         let c = (radius - 3).min(3) + shape_ellipse_c / 2 - 1;
         for dx in -a..a {
             for dz in -a..a {
-                if signed_distance_ellipse(
-                    dx,
-                    dz,
-                    local_origin_x,
-                    local_origin_z,
-                    a,
-                    c,
-                    angle,
-                ) >= 0.0
+                if signed_distance_ellipse(dx, dz, local_origin_x, local_origin_z, a, c, angle)
+                    >= 0.0
                 {
                     continue;
                 }
