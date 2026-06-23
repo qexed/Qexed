@@ -1058,7 +1058,7 @@ impl OverworldOreFeatures {
         features.push(PlacedUndergroundFeatureKey::FreezeTopLayer);
         features.sort_by_key(|key| {
             let feature = self.feature_by_key(*key);
-            (feature.step_index(), feature.feature_index())
+            (feature.step_index(), feature.placement_index())
         });
         features
     }
@@ -1211,7 +1211,7 @@ impl OverworldOreFeatures {
                         let source_origin_z = neighbor_sources.origin_z(source_index);
                         let mut random = FeatureRandom::for_feature(
                             source_decoration_seed,
-                            feature.feature_index,
+                            PlacedUndergroundFeature::MonsterRoom(feature).placement_index(),
                             feature.step_index,
                         );
                         if feature.target_precheck_prevents_spillover(
@@ -1238,7 +1238,7 @@ impl OverworldOreFeatures {
                             neighbor_sources.ensure_decoration_seed(source_index);
                         let mut random = FeatureRandom::for_feature(
                             source_decoration_seed,
-                            feature.feature_index(),
+                            feature.placement_index(),
                             feature.step_index(),
                         );
                         let trace_context = FeatureWriteTraceContext {
@@ -1314,7 +1314,7 @@ impl OverworldOreFeatures {
                     let source_decoration_seed = neighbor_sources.decoration_seed(source_index);
                     let mut random = FeatureRandom::for_feature(
                         source_decoration_seed,
-                        feature.feature_index(),
+                        feature.placement_index(),
                         feature.step_index(),
                     );
                     let spillover_start = Instant::now();
@@ -1445,7 +1445,7 @@ impl OverworldOreFeatures {
             if biome_filter.can_match_chunk(chunk) {
                 let mut random = FeatureRandom::for_feature(
                     decoration_seed,
-                    feature.feature_index(),
+                    feature.placement_index(),
                     feature.step_index(),
                 );
                 let trace_context = FeatureWriteTraceContext {
@@ -2400,6 +2400,134 @@ impl PlacedUndergroundFeature<'_> {
         }
     }
 
+    fn placement_index(self) -> i32 {
+        match self {
+            Self::MultifaceGrowth(feature) if feature.feature_index == 0 => 0,
+            Self::BlockColumn(feature) => match feature.feature_index {
+                99 => 15,
+                15 => 78,
+                16 => 80,
+                17 => 81,
+                19 => 83,
+                14 => 84,
+                18 => 85,
+                _ => feature.feature_index,
+            },
+            Self::Tree(feature) => match feature.feature_index {
+                64 => 2,
+                58 => 4,
+                48 => 5,
+                42 => 8,
+                50 => 10,
+                59 => 12,
+                53 => 13,
+                45 => 14,
+                63 => 16,
+                65 => 24,
+                51 => 27,
+                43 => 30,
+                62 => 32,
+                61 => 33,
+                49 => 34,
+                46 => 39,
+                44 => 40,
+                60 => 41,
+                55 => 46,
+                57 => 48,
+                56 => 49,
+                3 => 51,
+                52 => 55,
+                47 => 56,
+                54 => 70,
+                _ => feature.feature_index,
+            },
+            Self::EnvironmentScan(feature) => match feature.feature_index {
+                79 => 17,
+                80 => 19,
+                81 => 20,
+                82 => 21,
+                _ => feature.feature_index,
+            },
+            Self::CaveVines(feature) if feature.feature_index == 77 => 18,
+            Self::SporeBlossom(feature) if feature.feature_index == 78 => 22,
+            Self::ClassicVines(feature) => match feature.feature_index {
+                83 => 23,
+                85 => 90,
+                _ => feature.feature_index,
+            },
+            Self::HugeMushroom(feature) if feature.feature_index == 101 => 29,
+            Self::SimpleVegetation(feature) => match feature.feature_index {
+                1 => 3,
+                93 => 6,
+                97 => 7,
+                94 => 9,
+                92 => 11,
+                27 => 25,
+                91 => 26,
+                96 => 28,
+                28 => 31,
+                98 => 36,
+                41 => 37,
+                0 => 38,
+                38 => 42,
+                26 => 43,
+                23 => 44,
+                3 => 45,
+                39 => 47,
+                2 => 50,
+                4 => 52,
+                5 => 53,
+                40 => 54,
+                37 => 57,
+                21 => 58,
+                20 => 59,
+                24 => 60,
+                9 => 61,
+                84 => 62,
+                33 => 63,
+                34 => 64,
+                25 => 65,
+                31 => 66,
+                32 => 67,
+                35 => 68,
+                36 => 69,
+                22 => 71,
+                30 => 72,
+                11 => 73,
+                29 => 74,
+                10 => 75,
+                6 => 76,
+                7 => 77,
+                95 => 79,
+                8 => 82,
+                87 => 86,
+                89 => 87,
+                88 => 89,
+                12 => 91,
+                85 => 98,
+                86 => 100,
+                13 => 101,
+                _ => feature.feature_index,
+            },
+            Self::Aquatic(feature) => match feature.feature_index {
+                72 => 88,
+                67 => 92,
+                69 => 93,
+                70 => 94,
+                68 => 95,
+                66 => 96,
+                74 => 97,
+                73 => 99,
+                102 => 102,
+                71 => 103,
+                75 => 104,
+                76 => 105,
+                _ => feature.feature_index,
+            },
+            _ => self.feature_index(),
+        }
+    }
+
     fn biome_filter(self) -> FeatureBiomeFilter {
         match self {
             Self::Lake(feature) => feature.biome_filter,
@@ -2489,7 +2617,7 @@ impl PlacedUndergroundFeature<'_> {
         }
 
         let mut random =
-            FeatureRandom::for_feature(decoration_seed, self.feature_index(), self.step_index());
+            FeatureRandom::for_feature(decoration_seed, self.placement_index(), self.step_index());
         self.may_spill_from_random(
             settings,
             source_origin_x,
