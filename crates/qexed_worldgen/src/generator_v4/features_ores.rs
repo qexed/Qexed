@@ -305,6 +305,10 @@ impl PlacedOreFeature {
         target_origin_z: i32,
         random: &mut FeatureRandom,
     ) -> bool {
+        if self.ore.needs_source_spillover_replay() {
+            return true;
+        }
+
         for attempt in 0..self.count.sample(random) {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
