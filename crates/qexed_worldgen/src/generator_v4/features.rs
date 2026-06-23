@@ -1230,13 +1230,6 @@ impl OverworldOreFeatures {
                     if let PlacedUndergroundFeature::Ore(ore_feature) = feature
                         && ore_feature.can_place_target_spillover_without_source()
                     {
-                        if !neighbor_sources.may_spill_without_loading(
-                            settings,
-                            source_index,
-                            feature,
-                        ) {
-                            continue;
-                        }
                         let source_origin_x = neighbor_sources.origin_x(source_index);
                         let source_origin_z = neighbor_sources.origin_z(source_index);
                         let source_chunk_x = source_origin_x.div_euclid(16);
