@@ -551,6 +551,250 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual ore_gravel source/attempt diagnostic for seed0 chunk(0,0) block (15,-25,0)"]
+    fn seed_zero_ore_gravel_target_15_minus25_0_diagnostic() {
+        fn containing_spheres(
+            shape: &OreBlobShape,
+            target: (i32, i32, i32),
+        ) -> Vec<(usize, [f64; 4])> {
+            let mut containing_spheres = Vec::new();
+            for (sphere_index, [x, y, z, radius]) in shape.spheres.iter().copied().enumerate() {
+                if radius <= 0.0 {
+                    continue;
+                }
+                let xd = (target.0 as f64 + 0.5 - x) / radius;
+                let yd = (target.1 as f64 + 0.5 - y) / radius;
+                let zd = (target.2 as f64 + 0.5 - z) / radius;
+                if xd * xd < 1.0 && xd * xd + yd * yd < 1.0 && xd * xd + yd * yd + zd * zd < 1.0
+                {
+                    containing_spheres.push((sphere_index, [x, y, z, radius]));
+                }
+            }
+            containing_spheres
+        }
+
+        fn target_bit(shape: &OreBlobShape, target: (i32, i32, i32)) -> Option<usize> {
+            if target.0 < shape.min_box_x
+                || target.1 < shape.min_box_y
+                || target.2 < shape.min_box_z
+                || target.0 >= shape.min_box_x + shape.tested_size_x as i32
+                || target.1 >= shape.min_box_y + shape.tested_size_y as i32
+                || target.2 >= shape.min_box_z + shape.tested_size_z as i32
+            {
+                return None;
+            }
+
+            Some(
+                (target.0 - shape.min_box_x) as usize
+                    + (target.1 - shape.min_box_y) as usize * shape.tested_stride_x
+                    + (target.2 - shape.min_box_z) as usize
+                        * shape.tested_stride_x
+                        * shape.tested_stride_y,
+            )
+        }
+
+        fn gravel_at_target(
+            chunk: &NoiseChunkBlocks,
+            settings: &NoiseSettings,
+            target: (i32, i32, i32),
+        ) -> bool {
+            chunk
+                .layer(target.0 as usize, target.1, target.2 as usize, settings.min_y)
+                .is_some_and(|layer| layer.is("minecraft:gravel"))
+        }
+
+        fn feature_source_chunk(
+            settings: &NoiseSettings,
+            chunk_x: i32,
+            chunk_z: i32,
+        ) -> NoiseChunkBlocks {
+            let (mut chunk, preliminary_surfaces) = settings.generate_base_chunk(chunk_x, chunk_z);
+            settings.carvers.carve_chunk(
+                settings,
+                chunk_x,
+                chunk_z,
+                &preliminary_surfaces,
+                &mut chunk,
+            );
+            chunk
+        }
+
+        let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
+        let ore_gravel = &settings.ore_features.features[1];
+        let target_origin_x = 0;
+        let target_origin_z = 0;
+        let target = (15, -25, 0);
+        let (mut pipeline_chunk, preliminary_surfaces) = settings.generate_base_chunk(0, 0);
+        settings.carvers.carve_chunk(
+            &settings,
+            0,
+            0,
+            &preliminary_surfaces,
+            &mut pipeline_chunk,
+        );
+        settings
+            .ore_features
+            .place_chunk(&settings, 0, 0, &mut pipeline_chunk);
+        let pipeline_target = pipeline_chunk
+            .layer(target.0 as usize, target.1, target.2 as usize, settings.min_y)
+            .map(|layer| layer.block.as_ref())
+            .unwrap_or("outside_or_missing");
+        eprintln!(
+            "seed0 ore_gravel target diag: pipeline_after_ore_gravel target=({},{},{}) block={pipeline_target}",
+            target.0, target.1, target.2
+        );
+
+        let mut wrote_target = false;
+
+        for source_chunk_x in -1..=1 {
+            for source_chunk_z in -1..=1 {
+                let source_origin_x = source_chunk_x * 16;
+                let source_origin_z = source_chunk_z * 16;
+                let mut source = feature_source_chunk(&settings, source_chunk_x, source_chunk_z);
+                let mut target_chunk = feature_source_chunk(&settings, 0, 0);
+                let decoration_seed = FeatureRandom::decoration_seed(
+                    settings.ore_features.seed,
+                    source_origin_x,
+                    source_origin_z,
+                );
+                let can_reach_target_chunk = feature_can_reach_chunk(
+                    PlacedUndergroundFeature::Ore(ore_gravel),
+                    source_origin_x,
+                    source_origin_z,
+                    target_origin_x,
+                    target_origin_z,
+                    ore_gravel.ore.max_horizontal_spillover(),
+                );
+                let may_spill_from_seed = PlacedUndergroundFeature::Ore(ore_gravel)
+                    .may_spill_from_seed(
+                        &settings,
+                        source_origin_x,
+                        source_origin_z,
+                        target_origin_x,
+                        target_origin_z,
+                        decoration_seed,
+                    );
+                let mut random = FeatureRandom::for_feature(
+                    decoration_seed,
+                    ore_gravel.feature_index,
+                    ore_gravel.step_index,
+                );
+                let count = ore_gravel.count.sample(&mut random);
+
+                for attempt in 0..count {
+                    let x = source_origin_x + random.next_int(16);
+                    let z = source_origin_z + random.next_int(16);
+                    let y = ore_gravel.height.sample(&settings, &mut random);
+                    if !ore_gravel.biome_filter.allows_at(&settings.density, x, y, z) {
+                        continue;
+                    }
+
+                    let prefix = ore_gravel.ore.sample_blob_prefix(&mut random, x, y, z);
+                    let mut shape_random = random.clone();
+                    let shape = ore_gravel
+                        .ore
+                        .sample_blob_shape(&mut shape_random, prefix.clone());
+                    let containing_spheres = containing_spheres(&shape, target);
+                    let shape_covers_target = !containing_spheres.is_empty();
+                    let shape_reaches_target_chunk =
+                        ore_gravel
+                            .ore
+                            .shape_may_spill_into(target_origin_x, target_origin_z, &shape);
+
+                    let (precheck_passes, precheck_scans) = if source_chunk_x == 0
+                        && source_chunk_z == 0
+                    {
+                        ore_gravel.ore.precheck_passes_counted(
+                            &settings,
+                            target_origin_x,
+                            target_origin_z,
+                            &target_chunk,
+                            None,
+                            x,
+                            y,
+                            z,
+                        )
+                    } else {
+                        ore_gravel.ore.precheck_passes_counted(
+                            &settings,
+                            source_origin_x,
+                            source_origin_z,
+                            &source,
+                            Some((target_origin_x, target_origin_z, &target_chunk)),
+                            x,
+                            y,
+                            z,
+                        )
+                    };
+
+                    let before_target_gravel = gravel_at_target(&target_chunk, &settings, target);
+                    let actually_placed = if precheck_passes {
+                        let shape = ore_gravel.ore.sample_blob_shape(&mut random, prefix);
+                        if source_chunk_x == 0 && source_chunk_z == 0 {
+                            ore_gravel.ore.place_shape_with_neighbor(
+                                &settings,
+                                target_origin_x,
+                                target_origin_z,
+                                &mut target_chunk,
+                                None,
+                                &mut random,
+                                &shape,
+                            )
+                        } else if shape_reaches_target_chunk {
+                            let owned_context_chunks = source_region_context_chunks_for_shape(
+                                &settings,
+                                source_origin_x,
+                                source_origin_z,
+                                target_origin_x,
+                                target_origin_z,
+                                &shape,
+                            );
+                            let owned_context_refs = owned_context_chunks
+                                .iter()
+                                .map(|(origin_x, origin_z, chunk)| {
+                                    (*origin_x, *origin_z, chunk.as_ref())
+                                })
+                                .collect::<Vec<_>>();
+                            let (_source_placed, target_placed) =
+                                ore_gravel.ore.place_shape_with_context_chunks(
+                                    &settings,
+                                    source_origin_x,
+                                    source_origin_z,
+                                    &mut source,
+                                    target_origin_x,
+                                    target_origin_z,
+                                    &mut target_chunk,
+                                    &owned_context_refs,
+                                    &mut random,
+                                    &shape,
+                                );
+                            target_placed
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    let after_target_gravel = gravel_at_target(&target_chunk, &settings, target);
+                    let wrote_this_attempt = !before_target_gravel && after_target_gravel;
+
+                    if shape_covers_target || wrote_this_attempt {
+                        eprintln!(
+                            "seed0 ore_gravel target diag: source_chunk=({source_chunk_x},{source_chunk_z}) can_reach_target_chunk={can_reach_target_chunk} may_spill_from_seed={may_spill_from_seed} attempt={attempt} origin=({x},{y},{z}) shape_reaches_target_chunk={shape_reaches_target_chunk} shape_covers_target={shape_covers_target} containing_spheres={:?} target_bit={:?} precheck_passes={precheck_passes} precheck_scans={precheck_scans} actually_placed_any={actually_placed} wrote_target={wrote_this_attempt}",
+                            containing_spheres,
+                            target_bit(&shape, target),
+                        );
+                    }
+
+                    wrote_target |= wrote_this_attempt;
+                }
+            }
+        }
+
+        assert!(wrote_target, "no ore_gravel attempt wrote target {target:?}");
+    }
+
+    #[test]
     #[ignore = "manual redstone lower attempt diagnostic"]
     fn seed_zero_redstone_lower_attempt_three_shape_diagnostic() {
         let settings = NoiseSettings::overworld(0, vanilla_noise::OverworldNoiseKind::Default);
