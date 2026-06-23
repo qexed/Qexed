@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::app::qexed::server::{Economy, Server, ServerLogLevel};
+use crate::app::qexed::server::{Economy, Gameplay, Server, ServerLogLevel};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QexedServer {
@@ -53,6 +53,9 @@ pub struct QexedServerCore {
     #[serde(default)]
     pub economy: Economy,
 
+    #[serde(default)]
+    pub gameplay: Gameplay,
+
     pub motd: Vec<String>,
 
     #[serde(default)]
@@ -76,6 +79,7 @@ impl QexedServerCore {
         server.rate_limit_max_attempts = self.rate_limit_max_attempts;
         server.click_detection = self.click_detection;
         server.economy = self.economy;
+        server.gameplay = self.gameplay;
         server.motd = self.motd;
         server.code_of_conduct = self.code_of_conduct;
         server.favicon = self.favicon;
@@ -99,6 +103,7 @@ impl Default for QexedServerCore {
             rate_limit_max_attempts: server.rate_limit_max_attempts,
             click_detection: server.click_detection,
             economy: server.economy,
+            gameplay: server.gameplay,
             motd: vec!["qexed服务端awa".to_string()],
             code_of_conduct: server.code_of_conduct,
             favicon: server.favicon,

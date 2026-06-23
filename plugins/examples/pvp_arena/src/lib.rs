@@ -1,10 +1,11 @@
 use qexed_plugin_sdk::{
     ConfigReloadPayload, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
     PlayerAction, PlayerAttackQuery, PlayerAttackResponse, PlayerDeathQuery, PlayerDeathResponse,
-    PlayerPayload, PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery,
-    PluginCommandResponse, PluginManifest, ProjectileHitPlayerPayload, WorldEditRegion,
-    config_load_or_create, config_read_to_string, storage_delete, storage_get_typed,
-    storage_set_typed, time_millis, world_register_edit_region, world_set_blocks,
+    PlayerPayload, PlayerTickPayload, PlayerUseItemPayload, PluginCommandDefinition,
+    PluginCommandQuery, PluginCommandResponse, PluginManifest, ProjectileHitPlayerPayload,
+    WorldEditRegion, config_load_or_create, config_read_to_string, storage_delete,
+    storage_get_typed, storage_set_typed, time_millis, world_register_edit_region,
+    world_set_blocks,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,7 @@ const PENDING_PREFIX: &str = "pvp/pending/";
 const STATS_PREFIX: &str = "pvp/stats/";
 const DUEL_QUEUE_KEY: &str = "pvp/queue/duel";
 const BOSS_BAR_ID: &str = "pvp:status";
+const PVP_ARROW_EVENT: &str = "pvp.arrow";
 const WORLD_EDIT_BATCH_LIMIT: usize = 4096;
 
 #[unsafe(no_mangle)]
@@ -69,8 +71,12 @@ pub extern "C" fn qexed_plugin_player_join(ptr: i32, len: i32) {
     else {
         return;
     };
+    let config = load_config();
     clear_player_state(&payload.uuid);
     ensure_stats(&payload.uuid, &payload.username);
+    if config.enable {
+        push_pending(&payload.uuid, lobby_actions(&config, "已回到 PVP 大厅"));
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -180,6 +186,18 @@ pub extern "C" fn qexed_plugin_player_attack(ptr: i32, len: i32) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn qexed_plugin_player_use_item(ptr: i32, len: i32) -> i64 {
+    let Some(payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<PlayerUseItemPayload>(ptr, len) })
+    else {
+        return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
+    };
+    let config = load_config();
+    let response = handle_player_use_item(&config, &payload);
+    qexed_plugin_sdk::response_ptr_len(&response)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_projectile_hit_player(ptr: i32, len: i32) -> i64 {
     let Some(payload) =
         (unsafe { qexed_plugin_sdk::decode_payload::<ProjectileHitPlayerPayload>(ptr, len) })
@@ -224,10 +242,11 @@ fn handle_command(config: &Config, payload: &PluginCommandQuery) -> PluginComman
         }
         Some("ffa") => join_ffa(config, payload),
         Some("leave") | Some("lobby") | Some("quit") => leave_game(config, &payload.player.uuid),
+        Some("server") | Some("hub") => leave_to_server_lobby(config, &payload.player.uuid),
         Some("stats") => show_stats(&payload.player.uuid),
         Some("status") => show_status(&payload.player.uuid),
         _ => handled(vec![message(
-            "用法: /pvp, /pvp duel, /pvp ffa, /pvp leave, /pvp stats",
+            "用法: /pvp, /pvp duel, /pvp ffa, /pvp leave, /pvp server, /pvp stats",
         )]),
     }
 }
@@ -292,6 +311,7 @@ fn start_duel(
             opponent_uuid: opponent.uuid.clone(),
             opponent_name: opponent.username.clone(),
             alive: true,
+            last_shot_ms: 0,
         },
     );
     save_session(
@@ -302,6 +322,7 @@ fn start_duel(
             opponent_uuid: player.uuid.clone(),
             opponent_name: player.username.clone(),
             alive: true,
+            last_shot_ms: 0,
         },
     );
 
@@ -322,6 +343,7 @@ fn join_ffa(config: &Config, payload: &PluginCommandQuery) -> PluginCommandRespo
             opponent_uuid: String::new(),
             opponent_name: String::new(),
             alive: true,
+            last_shot_ms: 0,
         },
     );
     handled(ffa_spawn_actions(config, "已进入 FFA 竞技场"))
@@ -344,6 +366,15 @@ fn leave_game(config: &Config, player_uuid: &str) -> PluginCommandResponse {
     }
     clear_player_state(player_uuid);
     handled(lobby_actions(config, "已返回 PVP 大厅"))
+}
+
+fn leave_to_server_lobby(config: &Config, player_uuid: &str) -> PluginCommandResponse {
+    let mut response = leave_game(config, player_uuid);
+    response.actions.push(PlayerAction::ProxyConnect {
+        server: config.server_lobby_id.clone(),
+        message: "正在返回服务器大厅".to_string(),
+    });
+    response
 }
 
 fn show_status(player_uuid: &str) -> PluginCommandResponse {
@@ -453,11 +484,48 @@ fn handle_player_attack(config: &Config, payload: &PlayerAttackQuery) -> PlayerA
     }
 }
 
+fn handle_player_use_item(
+    config: &Config,
+    payload: &PlayerUseItemPayload,
+) -> PluginCommandResponse {
+    if !config.enable {
+        return PluginCommandResponse::default();
+    }
+    if payload.action == "use_item" && is_lobby_return_item(config, payload) {
+        return leave_game(config, &payload.player.uuid);
+    }
+    if payload.action == "use_item" && is_server_lobby_return_item(config, payload) {
+        return leave_to_server_lobby(config, &payload.player.uuid);
+    }
+    if payload.action != "release_use_item" {
+        return PluginCommandResponse::default();
+    }
+    let Some(mut session) = get_session(&payload.player.uuid) else {
+        return PluginCommandResponse::default();
+    };
+    if !session.alive || !is_pvp_bow(config, payload) {
+        return PluginCommandResponse::default();
+    }
+    let now = time_millis();
+    if now.saturating_sub(session.last_shot_ms) < config.combat.bow_cooldown_ms {
+        return handled(vec![message("PVP 弓冷却中")]);
+    }
+    session.last_shot_ms = now;
+    save_session(&payload.player.uuid, &session);
+    handled(vec![pvp_arrow_projectile(payload)])
+}
+
 fn handle_projectile_hit_player(
     config: &Config,
     payload: &ProjectileHitPlayerPayload,
 ) -> PluginCommandResponse {
     if !config.enable {
+        return PluginCommandResponse::default();
+    }
+    if payload.configured_event != PVP_ARROW_EVENT || payload.projectile_kind != "arrow" {
+        return PluginCommandResponse::default();
+    }
+    if !payload.tag.trim().ends_with(config.kit.bow_name.trim()) {
         return PluginCommandResponse::default();
     }
     let Some(shooter_session) = get_session(&payload.shooter.uuid) else {
@@ -511,6 +579,17 @@ fn handle_player_death(config: &Config, payload: &PlayerDeathQuery) -> PlayerDea
 
     add_death(&payload.player.uuid, &payload.player.username);
     clear_player_state(&payload.player.uuid);
+    save_session(
+        &payload.player.uuid,
+        &PlayerSession {
+            mode: GameModeKind::Ffa,
+            game_id: "ffa".to_string(),
+            opponent_uuid: String::new(),
+            opponent_name: String::new(),
+            alive: true,
+            last_shot_ms: 0,
+        },
+    );
     push_pending(
         &payload.player.uuid,
         ffa_spawn_actions(config, "你已阵亡，已重新进入 FFA"),
@@ -697,7 +776,7 @@ fn kit_actions(config: &Config) -> Vec<PlayerAction> {
     ];
     if config.kit.golden_apples > 0 {
         actions.push(PlayerAction::GiveItem {
-            item: "minecraft:golden_apple".to_string(),
+            item: config.kit.golden_apple_item.clone(),
             count: config.kit.golden_apples.clamp(1, 64),
             name: String::new(),
             lore: Vec::new(),
@@ -705,7 +784,83 @@ fn kit_actions(config: &Config) -> Vec<PlayerAction> {
             plugin_enchantments: Vec::new(),
         });
     }
+    actions.push(PlayerAction::GiveItem {
+        item: config.kit.lobby_item.clone(),
+        count: 1,
+        name: config.kit.lobby_item_name.clone(),
+        lore: vec!["右键返回 PVP 大厅".to_string()],
+        enchantments: Vec::new(),
+        plugin_enchantments: Vec::new(),
+    });
+    actions.push(PlayerAction::GiveItem {
+        item: config.kit.server_lobby_item.clone(),
+        count: 1,
+        name: config.kit.server_lobby_item_name.clone(),
+        lore: vec!["右键返回浅屿闲游大厅".to_string()],
+        enchantments: Vec::new(),
+        plugin_enchantments: Vec::new(),
+    });
     actions
+}
+
+fn is_lobby_return_item(config: &Config, payload: &PlayerUseItemPayload) -> bool {
+    payload.item.item_name == config.kit.lobby_item
+        && payload
+            .item
+            .display_name
+            .trim()
+            .ends_with(config.kit.lobby_item_name.trim())
+}
+
+fn is_server_lobby_return_item(config: &Config, payload: &PlayerUseItemPayload) -> bool {
+    payload.item.item_name == config.kit.server_lobby_item
+        && payload
+            .item
+            .display_name
+            .trim()
+            .ends_with(config.kit.server_lobby_item_name.trim())
+}
+
+fn is_pvp_bow(config: &Config, payload: &PlayerUseItemPayload) -> bool {
+    payload.item.item_name == config.kit.bow
+        && payload
+            .item
+            .display_name
+            .trim()
+            .ends_with(config.kit.bow_name.trim())
+}
+
+fn pvp_arrow_projectile(payload: &PlayerUseItemPayload) -> PlayerAction {
+    let (dir_x, dir_y, dir_z) = look_direction(payload.yaw, payload.pitch);
+    let speed = 1.9;
+    PlayerAction::SpawnProjectile {
+        kind: "arrow".to_string(),
+        configured_event: PVP_ARROW_EVENT.to_string(),
+        tag: payload.item.display_name.clone(),
+        dimension: payload.dimension.clone(),
+        x: payload.position.x + dir_x * 0.6,
+        y: payload.position.y + 1.55 + dir_y * 0.6,
+        z: payload.position.z + dir_z * 0.6,
+        velocity_x: dir_x * speed,
+        velocity_y: dir_y * speed,
+        velocity_z: dir_z * speed,
+        source_entity_id: payload.player.entity_id,
+        damage: 0.0,
+        knockback: 0.0,
+        gravity_per_tick: 0.03,
+        hit_radius: 0.25,
+        lifetime_ticks: 60,
+    }
+}
+
+fn look_direction(yaw: f32, pitch: f32) -> (f64, f64, f64) {
+    let yaw = f64::from(yaw).to_radians();
+    let pitch = f64::from(pitch).to_radians();
+    (
+        -yaw.sin() * pitch.cos(),
+        -pitch.sin(),
+        yaw.cos() * pitch.cos(),
+    )
 }
 
 fn register_regions(config: &Config) {
@@ -927,6 +1082,8 @@ struct PlayerSession {
     opponent_uuid: String,
     opponent_name: String,
     alive: bool,
+    #[serde(default)]
+    last_shot_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -979,6 +1136,8 @@ struct Config {
     combat: CombatConfig,
     #[serde(default)]
     kit: KitConfig,
+    #[serde(default = "default_server_lobby_id")]
+    server_lobby_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1106,6 +1265,8 @@ struct CombatConfig {
     knockback: f32,
     #[serde(default = "default_arrow_knockback")]
     arrow_knockback: f32,
+    #[serde(default = "default_bow_cooldown_ms")]
+    bow_cooldown_ms: i64,
 }
 
 impl Default for CombatConfig {
@@ -1117,6 +1278,7 @@ impl Default for CombatConfig {
             arrow_damage: default_arrow_damage(),
             knockback: default_knockback(),
             arrow_knockback: default_arrow_knockback(),
+            bow_cooldown_ms: default_bow_cooldown_ms(),
         }
     }
 }
@@ -1137,8 +1299,18 @@ struct KitConfig {
     food: String,
     #[serde(default = "default_food_count")]
     food_count: i32,
+    #[serde(default = "default_golden_apple_item")]
+    golden_apple_item: String,
     #[serde(default = "default_golden_apples")]
     golden_apples: i32,
+    #[serde(default = "default_lobby_item")]
+    lobby_item: String,
+    #[serde(default = "default_lobby_item_name")]
+    lobby_item_name: String,
+    #[serde(default = "default_server_lobby_item")]
+    server_lobby_item: String,
+    #[serde(default = "default_server_lobby_item_name")]
+    server_lobby_item_name: String,
 }
 
 impl Default for KitConfig {
@@ -1151,7 +1323,12 @@ impl Default for KitConfig {
             arrows: default_arrows(),
             food: default_food(),
             food_count: default_food_count(),
+            golden_apple_item: default_golden_apple_item(),
             golden_apples: default_golden_apples(),
+            lobby_item: default_lobby_item(),
+            lobby_item_name: default_lobby_item_name(),
+            server_lobby_item: default_server_lobby_item(),
+            server_lobby_item_name: default_server_lobby_item_name(),
         }
     }
 }
@@ -1162,6 +1339,10 @@ fn default_true() -> bool {
 
 fn default_menu_id() -> String {
     "pvp".to_string()
+}
+
+fn default_server_lobby_id() -> String {
+    "lobby_1".to_string()
 }
 
 fn default_lobby_dimension() -> String {
@@ -1253,7 +1434,7 @@ fn default_fist_damage() -> f32 {
 }
 
 fn default_arrow_damage() -> f32 {
-    5.0
+    3.0
 }
 
 fn default_knockback() -> f32 {
@@ -1262,6 +1443,10 @@ fn default_knockback() -> f32 {
 
 fn default_arrow_knockback() -> f32 {
     0.55
+}
+
+fn default_bow_cooldown_ms() -> i64 {
+    900
 }
 
 fn default_sword() -> String {
@@ -1296,9 +1481,30 @@ fn default_golden_apples() -> i32 {
     2
 }
 
+fn default_golden_apple_item() -> String {
+    "minecraft:enchanted_golden_apple".to_string()
+}
+
+fn default_lobby_item() -> String {
+    "minecraft:barrier".to_string()
+}
+
+fn default_lobby_item_name() -> String {
+    "返回 PVP 大厅".to_string()
+}
+
+fn default_server_lobby_item() -> String {
+    "minecraft:ender_pearl".to_string()
+}
+
+fn default_server_lobby_item_name() -> String {
+    "返回服务器大厅".to_string()
+}
+
 const DEFAULT_CONFIG: &str = r#"enable = true
 build_maps = true
 menu_id = "pvp"
+server_lobby_id = "lobby_1"
 
 [lobby]
 dimension = "qexed:pvp_lobby"
@@ -1352,9 +1558,10 @@ pitch = 0.0
 sword_damage = 6.0
 axe_damage = 7.0
 fist_damage = 1.0
-arrow_damage = 5.0
+arrow_damage = 3.0
 knockback = 0.42
 arrow_knockback = 0.55
+bow_cooldown_ms = 900
 
 [kit]
 sword = "minecraft:iron_sword"
@@ -1364,5 +1571,10 @@ bow_name = "PVP 弓"
 arrows = 32
 food = "minecraft:cooked_beef"
 food_count = 16
+golden_apple_item = "minecraft:enchanted_golden_apple"
 golden_apples = 2
+lobby_item = "minecraft:barrier"
+lobby_item_name = "返回 PVP 大厅"
+server_lobby_item = "minecraft:ender_pearl"
+server_lobby_item_name = "返回服务器大厅"
 "#;

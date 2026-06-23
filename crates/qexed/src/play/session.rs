@@ -27,6 +27,7 @@ impl<'a> PlayerLeaveGuard<'a> {
     }
 
     fn leave_inner(&self) {
+        self.plugins.remove_geyser_player_info(&self.player);
         self.plugins.emit_player_leave(&self.player);
         self.players.leave(self.player.profile.uuid);
     }

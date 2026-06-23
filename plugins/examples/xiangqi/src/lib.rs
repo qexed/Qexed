@@ -1389,13 +1389,19 @@ fn evaluate_position(game: &GameState, color: u8) -> i32 {
 fn piece_positional_score(piece: &Piece, x: usize, z: usize) -> i32 {
     let center = 4 - (x as i32 - 4).abs();
     match piece.kind {
-        PieceKind::General => 40 - ((x as i32 - 4).abs() + palace_home_z_distance(piece.color, z)) * 12,
+        PieceKind::General => {
+            40 - ((x as i32 - 4).abs() + palace_home_z_distance(piece.color, z)) * 12
+        }
         PieceKind::Advisor | PieceKind::Elephant => 20 + center * 4,
         PieceKind::Horse => 35 + center * 8 + advancement_score(piece.color, z) * 2,
         PieceKind::Rook => 40 + center * 6 + advancement_score(piece.color, z),
         PieceKind::Cannon => 30 + center * 7 + advancement_score(piece.color, z),
         PieceKind::Pawn => {
-            let crossed = if pawn_crossed_river(piece.color, z) { 45 } else { 0 };
+            let crossed = if pawn_crossed_river(piece.color, z) {
+                45
+            } else {
+                0
+            };
             20 + crossed + center * 6 + advancement_score(piece.color, z) * 12
         }
     }
@@ -2692,5 +2698,4 @@ mod tests {
             .z = 4;
         assert!(validate_move(&game, "r_pawn_0", 1, 4).is_ok());
     }
-
 }

@@ -48,6 +48,12 @@ pub(super) fn event_is_self(event: &PlayerEvent, profile_id: uuid::Uuid) -> bool
             item_name: _,
         } => *target_id == profile_id,
         PlayerEvent::ProjectileHitPlayer(event) => event.shooter_profile_id == profile_id,
+        PlayerEvent::Animation {
+            profile_id: animated_id,
+            entity_id: _,
+            dimension: _,
+            action_id: _,
+        } => *animated_id == profile_id,
         PlayerEvent::DimensionChanged {
             profile_id: target_id,
             entity_id: _,
@@ -96,6 +102,7 @@ pub(super) fn player_event_message(
         PlayerEvent::GameModeChanged { .. }
         | PlayerEvent::GiveItem { .. }
         | PlayerEvent::ProjectileHitPlayer(_)
+        | PlayerEvent::Animation { .. }
         | PlayerEvent::BlockChanges { .. } => None,
         PlayerEvent::ClientboundPackets { packets: _ } => None,
         _ => None,

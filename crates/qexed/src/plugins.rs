@@ -17,22 +17,23 @@ mod instance;
 mod structured_storage;
 
 pub use qexed_plugin_api::{
-    AdvancementGrantQuery, AdvancementGrantResponse, BlockDropPosition, BlockDropQuery,
-    BlockDropResponse, BlockStepPayload, BlockStepPosition, ClickDetectedPayload, CraftItemQuery,
-    CraftItemResponse, CraftingRecipeQuery, CraftingRecipeResponse, CustomEntityDefinition,
-    CustomEntityRegistryResponse, EnchantingOption, EnchantingQuery, EnchantingResponse,
-    EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload, EntityAiTickQuery,
-    EntityAiTickResponse, FurnaceRecipeQuery, FurnaceRecipeResponse, FurnaceTickPayload,
-    ItemDurabilityQuery, ItemDurabilityResponse, ItemEnchantment, ItemStackPayload,
-    MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload, NpcMutationOp,
-    NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
+    AdvancementGrantQuery, AdvancementGrantResponse, BedrockFormResponsePayload, BlockDropPosition,
+    BlockDropQuery, BlockDropResponse, BlockStepPayload, BlockStepPosition, ClickDetectedPayload,
+    CraftItemQuery, CraftItemResponse, CraftingRecipeQuery, CraftingRecipeResponse,
+    CustomEntityDefinition, CustomEntityRegistryResponse, EnchantingOption, EnchantingQuery,
+    EnchantingResponse, EntityAiEntityPayload, EntityAiOperation, EntityAiPlayerPayload,
+    EntityAiTickQuery, EntityAiTickResponse, FurnaceRecipeQuery, FurnaceRecipeResponse,
+    FurnaceTickPayload, ItemDurabilityQuery, ItemDurabilityResponse, ItemEnchantment,
+    ItemStackPayload, MiningSpeedQuery, MiningSpeedResponse, NpcEntityPayload, NpcInteractPayload,
+    NpcMutationOp, NpcMutationQuery, NpcMutationResponse, PlaceholderContext, PlaceholderQuery,
     PlaceholderReplacement, PlaceholderResponse, PlayerAction, PlayerAttackQuery,
-    PlayerAttackResponse, PlayerBlockInteractPayload, PlayerDeathQuery, PlayerDeathResponse,
-    PlayerInputPayload, PlayerItemPickupQuery, PlayerItemPickupResponse, PlayerMovePayload,
-    PlayerOxygenTickQuery, PlayerOxygenTickResponse, PlayerPayloadOwned, PlayerTickPayload,
-    PlayerUseItemPayload, PluginCommandDefinition, PluginCommandQuery, PluginCommandResponse,
-    PluginEnchantment, PotionEffectTickQuery, PotionEffectTickResponse, ProjectileHitPlayerPayload,
-    ProxyConnectResultPayload, SoundPayload, SoundResponse,
+    PlayerAttackResponse, PlayerBlockInteractPayload, PlayerClientPayload, PlayerDeathQuery,
+    PlayerDeathResponse, PlayerInputPayload, PlayerInputState, PlayerItemPickupQuery,
+    PlayerItemPickupResponse, PlayerMovePayload, PlayerOxygenTickQuery, PlayerOxygenTickResponse,
+    PlayerPayloadOwned, PlayerTickPayload, PlayerUseItemPayload, PluginCommandDefinition,
+    PluginCommandQuery, PluginCommandResponse, PluginEnchantment, PotionEffectTickQuery,
+    PotionEffectTickResponse, ProjectileHitPlayerPayload, ProxyConnectResultPayload, SoundPayload,
+    SoundResponse,
 };
 
 use event::PluginEvent;
@@ -44,6 +45,18 @@ use qexed_plugin_api::{
 };
 
 use crate::players::OnlinePlayer;
+
+#[derive(Debug, Clone, Default)]
+pub struct PlayerBlockHitPayload {
+    pub sequence: i32,
+    pub face: String,
+    pub face_id: i32,
+    pub cursor_x: f32,
+    pub cursor_y: f32,
+    pub cursor_z: f32,
+    pub inside_block: bool,
+    pub world_border_hit: bool,
+}
 
 pub struct PluginManager {
     plugins: Arc<OnceLock<Vec<Arc<Mutex<PluginInstance>>>>>,
@@ -754,6 +767,10 @@ impl PluginManager {
         self.emit_encoded(PluginEvent::ProxyConnectResult, payload);
     }
 
+    pub fn emit_bedrock_form_response(&self, payload: &BedrockFormResponsePayload) {
+        self.emit_encoded(PluginEvent::BedrockFormResponse, payload);
+    }
+
     pub fn placeholder_replacements(&self, query: PlaceholderQuery) -> Vec<PlaceholderReplacement> {
         let mut replacements = Vec::new();
         for response in
@@ -799,6 +816,9 @@ impl PluginManager {
         block_name: String,
         position: BlockDropPosition,
         hand: String,
+        hit: PlayerBlockHitPayload,
+        input: PlayerInputState,
+        client: PlayerClientPayload,
     ) -> PluginCommandResponse {
         let query = PlayerBlockInteractPayload {
             player: player_payload_owned(player),
@@ -808,6 +828,16 @@ impl PluginManager {
             position,
             player_position: player_position_payload(player.position),
             hand,
+            sequence: hit.sequence,
+            face: hit.face,
+            face_id: hit.face_id,
+            cursor_x: hit.cursor_x,
+            cursor_y: hit.cursor_y,
+            cursor_z: hit.cursor_z,
+            inside_block: hit.inside_block,
+            world_border_hit: hit.world_border_hit,
+            input,
+            client,
         };
         let mut result = PluginCommandResponse {
             handled: false,
@@ -875,6 +905,7 @@ impl PluginManager {
         player: &OnlinePlayer,
         previous_flags: u8,
         flags: u8,
+        client: PlayerClientPayload,
     ) -> PluginCommandResponse {
         let query = PlayerInputPayload {
             player: player_payload_owned(player),
@@ -882,6 +913,7 @@ impl PluginManager {
             position: player_position_payload(player.position),
             previous_input: player_input_state(previous_flags),
             input: player_input_state(flags),
+            client,
         };
         let mut result = PluginCommandResponse {
             handled: false,
@@ -905,6 +937,8 @@ impl PluginManager {
         sequence: i32,
         yaw: f32,
         pitch: f32,
+        input: PlayerInputState,
+        client: PlayerClientPayload,
     ) -> PluginCommandResponse {
         let query = PlayerUseItemPayload {
             player: player_payload_owned(player),
@@ -916,6 +950,8 @@ impl PluginManager {
             sequence,
             yaw,
             pitch,
+            input,
+            client,
         };
         let mut result = PluginCommandResponse {
             handled: false,
@@ -1040,6 +1076,15 @@ impl PluginManager {
 
     pub fn set_entity_control_service(&self, service: Arc<dyn host::EntityControlService>) {
         self.services.set_entity_control(service);
+    }
+
+    pub fn upsert_geyser_player_info(&self, info: qexed_plugin_api::GeyserPlayerInfoResponse) {
+        self.services.upsert_geyser_player(info);
+    }
+
+    pub fn remove_geyser_player_info(&self, player: &OnlinePlayer) {
+        self.services
+            .remove_geyser_player(&player.profile.uuid.to_string(), &player.profile.username);
     }
 
     pub fn configure_economy(&self, config: &qexed_config::app::qexed::server::Economy) {

@@ -1,4 +1,4 @@
-use qexed_plugin_sdk::{PlayerPayload, PlayerAction, PluginCommandDefinition, decode_payload, log};
+use qexed_plugin_sdk::{PlayerAction, PlayerPayload, PluginCommandDefinition, decode_payload, log};
 
 qexed_plugin_sdk::qexed_plugin_memory!();
 
@@ -58,13 +58,17 @@ pub extern "C" fn qexed_plugin_player_join(ptr: i32, len: i32) -> i64 {
     // Build actions
     let mut actions: Vec<PlayerAction> = vec![
         PlayerAction::SystemMessage {
-            text: format!("§aWelcome to Skyblock, {}! §eStarter items placed in inventory.", player.username),
+            text: format!(
+                "§aWelcome to Skyblock, {}! §eStarter items placed in inventory.",
+                player.username
+            ),
             translate: String::new(),
             with: Vec::new(),
             overlay: false,
         },
         PlayerAction::SystemMessage {
-            text: "§7Tip: Place ice to get water, lava + water = cobblestone generator.".to_string(),
+            text: "§7Tip: Place ice to get water, lava + water = cobblestone generator."
+                .to_string(),
             translate: String::new(),
             with: Vec::new(),
             overlay: false,
@@ -116,7 +120,8 @@ pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
     let response = PluginCommandResponse {
         handled: true,
         actions: vec![PlayerAction::SystemMessage {
-            text: "§6=== Skyblock ===\n§e/skyblock help §7- Show help\n§e/island §7- Island info".to_string(),
+            text: "§6=== Skyblock ===\n§e/skyblock help §7- Show help\n§e/island §7- Island info"
+                .to_string(),
             translate: String::new(),
             with: Vec::new(),
             overlay: false,

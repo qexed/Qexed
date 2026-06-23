@@ -86,6 +86,12 @@ pub enum PlayerEvent {
         item_name: String,
     },
     ProjectileHitPlayer(ProjectileHitPlayerEvent),
+    Animation {
+        profile_id: uuid::Uuid,
+        entity_id: i32,
+        dimension: String,
+        action_id: u8,
+    },
     EquipmentChanged {
         profile_id: uuid::Uuid,
         entity_id: i32,

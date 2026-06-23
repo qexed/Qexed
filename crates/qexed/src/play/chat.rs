@@ -50,6 +50,8 @@ pub(super) async fn handle_chat_command<W>(
     position: &mut qexed_protocol::to_client::play::add_entity::EntityPosition,
     next_teleport_id: &mut i32,
     play_dimension: &mut String,
+    geyser_runtime: &mut super::geyser::GeyserRuntime,
+    inventory: &mut crate::inventory::PlayerInventory,
 ) -> Result<CommandOutcome>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -414,7 +416,8 @@ where
                         visible_player_entities,
                         viewer_position,
                         render_distance,
-                        None,
+                        Some(&mut *inventory),
+                        Some(geyser_runtime),
                         action,
                     )
                     .await?;
@@ -2577,6 +2580,7 @@ pub(super) async fn apply_plugin_action<W>(
     viewer_position: EntityPosition,
     render_distance: f64,
     mut inventory: Option<&mut crate::inventory::PlayerInventory>,
+    mut geyser: Option<&mut super::geyser::GeyserRuntime>,
     action: crate::plugins::PlayerAction,
 ) -> Result<bool>
 where
@@ -2693,26 +2697,67 @@ where
             Ok(false)
         }
         crate::plugins::PlayerAction::GiveItem {
-            item, count, name, ..
+            item,
+            count,
+            name,
+            lore,
+            enchantments,
+            plugin_enchantments,
         } => {
-            let Some((mut slot, normalized)) = command_item_stack(&item, count.clamp(1, 64)) else {
+            let Some(slot) = super::plugin_action_item_stack(
+                &item,
+                count,
+                &name,
+                &lore,
+                &enchantments,
+                &plugin_enchantments,
+            ) else {
                 log::debug!("plugin GiveItem action ignored: unknown item={item}");
                 return Ok(false);
             };
             let display_name = if name.trim().is_empty() {
-                normalized
+                normalize_resource_key(&item).to_ascii_lowercase()
             } else {
-                let display_name = name.trim().to_string();
-                let components = slot.components_to_add.get_or_insert_with(Vec::new);
-                components.push(qexed_protocol::types::ComponentsToAdd::MinecraftItemName(
-                    qexed_protocol::types::minecraft::ItemName {
-                        name: text_component(display_name.as_str()),
-                    },
-                ));
-                slot.number_of_components_to_add = Some(VarInt(components.len() as i32));
-                display_name
+                name.trim().to_string()
             };
-            Ok(players.give_item(actor, slot, display_name))
+            let Some(inventory) = inventory.as_deref_mut() else {
+                return Ok(players.give_item(actor, slot, display_name));
+            };
+            let requested = slot.item_count.0.max(0);
+            let (changes, given) = inventory.add_item_stack_partial(&slot);
+            if !changes.is_empty() {
+                let actor_entity_id = players
+                    .player_by_uuid(actor)
+                    .map(|player| player.entity_id)
+                    .unwrap_or_default();
+                super::sync_inventory_changes(
+                    sink,
+                    players,
+                    actor,
+                    actor_entity_id,
+                    inventory.selected_slot(),
+                    changes,
+                )
+                .await?;
+            }
+            if given > 0 {
+                sink.send(SystemChat {
+                    content: text_component(format!("收到 {given} 个 {display_name}")),
+                    overlay: false,
+                })
+                .await?;
+            }
+            if given < requested {
+                sink.send(SystemChat {
+                    content: text_component(format!(
+                        "背包空间不足，剩余 {} 个 {display_name} 未放入",
+                        requested - given
+                    )),
+                    overlay: false,
+                })
+                .await?;
+            }
+            Ok(false)
         }
         crate::plugins::PlayerAction::ResetInventory { restore_menu_items } => {
             let Some(inventory) = inventory.as_deref_mut() else {
@@ -2897,6 +2942,51 @@ where
         crate::plugins::PlayerAction::RemoveBossBar { id } => {
             sink.send(BossEvent::remove(plugin_boss_bar_uuid(actor, &id)))
                 .await?;
+            Ok(false)
+        }
+        crate::plugins::PlayerAction::SendBedrockForm {
+            uuid,
+            username,
+            form_id,
+            plugin_form_id,
+            form_type,
+            json,
+        } => {
+            let target = if !uuid.trim().is_empty() {
+                uuid::Uuid::parse_str(uuid.trim())
+                    .ok()
+                    .and_then(|profile_id| players.player_by_uuid(profile_id))
+            } else if !username.trim().is_empty() {
+                players.player_by_name(username.trim())
+            } else {
+                players.player_by_uuid(actor)
+            };
+            let Some(target) = target else {
+                log::debug!(
+                    "plugin SendBedrockForm action ignored: target not found uuid={}, username={}",
+                    uuid,
+                    username
+                );
+                return Ok(false);
+            };
+            if target.profile.uuid != actor {
+                log::debug!(
+                    "plugin SendBedrockForm action ignored: target={} is not current connection",
+                    target.profile.username
+                );
+                return Ok(false);
+            }
+            let Some(geyser) = geyser.as_deref_mut() else {
+                log::debug!("plugin SendBedrockForm action ignored: geyser runtime unavailable");
+                return Ok(false);
+            };
+            let packet = geyser.form_packet(
+                super::geyser::BedrockFormType::parse(&form_type),
+                form_id,
+                plugin_form_id,
+                &json,
+            )?;
+            sink.send(packet).await?;
             Ok(false)
         }
     }

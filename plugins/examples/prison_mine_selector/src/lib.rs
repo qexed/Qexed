@@ -66,7 +66,8 @@ pub extern "C" fn qexed_plugin_player_join(ptr: i32, len: i32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_player_tick(ptr: i32, len: i32) -> i64 {
-    let Some(_payload) = (unsafe { qexed_plugin_sdk::decode_payload::<PlayerTickPayload>(ptr, len) })
+    let Some(_payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<PlayerTickPayload>(ptr, len) })
     else {
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse::default());
     };
@@ -408,8 +409,7 @@ pub extern "C" fn qexed_plugin_block_drops(ptr: i32, len: i32) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_mining_speed(ptr: i32, len: i32) -> i64 {
-    let Some(payload) =
-        (unsafe { qexed_plugin_sdk::decode_payload::<MiningSpeedQuery>(ptr, len) })
+    let Some(payload) = (unsafe { qexed_plugin_sdk::decode_payload::<MiningSpeedQuery>(ptr, len) })
     else {
         return qexed_plugin_sdk::response_ptr_len(&MiningSpeedResponse::default());
     };
@@ -1168,7 +1168,10 @@ fn should_refill_mine(config: &Config, mine: &MineConfig, mined_count: usize) ->
 }
 
 fn reset_mine_refill_state(mine: &MineConfig) {
-    let _ = storage_set_typed(&mine_refill_state_key(&mine.id), &MineRefillState::default());
+    let _ = storage_set_typed(
+        &mine_refill_state_key(&mine.id),
+        &MineRefillState::default(),
+    );
 }
 
 fn load_config() -> Config {

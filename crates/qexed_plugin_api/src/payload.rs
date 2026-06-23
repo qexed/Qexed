@@ -438,6 +438,26 @@ pub struct PlayerBlockInteractPayload {
     pub player_position: PlayerPositionPayload,
     #[serde(default)]
     pub hand: String,
+    #[serde(default)]
+    pub sequence: i32,
+    #[serde(default)]
+    pub face: String,
+    #[serde(default)]
+    pub face_id: i32,
+    #[serde(default)]
+    pub cursor_x: f32,
+    #[serde(default)]
+    pub cursor_y: f32,
+    #[serde(default)]
+    pub cursor_z: f32,
+    #[serde(default)]
+    pub inside_block: bool,
+    #[serde(default)]
+    pub world_border_hit: bool,
+    #[serde(default)]
+    pub input: PlayerInputState,
+    #[serde(default)]
+    pub client: PlayerClientPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -456,7 +476,7 @@ pub struct PlayerTickPayload {
     pub tick_millis: u64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct PlayerInputState {
     pub forward: bool,
     pub backward: bool,
@@ -467,6 +487,22 @@ pub struct PlayerInputState {
     pub sprint: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlayerClientPayload {
+    #[serde(default)]
+    pub bedrock: bool,
+    #[serde(default)]
+    pub floodgate: bool,
+    #[serde(default)]
+    pub xuid: String,
+    #[serde(default)]
+    pub device_os: String,
+    #[serde(default)]
+    pub input_mode: String,
+    #[serde(default)]
+    pub ui_profile: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerInputPayload {
     pub player: PlayerPayloadOwned,
@@ -474,6 +510,8 @@ pub struct PlayerInputPayload {
     pub position: PlayerPositionPayload,
     pub previous_input: PlayerInputState,
     pub input: PlayerInputState,
+    #[serde(default)]
+    pub client: PlayerClientPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -490,6 +528,10 @@ pub struct PlayerUseItemPayload {
     pub yaw: f32,
     #[serde(default)]
     pub pitch: f32,
+    #[serde(default)]
+    pub input: PlayerInputState,
+    #[serde(default)]
+    pub client: PlayerClientPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -661,6 +703,49 @@ pub struct PluginApiCallResponse {
     pub payload: Vec<u8>,
     #[serde(default)]
     pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GeyserPlayerInfoQuery {
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GeyserPlayerInfoResponse {
+    #[serde(default)]
+    pub online: bool,
+    #[serde(default)]
+    pub bedrock: bool,
+    #[serde(default)]
+    pub floodgate: bool,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub java_uuid: String,
+    #[serde(default)]
+    pub xuid: String,
+    #[serde(default)]
+    pub device_os: String,
+    #[serde(default)]
+    pub input_mode: String,
+    #[serde(default)]
+    pub ui_profile: String,
+    #[serde(default)]
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BedrockFormResponsePayload {
+    pub player: PlayerPayloadOwned,
+    #[serde(default)]
+    pub form_id: u16,
+    #[serde(default)]
+    pub plugin_form_id: String,
+    #[serde(default)]
+    pub response: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1027,6 +1112,19 @@ pub enum PlayerAction {
     },
     RemoveBossBar {
         id: String,
+    },
+    SendBedrockForm {
+        #[serde(default)]
+        uuid: String,
+        #[serde(default)]
+        username: String,
+        #[serde(default)]
+        form_id: Option<u16>,
+        #[serde(default)]
+        plugin_form_id: String,
+        #[serde(default)]
+        form_type: String,
+        json: String,
     },
 }
 

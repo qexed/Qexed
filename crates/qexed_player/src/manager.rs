@@ -318,6 +318,24 @@ impl PlayerManager {
             .is_ok()
     }
 
+    pub fn broadcast_animation(&self, profile_id: uuid::Uuid, action_id: u8) -> bool {
+        let players = self.players.lock().expect("player manager poisoned");
+        let Some(handle) = players.get(&profile_id) else {
+            return false;
+        };
+        broadcast_locked(
+            &players,
+            profile_id,
+            PlayerEvent::Animation {
+                profile_id,
+                entity_id: handle.player.entity_id,
+                dimension: handle.player.dimension.clone(),
+                action_id,
+            },
+        );
+        true
+    }
+
     pub fn player_by_name(&self, username: &str) -> Option<OnlinePlayer> {
         let username = username.trim();
         if username.is_empty() {

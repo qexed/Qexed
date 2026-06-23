@@ -13,7 +13,9 @@ use wasmtime::Caller;
 use super::PluginState;
 use super::economy::{EconomyState, normalize_currency};
 use super::structured_storage::StructuredStorageState;
-use qexed_plugin_api::{HttpHeader, HttpRequest, HttpResponse};
+use qexed_plugin_api::{
+    GeyserPlayerInfoQuery, GeyserPlayerInfoResponse, HttpHeader, HttpRequest, HttpResponse,
+};
 
 const MAX_HOST_LOG_BYTES: usize = 16 * 1024;
 const MAX_HOST_PATH_BYTES: usize = 1024;
@@ -25,6 +27,7 @@ const MAX_HOST_WORLD_EDIT_BATCH_BYTES: usize = 1024 * 1024;
 const MAX_HOST_ENTITY_CONTROL_BYTES: usize = 16 * 1024;
 const MAX_HOST_RANDOM_POOL_BYTES: usize = 256 * 1024;
 const MAX_HOST_PLUGIN_API_BYTES: usize = 1024 * 1024;
+const MAX_HOST_GEYSER_INFO_BYTES: usize = 16 * 1024;
 const MAX_HOST_HTTP_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_HOST_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_HOST_STORAGE_KEY_BYTES: usize = 512;
@@ -48,6 +51,7 @@ pub(super) struct PluginHostServices {
     world_edit: Mutex<Option<std::sync::Arc<dyn WorldEditService>>>,
     entity_control: Mutex<Option<std::sync::Arc<dyn EntityControlService>>>,
     random_pools: Mutex<RandomPoolState>,
+    geyser_players: Mutex<GeyserPlayerState>,
 }
 
 #[derive(Debug, Default)]
@@ -85,6 +89,12 @@ pub(crate) trait PluginApiService: Send + Sync + std::fmt::Debug {
 struct PluginServiceState {
     available_plugins: HashSet<String>,
     providers: HashMap<String, String>,
+}
+
+#[derive(Debug, Default)]
+struct GeyserPlayerState {
+    by_uuid: HashMap<String, GeyserPlayerInfoResponse>,
+    username_to_uuid: HashMap<String, String>,
 }
 
 pub(crate) trait PathfindingService: Send + Sync + std::fmt::Debug {
@@ -263,6 +273,61 @@ impl PluginHostServices {
             .expect("plugin API service poisoned")
             .as_ref()
             .and_then(|api| api.call(caller, service, method, payload))
+    }
+
+    pub(super) fn upsert_geyser_player(&self, info: GeyserPlayerInfoResponse) {
+        let uuid = info.java_uuid.trim().to_string();
+        if uuid.is_empty() {
+            return;
+        }
+        let mut state = self
+            .geyser_players
+            .lock()
+            .expect("geyser player state poisoned");
+        if !info.username.trim().is_empty() {
+            state
+                .username_to_uuid
+                .insert(info.username.to_ascii_lowercase(), uuid.clone());
+        }
+        state.by_uuid.insert(uuid, info);
+    }
+
+    pub(super) fn remove_geyser_player(&self, uuid: &str, username: &str) {
+        let mut state = self
+            .geyser_players
+            .lock()
+            .expect("geyser player state poisoned");
+        state.by_uuid.remove(uuid.trim());
+        if !username.trim().is_empty() {
+            state
+                .username_to_uuid
+                .remove(&username.to_ascii_lowercase());
+        }
+    }
+
+    fn geyser_player_info(&self, query: &GeyserPlayerInfoQuery) -> GeyserPlayerInfoResponse {
+        let state = self
+            .geyser_players
+            .lock()
+            .expect("geyser player state poisoned");
+        if let Some(info) = (!query.uuid.trim().is_empty())
+            .then(|| state.by_uuid.get(query.uuid.trim()))
+            .flatten()
+        {
+            return info.clone();
+        }
+        if let Some(uuid) = (!query.username.trim().is_empty())
+            .then(|| {
+                state
+                    .username_to_uuid
+                    .get(&query.username.to_ascii_lowercase())
+            })
+            .flatten()
+            && let Some(info) = state.by_uuid.get(uuid)
+        {
+            return info.clone();
+        }
+        GeyserPlayerInfoResponse::default()
     }
 
     pub(super) fn set_pathfinding(&self, pathfinding: std::sync::Arc<dyn PathfindingService>) {
@@ -1452,6 +1517,31 @@ pub(super) fn host_pathfinding_find(
         return -1;
     };
     write_host_response(&mut caller, out_ptr, out_len, response.as_bytes())
+}
+
+pub(super) fn host_geyser_player_info(
+    mut caller: Caller<'_, PluginState>,
+    query_ptr: i32,
+    query_len: i32,
+    out_ptr: i32,
+    out_len: i32,
+) -> i64 {
+    let Some(bytes) = host_memory_bytes(
+        &mut caller,
+        query_ptr,
+        query_len,
+        MAX_HOST_GEYSER_INFO_BYTES,
+    ) else {
+        return -1;
+    };
+    let Ok(query) = postcard::from_bytes::<GeyserPlayerInfoQuery>(bytes) else {
+        return -1;
+    };
+    let response = caller.data().services.geyser_player_info(&query);
+    let Ok(bytes) = postcard::to_allocvec(&response) else {
+        return -1;
+    };
+    write_host_response(&mut caller, out_ptr, out_len, &bytes)
 }
 
 pub(super) fn host_world_set_block(

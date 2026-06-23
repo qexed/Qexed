@@ -1,8 +1,8 @@
 use qexed_plugin_sdk::{
     ConfigReloadPayload, PlayerAction, PlayerItemPickupQuery, PlayerItemPickupResponse,
-    PlayerPayload, PluginApiCallQuery, PluginApiCallResponse, PluginManifest, PluginServiceDefinition,
-    config_load_or_create, config_read_to_string,
-    storage_get_typed, storage_set_typed,
+    PlayerPayload, PluginApiCallQuery, PluginApiCallResponse, PluginManifest,
+    PluginServiceDefinition, config_load_or_create, config_read_to_string, storage_get_typed,
+    storage_set_typed,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -170,7 +170,8 @@ pub extern "C" fn qexed_plugin_init() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_config_reload(ptr: i32, len: i32) {
-    let Some(payload) = (unsafe { qexed_plugin_sdk::decode_payload::<ConfigReloadPayload>(ptr, len) })
+    let Some(payload) =
+        (unsafe { qexed_plugin_sdk::decode_payload::<ConfigReloadPayload>(ptr, len) })
     else {
         return;
     };
@@ -220,8 +221,9 @@ pub extern "C" fn qexed_plugin_player_item_pickup(ptr: i32, len: i32) -> i64 {
     let mut actions = Vec::new();
     if config.pickup_message_enable && added > 0 {
         let now = qexed_plugin_sdk::time_millis();
-        let mut state = storage_get_typed::<PickupMessageState>(&cooldown_key(&payload.player.uuid))
-            .unwrap_or_default();
+        let mut state =
+            storage_get_typed::<PickupMessageState>(&cooldown_key(&payload.player.uuid))
+                .unwrap_or_default();
         if now - state.last_message_ms >= PICKUP_MESSAGE_COOLDOWN_MS {
             state.last_message_ms = now;
             let _ = storage_set_typed(&cooldown_key(&payload.player.uuid), &state);
@@ -260,8 +262,7 @@ pub extern "C" fn qexed_plugin_block_drops(_ptr: i32, _len: i32) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_api_call(ptr: i32, len: i32) -> i64 {
-    let Some(query) =
-        (unsafe { qexed_plugin_sdk::decode_payload::<PluginApiCallQuery>(ptr, len) })
+    let Some(query) = (unsafe { qexed_plugin_sdk::decode_payload::<PluginApiCallQuery>(ptr, len) })
     else {
         return qexed_plugin_sdk::response_ptr_len(&api_error("decode failed"));
     };
@@ -336,8 +337,7 @@ fn api_remove_items(query: &PluginApiCallQuery) -> Result<Vec<u8>, String> {
 }
 
 fn api_get_items(query: &PluginApiCallQuery) -> Result<Vec<u8>, String> {
-    let uuid: String =
-        serde_json::from_slice(&query.payload).map_err(|e| format!("parse: {e}"))?;
+    let uuid: String = serde_json::from_slice(&query.payload).map_err(|e| format!("parse: {e}"))?;
     let backpack = load_backpack(&uuid);
     let response = GetItemsResponse {
         items: backpack.items,

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::to_client::play::{
-    add_entity::EntityPosition, animate::Animate, damage_event::DamageEvent,
-    entity_event::EntityEvent, hurt_animation::HurtAnimation, set_entity_motion::SetEntityMotion,
+    add_entity::EntityPosition, damage_event::DamageEvent, entity_event::EntityEvent,
+    hurt_animation::HurtAnimation, set_entity_motion::SetEntityMotion,
 };
 
 use super::items;
@@ -60,6 +60,7 @@ where
         .map(|entity| entity.entity_type.clone())
         .unwrap_or_default();
     let target_player = players.player_by_entity_id(target_entity_id);
+    let should_broadcast_animation = target.is_some() || target_player.is_some();
     let response = plugins.apply_player_attack(crate::plugins::PlayerAttackQuery {
         player: qexed_plugin_api::player_payload_owned(player),
         dimension: player.dimension.clone(),
@@ -83,6 +84,9 @@ where
         knockback,
         fire_ticks,
     });
+    if should_broadcast_animation {
+        players.broadcast_animation(player.profile.uuid, 0);
+    }
     if response.cancel {
         return Ok(CombatOutcome {
             handled: !response.actions.is_empty(),
@@ -108,11 +112,6 @@ where
         actions: response.actions,
         ..CombatOutcome::default()
     };
-    sink.send(Animate {
-        entity_id: VarInt(player.entity_id),
-        action_id: 0,
-    })
-    .await?;
 
     if let Some(result) =
         entities.damage_managed_entity(players, rendering, target_entity_id, damage)?
@@ -159,6 +158,9 @@ where
             damage,
         )?
     {
+        if !should_broadcast_animation {
+            players.broadcast_animation(player.profile.uuid, 0);
+        }
         outcome.killed = result.killed;
         outcome.damaged_held_item = true;
     }

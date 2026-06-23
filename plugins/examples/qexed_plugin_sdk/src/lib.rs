@@ -146,6 +146,8 @@ unsafe extern "C" {
     fn host_lottery_roll(entries_ptr: i32, entries_len: i32, out_ptr: i32, out_len: i32) -> i64;
     #[link_name = "pathfinding_find"]
     fn host_pathfinding_find(query_ptr: i32, query_len: i32, out_ptr: i32, out_len: i32) -> i64;
+    #[link_name = "geyser_player_info"]
+    fn host_geyser_player_info(query_ptr: i32, query_len: i32, out_ptr: i32, out_len: i32) -> i64;
     #[link_name = "world_set_block"]
     fn host_world_set_block(query_ptr: i32, query_len: i32) -> i32;
     #[link_name = "world_set_blocks"]
@@ -779,6 +781,15 @@ pub fn pathfinding_find(
             ))
         })
         .collect()
+}
+
+pub fn geyser_player_info(query: &GeyserPlayerInfoQuery) -> Option<GeyserPlayerInfoResponse> {
+    let bytes = postcard::to_allocvec(query).ok()?;
+    let query_len = i32_len(&bytes)?;
+    let response = read_host_buffer(|out_ptr, out_len| unsafe {
+        host_geyser_player_info(bytes.as_ptr() as i32, query_len, out_ptr, out_len)
+    })?;
+    postcard::from_bytes(&response).ok()
 }
 
 pub fn world_set_block(dimension: &str, position: (i32, i32, i32), block: &str) -> bool {

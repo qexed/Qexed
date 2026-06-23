@@ -82,6 +82,22 @@ impl PlayerEvent {
                 item_name: _,
             } => Ok(Vec::new()),
             Self::ProjectileHitPlayer(_) => Ok(Vec::new()),
+            Self::Animation {
+                profile_id: _,
+                entity_id,
+                dimension,
+                action_id,
+            } => {
+                if dimension != viewer_dimension {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![packet_bytes(
+                    qexed_protocol::to_client::play::animate::Animate {
+                        entity_id: qexed_packet::net_types::VarInt(*entity_id),
+                        action_id: *action_id,
+                    },
+                )?])
+            }
             Self::DimensionChanged {
                 profile_id: _,
                 entity_id,
@@ -276,5 +292,25 @@ mod tests {
             .unwrap();
 
         assert_eq!(decoded.entries[0].game_mode.0, 0);
+    }
+
+    #[test]
+    fn animation_packets_respect_viewer_dimension() {
+        let event = PlayerEvent::Animation {
+            profile_id: uuid::Uuid::from_u128(3),
+            entity_id: 42,
+            dimension: "minecraft:overworld".to_string(),
+            action_id: 0,
+        };
+
+        let same_dimension_packets = event.packets(155, "minecraft:overworld").unwrap();
+        assert_eq!(same_dimension_packets.len(), 1);
+        assert_eq!(
+            same_dimension_packets[0].first(),
+            Some(&(qexed_protocol::to_client::play::animate::Animate::ID as u8))
+        );
+
+        let other_dimension_packets = event.packets(155, "minecraft:the_nether").unwrap();
+        assert!(other_dimension_packets.is_empty());
     }
 }

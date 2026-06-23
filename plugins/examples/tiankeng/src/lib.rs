@@ -2,8 +2,8 @@ use qexed_plugin_sdk::{
     ConfigReloadPayload, NpcInteractPayload, NpcMutationOp, NpcMutationResponse, NpcUpsert,
     PlayerAction, PlayerPayload, PlayerTickPayload, PluginCommandDefinition, PluginCommandQuery,
     PluginCommandResponse, WorldEditRegion, config_load_or_create, config_read_to_string,
-    storage_delete, storage_get_typed, storage_set_typed, time_millis,
-    world_register_edit_region, world_set_blocks,
+    storage_delete, storage_get_typed, storage_set_typed, time_millis, world_register_edit_region,
+    world_set_blocks,
 };
 use serde::{Deserialize, Serialize};
 
@@ -158,7 +158,10 @@ pub extern "C" fn qexed_plugin_player_tick(ptr: i32, len: i32) -> i64 {
     }
 
     if session.current_radius <= config.arena.min_radius.max(1)
-        && now >= session.next_collapse_at_ms.saturating_add(config.arena.win_hold_ms)
+        && now
+            >= session
+                .next_collapse_at_ms
+                .saturating_add(config.arena.win_hold_ms)
     {
         let _ = storage_delete(&session_key(&payload.player.uuid));
         return qexed_plugin_sdk::response_ptr_len(&PluginCommandResponse {
@@ -195,7 +198,12 @@ fn handle_command(config: &Config, payload: &PluginCommandQuery) -> PluginComman
         };
     }
 
-    match payload.argument.split_whitespace().next().unwrap_or_default() {
+    match payload
+        .argument
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+    {
         "" | "menu" | "select" => open_game_menu(config),
         "start" | "new" | "restart" => start_game(config, &payload.player.uuid),
         "status" | "info" => status_response(config, &payload.player.uuid),
@@ -491,7 +499,12 @@ fn elapsed_seconds(now: i64, started_at_ms: i64) -> u64 {
 
 fn instance_origin(config: &Config, player_uuid: &str) -> (i32, i32, i32) {
     let hash = fnv1a64(player_uuid.as_bytes());
-    let spacing = i64::from(config.arena.instance_spacing.max(config.arena.radius * 3 + 16));
+    let spacing = i64::from(
+        config
+            .arena
+            .instance_spacing
+            .max(config.arena.radius * 3 + 16),
+    );
     let x_index = (hash % INSTANCE_GRID_WIDTH) as i64;
     let z_index = ((hash / INSTANCE_GRID_WIDTH) % INSTANCE_GRID_WIDTH) as i64;
     (

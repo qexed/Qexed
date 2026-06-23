@@ -75,8 +75,7 @@ pub extern "C" fn qexed_plugin_player_leave(ptr: i32, len: i32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn qexed_plugin_block_drops(ptr: i32, len: i32) -> i64 {
-    let Some(payload) =
-        (unsafe { qexed_plugin_sdk::decode_payload::<BlockDropQuery>(ptr, len) })
+    let Some(payload) = (unsafe { qexed_plugin_sdk::decode_payload::<BlockDropQuery>(ptr, len) })
     else {
         return qexed_plugin_sdk::response_ptr_len(&BlockDropResponse::default());
     };
@@ -273,7 +272,12 @@ pub extern "C" fn qexed_plugin_command_execute(ptr: i32, len: i32) -> i64 {
         });
     }
 
-    let response = match payload.argument.split_whitespace().next().unwrap_or_default() {
+    let response = match payload
+        .argument
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+    {
         "" | "menu" => PluginCommandResponse {
             handled: true,
             actions: vec![PlayerAction::OpenMenu {
@@ -470,8 +474,13 @@ fn leave_queue(config: &Config, player_uuid: &str) -> PluginCommandResponse {
         }
         if was_alive && !game.phase.is_finished() {
             game.alive_map.insert(player_uuid.to_string(), false);
-            game.death_messages
-                .push(format!("{} 退出了游戏", game.player_names.get(player_uuid).cloned().unwrap_or_else(|| player_uuid.to_string())));
+            game.death_messages.push(format!(
+                "{} 退出了游戏",
+                game.player_names
+                    .get(player_uuid)
+                    .cloned()
+                    .unwrap_or_else(|| player_uuid.to_string())
+            ));
             save_game(game);
             let alive = alive_player_list(game);
             check_game_end(config, game, &alive);
@@ -503,7 +512,11 @@ fn start_game(config: &Config, game_id: &str) -> PluginCommandResponse {
         return PluginCommandResponse::default();
     };
 
-    let origin = (config.arena.origin_x, config.arena.origin_y, config.arena.origin_z);
+    let origin = (
+        config.arena.origin_x,
+        config.arena.origin_y,
+        config.arena.origin_z,
+    );
     game.origin_x = origin.0;
     game.origin_y = origin.1;
     game.origin_z = origin.2;
@@ -645,7 +658,10 @@ fn remove_player_from_game(player_uuid: &str) {
             game.alive_map.insert(player_uuid.to_string(), false);
             game.death_messages.push(format!(
                 "{} 离开了游戏",
-                game.player_names.get(player_uuid).cloned().unwrap_or_else(|| player_uuid.to_string())
+                game.player_names
+                    .get(player_uuid)
+                    .cloned()
+                    .unwrap_or_else(|| player_uuid.to_string())
             ));
             save_game(game);
         }
@@ -720,9 +736,13 @@ fn build_arena(config: &Config, game: &GameState) -> bool {
     let special_count = (radius * radius / 6).max(5) as usize;
     let mut hash = stable_seed(&game.id, 0);
     for _ in 0..special_count {
-        hash = hash.wrapping_mul(0x100000001b3).wrapping_add(0xcbf29ce484222325);
+        hash = hash
+            .wrapping_mul(0x100000001b3)
+            .wrapping_add(0xcbf29ce484222325);
         let x = ((hash % (radius as u64 * 2)) as i32) - radius;
-        hash = hash.wrapping_mul(0x100000001b3).wrapping_add(0xcbf29ce484222325);
+        hash = hash
+            .wrapping_mul(0x100000001b3)
+            .wrapping_add(0xcbf29ce484222325);
         let z = ((hash % (radius as u64 * 2)) as i32) - radius;
         let layer = (hash % layers as u64) as i32;
         let y = origin.1 + layer;
@@ -743,8 +763,8 @@ fn build_arena(config: &Config, game: &GameState) -> bool {
 }
 
 fn shrink_border(config: &Config, game: &mut GameState) {
-    let new_radius = (game.current_radius - config.arena.shrink_step)
-        .max(config.arena.min_radius.max(2));
+    let new_radius =
+        (game.current_radius - config.arena.shrink_step).max(config.arena.min_radius.max(2));
     if new_radius >= game.current_radius {
         return;
     }
@@ -762,11 +782,19 @@ fn shrink_border(config: &Config, game: &mut GameState) {
             for sign in [-1, 1] {
                 // Top and bottom edges
                 for dx in -r..=r {
-                    blocks.push((dim, (origin.0 + dx, y, origin.2 + sign * r), "minecraft:air"));
+                    blocks.push((
+                        dim,
+                        (origin.0 + dx, y, origin.2 + sign * r),
+                        "minecraft:air",
+                    ));
                 }
                 // Left and right edges (excluding corners already handled)
                 for dz in -(r - 1)..=(r - 1) {
-                    blocks.push((dim, (origin.0 + sign * r, y, origin.2 + dz), "minecraft:air"));
+                    blocks.push((
+                        dim,
+                        (origin.0 + sign * r, y, origin.2 + dz),
+                        "minecraft:air",
+                    ));
                 }
             }
         }
@@ -827,7 +855,9 @@ fn lottery_roll_single(items: &[String]) -> Option<String> {
     let mut entries: Vec<(String, u64)> = Vec::new();
     for item in items {
         let mut parts = item.split(':');
-        let Some(item_name) = parts.next() else { continue };
+        let Some(item_name) = parts.next() else {
+            continue;
+        };
         let Some(weight) = parts.next().and_then(|w| w.parse::<u64>().ok()) else {
             continue;
         };
@@ -919,11 +949,7 @@ fn alive_player_list(game: &GameState) -> Vec<String> {
         .collect()
 }
 
-fn broadcast_bossbar(
-    alive: &[String],
-    game: &GameState,
-    _config: &Config,
-) -> Vec<PlayerAction> {
+fn broadcast_bossbar(alive: &[String], game: &GameState, _config: &Config) -> Vec<PlayerAction> {
     let _phase_text = match game.phase {
         GamePhase::DigPhase => "挖掘阶段",
         GamePhase::FightPhase => "战斗阶段",
@@ -1221,35 +1247,83 @@ impl Default for LootConfig {
 
 // ============ Default value functions ============
 
-fn default_true() -> bool { true }
-fn default_menu_id() -> String { "digfight".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_menu_id() -> String {
+    "digfight".to_string()
+}
 
-fn default_lobby_dimension() -> String { "qexed:digfight_lobby".to_string() }
-fn default_lobby_y() -> f64 { -60.0 }
-fn default_lobby_floor_y() -> i32 { -60 }
-fn default_npc_z() -> f64 { 3.5 }
-fn default_npc_yaw() -> f32 { 180.0 }
-fn default_npc_entity_type() -> String { "minecraft:villager".to_string() }
+fn default_lobby_dimension() -> String {
+    "qexed:digfight_lobby".to_string()
+}
+fn default_lobby_y() -> f64 {
+    -60.0
+}
+fn default_lobby_floor_y() -> i32 {
+    -60
+}
+fn default_npc_z() -> f64 {
+    3.5
+}
+fn default_npc_yaw() -> f32 {
+    180.0
+}
+fn default_npc_entity_type() -> String {
+    "minecraft:villager".to_string()
+}
 fn default_npc_display_name() -> String {
     "{\"text\":\"掘一死战\",\"color\":\"gold\"}".to_string()
 }
 
-fn default_arena_dimension() -> String { "qexed:digfight".to_string() }
-fn default_arena_origin_x() -> i32 { 2048 }
-fn default_arena_origin_y() -> i32 { -60 }
-fn default_arena_origin_z() -> i32 { 2048 }
-fn default_min_players() -> i32 { 4 }
-fn default_initial_radius() -> i32 { 12 }
-fn default_min_radius() -> i32 { 3 }
-fn default_shrink_step() -> i32 { 1 }
-fn default_shrink_interval_ms() -> i64 { 15000 }
-fn default_shrink_start_delay_ms() -> i64 { 5000 }
-fn default_dig_phase_ms() -> i64 { 60000 }
-fn default_layer_count() -> i32 { 3 }
-fn default_top_layer_block() -> String { "minecraft:sand".to_string() }
-fn default_mid_layer_block() -> String { "minecraft:dirt".to_string() }
-fn default_deep_layer_block() -> String { "minecraft:stone".to_string() }
-fn default_special_block() -> String { "minecraft:diamond_block".to_string() }
+fn default_arena_dimension() -> String {
+    "qexed:digfight".to_string()
+}
+fn default_arena_origin_x() -> i32 {
+    2048
+}
+fn default_arena_origin_y() -> i32 {
+    -60
+}
+fn default_arena_origin_z() -> i32 {
+    2048
+}
+fn default_min_players() -> i32 {
+    4
+}
+fn default_initial_radius() -> i32 {
+    12
+}
+fn default_min_radius() -> i32 {
+    3
+}
+fn default_shrink_step() -> i32 {
+    1
+}
+fn default_shrink_interval_ms() -> i64 {
+    15000
+}
+fn default_shrink_start_delay_ms() -> i64 {
+    5000
+}
+fn default_dig_phase_ms() -> i64 {
+    60000
+}
+fn default_layer_count() -> i32 {
+    3
+}
+fn default_top_layer_block() -> String {
+    "minecraft:sand".to_string()
+}
+fn default_mid_layer_block() -> String {
+    "minecraft:dirt".to_string()
+}
+fn default_deep_layer_block() -> String {
+    "minecraft:stone".to_string()
+}
+fn default_special_block() -> String {
+    "minecraft:diamond_block".to_string()
+}
 
 fn default_common_items() -> Vec<String> {
     vec![

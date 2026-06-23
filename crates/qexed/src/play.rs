@@ -4,6 +4,7 @@ mod chunks;
 mod drops;
 mod events;
 mod gameplay;
+mod geyser;
 mod lobby;
 mod menus;
 mod mining;
@@ -594,6 +595,7 @@ where
     let mut initial_cluster_entity_view_sent = false;
     let mut last_stepped_block: Option<BlockPosition> = None;
     let mut last_input_flags = 0u8;
+    let mut geyser_runtime = geyser::GeyserRuntime::default();
     let mut movement_observation_logs = 0u8;
     let mut survival = SurvivalState::from_stored(saved_player.survival, current_game_mode);
     let mut pending_dig: Option<mining::PendingDig> = None;
@@ -849,6 +851,7 @@ where
                     &mut visible_player_entities,
                     config.server.entity_rendering.player_distance,
                     &mut inventory,
+                    &mut geyser_runtime,
                 )
                 .await?;
                 if handled {
@@ -1409,6 +1412,7 @@ where
                                 &mut visible_player_entities,
                                 config.server.entity_rendering.player_distance,
                                 &mut inventory,
+                                &mut geyser_runtime,
                             )
                             .await?;
                             if handled {
@@ -1556,6 +1560,20 @@ where
 
                 if packet_id == ServerboundCustomPayload::ID {
                     let custom_payload = crate::connection::decode_payload::<ServerboundCustomPayload>(&mut payload)?;
+                    let geyser_outcome = geyser_runtime.apply_custom_payload(&custom_payload);
+                    if geyser_outcome.recognized {
+                        plugins.upsert_geyser_player_info(geyser_runtime.player_info(&session.player));
+                    }
+                    if let Some(response) = geyser_outcome.form_response {
+                        plugins.emit_bedrock_form_response(&qexed_plugin_api::BedrockFormResponsePayload {
+                            player: qexed_plugin_api::player_payload_owned(&session.player),
+                            form_id: response.form_id,
+                            plugin_form_id: response.plugin_form_id,
+                            response: response.response,
+                        });
+                        sink.flush().await?;
+                        continue;
+                    }
                     if lobby.apply_proxy_server_list(&mut lobby_status, &custom_payload) {
                         lobby.update_boss_bar_status(sink, &lobby_status).await?;
                         for packet in scoreboard::refresh_lobby_sidebar_packets(
@@ -1769,6 +1787,8 @@ where
                         &mut visible_player_entities,
                         config.server.entity_rendering.player_distance,
                         &mut inventory,
+                        &mut geyser_runtime,
+                        last_input_flags,
                     )
                     .await?
                     {
@@ -2045,6 +2065,7 @@ where
                                 action.sequence.0,
                                 position.yaw,
                                 position.pitch,
+                                last_input_flags,
                                 &mut inventory,
                                 &chunk_sender,
                                 &mut chunk_state,
@@ -2056,6 +2077,7 @@ where
                                 &mut players_hidden,
                                 &mut visible_player_entities,
                                 config.server.entity_rendering.player_distance,
+                                &mut geyser_runtime,
                             )
                             .await?
                         {
@@ -2340,6 +2362,7 @@ where
                                         &mut visible_player_entities,
                                         &mut inventory,
                                         config.server.entity_rendering.player_distance,
+                                        &mut geyser_runtime,
                                         simulation_distance,
                                     )
                                     .await?;
@@ -2376,6 +2399,7 @@ where
                             use_item.sequence.0,
                             use_item.yaw,
                             use_item.pitch,
+                            last_input_flags,
                             &mut inventory,
                             &chunk_sender,
                             &mut chunk_state,
@@ -2387,6 +2411,7 @@ where
                             &mut players_hidden,
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
+                            &mut geyser_runtime,
                         )
                         .await?
                     {
@@ -2445,6 +2470,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                             session.player.entity_id,
                             deferred_actions,
                         )
@@ -2546,6 +2572,7 @@ where
                                 &mut inventory,
                                 viewer_position,
                                 config.server.entity_rendering.player_distance,
+                                &mut geyser_runtime,
                             )
                             .await?
                         };
@@ -2697,6 +2724,7 @@ where
                             &mut inventory,
                             viewer_position,
                             config.server.entity_rendering.player_distance,
+                            &mut geyser_runtime,
                         )
                         .await?;
                         if plugin_outcome.handled {
@@ -2810,6 +2838,7 @@ where
                                     viewer_position,
                                     config.server.entity_rendering.player_distance,
                                     Some(&mut inventory),
+                                    Some(&mut geyser_runtime),
                                     action,
                                 )
                                 .await?;
@@ -3014,6 +3043,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                             session.player.entity_id,
                             deferred_actions,
                         )
@@ -3243,6 +3273,7 @@ where
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
                         &mut inventory,
+                        &mut geyser_runtime,
                     )
                     .await?
                     {
@@ -3271,6 +3302,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                         )
                         .await?
                     {
@@ -3330,6 +3362,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            &mut geyser_runtime,
                             simulation_distance,
                         )
                         .await?;
@@ -3403,6 +3436,7 @@ where
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
                         &mut inventory,
+                        &mut geyser_runtime,
                     )
                     .await?
                     {
@@ -3431,6 +3465,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                         )
                         .await?
                     {
@@ -3490,6 +3525,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            &mut geyser_runtime,
                             simulation_distance,
                         )
                         .await?;
@@ -3560,6 +3596,7 @@ where
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
                         &mut inventory,
+                        &mut geyser_runtime,
                     )
                     .await?
                     {
@@ -3588,6 +3625,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                         )
                         .await?
                     {
@@ -3631,6 +3669,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            &mut geyser_runtime,
                             simulation_distance,
                         )
                         .await?;
@@ -3699,6 +3738,7 @@ where
                         config.server.entity_rendering.player_distance,
                         &mut last_stepped_block,
                         &mut inventory,
+                        &mut geyser_runtime,
                     )
                     .await?
                     {
@@ -3727,6 +3767,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                         )
                         .await?
                     {
@@ -3770,6 +3811,7 @@ where
                             &mut visible_player_entities,
                             &mut inventory,
                             config.server.entity_rendering.player_distance,
+                            &mut geyser_runtime,
                             simulation_distance,
                         )
                         .await?;
@@ -3813,6 +3855,7 @@ where
                             &mut visible_player_entities,
                             config.server.entity_rendering.player_distance,
                             &mut inventory,
+                            &mut geyser_runtime,
                         )
                         .await?
                         {
@@ -3954,6 +3997,8 @@ where
                         &mut position,
                         &mut next_teleport_id,
                         &mut play_dimension,
+                        &mut geyser_runtime,
+                        &mut inventory,
                     ).await?;
                     if outcome.opened_lobby_menu {
                         lobby_menu_open = true;
@@ -6025,6 +6070,10 @@ where
             };
             let response = plugins.execute_command(&player, &command, &argument);
             let mut outcome = MenuActionOutcome::default();
+            if inventory.is_some() {
+                outcome.deferred_actions = response.actions;
+                return Ok(outcome);
+            }
             for action in response.actions {
                 match action {
                     crate::plugins::PlayerAction::SystemMessage {
@@ -6181,6 +6230,7 @@ async fn apply_deferred_menu_actions<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
     inventory: &mut crate::inventory::PlayerInventory,
+    geyser_runtime: &mut geyser::GeyserRuntime,
     actor_entity_id: i32,
     actions: Vec<crate::plugins::PlayerAction>,
 ) -> Result<()>
@@ -6212,6 +6262,7 @@ where
             viewer_position,
             render_distance,
             Some(&mut *inventory),
+            Some(geyser_runtime),
             action,
         )
         .await?;
@@ -6442,6 +6493,16 @@ fn filtered_player_event_packets(
             Ok(packets)
         }
         crate::players::PlayerEvent::EquipmentChanged {
+            profile_id,
+            dimension,
+            ..
+        } => {
+            if dimension != viewer_dimension || !visible_player_entities.contains(profile_id) {
+                return Ok(Vec::new());
+            }
+            event.packets(player_entity_type, viewer_dimension)
+        }
+        crate::players::PlayerEvent::Animation {
             profile_id,
             dimension,
             ..
@@ -6763,6 +6824,7 @@ async fn handle_plugin_player_block_step<W>(
     render_distance: f64,
     last_stepped_block: &mut Option<BlockPosition>,
     inventory: &mut crate::inventory::PlayerInventory,
+    geyser_runtime: &mut geyser::GeyserRuntime,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -6817,6 +6879,7 @@ where
             player.position,
             render_distance,
             Some(&mut *inventory),
+            Some(geyser_runtime),
             action,
         )
         .await?;
@@ -6857,6 +6920,8 @@ async fn handle_plugin_player_block_interact<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
     inventory: &mut crate::inventory::PlayerInventory,
+    geyser_runtime: &mut geyser::GeyserRuntime,
+    last_input_flags: u8,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -6884,6 +6949,9 @@ where
             z: use_item_on.block_hit.position.z,
         },
         hand.to_string(),
+        block_hit_payload(use_item_on),
+        qexed_plugin_api::player_input_state(last_input_flags),
+        geyser_runtime.client_payload(&player.profile.username),
     );
 
     handle_plugin_response_actions(
@@ -6908,6 +6976,7 @@ where
         visible_player_entities,
         render_distance,
         inventory,
+        geyser_runtime,
     )
     .await
 }
@@ -6935,6 +7004,7 @@ async fn handle_plugin_player_move<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
     inventory: &mut crate::inventory::PlayerInventory,
+    geyser_runtime: &mut geyser::GeyserRuntime,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -6968,6 +7038,7 @@ where
             player.position,
             render_distance,
             Some(&mut *inventory),
+            Some(geyser_runtime),
             action,
         )
         .await?;
@@ -6983,6 +7054,32 @@ where
         }
     }
     Ok(handled)
+}
+
+fn block_hit_payload(use_item_on: &UseItemOn) -> crate::plugins::PlayerBlockHitPayload {
+    let face_id = use_item_on.block_hit.face.0;
+    crate::plugins::PlayerBlockHitPayload {
+        sequence: use_item_on.sequence.0,
+        face: block_face_name(face_id).to_string(),
+        face_id,
+        cursor_x: use_item_on.block_hit.cursor_x,
+        cursor_y: use_item_on.block_hit.cursor_y,
+        cursor_z: use_item_on.block_hit.cursor_z,
+        inside_block: use_item_on.block_hit.inside_block,
+        world_border_hit: use_item_on.block_hit.world_border_hit,
+    }
+}
+
+fn block_face_name(face_id: i32) -> &'static str {
+    match face_id {
+        0 => "down",
+        1 => "up",
+        2 => "north",
+        3 => "south",
+        4 => "west",
+        5 => "east",
+        _ => "unknown",
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7008,6 +7105,7 @@ async fn handle_plugin_response_actions<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
     inventory: &mut crate::inventory::PlayerInventory,
+    geyser_runtime: &mut geyser::GeyserRuntime,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -7037,6 +7135,7 @@ where
             player.position,
             render_distance,
             Some(&mut *inventory),
+            Some(geyser_runtime),
             action,
         )
         .await?;
@@ -7078,6 +7177,7 @@ async fn handle_plugin_player_input<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
     inventory: &mut crate::inventory::PlayerInventory,
+    geyser_runtime: &mut geyser::GeyserRuntime,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -7085,7 +7185,12 @@ where
     let mut player = player.clone();
     player.position = *position;
     player.dimension = play_dimension.clone();
-    let response = plugins.handle_player_input(&player, previous_flags, flags);
+    let response = plugins.handle_player_input(
+        &player,
+        previous_flags,
+        flags,
+        geyser_runtime.client_payload(&player.profile.username),
+    );
     let mut handled = response.handled || !response.actions.is_empty();
     for action in response.actions {
         let before_dimension = play_dimension.clone();
@@ -7111,6 +7216,7 @@ where
             player.position,
             render_distance,
             Some(&mut *inventory),
+            Some(geyser_runtime),
             action,
         )
         .await?;
@@ -7144,6 +7250,7 @@ async fn handle_plugin_player_use_item<W>(
     sequence: i32,
     yaw: f32,
     pitch: f32,
+    last_input_flags: u8,
     inventory: &mut crate::inventory::PlayerInventory,
     chunk_sender: &tokio::sync::mpsc::UnboundedSender<chunks::ChunkLoadResult>,
     chunk_state: &mut ChunkSendState,
@@ -7155,6 +7262,7 @@ async fn handle_plugin_player_use_item<W>(
     players_hidden: &mut bool,
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     render_distance: f64,
+    geyser_runtime: &mut geyser::GeyserRuntime,
 ) -> Result<bool>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -7170,6 +7278,8 @@ where
         sequence,
         yaw,
         pitch,
+        qexed_plugin_api::player_input_state(last_input_flags),
+        geyser_runtime.client_payload(&player.profile.username),
     );
     handle_plugin_response_actions(
         sink,
@@ -7193,6 +7303,7 @@ where
         visible_player_entities,
         render_distance,
         inventory,
+        geyser_runtime,
     )
     .await
 }
@@ -7222,6 +7333,7 @@ async fn handle_plugin_npc_interact<W>(
     inventory: &mut crate::inventory::PlayerInventory,
     viewer_position: EntityPosition,
     render_distance: f64,
+    geyser_runtime: &mut geyser::GeyserRuntime,
 ) -> Result<PluginNpcInteractOutcome>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -7295,6 +7407,7 @@ where
             viewer_position,
             render_distance,
             Some(&mut *inventory),
+            Some(geyser_runtime),
             action,
         )
         .await?;
@@ -11140,6 +11253,7 @@ async fn collect_nearby_drops<W>(
     visible_player_entities: &mut HashSet<uuid::Uuid>,
     inventory: &mut crate::inventory::PlayerInventory,
     render_distance: f64,
+    geyser_runtime: &mut geyser::GeyserRuntime,
     simulation_distance: i32,
 ) -> Result<()>
 where
@@ -11201,6 +11315,7 @@ where
                 viewer_position,
                 render_distance,
                 Some(&mut *inventory),
+                Some(geyser_runtime),
                 action,
             )
             .await?;

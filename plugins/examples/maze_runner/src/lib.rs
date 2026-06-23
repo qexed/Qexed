@@ -1221,7 +1221,10 @@ fn tick_active_maze(payload: &PlayerTickPayload) -> Option<Vec<PlayerAction>> {
     } else {
         session.origin()
     };
-    let maze = generate_maze(&difficulty, stable_seed(&payload.player.uuid, &difficulty.id));
+    let maze = generate_maze(
+        &difficulty,
+        stable_seed(&payload.player.uuid, &difficulty.id),
+    );
     let route = maze_route(&difficulty, &maze);
     let mut actions = vec![compass_bar(&session, &payload.position)];
     actions.extend(trigger_story_rooms(
@@ -1267,7 +1270,10 @@ fn compass_item() -> PlayerAction {
     }
 }
 
-fn compass_bar(session: &MazeSession, position: &qexed_plugin_sdk::PlayerPositionPayload) -> PlayerAction {
+fn compass_bar(
+    session: &MazeSession,
+    position: &qexed_plugin_sdk::PlayerPositionPayload,
+) -> PlayerAction {
     let dx = session.finish_x as f64 + 0.5 - position.x;
     let dz = session.finish_z as f64 + 0.5 - position.z;
     let distance = (dx * dx + dz * dz).sqrt();
@@ -1409,7 +1415,15 @@ fn update_maze_guards(
         }
         if !detected {
             state.patrol_step(guard_speed(difficulty) * tick_millis as f64 / 50.0);
-            let _ = entity_move(&key, &difficulty.dimension, state.x, state.y, state.z, state.yaw, 0.0);
+            let _ = entity_move(
+                &key,
+                &difficulty.dimension,
+                state.x,
+                state.y,
+                state.z,
+                state.yaw,
+                0.0,
+            );
         }
         let _ = storage_set_typed(&guard_state_key(player_uuid, index), &state);
     }
@@ -1431,7 +1445,11 @@ fn guard_entity<'a>(
         yaw: state.yaw,
         pitch: 0.0,
         display_name: "迷宫巡逻者",
-        ai: if alert { "hostile_melee" } else { "plugin:maze_patrol" },
+        ai: if alert {
+            "hostile_melee"
+        } else {
+            "plugin:maze_patrol"
+        },
         ai_params_json: if alert {
             r#"{"attack_damage":3.0,"follow_range":10.0,"attack_range":1.8}"#
         } else {
@@ -1537,7 +1555,11 @@ fn maze_route(difficulty: &DifficultyConfig, maze: &MazeData) -> Vec<MazePoint> 
         }
     }
     if parent[finish] == usize::MAX {
-        return vec![MazePoint { level: 0, x: 0, z: 0 }];
+        return vec![MazePoint {
+            level: 0,
+            x: 0,
+            z: 0,
+        }];
     }
     let mut route = Vec::new();
     let mut current = finish;
@@ -2355,27 +2377,55 @@ mod tests {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn economy_storage(_currency_ptr: i32, _currency_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+    extern "C" fn economy_storage(
+        _currency_ptr: i32,
+        _currency_len: i32,
+        _out_ptr: i32,
+        _out_len: i32,
+    ) -> i64 {
         -1
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn economy_balance_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32) -> i64 {
+    extern "C" fn economy_balance_async(
+        _player_ptr: i32,
+        _player_len: i32,
+        _currency_ptr: i32,
+        _currency_len: i32,
+    ) -> i64 {
         -1
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn economy_set_balance_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32, _amount: i64) -> i64 {
+    extern "C" fn economy_set_balance_async(
+        _player_ptr: i32,
+        _player_len: i32,
+        _currency_ptr: i32,
+        _currency_len: i32,
+        _amount: i64,
+    ) -> i64 {
         -1
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn economy_deposit_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32, _amount: i64) -> i64 {
+    extern "C" fn economy_deposit_async(
+        _player_ptr: i32,
+        _player_len: i32,
+        _currency_ptr: i32,
+        _currency_len: i32,
+        _amount: i64,
+    ) -> i64 {
         -1
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn economy_withdraw_async(_player_ptr: i32, _player_len: i32, _currency_ptr: i32, _currency_len: i32, _amount: i64) -> i64 {
+    extern "C" fn economy_withdraw_async(
+        _player_ptr: i32,
+        _player_len: i32,
+        _currency_ptr: i32,
+        _currency_len: i32,
+        _amount: i64,
+    ) -> i64 {
         -1
     }
 
@@ -2395,12 +2445,22 @@ mod tests {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn structured_storage_get(_key_ptr: i32, _key_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+    extern "C" fn structured_storage_get(
+        _key_ptr: i32,
+        _key_len: i32,
+        _out_ptr: i32,
+        _out_len: i32,
+    ) -> i64 {
         -1
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn structured_storage_set(_key_ptr: i32, _key_len: i32, _data_ptr: i32, _data_len: i32) -> i32 {
+    extern "C" fn structured_storage_set(
+        _key_ptr: i32,
+        _key_len: i32,
+        _data_ptr: i32,
+        _data_len: i32,
+    ) -> i32 {
         0
     }
 
@@ -2420,7 +2480,12 @@ mod tests {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn structured_storage_set_async(_key_ptr: i32, _key_len: i32, _data_ptr: i32, _data_len: i32) -> i64 {
+    extern "C" fn structured_storage_set_async(
+        _key_ptr: i32,
+        _key_len: i32,
+        _data_ptr: i32,
+        _data_len: i32,
+    ) -> i64 {
         -1
     }
 
@@ -2515,12 +2580,26 @@ mod tests {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn plugin_call(_service_ptr: i32, _service_len: i32, _method_ptr: i32, _method_len: i32, _payload_ptr: i32, _payload_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+    extern "C" fn plugin_call(
+        _service_ptr: i32,
+        _service_len: i32,
+        _method_ptr: i32,
+        _method_len: i32,
+        _payload_ptr: i32,
+        _payload_len: i32,
+        _out_ptr: i32,
+        _out_len: i32,
+    ) -> i64 {
         -1
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn http_request(_request_ptr: i32, _request_len: i32, _out_ptr: i32, _out_len: i32) -> i64 {
+    extern "C" fn http_request(
+        _request_ptr: i32,
+        _request_len: i32,
+        _out_ptr: i32,
+        _out_len: i32,
+    ) -> i64 {
         -1
     }
 
