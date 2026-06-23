@@ -358,6 +358,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "parkour"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "player_audit"
 version = "0.1.0"
 dependencies = [
@@ -411,6 +420,15 @@ dependencies = [
  "qexed_plugin_sdk",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pvp_arena"
+version = "0.1.0"
+dependencies = [
+ "qexed_plugin_sdk",
+ "serde",
+ "toml",
 ]
 
 [[package]]

@@ -2785,6 +2785,45 @@ where
                         )
                         .await?;
                         if combat_outcome.handled {
+                            for action in combat_outcome.actions {
+                                let viewer_position = position;
+                                let before_dimension = play_dimension.clone();
+                                let _ = chat::apply_plugin_action(
+                                    sink,
+                                    Some(&config.server),
+                                    world,
+                                    world_rules,
+                                    world_config,
+                                    entities,
+                                    players,
+                                    plugins,
+                                    profile.uuid,
+                                    &chunk_sender,
+                                    &mut chunk_state,
+                                    &mut position,
+                                    &mut next_teleport_id,
+                                    &mut play_dimension,
+                                    &menus,
+                                    &mut active_config_menu,
+                                    &mut players_hidden,
+                                    &mut visible_player_entities,
+                                    viewer_position,
+                                    config.server.entity_rendering.player_distance,
+                                    Some(&mut inventory),
+                                    action,
+                                )
+                                .await?;
+                                if before_dimension != play_dimension {
+                                    resync_inventory_state(
+                                        sink,
+                                        players,
+                                        profile.uuid,
+                                        session.player.entity_id,
+                                        &inventory,
+                                    )
+                                    .await?;
+                                }
+                            }
                             if combat_outcome.damaged_held_item {
                                 gameplay::durability::damage_item(
                                     inventory.held_item_mut(),

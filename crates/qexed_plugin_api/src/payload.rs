@@ -298,6 +298,8 @@ pub struct PlayerAttackQuery {
     #[serde(default)]
     pub target_uuid: [u8; 16],
     #[serde(default)]
+    pub target_player: Option<PlayerPayloadOwned>,
+    #[serde(default)]
     pub target_type: String,
     pub weapon: ItemStackPayload,
     pub damage: f32,

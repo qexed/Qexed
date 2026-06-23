@@ -7,11 +7,12 @@ use qexed_protocol::to_client::play::{
 
 use super::items;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Default)]
 pub(in crate::play) struct CombatOutcome {
     pub(in crate::play) handled: bool,
     pub(in crate::play) killed: bool,
     pub(in crate::play) damaged_held_item: bool,
+    pub(in crate::play) actions: Vec<crate::plugins::PlayerAction>,
 }
 
 pub(in crate::play) async fn attack_entity<W>(
@@ -58,6 +59,7 @@ where
         .as_ref()
         .map(|entity| entity.entity_type.clone())
         .unwrap_or_default();
+    let target_player = players.player_by_entity_id(target_entity_id);
     let response = plugins.apply_player_attack(crate::plugins::PlayerAttackQuery {
         player: qexed_plugin_api::player_payload_owned(player),
         dimension: player.dimension.clone(),
@@ -66,7 +68,15 @@ where
         target_uuid: target
             .as_ref()
             .map(|entity| *entity.uuid.as_bytes())
+            .or_else(|| {
+                target_player
+                    .as_ref()
+                    .map(|player| *player.profile.uuid.as_bytes())
+            })
             .unwrap_or_default(),
+        target_player: target_player
+            .as_ref()
+            .map(qexed_plugin_api::player_payload_owned),
         target_type,
         weapon: items::item_stack_payload(&held),
         damage,
@@ -74,7 +84,11 @@ where
         fire_ticks,
     });
     if response.cancel {
-        return Ok(CombatOutcome::default());
+        return Ok(CombatOutcome {
+            handled: !response.actions.is_empty(),
+            actions: response.actions,
+            ..CombatOutcome::default()
+        });
     }
     if let Some(plugin_damage) = response.damage {
         damage = plugin_damage.max(0.0);
@@ -91,6 +105,7 @@ where
 
     let mut outcome = CombatOutcome {
         handled: true,
+        actions: response.actions,
         ..CombatOutcome::default()
     };
     sink.send(Animate {
@@ -131,6 +146,8 @@ where
                 .await?;
         }
         outcome.killed = result.killed;
+        outcome.damaged_held_item = true;
+    } else if target_player.is_some() && !outcome.actions.is_empty() {
         outcome.damaged_held_item = true;
     } else if let Some(cluster_entities) = cluster_entities
         && let Some(result) = cluster_entities.damage_entity(

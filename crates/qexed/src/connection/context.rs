@@ -412,9 +412,14 @@ impl crate::plugins::host::EntityControlService for ServerEntityControlService {
             }
         }
 
+        let kind = if request.entity_type == "minecraft:text_display" {
+            crate::entities::ManagedEntityKind::Hologram
+        } else {
+            crate::entities::ManagedEntityKind::Entity
+        };
         let spawn = crate::entities::EntitySpawnRequest {
             key: request.key.clone(),
-            kind: crate::entities::ManagedEntityKind::Entity,
+            kind,
             entity_type: request.entity_type,
             entity_type_id_override: None,
             dimension: request.dimension,
@@ -732,9 +737,58 @@ impl ParsedWorldEditQuery {
 
 fn parse_plugin_block_state(block: &str) -> Option<i32> {
     block.parse::<i32>().ok().or_else(|| {
-        let block = normalize_plugin_resource_key(block);
-        crate::world::chunk_nbt::default_block_state_id_if_known(&block)
+        let (block, properties) = parse_plugin_block_state_name_and_properties(block)?;
+        if properties.is_empty() {
+            crate::world::chunk_nbt::default_block_state_id_if_known(&block)
+        } else {
+            let properties = complete_plugin_block_state_properties(&block, properties)?;
+            let state = crate::world::chunk_nbt::block_state(&block, &properties);
+            let entry = crate::world::chunk_nbt::block_state_entry(state.id);
+            (entry.name == block && entry.properties == properties).then_some(state.id)
+        }
     })
+}
+
+fn complete_plugin_block_state_properties(
+    block: &str,
+    properties: Vec<(String, String)>,
+) -> Option<Vec<(String, String)>> {
+    crate::world::chunk_nbt::default_block_state_id_if_known(block)?;
+    let mut completed = crate::world::chunk_nbt::default_block_state(block).properties;
+    for (key, value) in properties {
+        if let Some((_, existing_value)) = completed
+            .iter_mut()
+            .find(|(existing_key, _)| existing_key == &key)
+        {
+            *existing_value = value;
+        } else {
+            completed.push((key, value));
+        }
+    }
+    completed.sort_by(|left, right| left.0.cmp(&right.0));
+    Some(completed)
+}
+
+fn parse_plugin_block_state_name_and_properties(
+    block: &str,
+) -> Option<(String, Vec<(String, String)>)> {
+    let block = block.trim();
+    let Some((name, raw_properties)) = block.split_once('[') else {
+        return Some((normalize_plugin_resource_key(block), Vec::new()));
+    };
+    let raw_properties = raw_properties.strip_suffix(']')?;
+    let mut properties = Vec::new();
+    for raw_property in raw_properties.split(',') {
+        let (key, value) = raw_property.split_once('=')?;
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            return None;
+        }
+        properties.push((key.to_string(), value.to_string()));
+    }
+    properties.sort_by(|left, right| left.0.cmp(&right.0));
+    Some((normalize_plugin_resource_key(name), properties))
 }
 
 fn normalize_plugin_resource_key(value: &str) -> String {
@@ -966,5 +1020,52 @@ fn apply_plugin_npc_mutations(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_block_state_parser_supports_properties() {
+        let parsed = parse_plugin_block_state_name_and_properties("ladder[facing=south]").unwrap();
+        assert_eq!(parsed.0, "minecraft:ladder");
+        assert_eq!(parsed.1, vec![("facing".to_string(), "south".to_string())]);
+
+        let parsed = parse_plugin_block_state_name_and_properties(
+            "minecraft:oak_trapdoor[waterlogged=false,facing=north]",
+        )
+        .unwrap();
+        assert_eq!(parsed.0, "minecraft:oak_trapdoor");
+        assert_eq!(
+            parsed.1,
+            vec![
+                ("facing".to_string(), "north".to_string()),
+                ("waterlogged".to_string(), "false".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn plugin_block_state_parser_completes_default_properties() {
+        let parsed = parse_plugin_block_state("ladder[facing=south]").unwrap();
+        let entry = crate::world::chunk_nbt::block_state_entry(parsed);
+
+        assert_eq!(entry.name, "minecraft:ladder");
+        assert_eq!(
+            entry.properties,
+            vec![
+                ("facing".to_string(), "south".to_string()),
+                ("waterlogged".to_string(), "false".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn plugin_block_state_parser_rejects_malformed_properties() {
+        assert!(parse_plugin_block_state_name_and_properties("ladder[facing]").is_none());
+        assert!(parse_plugin_block_state_name_and_properties("ladder[facing=south").is_none());
+        assert!(parse_plugin_block_state("ladder[facing=sideways]").is_none());
     }
 }
