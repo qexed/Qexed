@@ -572,9 +572,11 @@ mod oracle_diagnostics {
             manifest.get("dimension_value").map(String::as_str),
             Some("overworld")
         );
-        assert!(manifest
-            .get("generation_config")
-            .is_some_and(|value| value.contains("minecraft-server;overworld")));
+        assert!(
+            manifest
+                .get("generation_config")
+                .is_some_and(|value| value.contains("minecraft-server;overworld"))
+        );
 
         let noise_settings_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../cache/mojang")
@@ -829,8 +831,7 @@ mod oracle_diagnostics {
     fn oracle_chunk_cache_region_path(seed: i64, chunk_x: i32, chunk_z: i32) -> std::path::PathBuf {
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
-        oracle_chunk_cache_dir(seed, chunk_x, chunk_z)
-            .join(format!("r.{region_x}.{region_z}.mca"))
+        oracle_chunk_cache_dir(seed, chunk_x, chunk_z).join(format!("r.{region_x}.{region_z}.mca"))
     }
 
     fn oracle_chunk_cache_dir(seed: i64, chunk_x: i32, chunk_z: i32) -> PathBuf {

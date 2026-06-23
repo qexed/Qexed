@@ -1406,7 +1406,6 @@ impl OverworldOreFeatures {
                         }
                         PlacedUndergroundFeature::Ore(feature) => {
                             let mut source = neighbor_sources.take_source(source_index);
-                            let source_neighbors = neighbor_sources.all_context(settings);
                             feature.place_with_spillover_context(
                                 settings,
                                 source_origin_x,
@@ -1415,7 +1414,7 @@ impl OverworldOreFeatures {
                                 origin_z,
                                 source.chunk_mut(),
                                 chunk,
-                                &source_neighbors,
+                                &[],
                                 &mut random,
                             );
                             neighbor_sources.restore_source(source_index, source);

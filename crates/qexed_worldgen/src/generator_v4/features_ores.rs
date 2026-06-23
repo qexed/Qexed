@@ -174,15 +174,17 @@ impl PlacedOreFeature {
                     .map(|(origin_x, origin_z, chunk)| (*origin_x, *origin_z, chunk.as_ref()))
                     .collect::<Vec<_>>();
                 let replay_context_chunks = owned_context_refs.as_slice();
-                let stats = self.ore.shape_scan_stats_for_context(
-                    settings,
-                    &shape,
-                    source_origin_x,
-                    source_origin_z,
-                    target_origin_x,
-                    target_origin_z,
-                    replay_context_chunks,
-                );
+                let stats = diagnostic.as_ref().map(|_| {
+                    self.ore.shape_scan_stats_for_context(
+                        settings,
+                        &shape,
+                        source_origin_x,
+                        source_origin_z,
+                        target_origin_x,
+                        target_origin_z,
+                        replay_context_chunks,
+                    )
+                });
                 let (source_placed, target_placed) = self.ore.place_shape_with_context_chunks(
                     settings,
                     source_origin_x,
@@ -195,7 +197,7 @@ impl PlacedOreFeature {
                     random,
                     &shape,
                 );
-                if let Some(diagnostic) = diagnostic.as_mut() {
+                if let (Some(diagnostic), Some(stats)) = (diagnostic.as_mut(), stats) {
                     diagnostic.source_spheres += stats.spheres;
                     diagnostic.source_scans += stats.scans;
                     diagnostic.source_writes += usize::from(source_placed);
@@ -204,9 +206,10 @@ impl PlacedOreFeature {
                     diagnostic.target_writes += usize::from(target_placed);
                 }
             } else if reaches_target {
-                let stats =
+                let stats = diagnostic.as_ref().map(|_| {
                     self.ore
-                        .shape_scan_stats(settings, target_origin_x, target_origin_z, &shape);
+                        .shape_scan_stats(settings, target_origin_x, target_origin_z, &shape)
+                });
                 let placed = self.ore.place_shape_with_neighbor(
                     settings,
                     target_origin_x,
@@ -216,7 +219,7 @@ impl PlacedOreFeature {
                     random,
                     &shape,
                 );
-                if let Some(diagnostic) = diagnostic.as_mut() {
+                if let (Some(diagnostic), Some(stats)) = (diagnostic.as_mut(), stats) {
                     diagnostic.target_spheres += stats.spheres;
                     diagnostic.target_scans += stats.scans;
                     diagnostic.target_writes += usize::from(placed);
@@ -238,7 +241,7 @@ impl PlacedOreFeature {
     }
 
     fn can_place_target_spillover_without_source(&self) -> bool {
-        self.ore.can_skip_non_spilling_blob_replay()
+        self.ore.can_replay_target_without_source()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -268,12 +271,9 @@ impl PlacedOreFeature {
             let spill_shape = self
                 .ore
                 .sample_blob_shape(&mut spill_random, prefix.clone());
-            if !self
-                .ore
-                .shape_may_spill_into(target_origin_x, target_origin_z, &spill_shape)
-            {
-                continue;
-            }
+            let reaches_target =
+                self.ore
+                    .shape_may_spill_into(target_origin_x, target_origin_z, &spill_shape);
             if !self
                 .ore
                 .precheck_passes_terrain(settings, &mut terrain_height_cache, x, y, z)
@@ -282,6 +282,9 @@ impl PlacedOreFeature {
             }
 
             let shape = self.ore.sample_blob_shape(random, prefix);
+            if !reaches_target {
+                continue;
+            }
             self.ore.start_count_trace_if_enabled();
             self.ore.place_shape_with_neighbor(
                 settings,
@@ -1882,7 +1885,7 @@ struct OreBlobShapeDiagnostic {
     shape: OreBlobShape,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OreTargetPredicate {
     StoneOreReplaceables,
     DeepslateOreReplaceables,
@@ -2994,6 +2997,14 @@ impl OreFeatureConfig {
 
     fn needs_source_spillover_replay(&self) -> bool {
         self.discard_chance_on_air_exposure > 0.0
+    }
+
+    fn can_replay_target_without_source(&self) -> bool {
+        self.can_skip_non_spilling_blob_replay()
+            && !self
+                .targets
+                .iter()
+                .any(|target| target.predicate == OreTargetPredicate::BaseStoneOverworld)
     }
 
     #[allow(clippy::too_many_arguments)]

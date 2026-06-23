@@ -157,14 +157,10 @@ mod diagnostics {
             let x = source_origin_x + random.next_int(16);
             let z = source_origin_z + random.next_int(16);
             let y = feature.height.sample(&settings, &mut random);
-            let reaches = feature.ore.may_spill_into(
-                target_origin_x,
-                target_origin_z,
-                &mut random,
-                x,
-                y,
-                z,
-            );
+            let reaches =
+                feature
+                    .ore
+                    .may_spill_into(target_origin_x, target_origin_z, &mut random, x, y, z);
             println!(
                 "ore_tuff_attempt attempt={attempt} origin=({x},{y},{z}) may_spill_into_target={reaches}"
             );
