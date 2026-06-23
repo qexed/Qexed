@@ -801,10 +801,11 @@ impl PlacedMultifaceGrowthFeature {
         chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let world_x = origin_x + random.next_int(16);
             let world_z = origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, world_x, world_y, world_z);
             let local_x = (world_x - origin_x) as usize;
             let local_z = (world_z - origin_z) as usize;
             let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
@@ -831,10 +832,11 @@ impl PlacedMultifaceGrowthFeature {
         neighbors: &[(i32, i32, &NoiseChunkBlocks)],
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let world_x = origin_x + random.next_int(16);
             let world_z = origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, world_x, world_y, world_z);
             let local_x = (world_x - origin_x) as usize;
             let local_z = (world_z - origin_z) as usize;
             let ocean_floor = chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);
@@ -863,10 +865,11 @@ impl PlacedMultifaceGrowthFeature {
         target_chunk: &mut NoiseChunkBlocks,
         random: &mut FeatureRandom,
     ) {
-        for _ in 0..self.count.sample(random) {
+        for attempt in 0..self.count.sample(random) {
             let world_x = source_origin_x + random.next_int(16);
             let world_z = source_origin_z + random.next_int(16);
             let world_y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, world_x, world_y, world_z);
             let local_x = (world_x - source_origin_x) as usize;
             let local_z = (world_z - source_origin_z) as usize;
             let ocean_floor = source_chunk.ocean_floor_wg_height(local_x, local_z, settings.min_y);

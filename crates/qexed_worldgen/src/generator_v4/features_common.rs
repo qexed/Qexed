@@ -104,37 +104,35 @@ impl MultifaceGrowthFeatureConfig {
         for search_direction in &search_directions {
             let placement_directions =
                 self.shuffled_directions_except(random, direction_opposite(*search_direction));
-            for step in 1..=self.search_range {
-                let world_x = origin_x + search_direction.0 * step;
-                let world_y = origin_y + search_direction.1 * step;
-                let world_z = origin_z + search_direction.2 * step;
-                let Some(state) = layer_at_world(
-                    chunk,
-                    chunk_min_x,
-                    chunk_min_z,
-                    world_x,
-                    world_y,
-                    world_z,
-                    settings.min_y,
-                ) else {
-                    break;
-                };
-                if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
-                    break;
-                }
-                if self.place_growth_if_possible(
-                    settings,
-                    chunk_min_x,
-                    chunk_min_z,
-                    chunk,
-                    random,
-                    world_x,
-                    world_y,
-                    world_z,
-                    &placement_directions,
-                ) {
-                    return true;
-                }
+            let world_x = origin_x + search_direction.0;
+            let world_y = origin_y + search_direction.1;
+            let world_z = origin_z + search_direction.2;
+            let Some(state) = layer_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x,
+                world_y,
+                world_z,
+                settings.min_y,
+            ) else {
+                continue;
+            };
+            if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
+                continue;
+            }
+            if self.place_growth_if_possible(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                &placement_directions,
+            ) {
+                return true;
             }
         }
 
@@ -188,38 +186,36 @@ impl MultifaceGrowthFeatureConfig {
         for search_direction in &search_directions {
             let placement_directions =
                 self.shuffled_directions_except(random, direction_opposite(*search_direction));
-            for step in 1..=self.search_range {
-                let world_x = origin_x + search_direction.0 * step;
-                let world_y = origin_y + search_direction.1 * step;
-                let world_z = origin_z + search_direction.2 * step;
-                let Some(state) = layer_at_world(
-                    chunk,
-                    chunk_min_x,
-                    chunk_min_z,
-                    world_x,
-                    world_y,
-                    world_z,
-                    settings.min_y,
-                ) else {
-                    break;
-                };
-                if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
-                    break;
-                }
-                if self.place_growth_if_possible_with_neighbors(
-                    settings,
-                    chunk_min_x,
-                    chunk_min_z,
-                    chunk,
-                    neighbors,
-                    random,
-                    world_x,
-                    world_y,
-                    world_z,
-                    &placement_directions,
-                ) {
-                    return true;
-                }
+            let world_x = origin_x + search_direction.0;
+            let world_y = origin_y + search_direction.1;
+            let world_z = origin_z + search_direction.2;
+            let Some(state) = layer_at_world(
+                chunk,
+                chunk_min_x,
+                chunk_min_z,
+                world_x,
+                world_y,
+                world_z,
+                settings.min_y,
+            ) else {
+                continue;
+            };
+            if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
+                continue;
+            }
+            if self.place_growth_if_possible_with_neighbors(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                neighbors,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                &placement_directions,
+            ) {
+                return true;
             }
         }
 
@@ -473,40 +469,38 @@ impl MultifaceGrowthFeatureConfig {
         for search_direction in &search_directions {
             let placement_directions =
                 self.shuffled_directions_except(random, direction_opposite(*search_direction));
-            for step in 1..=self.search_range {
-                let world_x = origin_x + search_direction.0 * step;
-                let world_y = origin_y + search_direction.1 * step;
-                let world_z = origin_z + search_direction.2 * step;
-                if local_coords(world_x, world_z, chunk_min_x, chunk_min_z).is_some() {
-                    let Some(state) = layer_at_world(
-                        chunk,
-                        chunk_min_x,
-                        chunk_min_z,
-                        world_x,
-                        world_y,
-                        world_z,
-                        settings.min_y,
-                    ) else {
-                        break;
-                    };
-                    if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
-                        break;
-                    }
-                }
-                if self.replay_growth_if_possible_with_neighbors(
-                    settings,
+            let world_x = origin_x + search_direction.0;
+            let world_y = origin_y + search_direction.1;
+            let world_z = origin_z + search_direction.2;
+            if local_coords(world_x, world_z, chunk_min_x, chunk_min_z).is_some() {
+                let Some(state) = layer_at_world(
+                    chunk,
                     chunk_min_x,
                     chunk_min_z,
-                    chunk,
-                    neighbors,
-                    random,
                     world_x,
                     world_y,
                     world_z,
-                    &placement_directions,
-                ) {
-                    return true;
+                    settings.min_y,
+                ) else {
+                    continue;
+                };
+                if !is_air_or_water_layer(state) && !state.is(self.block.block.as_ref()) {
+                    continue;
                 }
+            }
+            if self.replay_growth_if_possible_with_neighbors(
+                settings,
+                chunk_min_x,
+                chunk_min_z,
+                chunk,
+                neighbors,
+                random,
+                world_x,
+                world_y,
+                world_z,
+                &placement_directions,
+            ) {
+                return true;
             }
         }
         false
@@ -555,6 +549,17 @@ impl MultifaceGrowthFeatureConfig {
                 .with_property("waterlogged", waterlogged)
                 .with_property(face, "true")
         };
+        trace_feature_write_at_target(
+            world_x,
+            world_y,
+            world_z,
+            chunk_min_x,
+            chunk_min_z,
+            local_x,
+            local_z,
+            current,
+            &new_state,
+        );
         chunk.set_layer(local_x, world_y, local_z, settings.min_y, new_state);
         true
     }
