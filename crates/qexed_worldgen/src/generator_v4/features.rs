@@ -1227,6 +1227,69 @@ impl OverworldOreFeatures {
                         }
                     }
 
+                    if let PlacedUndergroundFeature::Ore(ore_feature) = feature
+                        && ore_feature.can_place_target_spillover_without_source()
+                    {
+                        if !neighbor_sources.may_spill_without_loading(
+                            settings,
+                            source_index,
+                            feature,
+                        ) {
+                            continue;
+                        }
+                        let source_origin_x = neighbor_sources.origin_x(source_index);
+                        let source_origin_z = neighbor_sources.origin_z(source_index);
+                        let source_chunk_x = source_origin_x.div_euclid(16);
+                        let source_chunk_z = source_origin_z.div_euclid(16);
+                        let source_decoration_seed =
+                            neighbor_sources.ensure_decoration_seed(source_index);
+                        let mut random = FeatureRandom::for_feature(
+                            source_decoration_seed,
+                            feature.feature_index(),
+                            feature.step_index(),
+                        );
+                        let trace_context = FeatureWriteTraceContext {
+                            chunk_x,
+                            chunk_z,
+                            ordinal,
+                            feature_name,
+                            step_index,
+                            feature_index,
+                            phase: "spillover",
+                            source_chunk_x,
+                            source_chunk_z,
+                            source_origin_x,
+                            source_origin_z,
+                            target_chunk_x: chunk_x,
+                            target_chunk_z: chunk_z,
+                            target_origin_x: origin_x,
+                            target_origin_z: origin_z,
+                            decoration_seed: source_decoration_seed,
+                            attempt: None,
+                            attempt_origin: None,
+                        };
+                        let spillover_start = Instant::now();
+                        with_feature_write_trace_context(trace_context, || {
+                            ore_feature.place_target_spillover_without_source(
+                                settings,
+                                source_origin_x,
+                                source_origin_z,
+                                origin_x,
+                                origin_z,
+                                chunk,
+                                &mut random,
+                            );
+                        });
+                        if let Some(profile) = profile.as_mut() {
+                            profile.record(
+                                &feature_label,
+                                FeatureProfilePhase::Spillover,
+                                spillover_start.elapsed(),
+                            );
+                        }
+                        continue;
+                    }
+
                     let load_start = Instant::now();
                     let can_place_spillover = if prechecked_spillover {
                         neighbor_sources.ensure_loaded(settings, source_index);

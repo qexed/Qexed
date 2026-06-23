@@ -247,6 +247,61 @@ impl PlacedOreFeature {
         }
     }
 
+    fn can_place_target_spillover_without_source(&self) -> bool {
+        self.ore.can_skip_non_spilling_blob_replay()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_target_spillover_without_source(
+        &self,
+        settings: &NoiseSettings,
+        source_origin_x: i32,
+        source_origin_z: i32,
+        target_origin_x: i32,
+        target_origin_z: i32,
+        target_chunk: &mut NoiseChunkBlocks,
+        random: &mut FeatureRandom,
+    ) {
+        debug_assert!(self.can_place_target_spillover_without_source());
+        for attempt in 0..self.count.sample(random) {
+            let x = source_origin_x + random.next_int(16);
+            let z = source_origin_z + random.next_int(16);
+            let y = self.height.sample(settings, random);
+            update_feature_write_trace_attempt(attempt, x, y, z);
+            if !self.biome_filter.allows_at(&settings.density, x, y, z) {
+                continue;
+            }
+
+            let prefix = self.ore.sample_blob_prefix(random, x, y, z);
+            let mut spill_random = random.clone();
+            let spill_shape = self
+                .ore
+                .sample_blob_shape(&mut spill_random, prefix.clone());
+            if !self
+                .ore
+                .shape_may_spill_into(target_origin_x, target_origin_z, &spill_shape)
+            {
+                continue;
+            }
+            if !self.ore.precheck_passes_terrain(settings, x, y, z) {
+                continue;
+            }
+
+            let shape = self.ore.sample_blob_shape(random, prefix);
+            self.ore.start_count_trace_if_enabled();
+            self.ore.place_shape_with_neighbor(
+                settings,
+                target_origin_x,
+                target_origin_z,
+                target_chunk,
+                None,
+                random,
+                &shape,
+            );
+            self.ore.finish_count_trace_if_enabled();
+        }
+    }
+
     fn may_spill_into(
         &self,
         settings: &NoiseSettings,
@@ -3034,6 +3089,33 @@ impl OreFeatureConfig {
             origin_z,
         )
         .0
+    }
+
+    fn precheck_passes_terrain(
+        &self,
+        settings: &NoiseSettings,
+        origin_x: i32,
+        origin_y: i32,
+        origin_z: i32,
+    ) -> bool {
+        let spread_xy = self.size as f32 / 8.0;
+        let precheck_radius = ((self.size as f32 / 16.0) * 2.0 + 1.0) / 2.0;
+        let precheck_radius = precheck_radius.ceil() as i32;
+        let spread_xy = spread_xy.ceil() as i32;
+        let min_x = origin_x - spread_xy - precheck_radius;
+        let min_y = origin_y - 2 - precheck_radius;
+        let min_z = origin_z - spread_xy - precheck_radius;
+        let horizontal_size = 2 * (spread_xy + precheck_radius);
+
+        for world_x in min_x..=min_x + horizontal_size {
+            for world_z in min_z..=min_z + horizontal_size {
+                if min_y <= settings.terrain_ocean_floor_wg_height(world_x, world_z) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn max_horizontal_spillover(&self) -> i32 {
