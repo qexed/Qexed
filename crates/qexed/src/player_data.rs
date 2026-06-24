@@ -5,7 +5,11 @@ mod vanilla;
 #[cfg(test)]
 mod tests;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -28,6 +32,12 @@ use vanilla::{read_vanilla_player_data, write_vanilla_player_data};
 pub struct PlayerDataManager {
     enabled: bool,
     store: Arc<dyn PlayerDataStore>,
+    locks: Arc<Mutex<HashMap<uuid::Uuid, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+pub struct PlayerDataLockGuard {
+    _local_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    _store_guard: Option<Box<dyn PlayerDataStoreLock>>,
 }
 
 impl PlayerDataManager {
@@ -39,6 +49,7 @@ impl PlayerDataManager {
             return Ok(Self {
                 enabled: false,
                 store: Arc::new(DisabledPlayerDataStore),
+                locks: Arc::new(Mutex::new(HashMap::new())),
             });
         }
 
@@ -57,6 +68,29 @@ impl PlayerDataManager {
         Ok(Self {
             enabled: config.enable,
             store,
+            locks: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
+    pub async fn lock_player(&self, uuid: uuid::Uuid) -> Result<PlayerDataLockGuard> {
+        if !self.enabled {
+            return Ok(PlayerDataLockGuard {
+                _local_guard: None,
+                _store_guard: None,
+            });
+        }
+        let lock = {
+            let mut locks = self.locks.lock().expect("player data lock map poisoned");
+            locks
+                .entry(uuid)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let local_guard = lock.lock_owned().await;
+        let store_guard = self.store.lock(uuid).await?;
+        Ok(PlayerDataLockGuard {
+            _local_guard: Some(local_guard),
+            _store_guard: store_guard,
         })
     }
 
@@ -91,13 +125,33 @@ impl PlayerDataManager {
         }
         self.store.save(data).await
     }
+
+    pub async fn locked_load_or_default(
+        &self,
+        _guard: &PlayerDataLockGuard,
+        profile: &GameProfile,
+        dimension: &str,
+        spawn: &Spawn,
+    ) -> PlayerData {
+        self.load_or_default(profile, dimension, spawn).await
+    }
+
+    pub async fn locked_save(&self, _guard: &PlayerDataLockGuard, data: &PlayerData) -> Result<()> {
+        self.save(data).await
+    }
 }
 
 #[async_trait]
 trait PlayerDataStore: Send + Sync + std::fmt::Debug {
+    async fn lock(&self, _uuid: uuid::Uuid) -> Result<Option<Box<dyn PlayerDataStoreLock>>> {
+        Ok(None)
+    }
+
     async fn load(&self, uuid: uuid::Uuid) -> Result<Option<PlayerData>>;
     async fn save(&self, data: &PlayerData) -> Result<()>;
 }
+
+trait PlayerDataStoreLock: Send + Sync {}
 
 #[derive(Debug)]
 struct DisabledPlayerDataStore;

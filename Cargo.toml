@@ -17,6 +17,7 @@ members = [
     "crates/qexed_tools",
     "crates/qexed_profiler",
     "crates/macros/qexed_error_macros",
+    "crates/qexed_mcp",
 ]
 [workspace.dependencies]
 qexed_config = { path = "crates/qexed_config" }

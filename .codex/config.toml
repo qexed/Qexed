@@ -1,0 +1,9 @@
+[mcp_servers.qexed-mcp]
+command = "E:/code/qexed-v4/target/release/qexed-mcp.exe"
+cwd = "E:/code/qexed-v4"
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.qexed-mcp.env]
+QEXED_SAVE_PATH = "E:/code/qexed-v4/world"
+QEXED_DIMENSION = "minecraft:overworld"
+QEXED_REGISTRY_PATH = "E:/code/qexed-v4/assets/reports/blocks.json"

@@ -15,7 +15,7 @@ mod session;
 mod survival;
 mod util;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::{Mutex, mpsc},
@@ -62,7 +62,7 @@ use qexed_protocol::to_server::play::{
     set_creative_mode_slot::SetCreativeModeSlot, use_item::UseItem, use_item_on::UseItemOn,
 };
 
-use crate::player_data::{PlayerData, PlayerDataManager};
+use crate::player_data::{PlayerData, PlayerDataLockGuard, PlayerDataManager};
 use crate::players::{PlayerDamageKind, PlayerManager, PlayerSession};
 use crate::world::WorldManager;
 
@@ -344,8 +344,22 @@ where
 {
     let world_config = &config.world;
     let default_dimension = world_config.default_play_dimension();
+    let player_data_lock = player_data
+        .lock_player(profile.uuid)
+        .await
+        .with_context(|| {
+            format!(
+                "acquire player data lock for {} ({})",
+                profile.username, profile.uuid
+            )
+        })?;
     let mut saved_player = player_data
-        .load_or_default(profile, &default_dimension, &world_config.spawn)
+        .locked_load_or_default(
+            &player_data_lock,
+            profile,
+            &default_dimension,
+            &world_config.spawn,
+        )
         .await;
     let play_dimension = if saved_player.dimension.is_empty() {
         default_dimension
@@ -512,6 +526,7 @@ where
         player_entity_type,
         profile,
         &mut saved_player,
+        &player_data_lock,
         play_dimension,
         chunk_state,
         inventory,
@@ -546,6 +561,7 @@ async fn wait_for_play_packets<R, W>(
     player_entity_type: i32,
     profile: &qexed_packet::net_types::GameProfile,
     saved_player: &mut PlayerData,
+    player_data_lock: &PlayerDataLockGuard,
     mut play_dimension: String,
     mut chunk_state: ChunkSendState,
     mut inventory: crate::inventory::PlayerInventory,
@@ -676,6 +692,10 @@ where
     chunk_state.refresh_pending_chunks();
     let fluid_seeds = chunk_state
         .send_center_chunk_first(sink, world, plugins)
+        .await?;
+    fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
+    let fluid_seeds = chunk_state
+        .send_remaining_initial_chunks(sink, world, plugins)
         .await?;
     fluid.enqueue_fluid_seeds(&play_dimension, fluid_seeds);
     chunk_state.start_next_chunk_load(world, Some(&chunk_sender), sink.compression_threshold());
@@ -1065,6 +1085,7 @@ where
                 let _span = crate::profile_span!("io:player_autosave");
                 save_player_runtime(
                     player_data,
+                    player_data_lock,
                     saved_player,
                     &play_dimension,
                     position,
@@ -1565,6 +1586,76 @@ where
                         plugins.upsert_geyser_player_info(geyser_runtime.player_info(&session.player));
                     }
                     if let Some(response) = geyser_outcome.form_response {
+                        if let Some((_menu_id, action)) = menus.action_for_bedrock_form_response(
+                            &response.plugin_form_id,
+                            &response.response,
+                        ) {
+                            let outcome = run_menu_action(
+                                sink,
+                                &menus,
+                                players,
+                                &mut players_hidden,
+                                &mut visible_player_entities,
+                                profile.uuid,
+                                session.player.entity_id,
+                                &play_dimension,
+                                position,
+                                config.server.entity_rendering.player_distance,
+                                Some(&config.server),
+                                plugins,
+                                &lobby,
+                                &lobby_status,
+                                Some(&mut inventory),
+                                Some(&mut geyser_runtime),
+                                action,
+                            )
+                            .await?;
+                            if outcome.opened_menu {
+                                active_config_menu = outcome.opened_menu_id;
+                            } else {
+                                active_config_menu = None;
+                            }
+                            let deferred_actions = outcome.deferred_actions;
+                            let ran_deferred_actions = !deferred_actions.is_empty();
+                            apply_deferred_menu_actions(
+                                sink,
+                                world,
+                                world_rules,
+                                &config.server,
+                                world_config,
+                                entities,
+                                players,
+                                plugins,
+                                profile.uuid,
+                                &chunk_sender,
+                                &mut chunk_state,
+                                &mut position,
+                                &mut next_teleport_id,
+                                &mut play_dimension,
+                                &menus,
+                                &mut active_config_menu,
+                                &mut players_hidden,
+                                &mut visible_player_entities,
+                                config.server.entity_rendering.player_distance,
+                                &mut inventory,
+                                &mut geyser_runtime,
+                                session.player.entity_id,
+                                deferred_actions,
+                            )
+                            .await?;
+                            if ran_deferred_actions {
+                                session.player.position = position;
+                                session.player.dimension = play_dimension.clone();
+                            }
+                            pending_dig = None;
+                            sink.flush().await?;
+                            continue;
+                        }
+                        if menus.is_bedrock_menu_form_id(&response.plugin_form_id) {
+                            active_config_menu = None;
+                            sink.flush().await?;
+                            continue;
+                        }
                         plugins.emit_bedrock_form_response(&qexed_plugin_api::BedrockFormResponsePayload {
                             player: qexed_plugin_api::player_payload_owned(&session.player),
                             form_id: response.form_id,
@@ -2441,6 +2532,7 @@ where
                             &lobby,
                             &lobby_status,
                             Some(&mut inventory),
+                            Some(&mut geyser_runtime),
                             action,
                         )
                         .await?;
@@ -2593,11 +2685,12 @@ where
                                 position,
                                 config.server.entity_rendering.player_distance,
                                 Some(&config.server),
-                                plugins,
-                                &lobby,
-                                &lobby_status,
-                            )
-                            .await?;
+                            plugins,
+                            &lobby,
+                            &lobby_status,
+                            Some(&mut geyser_runtime),
+                        )
+                        .await?;
                         }
                         if config_outcome.opened_menu {
                             active_config_menu = config_outcome.opened_menu_id;
@@ -2786,6 +2879,7 @@ where
                                 plugins,
                                 &lobby,
                                 &lobby_status,
+                                Some(&mut geyser_runtime),
                             )
                             .await?;
                             if config_outcome.opened_menu {
@@ -3011,6 +3105,7 @@ where
                             &lobby,
                             &lobby_status,
                             Some(&mut inventory),
+                            Some(&mut geyser_runtime),
                             action,
                         )
                         .await?;
@@ -4101,6 +4196,7 @@ where
     }
     save_player_runtime(
         player_data,
+        player_data_lock,
         saved_player,
         &play_dimension,
         position,
@@ -4117,6 +4213,7 @@ where
 
 async fn save_player_runtime(
     player_data: &PlayerDataManager,
+    player_data_lock: &PlayerDataLockGuard,
     saved_player: &mut PlayerData,
     play_dimension: &str,
     position: EntityPosition,
@@ -4126,7 +4223,10 @@ async fn save_player_runtime(
     reason: &str,
 ) {
     saved_player.update_runtime(play_dimension, position, inventory, survival.to_stored());
-    if let Err(err) = player_data.save(saved_player).await {
+    if let Err(err) = player_data
+        .locked_save(player_data_lock, saved_player)
+        .await
+    {
         log::warn!("failed to save player data: uuid={profile_id}, reason={reason}, error={err:#}");
     } else {
         log::debug!("saved player data: uuid={profile_id}, reason={reason}");
@@ -5927,6 +6027,7 @@ async fn run_config_npc_action<W>(
     plugins: &crate::plugins::PluginManager,
     lobby: &lobby::LobbyRuntime,
     lobby_status: &lobby::LobbyStatusSnapshot,
+    geyser_runtime: Option<&mut geyser::GeyserRuntime>,
 ) -> Result<NpcConfigActionOutcome>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -5971,6 +6072,7 @@ where
         lobby,
         lobby_status,
         None,
+        geyser_runtime,
         action,
     )
     .await?;
@@ -5997,6 +6099,7 @@ async fn run_menu_action<W>(
     lobby: &lobby::LobbyRuntime,
     lobby_status: &lobby::LobbyStatusSnapshot,
     mut inventory: Option<&mut crate::inventory::PlayerInventory>,
+    mut geyser_runtime: Option<&mut geyser::GeyserRuntime>,
     action: qexed_config::app::qexed::server::MenuAction,
 ) -> Result<MenuActionOutcome>
 where
@@ -6013,8 +6116,18 @@ where
                 lobby,
                 lobby_status,
             );
+            let username = players
+                .player_by_uuid(actor)
+                .map(|player| player.profile.username)
+                .unwrap_or_default();
             let opened = menus
-                .open_menu(sink, &action.target, Some(&render_context))
+                .open_menu_for_client(
+                    sink,
+                    &action.target,
+                    Some(&render_context),
+                    &username,
+                    geyser_runtime.as_deref_mut(),
+                )
                 .await?;
             Ok(MenuActionOutcome {
                 opened_menu: opened.is_some(),
@@ -6101,7 +6214,19 @@ where
                             lobby,
                             lobby_status,
                         );
-                        let opened = menus.open_menu(sink, &menu, Some(&render_context)).await?;
+                        let username = players
+                            .player_by_uuid(actor)
+                            .map(|player| player.profile.username)
+                            .unwrap_or_default();
+                        let opened = menus
+                            .open_menu_for_client(
+                                sink,
+                                &menu,
+                                Some(&render_context),
+                                &username,
+                                geyser_runtime.as_deref_mut(),
+                            )
+                            .await?;
                         outcome.opened_menu = opened.is_some();
                         outcome.opened_menu_id = opened;
                     }

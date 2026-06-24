@@ -167,6 +167,83 @@ fn vanilla_playerdata_roundtrips_payload() {
 }
 
 #[test]
+fn vanilla_playerdata_preserves_unknown_raw_nbt_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("player.dat");
+    let profile = GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Alex".to_string(),
+        properties: Vec::new(),
+    };
+    let mut root = HashMap::new();
+    root.insert(
+        "Dimension".to_string(),
+        qexed_nbt::Tag::String(Arc::from("minecraft:overworld")),
+    );
+    root.insert(
+        "Pos".to_string(),
+        qexed_nbt::Tag::new_list(
+            qexed_nbt::tag_id::DOUBLE,
+            vec![
+                qexed_nbt::Tag::Double(1.0),
+                qexed_nbt::Tag::Double(2.0),
+                qexed_nbt::Tag::Double(3.0),
+            ],
+        )
+        .unwrap(),
+    );
+    root.insert(
+        "Rotation".to_string(),
+        qexed_nbt::Tag::new_list(
+            qexed_nbt::tag_id::FLOAT,
+            vec![qexed_nbt::Tag::Float(0.0), qexed_nbt::Tag::Float(0.0)],
+        )
+        .unwrap(),
+    );
+    root.insert("KeepMe".to_string(), qexed_nbt::Tag::Int(42));
+    qexed_nbt::to_file(&path, "", &qexed_nbt::Tag::Compound(Arc::new(root)), true).unwrap();
+
+    let mut data = read_vanilla_player_data(&path, profile.uuid)
+        .unwrap()
+        .unwrap();
+    data.position.x = 9.0;
+    write_vanilla_player_data(&path, &data).unwrap();
+
+    let (_, written) = qexed_nbt::from_file(&path).unwrap();
+    let fields = match written {
+        qexed_nbt::Tag::Compound(fields) => fields,
+        _ => panic!("expected compound playerdata"),
+    };
+    assert_eq!(fields.get("KeepMe"), Some(&qexed_nbt::Tag::Int(42)));
+    assert!(fields.contains_key("qexed"));
+}
+
+#[tokio::test]
+async fn player_data_lock_serializes_same_uuid() {
+    let manager = PlayerDataManager {
+        enabled: true,
+        store: Arc::new(DisabledPlayerDataStore),
+        locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    };
+    let uuid = uuid::Uuid::new_v4();
+    let first = manager.lock_player(uuid).await;
+    let pending = manager.lock_player(uuid);
+    tokio::pin!(pending);
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
+            .await
+            .is_err()
+    );
+    drop(first);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), &mut pending)
+            .await
+            .is_ok()
+    );
+}
+
+#[test]
 fn player_data_defaults_to_empty_survival_inventory() {
     let profile = GameProfile {
         uuid: uuid::Uuid::new_v4(),

@@ -1,7 +1,9 @@
 use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Result;
-use qexed_config::app::qexed::server::{MenuAction, MenuHotbarItem, MenuItem, Menus};
+use qexed_config::app::qexed::server::{
+    MenuAction, MenuActionKind, MenuHotbarItem, MenuItem, Menus,
+};
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::{
     to_client::play::{
@@ -17,6 +19,7 @@ use super::util::text_component;
 const MENU_WINDOW_ID_RAW: i32 = 2;
 const GENERIC_9X1_MENU_TYPE: i32 = 0;
 const GENERIC_9X6_MENU_TYPE: i32 = 5;
+const BEDROCK_MENU_FORM_PREFIX: &str = "qexed:menu:";
 pub(super) const MENU_WINDOW_ID: i32 = MENU_WINDOW_ID_RAW;
 
 #[derive(Debug, Clone)]
@@ -29,6 +32,13 @@ pub(super) struct MenuRenderContext<'a> {
     plugins: &'a crate::plugins::PluginManager,
     player: Option<crate::players::OnlinePlayer>,
     placeholder_context: crate::placeholders::PlaceholderContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BedrockMenuForm {
+    pub(super) menu_id: String,
+    pub(super) plugin_form_id: String,
+    pub(super) json: String,
 }
 
 impl<'a> MenuRenderContext<'a> {
@@ -220,6 +230,93 @@ impl MenuRuntime {
         Ok(Some(menu.id.clone()))
     }
 
+    pub(super) async fn open_menu_for_client<W>(
+        &self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        menu_id: &str,
+        render_context: Option<&MenuRenderContext<'_>>,
+        username: &str,
+        geyser: Option<&mut super::geyser::GeyserRuntime>,
+    ) -> Result<Option<String>>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        if let Some(geyser) = geyser
+            && geyser.client_payload(username).bedrock
+        {
+            let Some(form) = self.bedrock_form(menu_id, render_context)? else {
+                return Ok(None);
+            };
+            let packet = geyser.form_packet(
+                super::geyser::BedrockFormType::Simple,
+                None,
+                form.plugin_form_id,
+                &form.json,
+            )?;
+            sink.send(packet).await?;
+            return Ok(Some(form.menu_id));
+        }
+        self.open_menu(sink, menu_id, render_context).await
+    }
+
+    pub(super) fn bedrock_form(
+        &self,
+        menu_id: &str,
+        render_context: Option<&MenuRenderContext<'_>>,
+    ) -> Result<Option<BedrockMenuForm>> {
+        let Some(menu) = self.resolve_menu(menu_id) else {
+            return Ok(None);
+        };
+        let title = render_menu_text(&menu.title, render_context);
+        let buttons = menu
+            .items
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "text": bedrock_button_text(item, render_context),
+                })
+            })
+            .collect::<Vec<_>>();
+        let json = serde_json::json!({
+            "type": "form",
+            "title": title,
+            "content": "",
+            "buttons": buttons,
+        });
+        Ok(Some(BedrockMenuForm {
+            menu_id: menu.id.clone(),
+            plugin_form_id: bedrock_menu_form_id(&menu.id),
+            json: serde_json::to_string(&json)?,
+        }))
+    }
+
+    pub(super) fn action_for_bedrock_form_response(
+        &self,
+        plugin_form_id: &str,
+        response: &str,
+    ) -> Option<(String, MenuAction)> {
+        let menu_id = plugin_form_id.strip_prefix(BEDROCK_MENU_FORM_PREFIX)?;
+        let menu = self.resolve_menu(menu_id)?;
+        let response = response.trim();
+        if response.is_empty() || response.eq_ignore_ascii_case("null") {
+            return Some((menu.id.clone(), MenuAction::default()));
+        }
+        let index = serde_json::from_str::<serde_json::Value>(response)
+            .ok()
+            .and_then(|value| bedrock_form_button_index(&value))?;
+        Some((
+            menu.id.clone(),
+            menu.items
+                .get(index)
+                .map(|item| item.action.clone())
+                .unwrap_or_default(),
+        ))
+    }
+
+    pub(super) fn is_bedrock_menu_form_id(&self, plugin_form_id: &str) -> bool {
+        plugin_form_id.starts_with(BEDROCK_MENU_FORM_PREFIX)
+    }
+
     pub(super) async fn handle_container_click<W>(
         &self,
         sink: &mut qexed_tcp_connect::PacketSink<W>,
@@ -339,6 +436,33 @@ fn render_menu_lore(
     lore.iter()
         .map(|line| render_menu_text(line, render_context))
         .collect()
+}
+
+fn bedrock_menu_form_id(menu_id: &str) -> String {
+    format!("{BEDROCK_MENU_FORM_PREFIX}{menu_id}")
+}
+
+fn bedrock_button_text(item: &MenuItem, render_context: Option<&MenuRenderContext<'_>>) -> String {
+    let name = render_menu_text(&item.name, render_context);
+    if !name.trim().is_empty() {
+        return name;
+    }
+    if !item.action.target.trim().is_empty()
+        && matches!(
+            item.action.kind,
+            MenuActionKind::OpenMenu | MenuActionKind::Transfer | MenuActionKind::Command
+        )
+    {
+        return item.action.target.trim().to_string();
+    }
+    normalize_resource_key(&item.item)
+}
+
+fn bedrock_form_button_index(value: &serde_json::Value) -> Option<usize> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 fn named_item_with_lore(item_name: &str, name: &str, lore: &[String], count: i32) -> Slot {
@@ -562,6 +686,82 @@ message = "Connecting"
 
         assert_eq!(name, "Hello Tester");
         assert_eq!(lore, vec!["Online 3/20", "Player Tester"]);
+    }
+
+    #[test]
+    fn bedrock_form_uses_item_order_instead_of_slots() {
+        let runtime = super::MenuRuntime::new(&Menus {
+            enable: true,
+            chests: vec![qexed_config::app::qexed::server::ChestMenu {
+                id: "main".to_string(),
+                title: "Main".to_string(),
+                items: vec![
+                    qexed_config::app::qexed::server::MenuItem {
+                        slot: 8,
+                        name: "First".to_string(),
+                        action: MenuAction {
+                            kind: MenuActionKind::Message,
+                            message: "first".to_string(),
+                            ..MenuAction::default()
+                        },
+                        ..Default::default()
+                    },
+                    qexed_config::app::qexed::server::MenuItem {
+                        slot: 0,
+                        name: "Second".to_string(),
+                        action: MenuAction {
+                            kind: MenuActionKind::Message,
+                            message: "second".to_string(),
+                            ..MenuAction::default()
+                        },
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Menus::default()
+        });
+
+        let form = runtime.bedrock_form("main", None).unwrap().unwrap();
+        let json: serde_json::Value = serde_json::from_str(&form.json).unwrap();
+        assert_eq!(form.plugin_form_id, "qexed:menu:main");
+        assert_eq!(json["buttons"][0]["text"], "First");
+        assert_eq!(json["buttons"][1]["text"], "Second");
+
+        let (_, action) = runtime
+            .action_for_bedrock_form_response(&form.plugin_form_id, "1")
+            .unwrap();
+        assert_eq!(action.message, "second");
+
+        let (_, action) = runtime
+            .action_for_bedrock_form_response(&form.plugin_form_id, "\"0\"")
+            .unwrap();
+        assert_eq!(action.message, "first");
+    }
+
+    #[test]
+    fn bedrock_form_null_response_closes_menu_without_action() {
+        let runtime = super::MenuRuntime::new(&Menus {
+            enable: true,
+            chests: vec![qexed_config::app::qexed::server::ChestMenu {
+                id: "main".to_string(),
+                items: vec![qexed_config::app::qexed::server::MenuItem {
+                    action: MenuAction {
+                        kind: MenuActionKind::Message,
+                        message: "clicked".to_string(),
+                        ..MenuAction::default()
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Menus::default()
+        });
+
+        let (_, action) = runtime
+            .action_for_bedrock_form_response("qexed:menu:main", "null")
+            .unwrap();
+        assert_eq!(action.kind, MenuActionKind::None);
     }
 
     fn text_component_value(component: &qexed_protocol::types::TextComponent) -> String {

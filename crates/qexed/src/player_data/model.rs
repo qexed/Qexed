@@ -23,6 +23,8 @@ pub struct PlayerData {
     #[serde(default)]
     pub survival: StoredSurvival,
     pub inventory: StoredInventory,
+    #[serde(default)]
+    pub raw_nbt: String,
 }
 
 impl PlayerData {
@@ -42,6 +44,7 @@ impl PlayerData {
             },
             survival: StoredSurvival::default(),
             inventory: PlayerInventory::empty().to_stored(),
+            raw_nbt: String::new(),
         }
     }
 
@@ -71,6 +74,19 @@ impl PlayerData {
         self.position = StoredPosition::from(position);
         self.survival = survival;
         self.inventory = inventory.to_stored();
+    }
+
+    pub fn raw_nbt_bytes(&self) -> Result<Option<Vec<u8>>> {
+        if self.raw_nbt.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            base64::engine::general_purpose::STANDARD.decode(&self.raw_nbt)?,
+        ))
+    }
+
+    pub fn set_raw_nbt_bytes(&mut self, bytes: &[u8]) {
+        self.raw_nbt = base64::engine::general_purpose::STANDARD.encode(bytes);
     }
 }
 

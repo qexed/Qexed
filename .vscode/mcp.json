@@ -1,0 +1,14 @@
+{
+    "servers": {
+        "qexed-mcp": {
+            "type": "stdio",
+            "command": "${workspaceFolder}/target/release/qexed-mcp.exe",
+            "args": [],
+            "env": {
+                "QEXED_SAVE_PATH": "${workspaceFolder}/world",
+                "QEXED_DIMENSION": "minecraft:overworld",
+                "QEXED_REGISTRY_PATH": "${workspaceFolder}/assets/reports/blocks.json"
+            }
+        }
+    }
+}

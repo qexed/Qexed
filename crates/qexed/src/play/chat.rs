@@ -2692,7 +2692,19 @@ where
                 players,
                 actor,
             );
-            let opened = menus.open_menu(sink, &menu, Some(&render_context)).await?;
+            let username = players
+                .player_by_uuid(actor)
+                .map(|player| player.profile.username)
+                .unwrap_or_default();
+            let opened = menus
+                .open_menu_for_client(
+                    sink,
+                    &menu,
+                    Some(&render_context),
+                    &username,
+                    geyser.as_deref_mut(),
+                )
+                .await?;
             *active_config_menu = opened;
             Ok(false)
         }

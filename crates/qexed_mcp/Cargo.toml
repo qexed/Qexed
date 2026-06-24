@@ -1,0 +1,20 @@
+[package]
+name = "qexed_mcp"
+version = "0.1.0"
+edition = "2024"
+description = "MCP server for offline Minecraft world editing via Anvil format"
+
+[[bin]]
+name = "qexed-mcp"
+path = "src/main.rs"
+
+[dependencies]
+qexed_nbt.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

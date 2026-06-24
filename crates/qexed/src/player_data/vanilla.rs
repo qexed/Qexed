@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use base64::Engine as _;
 
 use crate::inventory::PlayerInventory;
 
@@ -59,15 +60,17 @@ pub(super) fn read_vanilla_player_data(
 ) -> Result<Option<PlayerData>> {
     let (_, tag) = qexed_nbt::from_file(path)
         .with_context(|| format!("read vanilla playerdata: {}", path.display()))?;
+    let raw_nbt = serialize_nbt_payload(&tag)?;
     let qexed = compound(&tag)
         .and_then(|root| root.get("qexed"))
         .and_then(compound)
         .and_then(|qexed| qexed.get("payload"))
         .and_then(string_value);
     if let Some(payload) = qexed {
-        return serde_json::from_str(payload)
-            .map(Some)
-            .context("parse vanilla playerdata qexed payload");
+        let mut data: PlayerData =
+            serde_json::from_str(payload).context("parse vanilla playerdata qexed payload")?;
+        data.raw_nbt = raw_nbt;
+        return Ok(Some(data));
     }
 
     let root = compound(&tag).context("vanilla playerdata root tag is not compound")?;
@@ -92,11 +95,36 @@ pub(super) fn read_vanilla_player_data(
         position,
         survival: Default::default(),
         inventory: PlayerInventory::empty().to_stored(),
+        raw_nbt,
     }))
 }
 
 pub(super) fn write_vanilla_player_data(path: &std::path::Path, data: &PlayerData) -> Result<()> {
-    let mut root = HashMap::new();
+    let mut root = data
+        .raw_nbt_bytes()?
+        .and_then(|bytes| qexed_nbt::from_slice(&bytes).ok().map(|(_, tag)| tag))
+        .and_then(|tag| match tag {
+            qexed_nbt::Tag::Compound(fields) => Some((*fields).clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    apply_runtime_fields(&mut root, data)?;
+    root.insert(
+        "qexed".to_string(),
+        qexed_nbt::Tag::Compound(Arc::new(HashMap::from([(
+            "payload".to_string(),
+            qexed_nbt::Tag::String(Arc::from(serde_json::to_string(&structured_payload(data))?)),
+        )]))),
+    );
+
+    qexed_nbt::to_file(path, "", &qexed_nbt::Tag::Compound(Arc::new(root)), true)
+        .with_context(|| format!("write vanilla playerdata: {}", path.display()))
+}
+
+fn apply_runtime_fields(
+    root: &mut HashMap<String, qexed_nbt::Tag>,
+    data: &PlayerData,
+) -> Result<()> {
     root.insert("DataVersion".to_string(), qexed_nbt::Tag::Int(DATA_VERSION));
     root.insert(
         "Dimension".to_string(),
@@ -127,16 +155,28 @@ pub(super) fn write_vanilla_player_data(path: &std::path::Path, data: &PlayerDat
         "OnGround".to_string(),
         qexed_nbt::Tag::Byte(i8::from(data.position.on_ground)),
     );
-    root.insert(
-        "qexed".to_string(),
-        qexed_nbt::Tag::Compound(Arc::new(HashMap::from([(
-            "payload".to_string(),
-            qexed_nbt::Tag::String(Arc::from(serde_json::to_string(data)?)),
-        )]))),
-    );
+    Ok(())
+}
 
-    qexed_nbt::to_file(path, "", &qexed_nbt::Tag::Compound(Arc::new(root)), true)
-        .with_context(|| format!("write vanilla playerdata: {}", path.display()))
+pub(super) fn serialize_nbt_payload(tag: &qexed_nbt::Tag) -> Result<String> {
+    let tag = raw_playerdata_tag_without_qexed(tag);
+    let bytes = qexed_nbt::to_vec("", &tag).context("serialize raw playerdata nbt")?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+fn structured_payload(data: &PlayerData) -> PlayerData {
+    let mut payload = data.clone();
+    payload.raw_nbt.clear();
+    payload
+}
+
+fn raw_playerdata_tag_without_qexed(tag: &qexed_nbt::Tag) -> qexed_nbt::Tag {
+    let qexed_nbt::Tag::Compound(root) = tag else {
+        return tag.clone();
+    };
+    let mut root = (**root).clone();
+    root.remove("qexed");
+    qexed_nbt::Tag::Compound(Arc::new(root))
 }
 
 fn position_from_nbt(root: &HashMap<String, qexed_nbt::Tag>) -> Result<StoredPosition> {

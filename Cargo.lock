@@ -3042,6 +3042,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "qexed_mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "flate2",
+ "qexed_nbt",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "qexed_nbt"
 version = "0.1.0"
 dependencies = [

@@ -30,6 +30,7 @@ const MAX_UNACKNOWLEDGED_BATCHES: usize = 10;
 const MAX_CHUNK_LOAD_THREADS: usize = 4;
 const MAX_CHUNK_GENERATE_THREADS: usize = 8;
 const DEFAULT_CHUNK_CENTER_UPDATE_DELAY: Duration = Duration::from_secs(1);
+const CHUNK_PAYLOAD_TIMING_LOG_THRESHOLD: Duration = Duration::from_millis(100);
 
 pub(super) struct ChunkSendState {
     pub(super) dimension: String,
@@ -205,6 +206,7 @@ impl ChunkTask {
                 compression_threshold,
                 reply,
             } => {
+                let started_at = Instant::now();
                 let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     build_saved_chunk_payload_sync(
                         &world,
@@ -215,6 +217,7 @@ impl ChunkTask {
                         compression_threshold,
                     )
                 }));
+                log_chunk_payload_timing("saved", &dimension, chunk_x, chunk_z, started_at);
                 match loaded {
                     Ok(Ok(Some(payload))) => reply.send(chunk_x, chunk_z, Ok(payload)),
                     Ok(Ok(None)) => {
@@ -282,6 +285,8 @@ impl ChunkGenerateTask {
                 compression_threshold,
                 reply,
             } => {
+                let started_at = Instant::now();
+                let log_dimension = dimension.clone();
                 let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     build_generated_chunk_payload_sync(
                         world,
@@ -298,9 +303,34 @@ impl ChunkGenerateTask {
                         panic_payload_message(panic)
                     ))
                 });
+                match &payload {
+                    Ok(_) => log_chunk_payload_timing("generated", &log_dimension, chunk_x, chunk_z, started_at),
+                    Err(_) => log_chunk_payload_timing("generated_error", &log_dimension, chunk_x, chunk_z, started_at),
+                }
                 reply.send(chunk_x, chunk_z, payload);
             }
         }
+    }
+}
+
+fn log_chunk_payload_timing(
+    kind: &str,
+    dimension: &str,
+    chunk_x: i32,
+    chunk_z: i32,
+    started_at: Instant,
+) {
+    let elapsed = started_at.elapsed();
+    if elapsed >= CHUNK_PAYLOAD_TIMING_LOG_THRESHOLD {
+        log::warn!(
+            "slow chunk payload build: kind={kind}, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), elapsed_ms={}",
+            elapsed.as_millis()
+        );
+    } else {
+        log::debug!(
+            "chunk payload build: kind={kind}, dimension={dimension}, chunk=({chunk_x}, {chunk_z}), elapsed_ms={}",
+            elapsed.as_millis()
+        );
     }
 }
 
@@ -488,9 +518,7 @@ impl ChunkSendState {
         self.refresh_pending_chunks();
         self.start_next_chunk_load(world, Some(chunk_sender), sink.compression_threshold());
         sink.flush().await?;
-        log::debug!(
-            "鐜╁绉诲姩鍒版柊鍖哄潡锛屽凡琛ュ彂瑙嗚窛鍖哄潡: center=({chunk_x}, {chunk_z})"
-        );
+        log::debug!("chunk center update queued: center=({chunk_x}, {chunk_z})");
         Ok(())
     }
 
@@ -638,6 +666,12 @@ impl ChunkSendState {
         self.loading_chunks.remove(&chunk);
 
         let cache_epoch = world.cache_epoch();
+        log::info!(
+            "center chunk payload build started: dimension={}, chunk=({}, {})",
+            self.dimension,
+            chunk.0,
+            chunk.1
+        );
         let chunk_payload = ChunkTaskPool::shared()
             .build_payload(
                 world.clone(),
@@ -648,7 +682,20 @@ impl ChunkSendState {
                 sink.compression_threshold(),
             )
             .await?;
+        log::info!(
+            "center chunk payload build completed: dimension={}, chunk=({}, {}), bytes={}",
+            self.dimension,
+            chunk.0,
+            chunk.1,
+            chunk_payload.frame.len()
+        );
 
+        log::info!(
+            "center chunk send started: dimension={}, chunk=({}, {})",
+            self.dimension,
+            chunk.0,
+            chunk.1
+        );
         sink.send(ChunkBatchStart {}).await?;
         sink.send_encoded_frame(chunk_payload.frame).await?;
         for update in world.placed_block_updates(&self.dimension, chunk.0, chunk.1) {
@@ -656,12 +703,17 @@ impl ChunkSendState {
         }
         self.visible_chunks.insert(chunk);
         plugins.emit_chunk_load(&self.dimension, chunk.0, chunk.1);
-        self.unacknowledged_batches = self.unacknowledged_batches.saturating_add(1);
         sink.send(ChunkBatchFinished {
             batch_size: VarInt(1),
         })
         .await?;
         sink.flush().await?;
+        log::info!(
+            "center chunk send completed: dimension={}, chunk=({}, {})",
+            self.dimension,
+            chunk.0,
+            chunk.1
+        );
         self.log_initial_view_progress();
         Ok(chunk_payload.fluid_seeds)
     }
@@ -706,6 +758,67 @@ impl ChunkSendState {
             batch_size: VarInt(chunks.len() as i32),
         })
         .await?;
+        Ok(fluid_seeds)
+    }
+
+    pub(super) async fn send_remaining_initial_chunks<W>(
+        &mut self,
+        sink: &mut qexed_tcp_connect::PacketSink<W>,
+        world: &WorldManager,
+        plugins: &crate::plugins::PluginManager,
+    ) -> Result<Vec<FluidSeed>>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let chunks = self.missing_chunks();
+        if chunks.is_empty() {
+            self.log_initial_view_progress();
+            return Ok(Vec::new());
+        }
+
+        let started_at = Instant::now();
+        let cache_epoch = world.cache_epoch();
+        let mut fluid_seeds = Vec::new();
+        log::info!(
+            "initial chunk bootstrap started: dimension={}, remaining_chunks={}",
+            self.dimension,
+            chunks.len()
+        );
+
+        sink.send(ChunkBatchStart {}).await?;
+        for (chunk_x, chunk_z) in &chunks {
+            self.remove_pending_chunk((*chunk_x, *chunk_z));
+            self.loading_chunks.remove(&(*chunk_x, *chunk_z));
+            let chunk_payload = ChunkTaskPool::shared()
+                .build_payload(
+                    world.clone(),
+                    self.dimension.clone(),
+                    *chunk_x,
+                    *chunk_z,
+                    cache_epoch,
+                    sink.compression_threshold(),
+                )
+                .await?;
+            sink.send_encoded_frame(chunk_payload.frame).await?;
+            fluid_seeds.extend(chunk_payload.fluid_seeds);
+            for update in world.placed_block_updates(&self.dimension, *chunk_x, *chunk_z) {
+                sink.send(update).await?;
+            }
+            self.visible_chunks.insert((*chunk_x, *chunk_z));
+            plugins.emit_chunk_load(&self.dimension, *chunk_x, *chunk_z);
+        }
+        sink.send(ChunkBatchFinished {
+            batch_size: VarInt(chunks.len() as i32),
+        })
+        .await?;
+        sink.flush().await?;
+        log::info!(
+            "initial chunk bootstrap completed: dimension={}, chunks={}, elapsed_ms={}",
+            self.dimension,
+            chunks.len(),
+            started_at.elapsed().as_millis()
+        );
+        self.log_initial_view_progress();
         Ok(fluid_seeds)
     }
 
@@ -864,13 +977,17 @@ impl ChunkSendState {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        if self.ready_chunks.is_empty()
-            || self.unacknowledged_batches >= self.max_unacknowledged_batches
+        if self.ready_chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let initial_view_bootstrap = !self.initial_view_logged;
+        if !initial_view_bootstrap && self.unacknowledged_batches >= self.max_unacknowledged_batches
         {
             return Ok(Vec::new());
         }
 
-        if replenish_quota {
+        if replenish_quota || initial_view_bootstrap {
             let max_batch_size = self.desired_chunks_per_tick.max(1.0);
             self.batch_quota =
                 (self.batch_quota + self.desired_chunks_per_tick).min(max_batch_size);
@@ -920,7 +1037,9 @@ impl ChunkSendState {
             self.visible_chunks.insert((*chunk_x, *chunk_z));
             plugins.emit_chunk_load(&self.dimension, *chunk_x, *chunk_z);
         }
-        self.unacknowledged_batches = self.unacknowledged_batches.saturating_add(1);
+        if !initial_view_bootstrap {
+            self.unacknowledged_batches = self.unacknowledged_batches.saturating_add(1);
+        }
         self.batch_quota = (self.batch_quota - chunks.len() as f32).max(0.0);
         sink.send(ChunkBatchFinished {
             batch_size: VarInt(chunks.len() as i32),

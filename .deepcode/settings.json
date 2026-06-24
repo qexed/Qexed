@@ -1,0 +1,14 @@
+{
+    "mcpServers": {
+        "qexed-mcp": {
+            "command": "cargo",
+            "args": ["run", "-p", "qexed_mcp", "--release"],
+            "cwd": "e:/code/qexed-v4",
+            "env": {
+                "QEXED_SAVE_PATH": "在此填写你的世界存档路径",
+                "QEXED_DIMENSION": "minecraft:overworld",
+                "QEXED_REGISTRY_PATH": "e:/code/qexed-v4/assets/reports/blocks.json"
+            }
+        }
+    }
+}
