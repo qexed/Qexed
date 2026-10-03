@@ -1,0 +1,11 @@
+[package]
+name = "qexed"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+clap = { workspace = true }
+qexed-club = { path = "../qexed-club" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

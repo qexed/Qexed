@@ -1,0 +1,11 @@
+[package]
+name = "qexed_config"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+qexed_toml.workspace = true
+serde.workspace = true
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+toml_edit = { workspace = true, features = ["serde"] }
