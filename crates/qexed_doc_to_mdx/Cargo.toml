@@ -1,0 +1,27 @@
+[package]
+name = "qexed_doc_to_mdx"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+clap.workspace = true
+serde_json.workspace = true
+qexed_config.workspace = true
+qexed_config_macros.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+thiserror.workspace = true
+serde.workspace = true
+tklog.workspace = true
+tokio.workspace = true
+log.workspace = true
+anyhow.workspace = true
+shadow-rs = { workspace = true }
+
+qexed_language.workspace = true
+qexed_log.workspace = true
+
+[build-dependencies]
+shadow-rs = { workspace = true }

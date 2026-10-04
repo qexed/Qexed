@@ -1,0 +1,18 @@
+[package]
+name = "qexed_language"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { workspace = true, features = ["fs", "macros", "rt"] }
+serde_json.workspace = true
+qexed_config.workspace = true
+qexed_config_macros.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+thiserror.workspace = true
+serde.workspace = true
+tklog.workspace = true
+log.workspace = true

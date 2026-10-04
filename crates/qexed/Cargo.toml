@@ -5,7 +5,17 @@ edition = "2024"
 publish = false
 
 [dependencies]
+qexed_club = { workspace = true }
 clap = { workspace = true }
-qexed-club = { path = "../qexed-club" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+shadow-rs = { workspace = true }
+tklog.workspace = true
+qexed_log.workspace = true
+tokio.workspace = true
+anyhow = { workspace = true }
+log = { workspace = true }
+qexed_config.workspace = true
+qexed_language.workspace = true
+[build-dependencies]
+shadow-rs.workspace = true

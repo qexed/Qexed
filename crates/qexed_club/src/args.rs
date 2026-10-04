@@ -13,8 +13,8 @@ pub struct ServerArgs {
     pub language: Option<String>,
 
     /// 指定配置目录。
-    #[arg(long)]
-    pub config_path: Option<std::path::PathBuf>,
+    #[arg(long, default_value = "./config")]
+    pub config_path: std::path::PathBuf,
 
     /// 指定插件目录，相对路径基于 Qexed 可执行文件所在目录。
     #[arg(long, default_value = "plugins")]

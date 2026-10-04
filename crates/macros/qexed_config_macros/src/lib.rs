@@ -1,188 +1,165 @@
-// qexed_config_macros/src/lib.rs
+//! app_config：代替手写 impl qexed_config::Config。
+//!
+//! 用法：
+//! #[qexed_config_macros::app_config("/", "log", secrets = ["level.token"])]
+//!
+//! 生成 impl Config（PATH/NAME/SECRETS），并把 <File>path/name.toml</File> 与
+//! <Secrets>...</Secrets> 注入类型的 autodoc 块（没有则补一个完整块），
+//! schema 的 file/secrets 随之自动生成，不必在 autodoc 和 impl 两处重复声明。
+
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, parse_macro_input};
-use syn::{
-    Expr, Token,
-    parse::{Parse, ParseStream},
-};
-use syn::{ItemStruct, LitStr};
-mod autodoc;
+use syn::punctuated::Punctuated;
+use syn::parse::Parser;
+use syn::{LitStr, Token};
 
-#[proc_macro_derive(AutoDoc, attributes(AutoDoc, serde))]
-pub fn derive_autodoc(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    autodoc::expand(input).into()
+#[proc_macro_attribute]
+pub fn app_config(args: TokenStream, input: TokenStream) -> TokenStream {
+    let arg_tokens: proc_macro2::TokenStream = args.into();
+    let item_tokens: proc_macro2::TokenStream = input.into();
+    match expand(arg_tokens, item_tokens) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
 }
-/// 自动为枚举生成常用Trait实现的简化宏
-#[proc_macro_derive(AutoEnum, attributes(default, display))]
-pub fn auto_enum_derive(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let enum_name = &input.ident;
 
-    // 检查是否是枚举
-    let variants = match &input.data {
-        Data::Enum(data) => &data.variants,
-        _ => panic!("AutoEnum只能用于枚举类型"),
+
+fn expand(
+    arg_tokens: proc_macro2::TokenStream,
+    item_tokens: proc_macro2::TokenStream,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let (config_path, config_name) = parse_args(arg_tokens)?;
+    let item: syn::Item = syn::parse2(item_tokens)?;
+    let item_struct = match &item {
+        syn::Item::Struct(s) => s,
+        _ => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "app_config only works on structs",
+            ))
+        }
     };
+    let name = &item_struct.ident;
 
-    // 收集变体信息
-    let mut variant_idents = Vec::new();
-    let mut default_variant = None;
+    // ---- 从 autodoc 收集机密模式（<Secret /> 字段标签 + <Secrets> 嵌套/通配路径）----
+    // 属性宏先于 Derive 执行：读 doc 里的标签生成 SECRETS，并保持 doc 原样透传。
+    let mut new_attrs: Vec<syn::Attribute> = Vec::new();
+    for attr in &item_struct.attrs {
+        new_attrs.push(attr.clone());
+    }
+    let mut secrets: Vec<String> = Vec::new();
+    for attr in &item_struct.attrs {
+        if !attr.path().is_ident("doc") {
+            continue;
+        }
+        let text = attr_doc_text(attr);
+        // <Secrets>：多行/逗号分隔的嵌套或通配模式，如 auth.password, servers.*.api_key
+        if let Some(inner) = tag_inner(&text, "Secrets") {
+            for part in inner.split([',', '\n']) {
+                let pattern = part.trim();
+                if !pattern.is_empty() && !secrets.iter().any(|s| s == pattern) {
+                    secrets.push(pattern.to_string());
+                }
+            }
+        }
+    }
+    // 字段级 <Secret />：裸字段名进模式表（serde rename 后的键名优先）。
+    if let syn::Fields::Named(named) = &item_struct.fields {
+        for field in named.named.iter() {
+            let has_secret = field.attrs.iter().any(|attr| {
+                attr.path().is_ident("doc") && tag_self_closing(&attr_doc_text(attr), "Secret")
+            });
+            if !has_secret {
+                continue;
+            }
+            let rust_name = field.ident.as_ref().expect("named field").to_string();
+            let key = serde_rename_of(field).unwrap_or(rust_name);
+            if !secrets.iter().any(|s| s == &key) {
+                secrets.push(key);
+            }
+        }
+    }
 
-    for variant in variants {
-        match &variant.fields {
-            Fields::Unit => {
-                let ident = &variant.ident;
-                variant_idents.push(ident);
+    // ---- impl Config ----
+    let path_lit = LitStr::new(&config_path, proc_macro2::Span::call_site());
+    let name_lit = LitStr::new(&config_name, proc_macro2::Span::call_site());
+    let secrets_lits = secrets.iter().map(|s| quote! { #s });
 
-                // 检查是否有#[default]属性
-                for attr in &variant.attrs {
-                    if attr.path().is_ident("default") {
-                        default_variant = Some(ident);
+    // attrs 去重：new_attrs 已含注入结果，避免 item_struct 再带一份原 attrs
+    let mut item_struct = item_struct.clone();
+    item_struct.attrs = new_attrs;
+    Ok(quote! {
+        #item_struct
+
+        impl qexed_config::Config for #name {
+            const PATH: &'static str = #path_lit;
+            const NAME: &'static str = #name_lit;
+            const SECRETS: &'static [&'static str] = &[#(#secrets_lits),*];
+        }
+    })
+}
+
+fn attr_doc_text(attr: &syn::Attribute) -> String {
+    if let syn::Meta::NameValue(nv) = &attr.meta {
+        if let syn::Expr::Lit(lit) = &nv.value {
+            if let syn::Lit::Str(s) = &lit.lit {
+                return s.value();
+            }
+        }
+    }
+    String::new()
+}
+
+fn parse_args(tokens: proc_macro2::TokenStream) -> syn::Result<(String, String)> {
+    let parser = Punctuated::<LitStr, Token![,]>::parse_terminated;
+    let lits = parser.parse2(tokens)?;
+    let values: Vec<String> = lits.into_iter().map(|l| l.value()).collect();
+    match values.as_slice() {
+        [path, name] => Ok((path.clone(), name.clone())),
+        _ => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "app_config(PATH, NAME): exactly two positional string arguments",
+        )),
+    }
+}
+
+
+
+/// 取标签内文（<Tag>...</Tag>），跨行有效。
+fn tag_inner(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find(&close)? + start;
+    Some(text[start..end].to_string())
+}
+
+/// 自闭合标签判定（<Secret /> 及常见变体）。
+fn tag_self_closing(text: &str, tag: &str) -> bool {
+    text.contains(&format!("<{tag} />")) || text.contains(&format!("<{tag}/>"))
+}
+
+/// 字段的 serde rename 键名（显式 rename 才认；rename_all 交给文档侧的 serde 对齐逻辑）。
+fn serde_rename_of(field: &syn::Field) -> Option<String> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        if let Ok(nested) = attr.parse_args_with(
+            Punctuated::<syn::Meta, Token![,]>::parse_terminated,
+        ) {
+            for meta in nested {
+                if let syn::Meta::NameValue(nv) = meta {
+                    if nv.path.is_ident("rename") {
+                        if let syn::Expr::Lit(lit) = &nv.value {
+                            if let syn::Lit::Str(s) = &lit.lit {
+                                return Some(s.value());
+                            }
+                        }
                     }
                 }
             }
-            _ => panic!("AutoEnum只支持无字段枚举变体"),
         }
     }
-
-    // 生成代码
-    let mut output = proc_macro2::TokenStream::new();
-
-    // 生成Default实现
-    if let Some(default_ident) = default_variant {
-        output.extend(quote! {
-            impl std::default::Default for #enum_name {
-                fn default() -> Self {
-                    #enum_name::#default_ident
-                }
-            }
-        });
-    }
-
-    // 生成Display实现
-    let display_arms: Vec<_> = variant_idents
-        .iter()
-        .map(|ident| {
-            let display_text = ident.to_string();
-            quote! {
-                #enum_name::#ident => write!(f, #display_text),
-            }
-        })
-        .collect();
-
-    output.extend(quote! {
-        impl std::fmt::Display for #enum_name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    #(#display_arms)*
-                }
-            }
-        }
-    });
-
-    // 生成FromStr实现
-    let from_str_arms: Vec<_> = variant_idents
-        .iter()
-        .map(|ident| {
-            let ident_str = ident.to_string().to_lowercase();
-            quote! {
-                #ident_str => Ok(#enum_name::#ident),
-            }
-        })
-        .collect();
-
-    output.extend(quote! {
-        impl std::str::FromStr for #enum_name {
-            type Err = String;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                match s.to_lowercase().as_str() {
-                    #(#from_str_arms)*
-                    _ => Err(format!("无效的{}值: '{}'", stringify!(#enum_name), s)),
-                }
-            }
-        }
-    });
-
-    TokenStream::from(output)
-}
-/// 解析 `#[AppConfig(...)]` 的参数
-/// 解析 `#[AppConfig(...)]` 的参数
-struct AppConfigArgs {
-    path: String,
-    name: String,
-}
-
-impl Parse for AppConfigArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut path = None;
-        let mut name = None;
-
-        // 方法：先尝试解析一个字符串字面量（位置参数模式）
-        // 如果失败，则说明是键值对模式
-        let lookahead = input.lookahead1();
-        if lookahead.peek(LitStr) {
-            // 位置参数: "path", "name"
-            let path_lit: LitStr = input.parse()?;
-            path = Some(path_lit.value());
-            if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-            }
-            let name_lit: LitStr = input.parse()?;
-            name = Some(name_lit.value());
-        } else {
-            // 键值对模式: path = "...", name = "..."
-            while !input.is_empty() {
-                let ident: syn::Ident = input.parse()?;
-                input.parse::<Token![=]>()?;
-                let expr: Expr = input.parse()?;
-                let lit = match expr {
-                    Expr::Lit(lit) => lit,
-                    _ => return Err(input.error("expected string literal")),
-                };
-                let value = match lit.lit {
-                    syn::Lit::Str(s) => s.value(),
-                    _ => return Err(input.error("expected string literal")),
-                };
-                if ident == "path" {
-                    path = Some(value);
-                } else if ident == "name" {
-                    name = Some(value);
-                } else {
-                    return Err(input.error(format!("unknown key `{}`", ident)));
-                }
-                // 允许逗号分隔
-                if input.peek(Token![,]) {
-                    input.parse::<Token![,]>()?;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        Ok(AppConfigArgs {
-            path: path.ok_or_else(|| input.error("missing path"))?,
-            name: name.ok_or_else(|| input.error("missing name"))?,
-        })
-    }
-}
-#[proc_macro_attribute]
-pub fn app_config(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as AppConfigArgs);
-    let input = parse_macro_input!(item as ItemStruct);
-    let struct_name = &input.ident;
-    let path = args.path;
-    let name = args.name;
-
-    let expanded = quote! {
-        #input
-
-        impl ::qexed_config::tool::AppConfigTrait for #struct_name {
-            const PATH: &'static str = #path;
-            const NAME: &'static str = #name;
-        }
-    };
-    expanded.into()
+    None
 }
