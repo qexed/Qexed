@@ -427,6 +427,8 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     secret_placeholder: qexed_doc::SECRET_PLACEHOLDER.to_string(),
                     values: qexed_doc::doc_values(&[#(#schema_value_pairs),*]),
                     fields: Self::doc_fields(),
+                    // 空占位：由 qexed_language::translate_schema 在渲染阶段回填。
+                    document: ::std::option::Option::None,
                 }
             }
             pub fn schema_json() -> String { Self::schema().to_json() }

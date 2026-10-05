@@ -96,6 +96,11 @@ pub struct DocField {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub warn: Option<DocI18nText>,
+    /// 翻译后的字段文本：`t(key)` 渲染模板 + `values` 做 %{name} 插值。
+    /// None 表示尚未翻译，由 `qexed_language::translate_schema` 回填。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub document: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
@@ -114,11 +119,19 @@ pub struct DocSchema {
     /// 结构体级 <Value> 求值结果（i18n %{x} 插值用）。
     pub values: BTreeMap<String, Value>,
     pub fields: Vec<DocField>,
+    /// 翻译后的 schema 文本：`t(key)` 渲染模板 + `values` 做 %{name} 插值。
+    /// None 表示尚未翻译，由 `qexed_language::translate_schema` 回填。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub document: Option<String>,
 }
 
 /// 由 `Doc` 派生实现：从类型取回它的 schema，供嵌套字段递归展开。
 pub trait DocSchemaOf {
     fn schema() -> DocSchema;
+    fn schema_json() -> String {
+        Self::schema().to_json()
+    }
 }
 
 /// 主配置文件中机密字段的占位符文本（qexed_config::Config 约定）。
@@ -224,7 +237,7 @@ doc_value_primitive!(
     usize => "number",
     f32 => "number", f64 => "number",
 );
- 
+
 /// 泛型字符串键映射：值类型递归套用 DocValue，schema 的 value_type 随之嵌套
 /// （如 map<string,string>、map<string,map<string,string>>），可写值校验逐值穿透。
 // macro_rules 的 ty 片段拼泛型参数不合法，直接手写两个泛型实现：
@@ -298,6 +311,8 @@ pub fn doc_field(
         password,
         tip: None,
         warn: None,
+        // 由 qexed_language::translate_schema 在渲染阶段回填。
+        document: None,
     }
 }
 

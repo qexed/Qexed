@@ -19,6 +19,12 @@ members = [
     "crates/macros/qexed_doc_macros",
     "crates/macros/qexed_config_macros",
     "crates/qexed_doc_to_mdx",
+
+    # 文档示例校验（docker 复现 MDX verify 清单）
+    "crates/qexed_doc_verify",
+
+    # Mojang jar数据
+    "crates/qexed_mojang_data",
 ]
 [workspace.dependencies]
 qexed_toml.path = "crates/qexed_toml"
@@ -29,6 +35,8 @@ qexed_doc.path = "crates/qexed_doc"
 qexed_doc_macros.path = "crates/macros/qexed_doc_macros"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_club = { path = 'crates/qexed_club' }
+qexed_mojang_data.path = "crates/qexed_mojang_data"
+
 serde = "1.0.229"
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }

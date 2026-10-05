@@ -13,10 +13,12 @@ use serde::{Deserialize, Serialize};
 pub struct LanguageConfig {
     /// ```autodoc
     /// <Name>qexed.crates.language.config.LanguageConfig.enable</Name>
+    /// <Default>true</Default>
     /// ```
     pub enable: bool,
     /// ```autodoc
     /// <Name>qexed.crates.language.config.LanguageConfig.language</Name>
+    /// <Default>zh-CN</Default>
     /// ```
     pub language: String,
     /// 线上下载语言文件的服务器
@@ -25,12 +27,13 @@ pub struct LanguageConfig {
     /// 语言文件服务器可以是纯静态的
     /// 此外插件的语言配置有些特殊，若默认服务器没有插件的翻译文件，则从插件默认配置的语言服务器获取
     /// 路由规则:
-    /// Get /api/v1/qexed/{commit}/language.json 获取commit对应版本的语言支持列表
-    /// Get /api/v1/qexed/{commit}/{language}.json 获取commit对应版本的对应语言翻译文本
-    /// Get /api/v1/{author}/{plugin}/{commit}/language.json 获取对应作者的指定插件的commit对应版本的语言支持列表
-    /// Get /api/v1/{author}/{plugin}/{commit}/{language}.json 获取对应作者的指定插件的commit对应版本的对应语言翻译文本
+    /// `GET /api/v1/qexed/{commit}/language.json` 获取commit对应版本的语言支持列表
+    /// `GET /api/v1/qexed/{commit}/{language}.json` 获取commit对应版本的对应语言翻译文本
+    /// `GET /api/v1/{author}/{plugin}/{commit}/language.json` 获取对应作者的指定插件的commit对应版本的语言支持列表
+    /// `GET /api/v1/{author}/{plugin}/{commit}/{language}.json` 获取对应作者的指定插件的commit对应版本的对应语言翻译文本
     /// ```autodoc
     /// <Name>qexed.crates.language.config.LanguageConfig.server_url</Name>
+    /// <Default>https://language.qexed.com/</Default>
     /// ```
     pub server_url: Option<String>,
     /// 当server_url和插件自带的无法获取了，我们根据自定义插件作者的服务器获取

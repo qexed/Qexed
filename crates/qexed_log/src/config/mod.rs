@@ -20,22 +20,27 @@ pub struct LogConfig {
     pub level: loglevel::LogLevel,
     /// ```autodoc
     /// <Name>qexed.crates.log.config.LogConfig.filename</Name>
+    /// <Default>./log/qexed.log</Default>
     /// ```
     pub filename: String,
     /// ```autodoc
     /// <Name>qexed.crates.log.config.LogConfig.mode</Name>
+    /// <Default>DAY</Default>
     /// ```
     pub mode: mode::MODE,
     /// ```autodoc
     /// <Name>qexed.crates.log.config.LogConfig.maxbackups</Name>
+    /// <Default>30</Default>
     /// ```
     pub maxbackups: u32,
     /// ```autodoc
     /// <Name>qexed.crates.log.config.LogConfig.compress</Name>
+    /// <Default>true</Default>
     /// ```
     pub compress: bool,
     /// ```autodoc
     /// <Name>qexed.crates.log.config.LogConfig.json</Name>
+    /// <Default>false</Default>
     /// ```
     pub json: bool,
 }

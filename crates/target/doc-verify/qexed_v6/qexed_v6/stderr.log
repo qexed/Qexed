@@ -1,0 +1,13 @@
+error: failed to get `qexed_log` as a dependency of package `doc-snippet-log-init v0.0.0 (/doc-verify)`
+
+Caused by:
+  failed to load source for dependency `qexed_log`
+
+Caused by:
+  unable to update /workspace/crates/qexed_log
+
+Caused by:
+  failed to read `/workspace/crates/qexed_log/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)

@@ -1,0 +1,61 @@
+name: dispatch-docs-audit
+
+# Qexed 有 commit 时通知文档站，由 docs-auditor 对照源码补/修功能文档。
+# 需要仓库 secret DOC_SITE_DISPATCH_TOKEN：对 qexed/qexed-doc 有 repo + issues 权限的 PAT。
+
+on:
+  push:
+    branches: [v6, main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    if: github.repository == 'qexed/Qexed'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Collect commit context
+        id: ctx
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          title="$(git log -1 --pretty=%s)"
+          files="$(git diff-tree --no-commit-id --name-only -r HEAD | head -n 80 | paste -sd' ' -)"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "title<<EOF"
+            echo "${title}"
+            echo "EOF"
+            echo "files<<EOF"
+            echo "${files}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Notify qexed-doc
+        env:
+          GH_TOKEN: ${{ secrets.DOC_SITE_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "DOC_SITE_DISPATCH_TOKEN 未配置，跳过文档审计派发。"
+            exit 0
+          fi
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/qexed/qexed-doc/dispatches \
+            -f event_type=qexed-commit \
+            -f client_payload[sha]="${{ steps.ctx.outputs.sha }}" \
+            -f client_payload[ref]="${{ github.ref_name }}" \
+            -f client_payload[repository]="${{ github.repository }}" \
+            -f client_payload[title]="${{ steps.ctx.outputs.title }}" \
+            -f client_payload[files]="${{ steps.ctx.outputs.files }}" \
+            -f client_payload[html_url]="${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.ctx.outputs.sha }}"

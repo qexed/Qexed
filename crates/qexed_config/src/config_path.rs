@@ -21,6 +21,28 @@ pub fn config_file(path: &str, name: &str) -> Result<PathBuf, ConfigError> {
     Ok(dir.join(format!("{name}.toml")))
 }
 
+pub fn config_doc_path(path: &str, name: &str) -> Result<PathBuf, ConfigError> {
+    validate_config_name(name)?;
+    let dir = build_safe_relative(path)?;
+    Ok(dir.join(name))
+}
+fn build_safe_relative(path: &str) -> Result<PathBuf, ConfigError> {
+    let sub_trimmed = path.trim_start_matches('/');
+    let sub_path = std::path::Path::new(sub_trimmed);
+
+    for comp in sub_path.components() {
+        if matches!(
+            comp,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        ) {
+            return Err(ConfigError::InvalidPath(format!(
+                "sub path contains illegal component: {comp:?}"
+            )));
+        }
+    }
+
+    Ok(sub_path.to_path_buf())
+}
 fn validate_config_name(name: &str) -> Result<(), ConfigError> {
     if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Ok(());

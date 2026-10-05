@@ -2,7 +2,7 @@
 
 use crate::config::LanguageConfig;
 use crate::error::LanguageError;
-use crate::{storage_dir, Translations, CURRENT, ZH_CN_JSON};
+use crate::{embedded_json, storage_dir, Translations, CURRENT, ZH_CN_JSON};
 use std::path::{Path, PathBuf};
 
 /// 本体语言文件的缓存路径：`<config>/languages/qexed/{commit}/{language}.json`。
@@ -128,15 +128,17 @@ pub async fn load_translations(
     commit: &str,
     language: &str,
 ) -> Translations {
+    // 兜底表按语言选择：zh-CN 用内嵌中文，其余用内嵌英文（en 表缺的键由 t 回退 key）。
+    let embedded = embedded_json(language);
     let cache = match qexed_cache_path(commit, language) {
         Ok(p) => p,
-        Err(_) => return Translations::from_json(ZH_CN_JSON).unwrap_or_default(),
+        Err(_) => return Translations::from_json(embedded).unwrap_or_default(),
     };
     match ensure_translations(cache, fetch_qexed(config, commit, language)).await {
         Ok(table) => table,
         Err(e) => {
-            eprintln!("[qexed_language] {language}: fallback to embedded zh-CN: {e}");
-            Translations::from_json(ZH_CN_JSON).unwrap_or_default()
+            eprintln!("[qexed_language] {language}: fallback to embedded: {e}");
+            Translations::from_json(embedded).unwrap_or_default()
         }
     }
 }

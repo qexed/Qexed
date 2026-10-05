@@ -19,9 +19,11 @@ tokio.workspace = true
 log.workspace = true
 anyhow.workspace = true
 shadow-rs = { workspace = true }
+chrono.workspace = true
 
 qexed_language.workspace = true
 qexed_log.workspace = true
+qexed_mojang_data.workspace = true
 
 [build-dependencies]
 shadow-rs = { workspace = true }

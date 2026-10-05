@@ -1,0 +1,22 @@
+[package]
+name = "qexed_mojang_data"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_config.workspace = true
+qexed_config_macros.workspace = true
+qexed_language.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+tokio = { workspace = true, features = ["rt", "macros"] }
+tklog.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+log.workspace = true
+
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+sha1 = "0.10"
+hex = "0.4"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }

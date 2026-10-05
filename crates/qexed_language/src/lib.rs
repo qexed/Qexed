@@ -3,12 +3,25 @@ pub mod error;
 pub mod service;
 
 use qexed_config::Config;
+use qexed_doc::{interpolate, DocField, DocSchema};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
 /// 内置简体中文翻译（编译期嵌入，离线兜底：语言服务器与本地缓存都缺失时仍可显示中文）。
 pub const ZH_CN_JSON: &str = include_str!("locales/zh-CN.json");
+
+/// 内置英文翻译（编译期嵌入）：非 zh-CN 语言在缓存与远程都不可用时的兜底表，
+/// 避免英文文档回退成整表中文。
+pub const EN_JSON: &str = include_str!("locales/en.json");
+
+/// 按语言选择编译期内嵌的兜底翻译 json：zh-CN 系用中文表，其余一律英文表。
+pub fn embedded_json(language: &str) -> &'static str {
+    match language {
+        "zh-CN" | "zh" | "zh-Hans" => ZH_CN_JSON,
+        _ => EN_JSON,
+    }
+}
 
 /// 字段翻译键派生规则（autodoc 各标签 → 键空间）：
 ///
@@ -143,6 +156,61 @@ pub async fn ensure_plugin_translations(
     service::ensure_translations(cache, body).await
 }
 
+// ---------------------------------------------------------------------------
+// DocSchema / DocField 汉化
+// ---------------------------------------------------------------------------
+//
+// qexed_doc 只描述结构（key + values），不携带译文；渲染需要「翻译表 + %{name}
+// 插值」。这里把 t(key) 的结果按 values 插值后写回 document 字段，递归覆盖 sub。
+//
+// 依赖方向：qexed_language → qexed_doc（单向），不会与 qexed_doc 形成环。
+
+/// 用全局翻译表（`t`）汉化一份 schema（就地修改）。
+pub fn translate_schema(schema: &mut DocSchema) {
+    translate_schema_with(schema, &t);
+}
+
+/// 用指定翻译函数汉化一份 schema（就地修改）。
+/// 供测试与离线工具注入自定义 `Translations`。
+pub fn translate_schema_with<F>(schema: &mut DocSchema, t: &F)
+where
+    F: Fn(&str) -> String,
+{
+    // 结构体级：t(key) + values 插值。key 为空串时（无 <Name> 块）保留 None。
+    schema.document = if schema.key.is_empty() {
+        None
+    } else {
+        Some(interpolate(&t(&schema.key), &schema.values))
+    };
+
+    for field in &mut schema.fields {
+        translate_field_with(field, t);
+    }
+}
+
+/// 用全局翻译表汉化单个字段（递归处理 sub）。
+pub fn translate_field(field: &mut DocField) {
+    translate_field_with(field, &t);
+}
+
+/// 用指定翻译函数汉化单个字段（递归处理 sub）。
+pub fn translate_field_with<F>(field: &mut DocField, t: &F)
+where
+    F: Fn(&str) -> String,
+{
+    // 字段显示名：key 为空时不翻译。
+    field.document = if field.key.is_empty() {
+        None
+    } else {
+        Some(interpolate(&t(&field.key), &field.values))
+    };
+
+    // 递归处理嵌套字段。
+    if let Some(sub) = field.sub.as_mut() {
+        translate_schema_with(sub, t);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +259,107 @@ mod tests {
     fn global_t_falls_back_to_key() {
         assert_eq!(t("qexed.server.stopping"), "Qexed 服务器正在关闭");
         assert_eq!(t("totally.unknown"), "totally.unknown");
+    }
+
+    // ---- DocSchema / DocField 汉化 -----------------------------------------
+
+    /// 用内嵌 zh-CN 构造只读翻译函数，避免依赖全局 CURRENT 状态。
+    fn embedded_t(key: &str) -> String {
+        Translations::from_json(ZH_CN_JSON).unwrap().t(key)
+    }
+
+    fn sample_schema() -> DocSchema {
+        DocSchema {
+            name: "LogConfig".into(),
+            key: "qexed.crates.log.config.LogConfig".into(),
+            secrets: vec![],
+            secret_placeholder: String::new(),
+            values: Default::default(),
+            fields: vec![DocField {
+                path: "level".into(),
+                key: "qexed.crates.log.config.LogConfig.level".into(),
+                value_type: "LogLevel".into(),
+                writable: true,
+                values: [
+                    ("default".to_string(), serde_json::json!("Info")),
+                    (
+                        "variants".to_string(),
+                        serde_json::json!("Trace/Debug/Info/Warn/Error/Off"),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                default: Some(serde_json::json!("Info")),
+                variants: vec!["Trace".into(), "Info".into()],
+                check: None,
+                check_error_tip: None,
+                sub: None,
+                aliases: vec![],
+                optional: false,
+                flattened: false,
+                select: vec![],
+                min: None,
+                max: None,
+                password: false,
+                tip: None,
+                warn: None,
+                document: None,
+            }],
+            document: None,
+        }
+    }
+
+    #[test]
+    fn translate_schema_fills_struct_and_field_documents() {
+        let mut schema = sample_schema();
+        translate_schema_with(&mut schema, &embedded_t);
+
+        // 结构体级 document
+        assert_eq!(schema.document.as_deref(), Some("日志"));
+
+        // 字段级 document：命中显示名（key 本身无 %{...} 占位符）
+        assert_eq!(schema.fields[0].document.as_deref(), Some("日志级别"));
+    }
+
+    #[test]
+    fn translate_schema_interpolates_field_values() {
+        // 直接构造一个 key 落在 `.desc` 上的字段，验证 %{default}/%{variants} 插值。
+        let mut schema = sample_schema();
+        schema.fields[0].key =
+            "qexed.crates.log.config.LogConfig.level.desc".to_string();
+
+        translate_schema_with(&mut schema, &embedded_t);
+
+        assert_eq!(
+            schema.fields[0].document.as_deref(),
+            // interpolate 对字符串值原样插值，不加引号（与 desc_template_interpolates_values 一致）。
+            Some("日志级别，默认 Info，可选：Trace/Debug/Info/Warn/Error/Off"),
+        );
+    }
+
+    #[test]
+    fn translate_schema_recurses_into_sub() {
+        // 给字段挂一个 sub schema，验证递归回填。
+        let mut schema = sample_schema();
+        let mut sub = sample_schema();
+        sub.key = "qexed.crates.language.config.LanguageConfig".into();
+        sub.fields[0].key = "qexed.crates.language.config.LanguageConfig.enable".into();
+        sub.fields[0].values.clear();
+        schema.fields[0].sub = Some(Box::new(sub));
+
+        translate_schema_with(&mut schema, &embedded_t);
+
+        let sub = schema.fields[0].sub.as_ref().unwrap();
+        assert_eq!(sub.document.as_deref(), Some("语言"));
+        assert_eq!(sub.fields[0].document.as_deref(), Some("启用"));
+    }
+
+    #[test]
+    fn translate_schema_skips_empty_key() {
+        // 无 <Name> 块：结构体 key 空串 → document 保持 None。
+        let mut schema = sample_schema();
+        schema.key = String::new();
+        translate_schema_with(&mut schema, &embedded_t);
+        assert!(schema.document.is_none());
     }
 }

@@ -1,0 +1,76 @@
+---
+title: 日志初始化
+description: 初始化 qexed 日志系统的标准方式
+# 不可见验证负载：站点构建时剥离，不进入渲染。
+# verify_hash 是对 verify 块按键排序规范序列化后的 sha256。
+verify: |
+  {
+    "spec": "qexed.doc.verify/1",
+    "shell": "tokio-rt@1",
+    "toolchain": "1.98.1",
+    "snippet_hash": "sha256:1f1fa47e229dc8713fa2def8f9a4758b0c84c1fe77d56a1adf970f558002b753",
+    "api": {
+      "symbols": [
+        "qexed_config::init_config_path(std::path::PathBuf) -> Result<(), qexed_config::error::ConfigError>",
+        "qexed_log::config::LogConfig::default() -> qexed_log::config::LogConfig",
+        "qexed_log::init() -> Result<(), qexed_log::error::LogError>"
+      ],
+      "hash": "sha256:c288422a4f87f79a27044adf3687f81198ec5c932b31fe70f69d42ec4f4c8068"
+    },
+    "result": {
+      "format": "json",
+      "value": {
+        "exit": 0,
+        "stderr": [],
+        "stdout": [
+          "log level: Info",
+          "log ready"
+        ]
+      },
+      "hash": "sha256:de73f62890021ae0f178b923fafcb6eae770d788415c9bdd3bd89aa78c30a7ec"
+    },
+    "run_ok": true,
+    "exit_code": 0,
+    "cargo_toml": "[package]\nname = \"doc-snippet-log-init\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nanyhow = \"1\"\ntokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }\nqexed_config = { path = \"{{WORKSPACE}}/crates/qexed_config\" }\nqexed_log = { path = \"{{WORKSPACE}}/crates/qexed_log\" }\n",
+    "deps_lock_hash": "sha256:",
+    "commit": "44c79aabfc6433b28502cbb327a5dc85ef2792bc",
+    "ci_run": "https://ci.example.com/qexed/qexed/actions/runs/1234",
+    "verified_at": "2026-10-05T04:30:00Z"
+  }
+verify_hash: sha256:3d57548a17207c80567f3f7de60273567e06405f72a79bdeb647f65e402c48d4
+---
+# 初始化日志
+
+创建默认配置并启动日志系统：
+
+```rust
+use qexed_log::config::LogConfig;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // 日志配置存储在 <config-path>/config/log.toml，先初始化配置根目录
+    qexed_config::init_config_path("./config".into())?;
+
+    let config = LogConfig::default();
+    println!("log level: {:?}", config.level);
+
+    qexed_log::init().await?;
+    println!("log ready");
+    Ok(())
+}
+```
+
+执行成功后日志写入 `./log/qexed.log`，按天切割，保留 30 份压缩备份。
+stdout 中的 `log level: Info` 行来自 `LogConfig::default()`，即文档表中各项「默认值」的来源。
+
+## 示例验证状态
+
+由 CI 校验后回填：轻量层（`cargo test -p qexed_doc_verify`）核对四个哈希自洽；
+完整层（`--ignored` 测试）在 `rust:1.98` 容器内复现构建与运行。
+
+| 检查项 | 状态 | 说明 |
+| --- | --- | --- |
+| 示例代码与验证时一致 | ✅ | snippet hash 匹配 |
+| 涉及的 API 签名未变化 | ✅ | 2 个符号 |
+| 运行结果与记录一致 | ✅ | exit 0，stdout 两行 |
+| 最近验证 | commit 44c79aa | [CI 运行 #1234](https://ci.example.com/qexed/qexed/actions/runs/1234) |

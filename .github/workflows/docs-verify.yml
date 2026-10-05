@@ -1,0 +1,32 @@
+name: docs-verify
+# 文档示例校验：轻量层（哈希自洽）+ 完整层（docker 复现）。
+# MDX 页面的 verify 清单过期时本流水线失败，文档站构建必须在它之后。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.1"
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 完整层：真实复现（拉 rust:1.98 镜像，容器内 cargo run snippet）
+      - name: Reproduce doc snippets in docker
+        run: cargo test -p qexed_doc_verify -- --ignored --nocapture
+
+      # 轻量层兜底：不依赖 docker 的哈希自洽检查
+      - name: Manifest self-consistency
+        run: cargo test -p qexed_doc_verify
+
+      # 回填 verified_at / commit（结果哈希变化需人工确认后才允许合并）
+      - name: Refresh verify ledger fields
+        run: cargo run -p qexed_doc_verify --bin verify-refresh -- commit ${{ github.sha }}

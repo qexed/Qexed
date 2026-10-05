@@ -1,0 +1,9 @@
+[package]
+name = "doc-snippet-log-init"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+qexed_log = { path = "/workspace/crates/qexed_log" }

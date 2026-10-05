@@ -17,5 +17,6 @@ anyhow = { workspace = true }
 log = { workspace = true }
 qexed_config.workspace = true
 qexed_language.workspace = true
+qexed_mojang_data.workspace = true
 [build-dependencies]
 shadow-rs.workspace = true

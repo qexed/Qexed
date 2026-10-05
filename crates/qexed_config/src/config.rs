@@ -173,4 +173,9 @@ pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
 
         Ok(())
     }
+
+    // 将结构体转换为toml字符串
+    fn to_toml_string(config: &Self)->Result<String,ConfigError>{
+        Ok(qexed_toml::to_document(config)?.to_string())
+    }
 }
