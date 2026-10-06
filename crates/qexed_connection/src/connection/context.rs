@@ -20,9 +20,31 @@ pub struct ServerContext {
     pub config: Arc<ConnectionConfig>,
     pub authenticator: Arc<Authenticator>,
     pub code_of_conducts: Arc<CodeOfConductTexts>,
+    /// play 会话启动器（qexed 组装层注入；None 则登录后断开）。
+    pub play_launcher: Option<PlayLauncherFn>,
 }
 
+/// play 会话启动器签名（v4 crate::play::initialize 的注入版）。
+/// 传输以 trait object 注入，避免具体流类型耦合。
+pub type PlayLauncherFn = std::sync::Arc<
+    dyn Fn(
+            crate::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+            crate::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
+            qexed_packet::net_types::GameProfile,
+            Option<String>,
+            u8,
+            tokio::sync::watch::Receiver<bool>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::error::Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+
 impl ServerContext {
+    /// 组装层注入 play 会话启动器。
+    pub fn set_play_launcher(&mut self, launcher: PlayLauncherFn) {
+        self.play_launcher = Some(launcher);
+    }
+
     /// 从配置构造（行为守则目录用默认值）。
     pub async fn new(config: impl Into<ConnectionConfig>) -> crate::error::Result<Self> {
         Self::new_with_code_of_conduct_dir(config, DEFAULT_CODE_OF_CONDUCT_DIR).await
@@ -40,6 +62,7 @@ impl ServerContext {
             code_of_conduct_dir,
         )?);
         Ok(Self {
+            play_launcher: None,
             config: Arc::new(config),
             authenticator: Arc::new(Authenticator::new()?),
             code_of_conducts,

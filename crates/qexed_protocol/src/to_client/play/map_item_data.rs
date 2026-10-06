@@ -42,7 +42,7 @@ impl PacketCodec for MapPatch {
     }
 }
 
-#[qexed_packet_macros::packet(id = 0x33)]
+#[qexed_packet_macros::packet(id = 0x34)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct MapItemData {
     pub map_id: VarInt,

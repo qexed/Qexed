@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::{Position, VarInt}};
 
-#[qexed_packet_macros::packet(id = 0x24)]
+#[qexed_packet_macros::packet(id = 0x25)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct AddTransientBlock {
     pub pos: Position,

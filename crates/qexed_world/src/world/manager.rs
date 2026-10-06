@@ -2475,6 +2475,17 @@ fn light_from_packet_data(
         qexed_packet::net_types::Bitset(words)
     }
 
+
+    /// 公开包装（组装层适配用）。
+    pub fn fluid_positions_in_chunk_public(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Vec<(qexed_packet::net_types::Position, i32)>> {
+        self.fluid_positions_in_chunk(dimension, chunk_x, chunk_z)
+    }
+
     Light {
         sky_light_mask: mask_from_bytes(&data.sky_y_mask.0),
         block_light_mask: mask_from_bytes(&data.block_y_mask.0),

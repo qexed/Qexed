@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::*};
 use crate::types::*;
 
-#[qexed_packet_macros::packet(id = 0x3F)]
+#[qexed_packet_macros::packet(id = 0x40)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct PlaceGhostRecipe {
     pub container_id: VarInt,

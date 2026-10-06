@@ -89,6 +89,15 @@ impl<R: AsyncRead + Unpin> PacketStream<R> {
         self.max_packet_size = max_packet_size;
     }
 
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
+
+    /// 从任意读取半构造（组装层 boxed 流用）。
+    pub fn from_reader(reader: R) -> Self {
+        Self::new(reader)
+    }
+
     pub async fn read_packet(&mut self) -> Result<Option<BytesMut>, PacketReadError> {
         use tokio::io::AsyncReadExt;
 
@@ -116,7 +125,7 @@ impl<R: AsyncRead + Unpin> PacketStream<R> {
                 return Err(PacketReadError::ConnectionClosedWithIncompletePacket);
             }
 
-            self.push_read_bytes(&tmp[..n]);
+                        self.push_read_bytes(&tmp[..n]);
         }
     }
 
@@ -175,12 +184,9 @@ impl<R: AsyncRead + Unpin> PacketStream<R> {
             return Ok(BytesMut::from(&frame[header_len..]));
         }
 
-        if data_len < threshold {
-            return Err(PacketReadError::CompressedDataLengthTooSmall {
-                size: data_len,
-                threshold,
-            });
-        }
+        // MC 协议接收端规则：data_length > 0 即解压，阈值只影响发送侧决策。
+        // （v4 沿袭的"小于阈值拒绝"违反协议，导致拒收真压缩小包。）
+        let _ = threshold;
 
         let expected_len = data_len as usize;
         if expected_len > self.max_packet_size {

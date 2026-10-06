@@ -3,7 +3,7 @@ use qexed_packet::{PacketCodec, net_types::*};
 pub const ANCHOR_FEET: i32 = 0;
 pub const ANCHOR_EYES: i32 = 1;
 
-#[qexed_packet_macros::packet(id = 0x47)]
+#[qexed_packet_macros::packet(id = 0x48)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct PlayerLookAt {
     // TODO: net.minecraft.commands.arguments.EntityAnchorArgument$Anchor 枚举 -> VarInt（0=FEET, 1=EYES）

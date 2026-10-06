@@ -66,7 +66,7 @@ impl PlayerChat {
 }
 
 impl Packet for PlayerChat {
-    const ID: i32 = 0x41;
+    const ID: i32 = 0x42;
 
     fn serialize(&self, w: &mut PacketWriter) -> qexed_packet::Result<()> {
         self.global_index.serialize(w)?;

@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::{OptionalVarInt, Position, VarInt}};
 
-#[qexed_packet_macros::packet(id = 0x31)]
+#[qexed_packet_macros::packet(id = 0x32)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Login {
     // 注意：playerId 用 ByteBufCodecs.INT（普通 i32），不是 VarInt

@@ -1,6 +1,6 @@
 use qexed_packet::{Packet, PacketCodec};
 
-#[qexed_packet_macros::packet(id = 0x27)]
+#[qexed_packet_macros::packet(id = 0x28)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct GameRuleValues {
     // TODO: Map<ResourceKey<GameRule<?>>, String> — 键为 Identifier 字符串，展开为条目列表

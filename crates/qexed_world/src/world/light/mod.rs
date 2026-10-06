@@ -194,7 +194,7 @@ impl From<&crate::config::LightMode> for WorldLightMode {
     }
 }
 
-pub(crate) fn empty_chunk_packet(
+pub fn empty_chunk_packet(
     chunk_x: i32,
     chunk_z: i32,
     light_mode: WorldLightMode,

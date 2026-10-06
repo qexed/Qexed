@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec};
 use crate::types::*;
 
-#[qexed_packet_macros::packet(id = 0x51)]
+#[qexed_packet_macros::packet(id = 0x52)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ResourcePackPush {
     pub id: uuid::Uuid,

@@ -29,7 +29,7 @@ impl PacketCodec for LpVec3 {
     }
 }
 
-#[qexed_packet_macros::packet(id = 0x0)]
+#[qexed_packet_macros::packet(id = 0x1)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct AddEntity {
     pub id: VarInt,

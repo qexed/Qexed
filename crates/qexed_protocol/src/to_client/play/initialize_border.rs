@@ -3,7 +3,7 @@ use qexed_packet::{
     net_types::{VarInt, VarLong},
 };
 
-#[qexed_packet_macros::packet(id = 0x2b)]
+#[qexed_packet_macros::packet(id = 0x2c)]
 #[derive(Debug, PartialEq, Clone)]
 pub struct InitializeBorder {
     pub center_x: f64,

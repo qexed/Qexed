@@ -1,0 +1,126 @@
+---- Minecraft Network Protocol Error Report ----
+// Don't worry, I'll be fine
+
+Time: 2026-10-06 10:17:39
+Description: Packet handling error
+
+java.lang.IllegalStateException: Missing element ResourceKey[minecraft:decorated_pot_pattern / minecraft:angler]
+	at net.minecraft.core.HolderGetter$Provider.lambda$getOrThrow$1(HolderGetter.java:39)
+	at java.base/java.util.Optional.orElseThrow(Optional.java:403)
+	at net.minecraft.core.HolderGetter$Provider.getOrThrow(HolderGetter.java:39)
+	at net.minecraft.world.item.Item$Properties.lambda$potPattern$0(Item.java:260)
+	at net.minecraft.core.component.DataComponentInitializers$SingleComponentInitializer.lambda$asInitializer$0(DataComponentInitializers.java:134)
+	at net.minecraft.core.component.DataComponentInitializers$Initializer.lambda$andThen$0(DataComponentInitializers.java:120)
+	at net.minecraft.core.component.DataComponentInitializers$Initializer.lambda$andThen$0(DataComponentInitializers.java:119)
+	at net.minecraft.core.component.DataComponentInitializers$InitializerEntry.run(DataComponentInitializers.java:100)
+	at net.minecraft.core.component.DataComponentInitializers.runInitializers(DataComponentInitializers.java:29)
+	at net.minecraft.core.component.DataComponentInitializers.build(DataComponentInitializers.java:52)
+	at net.minecraft.client.multiplayer.RegistryDataCollector.updateComponents(RegistryDataCollector.java:149)
+	at net.minecraft.client.multiplayer.RegistryDataCollector.collectGameRegistries(RegistryDataCollector.java:171)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.lambda$handleConfigurationFinished$0(ClientConfigurationPacketListenerImpl.java:153)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.runWithResources(ClientConfigurationPacketListenerImpl.java:121)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.handleConfigurationFinished(ClientConfigurationPacketListenerImpl.java:153)
+	at net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket.handle(ClientboundFinishConfigurationPacket.java:22)
+	at net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket.handle(ClientboundFinishConfigurationPacket.java:8)
+	at net.minecraft.network.PacketProcessor$ListenerAndPacket.handle(PacketProcessor.java:55)
+	at net.minecraft.network.PacketProcessor.processQueuedPackets(PacketProcessor.java:38)
+	at net.minecraft.client.Minecraft.runTick(Minecraft.java:1238)
+	at net.minecraft.client.Minecraft.run(Minecraft.java:967)
+	at net.minecraft.client.main.Main.main(Main.java:292)
+
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+---------------------------------------------------------------------------------------
+
+-- Head --
+Thread: Render thread
+Stacktrace:
+	at net.minecraft.core.HolderGetter$Provider.lambda$getOrThrow$1(HolderGetter.java:39)
+	at java.base/java.util.Optional.orElseThrow(Optional.java:403)
+	at net.minecraft.core.HolderGetter$Provider.getOrThrow(HolderGetter.java:39)
+	at net.minecraft.world.item.Item$Properties.lambda$potPattern$0(Item.java:260)
+	at net.minecraft.core.component.DataComponentInitializers$SingleComponentInitializer.lambda$asInitializer$0(DataComponentInitializers.java:134)
+	at net.minecraft.core.component.DataComponentInitializers$Initializer.lambda$andThen$0(DataComponentInitializers.java:120)
+	at net.minecraft.core.component.DataComponentInitializers$Initializer.lambda$andThen$0(DataComponentInitializers.java:119)
+	at net.minecraft.core.component.DataComponentInitializers$InitializerEntry.run(DataComponentInitializers.java:100)
+	at net.minecraft.core.component.DataComponentInitializers.runInitializers(DataComponentInitializers.java:29)
+	at net.minecraft.core.component.DataComponentInitializers.build(DataComponentInitializers.java:52)
+	at net.minecraft.client.multiplayer.RegistryDataCollector.updateComponents(RegistryDataCollector.java:149)
+	at net.minecraft.client.multiplayer.RegistryDataCollector.collectGameRegistries(RegistryDataCollector.java:171)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.lambda$handleConfigurationFinished$0(ClientConfigurationPacketListenerImpl.java:153)
+	at net.minecraft.client.multiplayer.ClientConfigurationPacketListenerImpl.runWithResources(ClientConfigurationPacketListenerImpl.java:121)
+
+-- Incoming Packet --
+Details:
+	Type: clientbound/minecraft:finish_configuration
+	Is Terminal: true
+	Is Skippable: false
+Stacktrace:
+	at net.minecraft.network.protocol.PacketUtils.fillCrashReport(PacketUtils.java:41)
+	at net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl.storeDisconnectionReport(ClientCommonPacketListenerImpl.java:147)
+	at net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl.onPacketError(ClientCommonPacketListenerImpl.java:126)
+	at net.minecraft.network.PacketProcessor$ListenerAndPacket.handle(PacketProcessor.java:60)
+	at net.minecraft.network.PacketProcessor.processQueuedPackets(PacketProcessor.java:38)
+	at net.minecraft.client.Minecraft.runTick(Minecraft.java:1238)
+	at net.minecraft.client.Minecraft.run(Minecraft.java:967)
+	at net.minecraft.client.main.Main.main(Main.java:292)
+
+-- Connection --
+Details:
+	Protocol: configuration
+	Flow: CLIENTBOUND
+	Is Local: false
+	Server type: OTHER
+	Server brand: qexed
+
+-- System Details --
+Details:
+	Minecraft Version: 26.3
+	Minecraft Version ID: 26.3
+	Operating System: Windows 11 (amd64) version 10.0
+	Java Version: 25.0.2, Oracle Corporation
+	Java VM Version: OpenJDK 64-Bit Server VM (mixed mode, sharing), Oracle Corporation
+	Memory: 97817408 bytes (93 MiB) / 545259520 bytes (520 MiB) up to 17087594496 bytes (16296 MiB)
+	Memory (heap): init: 1024MiB, used: 412MiB, committed: 520MiB, max: 16296MiB
+	Memory (non-heap): init: 007MiB, used: 167MiB, committed: 170MiB, max: 000MiB
+	CPUs: 32
+	Processor Vendor: GenuineIntel
+	Processor Name: Intel(R) Core(TM) i9-14900HX
+	Identifier: Intel64 Family 6 Model 183 Stepping 1
+	Microarchitecture: Raptor Lake
+	Frequency (GHz): 2.42
+	Number of physical packages: 1
+	Number of physical CPUs: 24
+	Number of logical CPUs: 32
+	Graphics card #0 name: Intel(R) UHD Graphics
+	Graphics card #0 vendor: Intel Corporation
+	Graphics card #0 VRAM (MiB): 2048.00
+	Graphics card #0 deviceId: VideoController1
+	Graphics card #0 versionInfo: 32.0.101.6790
+	Graphics card #1 name: NVIDIA GeForce RTX 4070 Laptop GPU
+	Graphics card #1 vendor: NVIDIA
+	Graphics card #1 VRAM (MiB): 8188.00
+	Graphics card #1 deviceId: VideoController2
+	Graphics card #1 versionInfo: 32.0.15.9636
+	Memory slot #0 capacity (MiB): 32768.00
+	Memory slot #0 clockSpeed (GHz): 5.60
+	Memory slot #0 type: DDR5
+	Memory slot #1 capacity (MiB): 32768.00
+	Memory slot #1 clockSpeed (GHz): 5.60
+	Memory slot #1 type: DDR5
+	Virtual memory max (MiB): 104066.52
+	Virtual memory used (MiB): 92192.56
+	Swap memory total (MiB): 38912.00
+	Swap memory used (MiB): 1704.55
+	Space in storage for jna.tmpdir (MiB): available: 1477101.00, total: 3559430.00
+	Space in storage for org.lwjgl.system.SharedLibraryExtractPath (MiB): available: 1477101.00, total: 3559430.00
+	Space in storage for io.netty.native.workdir (MiB): available: 1477101.00, total: 3559430.00
+	Space in storage for java.io.tmpdir (MiB): available: 196359.25, total: 946273.31
+	Space in storage for workdir (MiB): available: 1477101.00, total: 3559430.00
+	Operating System Version: Microsoft Windows 11 build 26200
+	Process Elevated: true
+	Process Loads: Uptime: 48s, user: 50s (104.86%), kernel: 9s (18.66%), total: 59s (123.52%)
+	Process Virtual Size (MiB): 320.70
+	Process Resident Size (MiB): 1061.47
+	JVM Flags: 2 total; -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump -XX:StackShadowPages=32
+	Debug Flags: 0 total; 

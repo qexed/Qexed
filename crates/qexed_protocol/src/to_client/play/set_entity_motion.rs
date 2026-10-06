@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::*};
 
-#[qexed_packet_macros::packet(id = 0x66)]
+#[qexed_packet_macros::packet(id = 0x67)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetEntityMotion {
     pub id: VarInt,

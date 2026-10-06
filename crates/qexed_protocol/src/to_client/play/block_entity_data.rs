@@ -3,7 +3,7 @@ use qexed_packet::{
     net_types::{OptionalNbt, Position, VarInt},
 };
 
-#[qexed_packet_macros::packet(id = 0x5)]
+#[qexed_packet_macros::packet(id = 0x6)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct BlockEntityData {
     pub pos: Position,

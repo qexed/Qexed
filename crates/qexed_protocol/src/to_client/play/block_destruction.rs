@@ -3,7 +3,7 @@ use qexed_packet::{
     net_types::{Position, VarInt},
 };
 
-#[qexed_packet_macros::packet(id = 0x04)]
+#[qexed_packet_macros::packet(id = 0x5)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct BlockDestruction {
     pub entity_id: VarInt,

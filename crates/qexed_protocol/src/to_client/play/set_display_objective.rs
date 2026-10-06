@@ -4,7 +4,7 @@ pub const DISPLAY_SLOT_LIST: i32 = 0;
 pub const DISPLAY_SLOT_SIDEBAR: i32 = 1;
 pub const DISPLAY_SLOT_BELOW_NAME: i32 = 2;
 
-#[qexed_packet_macros::packet(id = 0x63)]
+#[qexed_packet_macros::packet(id = 0x64)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetDisplayObjective {
     pub slot: VarInt,

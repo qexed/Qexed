@@ -25,14 +25,16 @@ pub(crate) use cluster::ClusterRouter;
 #[cfg(test)]
 pub(crate) use light::empty_chunk_section_bytes;
 #[allow(unused_imports)]
+pub use light::empty_chunk_packet;
+pub use light::WorldLightMode;
 pub(crate) use light::{
     Light, LightDampeningNeighborhood, LIGHT_ARRAY_BYTES, block_light_dampening_index,
-    empty_chunk_packet, empty_heightmaps, light_for_mode, light_from_layers,
+    empty_heightmaps, light_for_mode, light_from_layers,
     light_section_index, light_update_data, replace_sky_light, section_count,
     sky_light_from_dampening, sky_light_from_neighbourhood, write_empty_section,
     write_fixed_long_array,
 };
-pub use light::{WorldLightAlgorithm, WorldLightMode};
+pub use light::WorldLightAlgorithm;
 pub use ore_pits::{OrePitBlockUpdate, OrePitManager};
 pub use rules::WorldRulesManager;
 

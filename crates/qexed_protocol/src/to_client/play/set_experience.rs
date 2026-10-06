@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x68)]
+#[qexed_packet_macros::packet(id = 0x69)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetExperience {
     pub experience_progress: f32,

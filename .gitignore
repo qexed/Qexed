@@ -5,3 +5,5 @@
 /cache
 /assets/
 /undefined
+*.log
+*.log.gz

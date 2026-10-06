@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::*};
 use crate::types::*;
 
-#[qexed_packet_macros::packet(id = 0x6E)]
+#[qexed_packet_macros::packet(id = 0x6f)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetPlayerTeam {
     pub name: String,

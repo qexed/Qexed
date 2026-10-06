@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x23)]
+#[qexed_packet_macros::packet(id = 0x24)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Explode {
     // TODO: net.minecraft.world.phys.Vec3 — STREAM_CODEC 为 3 个 double，此处展开为三个字段

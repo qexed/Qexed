@@ -29,7 +29,7 @@ pub struct MerchantOffer {
     pub demand: i32,
 }
 
-#[qexed_packet_macros::packet(id = 0x34)]
+#[qexed_packet_macros::packet(id = 0x35)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct MerchantOffers {
     pub container_id: VarInt,

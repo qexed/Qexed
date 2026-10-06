@@ -19,7 +19,7 @@ impl Default for BossEvent {
 }
 
 impl Packet for BossEvent {
-    const ID: i32 = 0x8;
+    const ID: i32 = 0x9;
 
     fn serialize(&self, w: &mut PacketWriter) -> qexed_packet::Result<()> {
         self.id.serialize(w)?;

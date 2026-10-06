@@ -3,7 +3,7 @@ use qexed_packet::{
     net_types::{ByteArray, OptionalNbt, VarInt},
 };
 
-#[qexed_packet_macros::packet(id = 0x2D)]
+#[qexed_packet_macros::packet(id = 0x2e)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct LevelChunkWithLight {
     // 注意：x/z 用 ByteBufCodecs.INT（普通 i32），不是 VarInt

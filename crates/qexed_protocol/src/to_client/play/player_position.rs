@@ -26,7 +26,7 @@ pub struct PositionMoveRotation {
     pub x_rot: f32,
 }
 
-#[qexed_packet_macros::packet(id = 0x48)]
+#[qexed_packet_macros::packet(id = 0x49)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct PlayerPosition {
     pub id: VarInt,

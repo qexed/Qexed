@@ -73,7 +73,7 @@ impl PlayerInfoEntry {
 }
 
 impl Packet for PlayerInfoUpdate {
-    const ID: i32 = 0x46;
+    const ID: i32 = 0x47;
 
     fn serialize(&self, w: &mut PacketWriter) -> qexed_packet::Result<()> {
         self.actions.serialize(w)?;

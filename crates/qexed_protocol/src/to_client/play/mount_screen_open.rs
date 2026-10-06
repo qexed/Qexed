@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x29)]
+#[qexed_packet_macros::packet(id = 0x2a)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct MountScreenOpen {
     pub container_id: VarInt,

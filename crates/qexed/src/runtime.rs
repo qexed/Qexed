@@ -107,3 +107,163 @@ impl ConnectionHandler for QexedConnectionHandler {
         })
     }
 }
+
+/// 构造 play 会话启动器（注入 connection 的 ServerContext）。
+pub fn play_launcher(
+    world: std::sync::Arc<qexed_world::world::WorldManager>,
+    players: std::sync::Arc<qexed_player::PlayerManager>,
+) -> qexed_connection::connection::PlayLauncherFn {
+    std::sync::Arc::new(
+        move |mut packets: qexed_connection::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>, mut sink: qexed_connection::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>, profile: qexed_packet::net_types::GameProfile, locale: Option<String>, skin_parts: u8, shutdown: tokio::sync::watch::Receiver<bool>| {
+            let world = world.clone();
+            let players = players.clone();
+            Box::pin(async move {
+                play_session(&mut packets, &mut sink, &world, &players, profile, locale, skin_parts, shutdown).await
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = qexed_connection::error::Result<()>> + Send>>
+        },
+    )
+}
+
+/// play 会话（v4 crate::play::initialize 的组装层实现）。
+#[allow(clippy::too_many_arguments)]
+async fn play_session(
+    packets: &mut qexed_connection::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+    sink: &mut qexed_connection::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
+    world: &std::sync::Arc<qexed_world::world::WorldManager>,
+    players: &std::sync::Arc<qexed_player::PlayerManager>,
+    profile: qexed_packet::net_types::GameProfile,
+    locale: Option<String>,
+    skin_parts: u8,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> qexed_connection::error::Result<()> {
+    use qexed_play::{
+        AllowAllPermissions, NoChatFilter, NoGameplay, NoPluginEvents, NoSecureChat,
+        PlaySessionDeps,
+    };
+
+    let config = qexed_play::PlayConfig::default();
+    let player_data = qexed_player::player_data::PlayerDataManager::from_config(
+        "./world",
+        &qexed_player::config::PlayerDataConfig::default(),
+    )
+    .await
+    .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))?;
+    let entities = qexed_entities::EntityManager::from_config(
+        &qexed_entities::config::Entities::default(),
+        std::sync::Arc::new(qexed_entities::EntityIdAllocator::default()),
+    )
+    .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))?;
+    let inventory = BasicInventory;
+    let display = qexed_play::ServerDisplay::default();
+    let shared_world: qexed_play::SharedWorld = crate::world_adapter::shared_world(world.clone());
+
+    let deps = PlaySessionDeps {
+        config: &config,
+        world: shared_world,
+        world_rules: &NoWorldRules,
+        players,
+        player_data: &player_data,
+        entities: &entities,
+        plugins: &NoPluginEvents,
+        permissions: &AllowAllPermissions,
+        player_audit: &qexed_play::NoPlayerAudit,
+        items: &BasicItems,
+        inventory: &inventory,
+        gameplay: &NoGameplay,
+        secure_chat: &NoSecureChat,
+        chat_filter: &NoChatFilter,
+        cluster: None,
+        display,
+        command_tree: bytes::Bytes::new(),
+        entity_rendering: qexed_entities::EntityRendering::default(),
+        player_entity_type: 1,
+    };
+
+    qexed_play::initialize(
+        packets,
+        sink,
+        &deps,
+        &profile,
+        locale,
+        skin_parts,
+        shutdown,
+    )
+    .await
+    .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))
+}
+
+
+/// 最小会话背包（空装备）。
+struct BasicInventory;
+
+impl qexed_play::SessionInventory for BasicInventory {
+    fn selected_slot(&self) -> usize {
+        0
+    }
+
+    fn set_player_inventory_packets(&self) -> Vec<bytes::Bytes> {
+        Vec::new()
+    }
+
+    fn visible_equipment(&self) -> Vec<qexed_protocol::to_client::play::set_equipment::EquipmentEntry> {
+        Vec::new()
+    }
+
+    fn equipment_packet(
+        &self,
+        _entity_id: i32,
+        _equipment: Vec<qexed_protocol::to_client::play::set_equipment::EquipmentEntry>,
+    ) -> qexed_play::Result<Option<qexed_protocol::to_client::play::set_equipment::SetEquipment>> {
+        Ok(None)
+    }
+}
+
+struct BasicItems;
+
+impl qexed_play::ItemRegistry for BasicItems {
+    fn is_air_block_state(&self, block_state: i32) -> bool {
+        block_state == 0
+    }
+
+    fn air_block_state(&self) -> i32 {
+        0
+    }
+
+    fn picked_item_for_block_state(&self, _block_state: i32) -> Option<i32> {
+        None
+    }
+
+    fn item_id_for_name(&self, _name: &str) -> Option<i32> {
+        None
+    }
+
+    fn simple_item(&self, _item_id: i32, _count: i32) -> qexed_protocol::types::Slot {
+        qexed_play::inventory::empty_slot()
+    }
+
+    fn empty_slot(&self) -> qexed_protocol::types::Slot {
+        qexed_play::inventory::empty_slot()
+    }
+}
+
+struct NoWorldRules;
+
+impl qexed_play::WorldRulesSource for NoWorldRules {
+    fn ensure_loaded(&self, _dimension: &str) -> qexed_play::Result<()> {
+        Ok(())
+    }
+
+    fn snapshot(&self, dimension: &str) -> qexed_play::DimensionRules {
+        qexed_play::DimensionRules {
+            dimension_type: dimension.to_string(),
+        }
+    }
+
+    fn current_time(&self, _dimension: &str) -> i64 {
+        0
+    }
+
+    fn tick_dimension_time(&self, _dimension: &str, default_day_ticks: i64) -> i64 {
+        default_day_ticks
+    }
+}

@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::*};
 use crate::types::*;
 
-#[qexed_packet_macros::packet(id = 0x80)]
+#[qexed_packet_macros::packet(id = 0x81)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct TestInstanceBlockStatus {
     pub status: TextComponent,

@@ -9,7 +9,7 @@ pub struct DebugSample {
 }
 
 impl Packet for DebugSample {
-    const ID: i32 = 0x1D;
+    const ID: i32 = 0x1e;
 
     fn serialize(&self, w: &mut PacketWriter) -> qexed_packet::Result<()> {
         VarInt(self.sample.len() as i32).serialize(w)?;

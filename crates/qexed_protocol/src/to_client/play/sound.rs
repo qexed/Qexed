@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x76)]
+#[qexed_packet_macros::packet(id = 0x77)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SoundEntity {
     pub sound_event: VarInt,

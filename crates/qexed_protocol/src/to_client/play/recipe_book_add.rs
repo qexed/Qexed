@@ -2,7 +2,7 @@ use qexed_packet::PacketCodec;
 use qexed_packet::net_types::{OptionalVarInt, VarInt};
 
 use crate::types::{IDSet, RecipeDisplay};
-#[qexed_packet_macros::packet(id = 0x4a)]
+#[qexed_packet_macros::packet(id = 0x4b)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct RecipeBookAdd {
     pub entries: Vec<Recipes>,

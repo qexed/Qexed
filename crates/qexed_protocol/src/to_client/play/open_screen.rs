@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x3B)]
+#[qexed_packet_macros::packet(id = 0x3c)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct OpenScreen {
     pub window_id: VarInt,

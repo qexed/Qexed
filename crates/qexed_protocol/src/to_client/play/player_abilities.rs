@@ -1,6 +1,6 @@
 use qexed_packet::PacketCodec;
 
-#[qexed_packet_macros::packet(id = 0x40)]
+#[qexed_packet_macros::packet(id = 0x41)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct PlayerAbilities {
     pub flags: u8,

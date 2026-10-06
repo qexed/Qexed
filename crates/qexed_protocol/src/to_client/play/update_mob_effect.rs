@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x86)]
+#[qexed_packet_macros::packet(id = 0x87)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct RemoveMobEffect {
     pub entity_id: VarInt,

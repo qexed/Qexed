@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::*};
 use crate::types::*;
 
-#[qexed_packet_macros::packet(id = 0x67)]
+#[qexed_packet_macros::packet(id = 0x68)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetEquipment {
     pub entity: VarInt,

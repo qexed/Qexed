@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
 use crate::types::Slot;
-#[qexed_packet_macros::packet(id = 0x84)]
+#[qexed_packet_macros::packet(id = 0x85)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct UpdateAdvancements {
     pub reset_or_clear: bool,

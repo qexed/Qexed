@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::*};
 
-#[qexed_packet_macros::packet(id = 0x65)]
+#[qexed_packet_macros::packet(id = 0x66)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetEntityLink {
     // Java 使用 writeInt/readInt（定长 4 字节），非 VarInt

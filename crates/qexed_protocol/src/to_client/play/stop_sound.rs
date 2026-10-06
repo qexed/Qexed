@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::*};
 
-#[qexed_packet_macros::packet(id = 0x78)]
+#[qexed_packet_macros::packet(id = 0x79)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct StopSound {
     pub flags: u8,

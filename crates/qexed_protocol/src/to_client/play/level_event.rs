@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::Position};
 
-#[qexed_packet_macros::packet(id = 0x2E)]
+#[qexed_packet_macros::packet(id = 0x2f)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct LevelEvent {
     pub event_id: i32,

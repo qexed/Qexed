@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec};
 
-#[qexed_packet_macros::packet(id = 0x59)]
+#[qexed_packet_macros::packet(id = 0x5a)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetBorderCenter {
     pub new_center_x: f64,

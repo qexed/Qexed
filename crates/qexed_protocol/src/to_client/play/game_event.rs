@@ -1,6 +1,6 @@
 use qexed_packet::PacketCodec;
 
-#[qexed_packet_macros::packet(id = 0x26)]
+#[qexed_packet_macros::packet(id = 0x27)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct GameEvent {
     pub event: u8,

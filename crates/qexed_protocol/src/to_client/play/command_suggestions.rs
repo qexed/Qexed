@@ -1,5 +1,5 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
-#[qexed_packet_macros::packet(id = 0x0E)]
+#[qexed_packet_macros::packet(id = 0xf)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct CommandSuggestions {
     pub id: VarInt,

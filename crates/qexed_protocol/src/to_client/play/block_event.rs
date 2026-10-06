@@ -3,7 +3,7 @@ use qexed_packet::{
     net_types::{Position, VarInt},
 };
 
-#[qexed_packet_macros::packet(id = 0x6)]
+#[qexed_packet_macros::packet(id = 0x7)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct BlockEvent {
     pub pos: Position,

@@ -1,7 +1,7 @@
 use crate::types::{IDSet, SlotDisplay};
 use qexed_packet::{PacketCodec, net_types::*};
 
-#[qexed_packet_macros::packet(id = 0x87)]
+#[qexed_packet_macros::packet(id = 0x88)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct UpdateRecipes {
     pub item_sets: Vec<RecipePropertySetEntry>,

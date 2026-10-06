@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x1E)]
+#[qexed_packet_macros::packet(id = 0x1f)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct DeleteChat {
     pub message_signature: MessageSignaturePacked,

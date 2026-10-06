@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::*};
 
-#[qexed_packet_macros::packet(id = 0x7A)]
+#[qexed_packet_macros::packet(id = 0x7b)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SwingAnimation {
     pub entity_id: VarInt,

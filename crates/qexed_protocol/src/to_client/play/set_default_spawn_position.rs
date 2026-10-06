@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::Position};
 
-#[qexed_packet_macros::packet(id = 0x62)]
+#[qexed_packet_macros::packet(id = 0x63)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetDefaultSpawnPosition {
     pub dimension: String,

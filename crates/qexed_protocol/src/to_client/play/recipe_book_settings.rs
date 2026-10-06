@@ -1,5 +1,5 @@
 use qexed_packet::PacketCodec;
-#[qexed_packet_macros::packet(id = 0x4c)]
+#[qexed_packet_macros::packet(id = 0x4d)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct RecipeBookSettings {
     /// If true, then the crafting recipe book will be open when the player opens its inventory.

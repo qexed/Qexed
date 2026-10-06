@@ -1,0 +1,76 @@
+plugins {
+    id 'java'
+    id("org.spongepowered.gradle.vanilla") version "0.3.2"
+}
+
+group = 'cn.qexed'
+version = '1.0-SNAPSHOT'
+
+if (providers.gradleProperty("qexedSmokeBuildDir").isPresent()) {
+    layout.buildDirectory.set(file(providers.gradleProperty("qexedSmokeBuildDir").get()))
+}
+
+minecraft {
+    version("26.3")
+    runs {
+        server()
+        client() {
+            args("--quickPlayMultiplayer", providers.gradleProperty("qexedQuickPlay").orElse("127.0.0.1:25565").get())
+        }
+    }
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.17.2'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.register("buildQexedForIntegration", Exec) {
+    workingDir = rootProject.projectDir.parentFile.parentFile
+    if (providers.gradleProperty("qexedTargetDir").isPresent()) {
+        environment "CARGO_TARGET_DIR", providers.gradleProperty("qexedTargetDir").get()
+    }
+    commandLine "cargo", "build", "-p", "qexed"
+}
+
+tasks.register("buildWasmPluginsForIntegration", Exec) {
+    workingDir = rootProject.projectDir.parentFile.parentFile
+    commandLine "cargo", "build", "--manifest-path", "plugins/examples/Cargo.toml",
+            "--target", "wasm32-unknown-unknown", "--release"
+}
+
+tasks.register("integrationTest", Test) {
+    description = "Runs Qexed single-server vanilla protocol integration tests."
+    group = "verification"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags "integration"
+    }
+    dependsOn tasks.named("buildQexedForIntegration"), tasks.named("buildWasmPluginsForIntegration")
+    shouldRunAfter tasks.named("test")
+    systemProperty "qexed.repoRoot", rootProject.projectDir.parentFile.parentFile.absolutePath
+    if (providers.gradleProperty("qexedTargetDir").isPresent()) {
+        systemProperty "qexed.binary", file("${providers.gradleProperty("qexedTargetDir").get()}/debug/qexed.exe").absolutePath
+    }
+    if (providers.gradleProperty("qexedPort").isPresent()) {
+        systemProperty "qexed.port", providers.gradleProperty("qexedPort").get()
+    }
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
+}
+
+tasks.named("test") {
+    useJUnitPlatform {
+        excludeTags "integration"
+    }
+}

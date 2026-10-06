@@ -52,6 +52,9 @@ const SYNCHRONIZED_REGISTRIES: &[&str] = &[
     "dialog",
     "world_clock",
     "timeline",
+    // 26.3: item 组件初始化（shovel/axe/hoe）所需
+    "block_transformer",
+    "decorated_pot_pattern",
 ];
 
 pub fn known_packs() -> Vec<KnownPacks> {

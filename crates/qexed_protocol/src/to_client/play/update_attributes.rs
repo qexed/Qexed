@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x85)]
+#[qexed_packet_macros::packet(id = 0x86)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct UpdateAttributes {
     pub entity_id: VarInt,

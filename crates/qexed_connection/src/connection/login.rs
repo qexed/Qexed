@@ -1,4 +1,4 @@
-//! 登录处理（v4 connection::login 迁移）。
+﻿//! 登录处理（v4 connection::login 迁移）。
 //!
 //! 包名对齐 v6：SetProtocol→ClientIntention，LoginStart→Hello，
 //! EncryptionBegin(server)→Hello(login)，EncryptionBegin(client)→Key，
@@ -37,20 +37,17 @@ pub struct LoginOutcome {
     pub client_config: super::configuration::ClientConfiguration,
 }
 
-pub(super) async fn handle_login<R, W>(
+pub(super) async fn handle_login(
     handshake: ClientIntention,
-    packets: &mut crate::transport::PacketStream<R>,
-    sink: &mut crate::transport::PacketSink<W>,
+    mut packets: crate::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+    mut sink: crate::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
     context: &ServerContext,
-    _shutdown: tokio::sync::watch::Receiver<bool>,
-) -> Result<()>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
-{
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    use tokio::io::{AsyncRead as _, AsyncWrite as _};
     if handshake.protocol_version.0 != qexed_config::PROTOCOL_VERSION {
         disconnect_login(
-            sink,
+            &mut sink,
             format!(
                 "Unsupported protocol {}. This server expects {} ({})",
                 handshake.protocol_version.0,
@@ -62,11 +59,11 @@ where
         return Ok(());
     }
 
-    let login_start = read_expected_packet::<Hello, _>(packets).await?;
-    let login = match resolve_login(&handshake, packets, sink, context, &login_start).await {
+    let login_start = read_expected_packet::<Hello, _>(&mut packets).await?;
+    let login = match resolve_login(&handshake, &mut packets, &mut sink, context, &login_start).await {
         Ok(login) => login,
         Err(err) => {
-            disconnect_login(sink, format!("Authentication failed: {err}")).await?;
+            disconnect_login(&mut sink, format!("Authentication failed: {err}")).await?;
             return Ok(());
         }
     };
@@ -90,19 +87,32 @@ where
     })
     .await?;
 
-    read_expected_packet::<LoginAcknowledged, _>(packets).await?;
-    let client_config = handle_configuration(packets, sink, context, &login.login_host).await?;
+    read_expected_packet::<LoginAcknowledged, _>(&mut packets).await?;
+    let client_config = handle_configuration(&mut packets, &mut sink, context, &login.login_host).await?;
     context.ensure_plugins_initialized();
 
-    // TODO(hook): v4 在此调用 crate::play::initialize(...) 进入 play 域，
-    // 携带 world/players/entities 等全部运行时；v6 由 qexed_server 组装层
-    // 拿到 LoginOutcome 后调用 qexed_play 的入口。
-    let _outcome = LoginOutcome {
+    // play 域初始化：由组装层注入的启动器接管（避免 connection→play 依赖环）。
+    let outcome = LoginOutcome {
         profile: login.profile,
         login_host: login.login_host,
         client_config,
     };
 
+    if let Some(launcher) = context.play_launcher.clone() {
+        let outcome_result = launcher(
+            packets,
+            sink,
+            outcome.profile.clone(),
+            outcome.client_config.locale.clone(),
+            outcome.client_config.displayed_skin_parts,
+            shutdown,
+        )
+        .await;
+        if let Err(err) = &outcome_result {
+            log::error!("[play] 会话错误: {err}");
+        }
+        return outcome_result;
+    }
     Ok(())
 }
 
@@ -113,16 +123,13 @@ struct Login {
 }
 
 
-async fn resolve_login<R, W>(
+async fn resolve_login(
     handshake: &ClientIntention,
-    packets: &mut crate::transport::PacketStream<R>,
-    sink: &mut crate::transport::PacketSink<W>,
+    packets: &mut crate::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+    sink: &mut crate::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
     context: &ServerContext,
     login_start: &Hello,
 ) -> Result<Login>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
 {
     if context.config.proxy {
         match context.config.proxy_protocol {
@@ -143,8 +150,8 @@ where
             }
             ForwardingMode::Velocity | ForwardingMode::Victory => {
                 let profile = request_velocity_forwarding(
-                    packets,
-                    sink,
+                    &mut *packets,
+                    &mut *sink,
                     &context.config.proxy_token,
                 )
                 .await?;
@@ -184,14 +191,11 @@ where
     })
 }
 
-async fn request_velocity_forwarding<R, W>(
-    packets: &mut crate::transport::PacketStream<R>,
-    sink: &mut crate::transport::PacketSink<W>,
+async fn request_velocity_forwarding(
+    packets: &mut crate::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+    sink: &mut crate::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
     secret: &str,
 ) -> Result<qexed_packet::net_types::GameProfile>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
 {
     sink.send(to_client::login::custom_query::CustomQuery {
         transaction_id: qexed_packet::net_types::VarInt(
@@ -223,15 +227,12 @@ where
     crate::proxy_forwarding::parse_velocity_forwarding_response(&data.data.0, secret)
 }
 
-async fn authenticate_online<R, W>(
-    packets: &mut crate::transport::PacketStream<R>,
-    sink: &mut crate::transport::PacketSink<W>,
+async fn authenticate_online(
+    packets: &mut crate::transport::PacketStream<tokio::io::ReadHalf<tokio::net::TcpStream>>,
+    sink: &mut crate::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
     context: &ServerContext,
     login_start: &Hello,
 ) -> Result<qexed_packet::net_types::GameProfile>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
 {
     let verify_token = random_verify_token();
     sink.send(to_client::login::hello::Hello {
@@ -258,12 +259,10 @@ where
     Ok(authenticated.into())
 }
 
-async fn disconnect_login<W>(
-    sink: &mut crate::transport::PacketSink<W>,
+async fn disconnect_login(
+    sink: &mut crate::transport::PacketSink<tokio::io::WriteHalf<tokio::net::TcpStream>>,
     reason: impl Into<String>,
 ) -> Result<()>
-where
-    W: tokio::io::AsyncWrite + Unpin,
 {
     sink.send(to_client::login::login_disconnect::LoginDisconnect {
         reason: super::text_component(reason),

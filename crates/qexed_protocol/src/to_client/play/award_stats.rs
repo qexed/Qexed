@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x02)]
+#[qexed_packet_macros::packet(id = 0x3)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct AwardStats {
     pub stats: Vec<AwardStat>,

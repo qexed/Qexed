@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::{AnyNbt, VarInt}};
 
-#[qexed_packet_macros::packet(id = 0x20)]
+#[qexed_packet_macros::packet(id = 0x21)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct DisguisedChat {
     // TODO: net.minecraft.network.chat.Component — 线上格式为 NBT 文本组件，用 AnyNbt 占位

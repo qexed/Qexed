@@ -4,7 +4,7 @@ use qexed_packet::{
     net_types::{ByteArray, VarInt},
 };
 
-#[qexed_packet_macros::packet(id = 0xC)]
+#[qexed_packet_macros::packet(id = 0xd)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ChunksBiomes {
     pub chunk_biome_data: Vec<ChunkBiomeData>,

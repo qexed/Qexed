@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
 use crate::types::EntityMetadata;
-#[qexed_packet_macros::packet(id = 0x64)]
+#[qexed_packet_macros::packet(id = 0x65)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetEntityData {
     pub entity_id: VarInt,

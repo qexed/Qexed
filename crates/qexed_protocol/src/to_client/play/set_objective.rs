@@ -1,7 +1,7 @@
 use qexed_packet::{PacketCodec, net_types::*};
 use crate::types::*;
 
-#[qexed_packet_macros::packet(id = 0x6B)]
+#[qexed_packet_macros::packet(id = 0x6c)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetObjective {
     pub objective_name: String,

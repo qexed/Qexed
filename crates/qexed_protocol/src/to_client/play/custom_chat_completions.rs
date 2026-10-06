@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x16)]
+#[qexed_packet_macros::packet(id = 0x17)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct CustomChatCompletions {
     pub action: VarInt,

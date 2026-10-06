@@ -13,7 +13,7 @@ pub struct DamageEvent {
 }
 
 impl Packet for DamageEvent {
-    const ID: i32 = 0x18;
+    const ID: i32 = 0x19;
 
     fn serialize(&self, w: &mut PacketWriter) -> qexed_packet::Result<()> {
         self.entity_id.serialize(w)?;

@@ -60,7 +60,7 @@ impl Default for Respawn {
 }
 
 impl Packet for Respawn {
-    const ID: i32 = 0x53;
+    const ID: i32 = 0x54;
 
     fn serialize(&self, w: &mut PacketWriter) -> qexed_packet::Result<()> {
         self.dimension_type.serialize(w)?;

@@ -1,6 +1,6 @@
 use crate::types::Slot;
 use qexed_packet::{PacketCodec, net_types::VarInt};
-#[qexed_packet_macros::packet(id = 0x13)]
+#[qexed_packet_macros::packet(id = 0x14)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ContainerSetContent {
     pub window_id: VarInt,

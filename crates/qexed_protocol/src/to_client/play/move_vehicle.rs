@@ -11,7 +11,7 @@ pub struct PositionAndRotation {
     pub x_rot: f32,
 }
 
-#[qexed_packet_macros::packet(id = 0x39)]
+#[qexed_packet_macros::packet(id = 0x3a)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct MoveVehicle {
     pub moving_to: PositionAndRotation,

@@ -1,6 +1,6 @@
 use qexed_packet::PacketCodec;
 
-#[qexed_packet_macros::packet(id = 0x57)]
+#[qexed_packet_macros::packet(id = 0x58)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ServerData {
     pub motd: crate::types::TextComponent,

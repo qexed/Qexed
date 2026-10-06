@@ -14,7 +14,7 @@ mod status_handle;
 #[cfg(test)]
 #[cfg(test)]
 use configuration::handle_configuration;
-pub use context::ServerContext;
+pub use context::{PlayLauncherFn, ServerContext};
 
 use qexed_protocol::to_server::handshaking::client_intention::ClientIntention;
 use tokio::net::TcpStream;
@@ -73,10 +73,11 @@ async fn handle_inner(
             .replace("%{port}", &handshake.port.to_string())
             .replace("%{next_state}", &handshake.intention.0.to_string()),
     );
-    // v4 next_state: 1=status, 2|3=login；v6 ClientIntention: 0=STATUS, 1=LOGIN, 2=TRANSFER
+    // 线上协议（v4 实测同款）：next_state/intention 1=STATUS, 2=LOGIN, 3=TRANSFER。
+    // 26.3 客户端 ping 服务器列表发 1，直接登录发 2。
     match handshake.intention.0 {
-        0 => handle_status(&mut packets, &mut sink, &context).await,
-        1 | 2 => handle_login(handshake, &mut packets, &mut sink, &context, shutdown).await,
+        1 => handle_status(&mut packets, &mut sink, &context).await,
+        2 | 3 => handle_login(handshake, packets, sink, &context, shutdown).await,
         state => Err(ConnectionError::msg(format!(
             "unsupported handshake target state: {state}"
         ))),

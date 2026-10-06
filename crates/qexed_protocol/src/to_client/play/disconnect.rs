@@ -1,6 +1,6 @@
 use qexed_packet::PacketCodec;
 
-#[qexed_packet_macros::packet(id = 0x1F)]
+#[qexed_packet_macros::packet(id = 0x20)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Disconnect {
     pub reason: crate::types::TextComponent,

@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarLong};
 
-#[qexed_packet_macros::packet(id = 0x55)]
+#[qexed_packet_macros::packet(id = 0x56)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SectionBlocksUpdate {
     pub section_position: i64,

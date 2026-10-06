@@ -4,7 +4,7 @@ use qexed_packet::{
 };
 
 
-#[qexed_packet_macros::packet(id = 0x30)]
+#[qexed_packet_macros::packet(id = 0x31)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct LightUpdate {
     pub chunk_x: VarInt,

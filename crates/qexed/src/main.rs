@@ -1,3 +1,5 @@
+mod play_boot;
+mod world_adapter;
 mod runtime;
 
 use clap::Parser;
@@ -98,10 +100,24 @@ async fn run() -> anyhow::Result<()> {
     // 组装真实运行时并启动服务器主循环
     let server_config = qexed_server::config::ServerConfig::default();
     let services = std::sync::Arc::new(qexed_server::context::ServerServices::load());
-    let connection_ctx = qexed_connection::connection::ServerContext::new(
-        qexed_connection::config::ConnectionConfig::default(),
-    )
-    .await?;
+    // 连接配置：优先 connection.toml；缺省时用离线模式（本地可连）。
+    let mut connection_config = qexed_connection::config::ConnectionConfig::default();
+    connection_config.online_mode = false;
+    // TODO(config): app_config 宏生成的加载入口接线后，从 connection.toml 覆盖
+    let runtime = std::sync::Arc::new(runtime::QexedRuntime::new(
+        server_config.clone(),
+        "./world",
+    )?);
+    let mut connection_config = connection_config;
+    // 组装层注入 play 启动器（v4 ServerContext::new 内联的 play::initialize 等价）
+    let _ = &runtime;
+    let mut connection_ctx =
+        qexed_connection::connection::ServerContext::new(connection_config).await?;
+    connection_ctx.set_play_launcher(runtime::play_launcher(
+        runtime.world.clone(),
+        runtime.players.clone(),
+    ));
+    let _ = &connection_ctx;
 
     let runtime = std::sync::Arc::new(runtime::QexedRuntime::new(
         server_config.clone(),
@@ -111,7 +127,7 @@ async fn run() -> anyhow::Result<()> {
         context: connection_ctx,
     });
 
-    log::info!("{}", qexed_language::t("qexed.server.starting"));
+    log::info!("{}", qexed_language::t("qexed.server.starting").replace("%{version}", shadow::PKG_VERSION));
     qexed_server::server::run(server_config, runtime, services, handler).await?;
     Ok(())
 }

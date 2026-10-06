@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x72)]
+#[qexed_packet_macros::packet(id = 0x73)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetTime {
     pub game_time: i64,

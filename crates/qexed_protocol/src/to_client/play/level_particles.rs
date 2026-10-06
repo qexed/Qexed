@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 
-#[qexed_packet_macros::packet(id = 0x2F)]
+#[qexed_packet_macros::packet(id = 0x30)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct LevelParticles {
     // TODO: net.minecraft.core.particles.ParticleOptions — 粒子注册表 id（VarInt）+ 按粒子类型分发的选项数据

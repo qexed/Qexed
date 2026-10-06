@@ -1,6 +1,6 @@
 use qexed_packet::{PacketCodec, net_types::VarInt};
 use std::fmt;
-#[qexed_packet_macros::packet(id = 0x0F)]
+#[qexed_packet_macros::packet(id = 0x10)]
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Commands {
     pub nodes: Vec<Node>,
