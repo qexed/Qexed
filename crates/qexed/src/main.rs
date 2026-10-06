@@ -1,12 +1,3 @@
-mod gameplay_hooks;
-mod management_wiring;
-mod items_registry;
-mod play_boot;
-mod plugin_services;
-mod world_adapter;
-mod world_rules_adapter;
-mod runtime;
-
 use clap::Parser;
 use qexed_club::{arg_fields, ServerArgs};
 use shadow_rs::shadow;
@@ -33,7 +24,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main() -> anyhow::Result<()> {
     if let Err(err) = run().await {
-        log::error!("{}", qexed_language::t("qexed.runtime.error").replace("%{error}", &err.to_string()));
+        log::error!("{err}");
     }
     Ok(())
 }
@@ -100,128 +91,9 @@ async fn run() -> anyhow::Result<()> {
     qexed_log::init().await?;
     qexed_language::init(shadow::SHORT_COMMIT, args.language.as_deref()).await?;
     qexed_mojang_data::init().await?;
-    qexed_mojang_data::registry_sync::ensure_data_ready()?;
-
-    // 管理协议（MCSMP JSON-RPC over WebSocket）
-    {
-        let mgmt_config = qexed_management::config::ManagementConfig::load_persistent()
-            .unwrap_or_else(|err| {
-                log::warn!("management config load failed, using default: {err}");
-                let mut fallback = qexed_management::config::ManagementConfig::persistent_default();
-                fallback.ensure_secret();
-                fallback
-            });
-        log::info!(
-            "{}",
-            qexed_language::t("qexed.management.secret_generated")
-                .replace("%{secret}", &mgmt_config.secret)
-        );
-        let backend = std::sync::Arc::new(management_wiring::QexedManagementBackend {
-            players: std::sync::Arc::new(qexed_player::PlayerManager::new(std::sync::Arc::new(
-                qexed_protocol::types::EntityIdAllocator::default(),
-            ))),
-            warden: std::sync::Arc::new(qexed_server::warden::WardenManager::from_config(
-                qexed_server::config::WardenConfig::default(),
-            )),
-            motd: std::sync::Arc::new(std::sync::Mutex::new("Qexed Server".to_string())),
-            version_name: "26.3",
-            protocol_version: qexed_config::PROTOCOL_VERSION,
-        });
-        let server = qexed_management::server::ManagementServer::new(mgmt_config, backend);
-        tokio::spawn(async move {
-            if let Err(err) = server.run().await {
-                log::warn!("management server stopped: {err}");
-            }
-        });
+    loop{
+        log::info!("test");
+        std::thread::sleep(std::time::Duration::from_secs(5)); // 等待 5 秒
     }
-
-    qexed_profiler::init_global(std::sync::Arc::new(qexed_profiler::Profiler::new()));
-    // 组装真实运行时并启动服务器主循环
-    let server_config = qexed_server::config::ServerConfig::default();
-    let services = std::sync::Arc::new(qexed_server::context::ServerServices::load());
-    // 连接配置：默认正版验证（v4 语义）；connection.toml 的 online_mode=false 可关闭。
-    let mut connection_config = qexed_connection::config::ConnectionConfig::default();
-    // 尝试从 connection.toml 覆盖（含 online_mode）。
-    use qexed_config::Config as _;
-    if let Ok(loaded) = qexed_connection::config::ConnectionConfig::load_and_create_default(true) {
-        connection_config = loaded;
-    }
-    // online_mode 由 connection.toml 驱动（默认 true = 正版验证；
-    // session server 认证链已就绪：auth/authenticator.rs hasJoined + 皮肤
-    // properties 透传）。本地离线开发在 connection.toml 设 online_mode=false。
-    let runtime = std::sync::Arc::new(runtime::QexedRuntime::new(
-        server_config.clone(),
-        "./world",
-    )?);
-    // 组装层注入 play 启动器（v4 ServerContext::new 内联的 play::initialize 等价）
-    let _ = &runtime;
-    let mut connection_ctx =
-        qexed_connection::connection::ServerContext::new(connection_config).await?;
-    // warden 封禁检查注入
-    {
-        let warden = std::sync::Arc::new(qexed_server::warden::WardenManager::from_config(
-            qexed_server::config::WardenConfig::default(),
-        ));
-        connection_ctx.set_ban_check(std::sync::Arc::new(move |uuid| {
-            warden.ban_for(uuid).map(|record| record.reason)
-        }));
-    }
-    connection_ctx.set_play_launcher(runtime::play_launcher(
-        runtime.world.clone(),
-        runtime.players.clone(),
-    ));
-    // 插件域初始化注入：v4 ensure_plugins_initialized（插件 init 事件 + 自定义实体
-    // 注册 + NPC 落场）由连接域在首个玩家配置完成时触发一次。
-    {
-        let runtime_for_plugins = runtime.clone();
-        runtime_for_plugins.install_plugin_services();
-        connection_ctx.set_plugins_init(runtime_for_plugins.plugins_init_callback(
-            &server_config.language.clone(),
-        ));
-    }
-    let _ = &connection_ctx;
-
-    let handler = std::sync::Arc::new(runtime::QexedConnectionHandler {
-        context: connection_ctx,
-    });
-
-    // 出生点区块预热（后台执行，不阻塞监听）
-    tokio::spawn(async move {
-    {
-        use qexed_config::Config as _;
-        use qexed_world::world::WorldManager;
-        let warm_world = WorldManager::with_generator(
-            "./world",
-            qexed_world::world::WorldLightMode::default(),
-            qexed_world::world::WorldLightAlgorithm::default(),
-            false,
-            qexed_world::world::generator::from_config(
-                &match qexed_world::config::WorldConfig::load_and_create_default(true) {
-                Ok(config) => config,
-                Err(err) => {
-                    log::warn!("world config load failed, using flat default: {err}");
-                    let mut fallback = qexed_world::config::WorldConfig::default();
-                    fallback.generator = qexed_world::config::WorldGenerator::VanillaFlat;
-                    fallback
-                }
-            },
-            ),
-        );
-        let _session = warm_world.begin_session();
-        let epoch = warm_world.cache_epoch();
-        for dx in -1..=1i32 {
-            for dz in -1..=1i32 {
-                let t0 = std::time::Instant::now();
-                match warm_world.generated_network_chunk_for_session("minecraft:overworld", dx, dz, epoch) {
-                    Ok(_) => log::info!("spawn chunk ({dx},{dz}) warmed in {:?}", t0.elapsed()),
-                    Err(e) => log::warn!("spawn chunk ({dx},{dz}) warmup failed: {e}"),
-                }
-            }
-        }
-    }
-    });
-
-    log::info!("{}", qexed_language::t("qexed.server.starting").replace("%{version}", shadow::PKG_VERSION));
-    qexed_server::server::run(server_config, runtime, services, handler).await?;
     Ok(())
 }

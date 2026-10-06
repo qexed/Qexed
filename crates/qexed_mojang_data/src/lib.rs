@@ -1,6 +1,5 @@
 pub mod config;
 pub mod error;
-pub mod registry_sync;
 mod download;
 mod extract;
 mod lock;
@@ -91,10 +90,8 @@ fn cleanup_downloaded_jars(cache_root: &Path) {
             && err.kind() != std::io::ErrorKind::NotFound
         {
             log::warn!(
-                "{}",
-                qexed_language::t("qexed.mojang_data.jar.cleanup_failed")
-                    .replace("%{path}", &path.display().to_string())
-                    .replace("%{error}", &err.to_string())
+                "failed to remove Mojang jar after data extraction: path={}, error={err}",
+                path.display()
             );
         }
     }

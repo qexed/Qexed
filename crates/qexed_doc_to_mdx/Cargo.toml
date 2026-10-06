@@ -24,8 +24,6 @@ chrono.workspace = true
 qexed_language.workspace = true
 qexed_log.workspace = true
 qexed_mojang_data.workspace = true
-qexed_protocol.workspace = true
-qexed_packet.workspace = true
 
 [build-dependencies]
 shadow-rs = { workspace = true }

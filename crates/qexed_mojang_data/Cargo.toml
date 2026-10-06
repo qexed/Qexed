@@ -9,15 +9,11 @@ qexed_config_macros.workspace = true
 qexed_language.workspace = true
 qexed_doc.workspace = true
 qexed_doc_macros.workspace = true
-qexed_protocol.workspace = true
-qexed_packet.workspace = true
-qexed_nbt.workspace = true
 
 tokio = { workspace = true, features = ["rt", "macros"] }
 tklog.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 log.workspace = true
 
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

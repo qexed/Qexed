@@ -162,7 +162,7 @@ pub async fn run(
         }
         Err(e) => {
             // 全源失败：内嵌 zh-CN 兜底，进程照常启动（翻译缺英文等仍回退 key）。
-            log::error!("{}", crate::t("qexed.language.fallback.embedded").replace("%{error}", &e.to_string()));
+            log::error!("fallback to embedded zh-CN: {e}");
             let table = Translations::from_json(ZH_CN_JSON).unwrap_or_default();
             *CURRENT.write().unwrap() = Some(table);
         }
