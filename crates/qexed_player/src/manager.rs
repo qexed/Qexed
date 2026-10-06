@@ -383,7 +383,7 @@ impl PlayerManager {
                 .player
                 .equipment
                 .iter_mut()
-                .find(|existing| existing.slot.0 == slot.slot.0)
+                .find(|existing| existing.slot == slot.slot)
             {
                 existing.item = slot.item.clone();
             } else {

@@ -31,3 +31,15 @@ log.workspace = true
 clap.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+
+qexed_profiler.workspace = true
+
+sha1.workspace = true
+
+hex.workspace = true
+
+# content_filter Api 引擎的 HTTP 客户端（v4 语义）。
+reqwest.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

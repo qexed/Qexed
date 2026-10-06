@@ -12,7 +12,7 @@ fn registry_has_26_3_play_ids() {
         "clientbound_login",
     )
     .unwrap();
-    assert_eq!(login.id, 0x31);
+    assert_eq!(login.id, 0x32);
 
     let keep_alive = packet_by_name(
         ProtocolState::Play,
@@ -22,131 +22,131 @@ fn registry_has_26_3_play_ids() {
     .unwrap();
     assert_eq!(keep_alive.id, 0x1C);
 
-    let packet = packet_by_id(ProtocolState::Play, PacketDirection::Clientbound, 0x8E).unwrap();
+    let packet = packet_by_id(ProtocolState::Play, PacketDirection::Clientbound, 0x8F).unwrap();
     assert_eq!(packet.name, "clientbound_show_dialog");
 }
 
 #[test]
 fn existing_packet_types_use_26_3_ids() {
-    assert_eq!(qexed_protocol::to_client::play::login::Login::ID, 0x31);
+    assert_eq!(qexed_protocol::to_client::play::login::Login::ID, 0x32);
     assert_eq!(
         qexed_protocol::to_client::play::initialize_border::InitializeBorder::ID,
-        0x2B
-    );
-    assert_eq!(
-        qexed_protocol::to_client::play::keep_alive::KeepAlive::ID,
         0x2C
     );
     assert_eq!(
+        qexed_protocol::to_client::play::keep_alive::KeepAlive::ID,
+        0x2D
+    );
+    assert_eq!(
         qexed_protocol::to_client::play::light_update::LightUpdate::ID,
-        0x30
+        0x31
     );
     assert_eq!(
         qexed_protocol::to_client::play::player_info_update::PlayerInfoUpdate::ID,
-        0x46
+        0x47
     );
     assert_eq!(
         qexed_protocol::to_client::play::forget_level_chunk::ForgetLevelChunk::ID,
-        0x25
+        0x26
     );
     assert_eq!(
         qexed_protocol::to_client::play::add_entity::AddEntity::ID,
-        0x0
+        0x1
     );
     assert_eq!(
         qexed_protocol::to_client::play::player_info_remove::PlayerInfoRemove::ID,
-        0x45
+        0x46
     );
     assert_eq!(
         qexed_protocol::to_client::play::remove_entities::RemoveEntities::ID,
-        0x4D
+        0x4E
     );
     assert_eq!(
         qexed_protocol::to_client::play::rotate_head::RotateHead::ID,
-        0x54
+        0x55
     );
     assert_eq!(
         qexed_protocol::to_client::play::teleport_entity::TeleportEntity::ID,
-        0x7F
+        0x80
     );
     assert_eq!(
         qexed_protocol::to_client::play::entity_position_sync::EntityPositionSync::ID,
-        0x22
+        0x23
     );
     assert_eq!(
         qexed_protocol::to_client::play::block_changed_ack::BlockChangedAck::ID,
-        0x03
+        0x04
     );
     assert_eq!(
         qexed_protocol::to_client::play::block_update::BlockUpdate::ID,
-        0x07
+        0x08
     );
     assert_eq!(
         qexed_protocol::to_client::play::commands::Commands::ID,
-        0x0F
+        0x10
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_equipment::SetEquipment::ID,
-        0x67
+        0x68
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_player_inventory::SetPlayerInventory::ID,
-        0x6D
+        0x6E
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_entity_data::SetEntityData::ID,
-        0x64
+        0x65
     );
     assert_eq!(
         qexed_protocol::to_client::play::reset_score::ResetScore::ID,
-        0x4F
+        0x50
     );
-    assert_eq!(qexed_protocol::to_client::play::respawn::Respawn::ID, 0x53);
+    assert_eq!(qexed_protocol::to_client::play::respawn::Respawn::ID, 0x54);
     assert_eq!(
         qexed_protocol::to_client::play::set_display_objective::SetDisplayObjective::ID,
-        0x63
+        0x64
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_objective::SetObjective::ID,
-        0x6B
+        0x6C
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_score::SetScore::ID,
-        0x6F
+        0x70
     );
     assert_eq!(
         qexed_protocol::to_client::play::player_chat::PlayerChat::ID,
-        0x41
+        0x42
     );
     assert_eq!(qexed_protocol::to_server::play::chat_ack::ChatAck::ID, 0x06);
     assert_eq!(
         qexed_protocol::to_client::play::server_data::ServerData::ID,
-        0x57
+        0x58
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_experience::SetExperience::ID,
-        0x68
-    );
-    assert_eq!(
-        qexed_protocol::to_client::play::set_health::SetHealth::ID,
         0x69
     );
     assert_eq!(
-        qexed_protocol::to_client::play::set_held_slot::SetHeldSlot::ID,
+        qexed_protocol::to_client::play::set_health::SetHealth::ID,
         0x6A
     );
     assert_eq!(
-        qexed_protocol::to_client::play::set_simulation_distance::SetSimulationDistance::ID,
-        0x70
+        qexed_protocol::to_client::play::set_held_slot::SetHeldSlot::ID,
+        0x6B
     );
-    assert_eq!(qexed_protocol::to_client::play::set_time::SetTime::ID, 0x72);
+    assert_eq!(
+        qexed_protocol::to_client::play::set_simulation_distance::SetSimulationDistance::ID,
+        0x71
+    );
+    assert_eq!(qexed_protocol::to_client::play::set_time::SetTime::ID, 0x73);
     assert_eq!(
         qexed_protocol::to_client::play::ticking_state::TickingState::ID,
-        0x81
+        0x82
     );
     assert_eq!(
         qexed_protocol::to_client::play::update_recipes::UpdateRecipes::ID,
-        0x87
+        0x88
     );
     assert_eq!(
         qexed_protocol::to_server::play::keep_alive::KeepAlive::ID,
@@ -257,11 +257,11 @@ fn player_chat_uses_nullable_components() {
 fn scoreboard_packet_ids_use_26_3_registry() {
     assert_eq!(
         qexed_protocol::to_client::play::set_objective::SetObjective::ID,
-        0x6B
+        0x6C
     );
     assert_eq!(
         qexed_protocol::to_client::play::set_display_objective::SetDisplayObjective::ID,
-        0x63
+        0x64
     );
 }
 #[test]
@@ -550,3 +550,156 @@ fn configuration_resource_pack_packets_use_26_3_ids() {
         0x06
     );
 }
+#[test]
+fn merchant_offers_count_prefix_round_trips() {
+    use qexed_protocol::to_client::play::merchant_offers::{ItemCost, MerchantOffer, MerchantOffers};
+
+    let cost_a = ItemCost {
+        item: qexed_packet::net_types::VarInt(4),
+        count: qexed_packet::net_types::VarInt(3),
+        components: Vec::new(),
+    };
+    let cost_b = ItemCost {
+        item: qexed_packet::net_types::VarInt(5),
+        count: qexed_packet::net_types::VarInt(2),
+        components: Vec::new(),
+    };
+    let offer = MerchantOffer {
+        base_cost_a: cost_a,
+        result: qexed_protocol::types::Slot {
+            item_count: qexed_packet::net_types::VarInt(1),
+            item_id: Some(qexed_packet::net_types::VarInt(36)),
+            number_of_components_to_add: Some(qexed_packet::net_types::VarInt(0)),
+            number_of_components_to_remove: Some(qexed_packet::net_types::VarInt(0)),
+            components_to_add: None,
+            components_to_remove: None,
+        },
+        cost_b: Some(cost_b),
+        out_of_stock: false,
+        uses: 1,
+        max_uses: 12,
+        villager_xp: 5,
+        special_price_diff: -1,
+        price_multiplier: 0.05,
+        demand: 0,
+    };
+    let packet = MerchantOffers {
+        container_id: qexed_packet::net_types::VarInt(1),
+        offers: vec![offer],
+        villager_level: qexed_packet::net_types::VarInt(2),
+        villager_xp: qexed_packet::net_types::VarInt(10),
+        show_progress: true,
+        can_restock: true,
+    };
+
+    let mut buf = bytes::BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+    packet.serialize(&mut writer).unwrap();
+
+    // offers 容器为计数前缀（ByteBufCodecs$26 readCount/writeCount）而非终止符：
+    // container_id(0x01) 之后紧跟 offer 计数 0x01。
+    assert_eq!(buf[0], 1);
+    assert_eq!(buf[1], 1);
+
+    let mut bytes = buf.freeze();
+    let mut reader = qexed_packet::PacketReader::new(&mut bytes);
+    let mut decoded = MerchantOffers::default();
+    decoded.deserialize(&mut reader).unwrap();
+    assert_eq!(decoded.offers.len(), 1);
+    assert_eq!(decoded.offers[0].base_cost_a.item.0, 4);
+    assert_eq!(decoded.offers[0].cost_b.as_ref().unwrap().count.0, 2);
+    assert_eq!(decoded.offers[0].price_multiplier, 0.05);
+
+    let empty = round_trip(MerchantOffers::default());
+    assert!(empty.offers.is_empty());
+}
+
+#[test]
+fn set_objective_conditional_fields_match_java() {
+    use qexed_protocol::to_client::play::set_objective::SetObjective;
+
+    let add = SetObjective {
+        objective_name: "obj".to_string(),
+        method: 0,
+        display_name: text_component("Title"),
+        render_type: qexed_packet::net_types::VarInt(0),
+        number_format: None,
+    };
+    let mut buf = bytes::BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+    add.serialize(&mut writer).unwrap();
+    let add_len = buf.len();
+
+    let remove = SetObjective {
+        method: 1,
+        ..add.clone()
+    };
+    let mut buf2 = bytes::BytesMut::new();
+    let mut writer2 = qexed_packet::PacketWriter::new(&mut buf2);
+    remove.serialize(&mut writer2).unwrap();
+
+    // method=1(remove) 时 Java 完全不写后三个字段：仅 name + method。
+    assert!(buf2.len() < add_len);
+    assert_eq!(buf2.len(), 2 + "obj".len());
+
+    let mut bytes = buf2.freeze();
+    let mut reader = qexed_packet::PacketReader::new(&mut bytes);
+    let mut decoded = SetObjective::default();
+    decoded.deserialize(&mut reader).unwrap();
+    assert_eq!(decoded.method, 1);
+    assert_eq!(decoded.number_format, None);
+}
+
+#[test]
+fn set_player_team_conditional_fields_match_java() {
+    use qexed_protocol::to_client::play::set_player_team::{SetPlayerTeam, TeamParameters};
+
+    let parameters = TeamParameters {
+        friendly_flags: 3,
+        color: Some(qexed_packet::net_types::VarInt(4)),
+        display_name: text_component("Red"),
+        player_prefix: text_component("["),
+        player_suffix: text_component("]"),
+        name_tag_visibility: qexed_packet::net_types::VarInt(0),
+        collision_rule: qexed_packet::net_types::VarInt(0),
+    };
+    let add = SetPlayerTeam {
+        name: "team".to_string(),
+        method: 0,
+        players: vec!["Steve".to_string()],
+        parameters: Some(parameters),
+    };
+    let mut buf = bytes::BytesMut::new();
+    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+    add.serialize(&mut writer).unwrap();
+    let add_len = buf.len();
+
+    let decoded = round_trip(add);
+    assert_eq!(decoded.parameters.as_ref().unwrap().friendly_flags, 3);
+    assert_eq!(decoded.players, vec!["Steve".to_string()]);
+
+    // method=1(remove)：无 parameters 也无 players，仅 name + method。
+    let remove = SetPlayerTeam {
+        name: "team".to_string(),
+        method: 1,
+        players: Vec::new(),
+        parameters: None,
+    };
+    let mut buf2 = bytes::BytesMut::new();
+    let mut writer2 = qexed_packet::PacketWriter::new(&mut buf2);
+    remove.serialize(&mut writer2).unwrap();
+    assert!(buf2.len() < add_len);
+    assert_eq!(buf2.len(), 2 + "team".len());
+
+    // method=4(leave)：有 players 无 parameters。
+    let leave = SetPlayerTeam {
+        name: "team".to_string(),
+        method: 4,
+        players: vec!["Alex".to_string()],
+        parameters: None,
+    };
+    let decoded_leave = round_trip(leave);
+    assert!(decoded_leave.parameters.is_none());
+    assert_eq!(decoded_leave.players, vec!["Alex".to_string()]);
+}
+

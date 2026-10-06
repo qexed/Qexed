@@ -6,8 +6,10 @@ use std::{collections::BTreeMap, path::Path};
 
 use crate::error::{ConnectionError, Result};
 
-/// v4 为 "config/enable-code-of-conduct"；v6 配置统一在 config_path 下，
-/// TODO(config): 由 qexed_server 组装时传入真实目录，这里保留默认相对目录。
+/// v4 为 "config/enable-code-of-conduct"；v6 配置统一在 qexed_config::config_path()
+/// 根目录下，本常量是相对该根的子路径（相对 "connection/enable-code-of-conduct"，
+/// 由调用方按其工作目录解析）。组装层需要自定义目录时用
+/// ServerContext::new_with_code_of_conduct_dir 显式传入，不经此常量。
 pub const DEFAULT_CODE_OF_CONDUCT_DIR: &str = "connection/enable-code-of-conduct";
 
 fn coc_err(message: impl Into<String>) -> ConnectionError {

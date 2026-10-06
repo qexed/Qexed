@@ -42,3 +42,6 @@ cipher = { version = "0.4", features = ["block-padding"] }
 
 sha2 = "0.10"
 
+[dev-dependencies]
+tempfile = "3"
+

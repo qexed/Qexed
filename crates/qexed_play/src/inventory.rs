@@ -66,7 +66,7 @@ impl Equipment {
     /// 转成 v6 协议的 SetEquipment 槽位项。
     pub fn to_entry(&self) -> qexed_protocol::to_client::play::set_equipment::EquipmentEntry {
         qexed_protocol::to_client::play::set_equipment::EquipmentEntry {
-            slot: VarInt(i32::from(self.slot)),
+            slot: i32::from(self.slot),
             item: self.item.clone(),
         }
     }
@@ -524,7 +524,7 @@ impl PlayerInventory {
             .iter()
             .enumerate()
             .map(|(slot, contents)| SetPlayerInventory {
-                slot: VarInt(slot as i32),
+                slot: qexed_packet::net_types::VarInt(slot as i32),
                 contents: contents.clone(),
             })
             .chain(
@@ -532,7 +532,7 @@ impl PlayerInventory {
                     .iter()
                     .enumerate()
                     .map(|(slot, contents)| SetPlayerInventory {
-                        slot: VarInt((HOTBAR_SIZE + slot) as i32),
+                        slot: qexed_packet::net_types::VarInt((HOTBAR_SIZE + slot) as i32),
                         contents: contents.clone(),
                     }),
             )
@@ -790,14 +790,14 @@ pub fn block_state_for_placement(default_state: i32, context: PlacementContext) 
 
 pub fn set_player_inventory_packet(slot: usize, contents: Slot) -> SetPlayerInventory {
     SetPlayerInventory {
-        slot: VarInt(slot as i32),
+        slot: qexed_packet::net_types::VarInt(slot as i32),
         contents,
     }
 }
 
 pub fn set_player_main_inventory_packet(slot: usize, contents: Slot) -> SetPlayerInventory {
     SetPlayerInventory {
-        slot: VarInt((HOTBAR_SIZE + slot) as i32),
+        slot: qexed_packet::net_types::VarInt((HOTBAR_SIZE + slot) as i32),
         contents,
     }
 }
@@ -824,6 +824,36 @@ pub fn empty_slot() -> Slot {
     Slot {
         item_count: VarInt(0),
         ..Slot::default()
+    }
+}
+
+/// play 域默认 ItemRegistry（本模块静态物品/方块表；v4 crate::inventory 直呼）。
+/// 供 menus/lobby 的菜单渲染与 chat 命令物品构造使用。
+pub struct InventoryItemRegistry;
+
+impl crate::ItemRegistry for InventoryItemRegistry {
+    fn is_air_block_state(&self, block_state: i32) -> bool {
+        is_air_block_state(block_state)
+    }
+
+    fn air_block_state(&self) -> i32 {
+        air_block_state()
+    }
+
+    fn picked_item_for_block_state(&self, block_state: i32) -> Option<i32> {
+        picked_item_for_block_state(block_state)
+    }
+
+    fn item_id_for_name(&self, name: &str) -> Option<i32> {
+        item_id_for_name(name)
+    }
+
+    fn simple_item(&self, item_id: i32, count: i32) -> Slot {
+        simple_item(item_id, count)
+    }
+
+    fn empty_slot(&self) -> Slot {
+        empty_slot()
     }
 }
 
@@ -964,11 +994,9 @@ fn load_block_state_metadata() -> Result<BlockStateMetadata> {
     let mut metadata = BlockStateMetadata::default();
 
     for (name, block) in blocks {
-        let definition_type = block
-            .get("definition")
-            .and_then(|definition| definition.get("type"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
+        // v4 的 blocks.json 含 definition.type（自定义 datagen 产物）；v6 官方
+        // 26.3 报告只有 properties/states，因此按方块名推导等价的类别标签。
+        let definition_type = block_class_from_name(name);
         let states = block
             .get("states")
             .and_then(serde_json::Value::as_array)
@@ -1147,6 +1175,45 @@ fn state_properties_signature_without_half(state: &serde_json::Value) -> String 
         .collect::<Vec<_>>();
     entries.sort();
     entries.join(";")
+}
+
+/// 从方块注册名推导 v4 definition.type 等价的类别标签。
+///
+/// v6 的官方 26.3 blocks.json 不含 definition 节点（v4 报告由自定义 datagen
+/// 生成），air/replaceable/碰撞判定改按注册名后缀/前缀归类，与
+/// collision_shape_for_block 的命名规则同源。
+fn block_class_from_name(name: &str) -> &'static str {
+    match name {
+        "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air" => "minecraft:air",
+        "minecraft:water" | "minecraft:lava" => "minecraft:liquid",
+        "minecraft:fire" | "minecraft:soul_fire" => "minecraft:fire",
+        "minecraft:tall_grass" | "minecraft:short_grass" | "minecraft:fern"
+        | "minecraft:large_fern" | "minecraft:bush" | "minecraft:short_dry_grass"
+        | "minecraft:tall_dry_grass" => "minecraft:tall_grass",
+        "minecraft:dead_bush" => "minecraft:dry_vegetation",
+        "minecraft:snow_layer" => "minecraft:snow_layer",
+        _ if name.ends_with("_sapling") || name.ends_with("_propagule") => "minecraft:flower",
+        _ if name == "minecraft:pink_petals" || name.ends_with("_petals") => "minecraft:pink_petals",
+        _ if name == "minecraft:wildflowers" || name == "minecraft:leaf_litter" => {
+            "minecraft:flower"
+        }
+        _ if name.ends_with("_flower")
+            || name.ends_with("_orchid")
+            || name.ends_with("_tulip")
+            || name.ends_with("_daisy")
+            || name.ends_with("_poppy")
+            || name.ends_with("_dandelion")
+            || name.ends_with("_bluet") => "minecraft:flower",
+        "minecraft:sunflower" | "minecraft:lilac" | "minecraft:rose_bush"
+        | "minecraft:peony" | "minecraft:pitcher_plant" => "minecraft:tall_flower",
+        _ if name.ends_with("_vine") || name == "minecraft:vine" => "minecraft:vine",
+        "minecraft:cave_vines" | "minecraft:cave_vines_head" => "minecraft:cave_vines",
+        "minecraft:twisting_vines" | "minecraft:twisting_vines_plant" => "minecraft:twisting_vines",
+        "minecraft:weeping_vines" | "minecraft:weeping_vines_plant" => "minecraft:weeping_vines",
+        "minecraft:kelp" | "minecraft:kelp_plant" => "minecraft:kelp",
+        "minecraft:seagrass" | "minecraft:tall_seagrass" => "minecraft:seagrass",
+        _ => "",
+    }
 }
 
 fn block_state_is_replaceable(definition_type: &str, state: &serde_json::Value) -> bool {
@@ -1405,7 +1472,9 @@ mod tests {
             picked_item_for_block_state(STONE_BLOCK_STATE_ID),
             Some(STONE_ITEM_ID)
         );
-        assert!(placed_block_state_for_item(&simple_item(923, 1)).is_none());
+        // 非方块物品（v6 26.3：923=warped_trapdoor 已是方块，改用确定非方块的 diamond）
+        let diamond = item_id_for_name("minecraft:diamond").expect("diamond item id");
+        assert!(placed_block_state_for_item(&simple_item(diamond, 1)).is_none());
     }
 
     #[test]
@@ -1547,56 +1616,84 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn block_report_metadata_pairs_double_height_halves() {
-        assert_eq!(upper_half_block_state(12920), Some(12919));
-        assert_eq!(lower_half_block_state(12919), Some(12920));
+        // v6 26.3 报告：oak_door 默认 lower=7254，同构 upper=7246。
+        let lower = crate::world_access::default_block_state_id("minecraft:oak_door");
+        let upper = upper_half_block_state(lower).expect("door upper half");
+        assert_eq!(lower_half_block_state(upper), Some(lower));
+        assert!(upper != lower);
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn placement_context_selects_axis_for_logs() {
+        // oak_log 默认 axis=y；face=5（东西向点击）应转成 axis=x。
+        let y_axis = crate::world_access::default_block_state_id("minecraft:oak_log");
+        let x_axis = crate::world_access::block_state(
+            "minecraft:oak_log",
+            &[("axis".to_string(), "x".to_string())],
+        );
         let context = PlacementContext {
             face: 5,
             cursor_y: 0.5,
             player_yaw: 0.0,
         };
 
-        assert_eq!(block_state_for_placement(137, context), 136);
+        assert_eq!(block_state_for_placement(y_axis, context), x_axis);
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn placement_context_selects_slab_half() {
+        // oak_slab 默认 bottom；face=3 + cursor_y=0.8 应选 top。
+        let bottom = crate::world_access::default_block_state_id("minecraft:oak_slab");
+        let top = crate::world_access::block_state(
+            "minecraft:oak_slab",
+            &[
+                ("type".to_string(), "top".to_string()),
+                ("waterlogged".to_string(), "false".to_string()),
+            ],
+        );
         let context = PlacementContext {
             face: 3,
             cursor_y: 0.8,
             player_yaw: 0.0,
         };
 
-        assert_eq!(block_state_for_placement(13399, context), 13397);
+        assert_eq!(block_state_for_placement(bottom, context), top);
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn placement_context_selects_stair_half_and_facing() {
+        // oak_stairs 默认 north/bottom/straight；face=1 + cursor 0.4 保持 bottom，
+        // yaw=90 应面向 west。
+        let default = crate::world_access::default_block_state_id("minecraft:oak_stairs");
+        let desired = crate::world_access::block_state(
+            "minecraft:oak_stairs",
+            &[
+                ("facing".to_string(), "west".to_string()),
+                ("half".to_string(), "bottom".to_string()),
+                ("shape".to_string(), "straight".to_string()),
+                ("waterlogged".to_string(), "false".to_string()),
+            ],
+        );
         let context = PlacementContext {
             face: 1,
             cursor_y: 0.4,
             player_yaw: 90.0,
         };
 
-        assert_eq!(block_state_for_placement(15787, context), 15827);
+        assert_eq!(block_state_for_placement(default, context), desired);
     }
 
     #[test]
     fn placement_context_keeps_floor_torch_on_top_clicks() {
+        // v6 26.3 报告：torch 无属性方块（默认状态 4926），点击顶部放置时保持地板形态。
+        let torch = crate::world_access::default_block_state_id("minecraft:torch");
         let context = PlacementContext {
             face: 1,
             cursor_y: 0.4,
             player_yaw: 0.0,
         };
 
-        assert_eq!(block_state_for_placement(3370, context), 3370);
+        assert_eq!(block_state_for_placement(torch, context), torch);
     }
 }

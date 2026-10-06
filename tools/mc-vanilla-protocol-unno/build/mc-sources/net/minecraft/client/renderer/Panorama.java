@@ -1,0 +1,27 @@
+package net.minecraft.client.renderer;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.renderer.state.gui.PanoramaRenderState;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+
+@OnlyIn(Dist.CLIENT)
+public class Panorama {
+    public static final Identifier PANORAMA_OVERLAY = Identifier.withDefaultNamespace("textures/gui/title/background/panorama_overlay.png");
+    private float spin;
+
+    public void extractRenderState(GuiGraphicsExtractor graphics, int width, int height, boolean shouldSpin) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (shouldSpin) {
+            float a = minecraft.getDeltaTracker().getRealtimeDeltaTicks();
+            float delta = (float)(a * minecraft.gameRenderer.getGameRenderState().optionsRenderState.panoramaSpeed);
+            this.spin = Mth.wrapDegrees(this.spin + delta * 0.1F);
+        }
+
+        minecraft.gameRenderer.getGameRenderState().guiRenderState.panoramaRenderState = new PanoramaRenderState(-this.spin);
+        graphics.blit(RenderPipelines.GUI_TEXTURED, PANORAMA_OVERLAY, 0, 0, 0.0F, 0.0F, width, height, 16, 128, 16, 128);
+    }
+}

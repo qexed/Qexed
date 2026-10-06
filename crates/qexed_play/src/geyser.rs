@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use qexed_packet::net_types::RestBuffer;
 use qexed_protocol::to_client::play::custom_payload::CustomPayload as ClientboundCustomPayload;
+use qexed_plugins::api::{GeyserPlayerInfoResponse, PlayerClientPayload};
+
+use crate::error::{PlayError, Result};
 
 pub(super) const FLOODGATE_FORM_CHANNEL: &str = "floodgate:form";
 const MAX_FORM_JSON_BYTES: usize = 64 * 1024;
@@ -71,8 +74,8 @@ impl GeyserRuntime {
     pub(super) fn player_info(
         &self,
         player: &qexed_player::OnlinePlayer,
-    ) -> qexed_plugin_api::GeyserPlayerInfoResponse {
-        qexed_plugin_api::GeyserPlayerInfoResponse {
+    ) -> GeyserPlayerInfoResponse {
+        GeyserPlayerInfoResponse {
             online: true,
             bedrock: self.bedrock || likely_bedrock_username(&player.profile.username),
             floodgate: self.floodgate,
@@ -86,8 +89,8 @@ impl GeyserRuntime {
         }
     }
 
-    pub(super) fn client_payload(&self, username: &str) -> qexed_plugin_api::PlayerClientPayload {
-        qexed_plugin_api::PlayerClientPayload {
+    pub(super) fn client_payload(&self, username: &str) -> PlayerClientPayload {
+        PlayerClientPayload {
             bedrock: self.bedrock || likely_bedrock_username(username),
             floodgate: self.floodgate,
             xuid: self.xuid.clone(),
@@ -109,7 +112,9 @@ impl GeyserRuntime {
             return Err(PlayError::msg("bedrock form json is empty"));
         }
         if json.len() > MAX_FORM_JSON_BYTES {
-            return Err(PlayError::msg("bedrock form json exceeds {} bytes", MAX_FORM_JSON_BYTES));
+            return Err(PlayError::msg(format!(
+                "bedrock form json exceeds {MAX_FORM_JSON_BYTES} bytes"
+            )));
         }
         let form_id = requested_form_id.unwrap_or_else(|| self.next_allocated_form_id());
         self.forms.insert(form_id, plugin_form_id);

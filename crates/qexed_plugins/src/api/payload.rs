@@ -46,6 +46,18 @@ pub struct PlayerPayload {
     pub dimension: String,
 }
 
+impl From<&qexed_player::OnlinePlayer> for PlayerPayload {
+    fn from(player: &qexed_player::OnlinePlayer) -> Self {
+        Self {
+            uuid: player.profile.uuid.to_string(),
+            username: player.profile.username.clone(),
+            entity_id: player.entity_id,
+            language: player.language.clone(),
+            dimension: player.dimension.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerPayloadOwned {
     pub uuid: String,

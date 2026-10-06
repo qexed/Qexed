@@ -1,0 +1,2896 @@
+{
+  "net.minecraft.network.protocol.game.ClientboundSetBorderCenterPacket": {
+    "packet": "clientbound/minecraft:set_border_center",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetBorderCenterPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "newCenterX",
+      "wire": "f64"
+    }, {
+      "name": "newCenterZ",
+      "wire": "f64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetStructureBlockPacket": {
+    "packet": "serverbound/minecraft:set_structure_block",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetStructureBlockPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "updateType",
+      "wire": "varint"
+    }, {
+      "name": "mode",
+      "wire": "varint"
+    }, {
+      "name": "name",
+      "wire": "string"
+    }, {
+      "name": "offset",
+      "wire": "u8"
+    }, {
+      "name": "offset",
+      "wire": "u8"
+    }, {
+      "name": "offset",
+      "wire": "u8"
+    }, {
+      "name": "size",
+      "wire": "u8"
+    }, {
+      "name": "size",
+      "wire": "u8"
+    }, {
+      "name": "size",
+      "wire": "u8"
+    }, {
+      "name": "mirror",
+      "wire": "varint"
+    }, {
+      "name": "data",
+      "wire": "string"
+    }, {
+      "name": "integrity",
+      "wire": "f32"
+    }, {
+      "name": "seed",
+      "wire": "varlong"
+    }, {
+      "name": "strict",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTestInstanceBlockStatus": {
+    "packet": "clientbound/minecraft:test_instance_block_status",
+    "class": "net.minecraft.network.protocol.game.ClientboundTestInstanceBlockStatus",
+    "kind": "packet",
+    "fields": [{
+      "name": "status",
+      "wire": "ComponentSerialization.STREAM_CODEC"
+    }, {
+      "name": "size",
+      "wire": "Vec3i.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData": {
+    "class": "net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData",
+    "kind": "struct",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket": {
+    "packet": "clientbound/minecraft:level_chunk_with_light",
+    "class": "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "x",
+      "wire": "i32"
+    }, {
+      "name": "z",
+      "wire": "i32"
+    }, {
+      "name": "chunkData",
+      "wire": "ClientboundLevelChunkPacketData.STREAM_CODEC"
+    }, {
+      "name": "lightData",
+      "wire": "ClientboundLightUpdatePacketData.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPlaceRecipePacket": {
+    "packet": "serverbound/minecraft:place_recipe",
+    "class": "net.minecraft.network.protocol.game.ServerboundPlaceRecipePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "ByteBufCodecs.CONTAINER_ID"
+    }, {
+      "name": "recipe",
+      "wire": "RecipeDisplayId.STREAM_CODEC"
+    }, {
+      "name": "useMaxItems",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket": {
+    "packet": "clientbound/minecraft:remove_entities",
+    "class": "net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityIds",
+      "wire": "array:ClientboundRemoveEntitiesPacket.ID_LIST_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundContainerClosePacket": {
+    "packet": "serverbound/minecraft:container_close",
+    "class": "net.minecraft.network.protocol.game.ServerboundContainerClosePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSelectBundleItemPacket": {
+    "packet": "serverbound/minecraft:bundle_item_selected",
+    "class": "net.minecraft.network.protocol.game.ServerboundSelectBundleItemPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slotId",
+      "wire": "varint"
+    }, {
+      "name": "selectedItemIndex",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundBlockEntityTagQueryPacket": {
+    "packet": "serverbound/minecraft:block_entity_tag_query",
+    "class": "net.minecraft.network.protocol.game.ServerboundBlockEntityTagQueryPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "transactionId",
+      "wire": "varint"
+    }, {
+      "name": "pos",
+      "wire": "position"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundBlockChangedAckPacket": {
+    "packet": "clientbound/minecraft:block_changed_ack",
+    "class": "net.minecraft.network.protocol.game.ClientboundBlockChangedAckPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "sequence",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTabListPacket": {
+    "packet": "clientbound/minecraft:tab_list",
+    "class": "net.minecraft.network.protocol.game.ClientboundTabListPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "header",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }, {
+      "name": "footer",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundAttackPacket": {
+    "packet": "serverbound/minecraft:attack",
+    "class": "net.minecraft.network.protocol.game.ServerboundAttackPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket": {
+    "packet": "clientbound/minecraft:set_held_slot",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slot",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket": {
+    "packet": "clientbound/minecraft:waypoint",
+    "class": "net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "operation",
+      "wire": "ClientboundTrackedWaypointPacket$Operation.STREAM_CODEC"
+    }, {
+      "name": "waypoint",
+      "wire": "TrackedWaypoint.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDebugEntityValuePacket": {
+    "packet": "clientbound/minecraft:debug/entity_value",
+    "class": "net.minecraft.network.protocol.game.ClientboundDebugEntityValuePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "update",
+      "wire": "DebugSubscription$Update.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundAddTransientBlockPacket": {
+    "packet": "clientbound/minecraft:add_transient_block",
+    "class": "net.minecraft.network.protocol.game.ClientboundAddTransientBlockPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "position"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLoginPacket": {
+    "packet": "clientbound/minecraft:login",
+    "class": "net.minecraft.network.protocol.game.ClientboundLoginPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "playerId",
+      "wire": "i32"
+    }, {
+      "name": "hardcore",
+      "wire": "bool"
+    }, {
+      "name": "levels",
+      "wire": "array:resource_key:dimension"
+    }, {
+      "name": "maxPlayers",
+      "wire": "varint"
+    }, {
+      "name": "chunkRadius",
+      "wire": "varint"
+    }, {
+      "name": "simulationDistance",
+      "wire": "varint"
+    }, {
+      "name": "reducedDebugInfo",
+      "wire": "bool"
+    }, {
+      "name": "showDeathScreen",
+      "wire": "bool"
+    }, {
+      "name": "doLimitedCrafting",
+      "wire": "bool"
+    }, {
+      "name": "commonPlayerSpawnInfo",
+      "wire": "CommonPlayerSpawnInfo.STREAM_CODEC"
+    }, {
+      "name": "onlineMode",
+      "wire": "bool"
+    }, {
+      "name": "enforcesSecureChat",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundContainerClosePacket": {
+    "packet": "clientbound/minecraft:container_close",
+    "class": "net.minecraft.network.protocol.game.ClientboundContainerClosePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundMountScreenOpenPacket": {
+    "packet": "clientbound/minecraft:mount_screen_open",
+    "class": "net.minecraft.network.protocol.game.ClientboundMountScreenOpenPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "varint"
+    }, {
+      "name": "inventoryColumns",
+      "wire": "varint"
+    }, {
+      "name": "entityId",
+      "wire": "i32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChangeGameModePacket": {
+    "packet": "serverbound/minecraft:change_game_mode",
+    "class": "net.minecraft.network.protocol.game.ServerboundChangeGameModePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "mode",
+      "wire": "GameType.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.custom.BrandPayload": {
+    "class": "net.minecraft.network.protocol.common.custom.BrandPayload",
+    "kind": "struct",
+    "fields": [{
+      "name": "brand",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundCustomChatCompletionsPacket": {
+    "packet": "clientbound/minecraft:custom_chat_completions",
+    "class": "net.minecraft.network.protocol.game.ClientboundCustomChatCompletionsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "action",
+      "wire": "ClientboundCustomChatCompletionsPacket$Action.STREAM_CODEC"
+    }, {
+      "name": "entries",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDebugEventPacket": {
+    "packet": "clientbound/minecraft:debug/event",
+    "class": "net.minecraft.network.protocol.game.ClientboundDebugEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "event",
+      "wire": "DebugSubscription$Event.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLightUpdatePacketData": {
+    "class": "net.minecraft.network.protocol.game.ClientboundLightUpdatePacketData",
+    "kind": "struct",
+    "fields": [{
+      "name": "skyYMask",
+      "wire": "ByteBufCodecs.BIT_SET"
+    }, {
+      "name": "blockYMask",
+      "wire": "ByteBufCodecs.BIT_SET"
+    }, {
+      "name": "emptySkyYMask",
+      "wire": "ByteBufCodecs.BIT_SET"
+    }, {
+      "name": "emptyBlockYMask",
+      "wire": "ByteBufCodecs.BIT_SET"
+    }, {
+      "name": "skyUpdates",
+      "wire": "ClientboundLightUpdatePacketData.DATA_LAYER_STREAM_CODEC"
+    }, {
+      "name": "blockUpdates",
+      "wire": "ClientboundLightUpdatePacketData.DATA_LAYER_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetPlayerInventoryPacket": {
+    "packet": "clientbound/minecraft:set_player_inventory",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetPlayerInventoryPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slot",
+      "wire": "varint"
+    }, {
+      "name": "contents",
+      "wire": "ItemStack.OPTIONAL_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundClearDialogPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundClearDialogPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundRespawnPacket": {
+    "packet": "clientbound/minecraft:respawn",
+    "class": "net.minecraft.network.protocol.game.ClientboundRespawnPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "commonPlayerSpawnInfo",
+      "wire": "CommonPlayerSpawnInfo.STREAM_CODEC"
+    }, {
+      "name": "dataToKeep",
+      "wire": "i8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTickingStatePacket": {
+    "packet": "clientbound/minecraft:ticking_state",
+    "class": "net.minecraft.network.protocol.game.ClientboundTickingStatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "tickRate",
+      "wire": "f32"
+    }, {
+      "name": "isFrozen",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket": {
+    "packet": "clientbound/minecraft:set_action_bar_text",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "text",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ServerboundPongPacket": {
+    "class": "net.minecraft.network.protocol.common.ServerboundPongPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "i32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket": {
+    "packet": "serverbound/minecraft:player_command",
+    "class": "net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "action",
+      "wire": "varint"
+    }, {
+      "name": "data",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetScorePacket": {
+    "packet": "clientbound/minecraft:set_score",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetScorePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "owner",
+      "wire": "string"
+    }, {
+      "name": "objectiveName",
+      "wire": "string"
+    }, {
+      "name": "score",
+      "wire": "varint"
+    }, {
+      "name": "display",
+      "wire": "ComponentSerialization.TRUSTED_OPTIONAL_STREAM_CODEC"
+    }, {
+      "name": "numberFormat",
+      "wire": "NumberFormatTypes.OPTIONAL_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ServerboundKeyPacket": {
+    "class": "net.minecraft.network.protocol.login.ServerboundKeyPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "keybytes",
+      "wire": "bytes"
+    }, {
+      "name": "encryptedChallenge",
+      "wire": "bytes"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChatPacket": {
+    "packet": "serverbound/minecraft:chat",
+    "class": "net.minecraft.network.protocol.game.ServerboundChatPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "message",
+      "wire": "ByteBufCodecs.stringUtf8"
+    }, {
+      "name": "timeStamp",
+      "wire": "ByteBufCodecs.INSTANT"
+    }, {
+      "name": "salt",
+      "wire": "i64"
+    }, {
+      "name": "signature",
+      "wire": "MessageSignature.STREAM_CODEC"
+    }, {
+      "name": "lastSeenMessages",
+      "wire": "LastSeenMessages$Update.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.ping.ServerboundPingRequestPacket": {
+    "class": "net.minecraft.network.protocol.ping.ServerboundPingRequestPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "time",
+      "wire": "i64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket": {
+    "packet": "serverbound/minecraft:set_carried_item",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slot",
+      "wire": "i16"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket": {
+    "packet": "clientbound/minecraft:swing_animation",
+    "class": "net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "hand",
+      "wire": "InteractionHand.STREAM_CODEC"
+    }, {
+      "name": "animation",
+      "wire": "SwingAnimation.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket": {
+    "packet": "clientbound/minecraft:set_chunk_cache_center",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "x",
+      "wire": "varint"
+    }, {
+      "name": "z",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLightUpdatePacket": {
+    "packet": "clientbound/minecraft:light_update",
+    "class": "net.minecraft.network.protocol.game.ClientboundLightUpdatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "x",
+      "wire": "varint"
+    }, {
+      "name": "z",
+      "wire": "varint"
+    }, {
+      "name": "lightData",
+      "wire": "ClientboundLightUpdatePacketData.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundRecipeBookAddPacket": {
+    "packet": "clientbound/minecraft:recipe_book_add",
+    "class": "net.minecraft.network.protocol.game.ClientboundRecipeBookAddPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entries",
+      "wire": "ClientboundRecipeBookAddPacket$Entry.STREAM_CODEC"
+    }, {
+      "name": "replace",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundTestInstanceBlockActionPacket": {
+    "packet": "serverbound/minecraft:test_instance_block_action",
+    "class": "net.minecraft.network.protocol.game.ServerboundTestInstanceBlockActionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "action",
+      "wire": "ServerboundTestInstanceBlockActionPacket$Action.STREAM_CODEC"
+    }, {
+      "name": "data",
+      "wire": "TestInstanceBlockEntity$Data.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundResetScorePacket": {
+    "packet": "clientbound/minecraft:reset_score",
+    "class": "net.minecraft.network.protocol.game.ClientboundResetScorePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "owner",
+      "wire": "string"
+    }, {
+      "name": "objectiveName",
+      "wire": "optional"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetBorderLerpSizePacket": {
+    "packet": "clientbound/minecraft:set_border_lerp_size",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetBorderLerpSizePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "oldSize",
+      "wire": "f64"
+    }, {
+      "name": "newSize",
+      "wire": "f64"
+    }, {
+      "name": "lerpTime",
+      "wire": "varlong"
+    }]
+  },
+  "net.minecraft.network.protocol.status.ClientboundStatusResponsePacket": {
+    "class": "net.minecraft.network.protocol.status.ClientboundStatusResponsePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "status",
+      "wire": "ByteBufCodecs.lenientJson"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket": {
+    "class": "net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "payload",
+      "wire": "BrandPayload.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSoundEntityPacket": {
+    "packet": "clientbound/minecraft:sound_entity",
+    "class": "net.minecraft.network.protocol.game.ClientboundSoundEntityPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "source",
+      "wire": "varint"
+    }, {
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "volume",
+      "wire": "f32"
+    }, {
+      "name": "pitch",
+      "wire": "f32"
+    }, {
+      "name": "seed",
+      "wire": "i64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundGameTestHighlightPosPacket": {
+    "packet": "clientbound/minecraft:game_test_highlight_pos",
+    "class": "net.minecraft.network.protocol.game.ClientboundGameTestHighlightPosPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "absolutePos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "relativePos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSpectatorActionPacket": {
+    "packet": "serverbound/minecraft:spectator_action",
+    "class": "net.minecraft.network.protocol.game.ServerboundSpectatorActionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "spectateEntityId",
+      "wire": "ByteBufCodecs.OPTIONAL_VAR_INT"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket": {
+    "class": "net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.common.ClientboundKeepAlivePacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundKeepAlivePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "i64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket": {
+    "packet": "clientbound/minecraft:set_subtitle_text",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "text",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundUpdateTagsPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundUpdateTagsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "tags",
+      "wire": "TagNetworkSerialization$NetworkPayload.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundShowDialogPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundShowDialogPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "dialog",
+      "wire": "Dialog.STREAM_CODEC"
+    }, {
+      "name": "dialog",
+      "wire": "Dialog.CONTEXT_FREE_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundDebugSubscriptionRequestPacket": {
+    "packet": "serverbound/minecraft:debug_subscription_request",
+    "class": "net.minecraft.network.protocol.game.ServerboundDebugSubscriptionRequestPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "subscriptions",
+      "wire": "array:ServerboundDebugSubscriptionRequestPacket.SET_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundRotateHeadPacket": {
+    "packet": "clientbound/minecraft:rotate_head",
+    "class": "net.minecraft.network.protocol.game.ClientboundRotateHeadPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "yHeadRot",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundInteractPacket": {
+    "packet": "serverbound/minecraft:interact",
+    "class": "net.minecraft.network.protocol.game.ServerboundInteractPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "hand",
+      "wire": "InteractionHand.STREAM_CODEC"
+    }, {
+      "name": "location",
+      "wire": "Vec3.LP_STREAM_CODEC"
+    }, {
+      "name": "usingSecondaryAction",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket": {
+    "packet": "serverbound/minecraft:chat_command_signed",
+    "class": "net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "command",
+      "wire": "string"
+    }, {
+      "name": "timeStamp",
+      "wire": "ByteBufCodecs.INSTANT"
+    }, {
+      "name": "salt",
+      "wire": "i64"
+    }, {
+      "name": "argumentSignatures",
+      "wire": "ArgumentSignatures.STREAM_CODEC"
+    }, {
+      "name": "lastSeenMessages",
+      "wire": "LastSeenMessages$Update.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket": {
+    "packet": "clientbound/minecraft:player_rotation",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "yRot",
+      "wire": "f32"
+    }, {
+      "name": "relativeY",
+      "wire": "bool"
+    }, {
+      "name": "xRot",
+      "wire": "f32"
+    }, {
+      "name": "relativeX",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerCombatEndPacket": {
+    "packet": "clientbound/minecraft:player_combat_end",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerCombatEndPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "duration",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundOpenSignEditorPacket": {
+    "packet": "clientbound/minecraft:open_sign_editor",
+    "class": "net.minecraft.network.protocol.game.ClientboundOpenSignEditorPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "slot",
+      "wire": "SignTextSlot.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDebugSamplePacket": {
+    "packet": "clientbound/minecraft:debug_sample",
+    "class": "net.minecraft.network.protocol.game.ClientboundDebugSamplePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "debugSampleType",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundUpdateMobEffectPacket": {
+    "packet": "clientbound/minecraft:update_mob_effect",
+    "class": "net.minecraft.network.protocol.game.ClientboundUpdateMobEffectPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "effectAmplifier",
+      "wire": "varint"
+    }, {
+      "name": "effectDurationTicks",
+      "wire": "varint"
+    }, {
+      "name": "flags",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket": {
+    "packet": "serverbound/minecraft:chunk_batch_received",
+    "class": "net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "desiredChunksPerTick",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket": {
+    "packet": "clientbound/minecraft:container_set_slot",
+    "class": "net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "varint"
+    }, {
+      "name": "stateId",
+      "wire": "varint"
+    }, {
+      "name": "slot",
+      "wire": "i16"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket": {
+    "packet": "clientbound/minecraft:recipe_book_settings",
+    "class": "net.minecraft.network.protocol.game.ClientboundRecipeBookSettingsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "bookSettings",
+      "wire": "RecipeBookSettings.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket": {
+    "packet": "serverbound/minecraft:player_loaded",
+    "class": "net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.common.ClientboundPingPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundPingPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "i32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetHealthPacket": {
+    "packet": "clientbound/minecraft:set_health",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetHealthPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "health",
+      "wire": "f32"
+    }, {
+      "name": "food",
+      "wire": "varint"
+    }, {
+      "name": "saturation",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket": {
+    "packet": "clientbound/minecraft:player_position",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "change",
+      "wire": "PositionMoveRotation.STREAM_CODEC"
+    }, {
+      "name": "relatives",
+      "wire": "Relative.SET_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundCommandsPacket": {
+    "packet": "clientbound/minecraft:commands",
+    "class": "net.minecraft.network.protocol.game.ClientboundCommandsPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundGameEventPacket": {
+    "packet": "clientbound/minecraft:game_event",
+    "class": "net.minecraft.network.protocol.game.ClientboundGameEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "event",
+      "wire": "u8"
+    }, {
+      "name": "param",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket": {
+    "class": "net.minecraft.network.protocol.login.ServerboundCustomQueryAnswerPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "transactionId",
+      "wire": "varint"
+    }, {
+      "name": "payload",
+      "wire": "optional"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundEntityEventPacket": {
+    "packet": "clientbound/minecraft:entity_event",
+    "class": "net.minecraft.network.protocol.game.ClientboundEntityEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "i32"
+    }, {
+      "name": "eventId",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundEditBookPacket": {
+    "packet": "serverbound/minecraft:edit_book",
+    "class": "net.minecraft.network.protocol.game.ServerboundEditBookPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slot",
+      "wire": "varint"
+    }, {
+      "name": "pages",
+      "wire": "ByteBufCodecs.stringUtf8"
+    }, {
+      "name": "title",
+      "wire": "ByteBufCodecs.stringUtf8"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ServerboundClientInformationPacket": {
+    "class": "net.minecraft.network.protocol.common.ServerboundClientInformationPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "information",
+      "wire": "delegated:ClientInformation"
+    }]
+  },
+  "net.minecraft.network.protocol.ping.ClientboundPongResponsePacket": {
+    "class": "net.minecraft.network.protocol.ping.ClientboundPongResponsePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "time",
+      "wire": "i64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPlayerAbilitiesPacket": {
+    "packet": "serverbound/minecraft:player_abilities",
+    "class": "net.minecraft.network.protocol.game.ServerboundPlayerAbilitiesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "isFlying",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundRemoveMobEffectPacket": {
+    "packet": "clientbound/minecraft:remove_mob_effect",
+    "class": "net.minecraft.network.protocol.game.ClientboundRemoveMobEffectPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "effect",
+      "wire": "MobEffect.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket": {
+    "packet": "clientbound/minecraft:set_title_text",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "text",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ServerboundKeepAlivePacket": {
+    "class": "net.minecraft.network.protocol.common.ServerboundKeepAlivePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "i64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundLockDifficultyPacket": {
+    "packet": "serverbound/minecraft:lock_difficulty",
+    "class": "net.minecraft.network.protocol.game.ServerboundLockDifficultyPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "locked",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPlayerActionPacket": {
+    "packet": "serverbound/minecraft:player_action",
+    "class": "net.minecraft.network.protocol.game.ServerboundPlayerActionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "action",
+      "wire": "varint"
+    }, {
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "direction",
+      "wire": "u8"
+    }, {
+      "name": "sequence",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSignUpdatePacket": {
+    "packet": "serverbound/minecraft:sign_update",
+    "class": "net.minecraft.network.protocol.game.ServerboundSignUpdatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "lines",
+      "wire": "ByteBufCodecs.stringUtf8"
+    }, {
+      "name": "slot",
+      "wire": "SignTextSlot.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket": {
+    "packet": "clientbound/minecraft:chunk_batch_finished",
+    "class": "net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "batchSize",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundRecipeBookRemovePacket": {
+    "packet": "clientbound/minecraft:recipe_book_remove",
+    "class": "net.minecraft.network.protocol.game.ClientboundRecipeBookRemovePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "recipes",
+      "wire": "RecipeDisplayId.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundExplodePacket": {
+    "packet": "clientbound/minecraft:explode",
+    "class": "net.minecraft.network.protocol.game.ClientboundExplodePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "center",
+      "wire": "Vec3.STREAM_CODEC"
+    }, {
+      "name": "radius",
+      "wire": "f32"
+    }, {
+      "name": "blockCount",
+      "wire": "i32"
+    }, {
+      "name": "playerKnockback",
+      "wire": "Vec3.STREAM_CODEC"
+    }, {
+      "name": "explosionParticle",
+      "wire": "ParticleTypes.STREAM_CODEC"
+    }, {
+      "name": "explosionSound",
+      "wire": "SoundEvent.STREAM_CODEC"
+    }, {
+      "name": "blockParticles",
+      "wire": "ExplosionParticleInfo.STREAM_CODEC"
+    }, {
+      "name": "playSound",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket": {
+    "packet": "clientbound/minecraft:change_difficulty",
+    "class": "net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "difficulty",
+      "wire": "Difficulty.STREAM_CODEC"
+    }, {
+      "name": "locked",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDeleteChatPacket": {
+    "packet": "clientbound/minecraft:delete_chat",
+    "class": "net.minecraft.network.protocol.game.ClientboundDeleteChatPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "messageSignature",
+      "wire": "MessageSignature$Packed.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPunchPacket": {
+    "packet": "serverbound/minecraft:punch",
+    "class": "net.minecraft.network.protocol.game.ServerboundPunchPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket": {
+    "packet": "clientbound/minecraft:disguised_chat",
+    "class": "net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "message",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }, {
+      "name": "chatType",
+      "wire": "ChatType$Bound.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetCameraPacket": {
+    "packet": "clientbound/minecraft:set_camera",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetCameraPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "cameraId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundMapItemDataPacket": {
+    "packet": "clientbound/minecraft:map_item_data",
+    "class": "net.minecraft.network.protocol.game.ClientboundMapItemDataPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "mapId",
+      "wire": "MapId.STREAM_CODEC"
+    }, {
+      "name": "scale",
+      "wire": "i8"
+    }, {
+      "name": "locked",
+      "wire": "bool"
+    }, {
+      "name": "decorations",
+      "wire": "MapDecoration.STREAM_CODEC"
+    }, {
+      "name": "colorPatch",
+      "wire": "MapItemSavedData$MapPatch.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket": {
+    "class": "net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket",
+    "kind": "struct",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "position",
+      "wire": "PositionPath.STREAM_CODEC"
+    }, {
+      "name": "yRot",
+      "wire": "f32"
+    }, {
+      "name": "xRot",
+      "wire": "f32"
+    }, {
+      "name": "onGround",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundContainerSetDataPacket": {
+    "packet": "clientbound/minecraft:container_set_data",
+    "class": "net.minecraft.network.protocol.game.ClientboundContainerSetDataPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "varint"
+    }, {
+      "name": "id",
+      "wire": "i16"
+    }, {
+      "name": "value",
+      "wire": "i16"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetCursorItemPacket": {
+    "packet": "clientbound/minecraft:set_cursor_item",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetCursorItemPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "contents",
+      "wire": "ItemStack.OPTIONAL_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket": {
+    "packet": "clientbound/minecraft:block_entity_data",
+    "class": "net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "getPos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "getType",
+      "wire": "resource_key:block_entity_type"
+    }, {
+      "name": "getTag",
+      "wire": "ByteBufCodecs.TRUSTED_COMPOUND_TAG"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetDisplayObjectivePacket": {
+    "packet": "clientbound/minecraft:set_display_objective",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetDisplayObjectivePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "objectiveName",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ClientboundSelectKnownPacks": {
+    "class": "net.minecraft.network.protocol.configuration.ClientboundSelectKnownPacks",
+    "kind": "packet",
+    "fields": [{
+      "name": "knownPacks",
+      "wire": "KnownPack.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundClientTickEndPacket": {
+    "packet": "serverbound/minecraft:client_tick_end",
+    "class": "net.minecraft.network.protocol.game.ServerboundClientTickEndPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket": {
+    "packet": "clientbound/minecraft:set_entity_data",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket": {
+    "packet": "clientbound/minecraft:set_entity_link",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "sourceId",
+      "wire": "i32"
+    }, {
+      "name": "destId",
+      "wire": "i32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket": {
+    "packet": "clientbound/minecraft:section_blocks_update",
+    "class": "net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "positions",
+      "wire": "varint"
+    }, {
+      "name": "positions",
+      "wire": "varlong"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundContainerClickPacket": {
+    "packet": "serverbound/minecraft:container_click",
+    "class": "net.minecraft.network.protocol.game.ServerboundContainerClickPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "ByteBufCodecs.CONTAINER_ID"
+    }, {
+      "name": "stateId",
+      "wire": "varint"
+    }, {
+      "name": "slotNum",
+      "wire": "i16"
+    }, {
+      "name": "buttonNum",
+      "wire": "i8"
+    }, {
+      "name": "containerInput",
+      "wire": "ContainerInput.STREAM_CODEC"
+    }, {
+      "name": "changedSlots",
+      "wire": "ServerboundContainerClickPacket.SLOTS_STREAM_CODEC"
+    }, {
+      "name": "carriedItem",
+      "wire": "HashedStack.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetCommandBlockPacket": {
+    "packet": "serverbound/minecraft:set_command_block",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetCommandBlockPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "command",
+      "wire": "string"
+    }, {
+      "name": "mode",
+      "wire": "varint"
+    }, {
+      "name": "automatic",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundCustomReportDetailsPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundCustomReportDetailsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "details",
+      "wire": "ClientboundCustomReportDetailsPacket.DETAILS_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket": {
+    "packet": "clientbound/minecraft:hurt_animation",
+    "class": "net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "yaw",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundMoveVehiclePacket": {
+    "packet": "clientbound/minecraft:move_vehicle",
+    "class": "net.minecraft.network.protocol.game.ClientboundMoveVehiclePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "movingTo",
+      "wire": "PositionAndRotation.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetJigsawBlockPacket": {
+    "packet": "serverbound/minecraft:set_jigsaw_block",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetJigsawBlockPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "name",
+      "wire": "identifier"
+    }, {
+      "name": "target",
+      "wire": "identifier"
+    }, {
+      "name": "pool",
+      "wire": "identifier"
+    }, {
+      "name": "finalState",
+      "wire": "string"
+    }, {
+      "name": "joint",
+      "wire": "string"
+    }, {
+      "name": "selectionPriority",
+      "wire": "varint"
+    }, {
+      "name": "placementPriority",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSystemChatPacket": {
+    "packet": "clientbound/minecraft:system_chat",
+    "class": "net.minecraft.network.protocol.game.ClientboundSystemChatPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "content",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }, {
+      "name": "overlay",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundMoveMinecartPacket": {
+    "packet": "clientbound/minecraft:move_minecart_along_track",
+    "class": "net.minecraft.network.protocol.game.ClientboundMoveMinecartPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "lerpSteps",
+      "wire": "NewMinecartBehavior$MinecartStep.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket": {
+    "class": "net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "gameProfile",
+      "wire": "ByteBufCodecs.GAME_PROFILE"
+    }, {
+      "name": "sessionId",
+      "wire": "UUIDUtil.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundProjectilePowerPacket": {
+    "packet": "clientbound/minecraft:projectile_power",
+    "class": "net.minecraft.network.protocol.game.ClientboundProjectilePowerPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "accelerationPower",
+      "wire": "f64"
+    }]
+  },
+  "net.minecraft.network.protocol.status.ServerboundStatusRequestPacket": {
+    "class": "net.minecraft.network.protocol.status.ServerboundStatusRequestPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetBeaconPacket": {
+    "packet": "serverbound/minecraft:set_beacon",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetBeaconPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "primary",
+      "wire": "MobEffect.STREAM_CODEC"
+    }, {
+      "name": "secondary",
+      "wire": "MobEffect.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTickingStepPacket": {
+    "packet": "clientbound/minecraft:ticking_step",
+    "class": "net.minecraft.network.protocol.game.ClientboundTickingStepPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "tickSteps",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundUseItemOnPacket": {
+    "packet": "serverbound/minecraft:use_item_on",
+    "class": "net.minecraft.network.protocol.game.ServerboundUseItemOnPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "hand",
+      "wire": "InteractionHand.STREAM_CODEC"
+    }, {
+      "name": "hitResult",
+      "wire": "BlockHitResult.STREAM_CODEC"
+    }, {
+      "name": "sequence",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundCooldownPacket": {
+    "packet": "clientbound/minecraft:cooldown",
+    "class": "net.minecraft.network.protocol.game.ClientboundCooldownPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "cooldownGroup",
+      "wire": "Identifier.STREAM_CODEC"
+    }, {
+      "name": "duration",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket": {
+    "packet": "clientbound/minecraft:set_simulation_distance",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "simulationDistance",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ClientboundCustomQueryPacket": {
+    "class": "net.minecraft.network.protocol.login.ClientboundCustomQueryPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "transactionId",
+      "wire": "varint"
+    }, {
+      "name": "payload",
+      "wire": "identifier"
+    }, {
+      "name": "payload",
+      "wire": "delegated:CustomQueryPayload"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundGameRuleValuesPacket": {
+    "packet": "clientbound/minecraft:game_rule_values",
+    "class": "net.minecraft.network.protocol.game.ClientboundGameRuleValuesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "values",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundTransferPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundTransferPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "host",
+      "wire": "string"
+    }, {
+      "name": "port",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ServerboundSelectKnownPacks": {
+    "class": "net.minecraft.network.protocol.configuration.ServerboundSelectKnownPacks",
+    "kind": "packet",
+    "fields": [{
+      "name": "knownPacks",
+      "wire": "KnownPack.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ClientboundLoginDisconnectPacket": {
+    "class": "net.minecraft.network.protocol.login.ClientboundLoginDisconnectPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "reason",
+      "wire": "ByteBufCodecs.lenientJson"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundEntityTagQueryPacket": {
+    "packet": "serverbound/minecraft:entity_tag_query",
+    "class": "net.minecraft.network.protocol.game.ServerboundEntityTagQueryPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "transactionId",
+      "wire": "varint"
+    }, {
+      "name": "entityId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetBorderWarningDelayPacket": {
+    "packet": "clientbound/minecraft:set_border_warning_delay",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetBorderWarningDelayPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "warningDelay",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundChunksBiomesPacket": {
+    "packet": "clientbound/minecraft:chunks_biomes",
+    "class": "net.minecraft.network.protocol.game.ClientboundChunksBiomesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "chunkBiomeData",
+      "wire": "ClientboundChunksBiomesPacket$ChunkBiomeData.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket": {
+    "packet": "serverbound/minecraft:command_suggestion",
+    "class": "net.minecraft.network.protocol.game.ServerboundCommandSuggestionPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket": {
+    "class": "net.minecraft.network.protocol.login.ClientboundLoginCompressionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "compressionThreshold",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.login.ServerboundHelloPacket": {
+    "class": "net.minecraft.network.protocol.login.ServerboundHelloPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "name",
+      "wire": "string"
+    }, {
+      "name": "profileId",
+      "wire": "uuid"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket": {
+    "packet": "clientbound/minecraft:forget_level_chunk",
+    "class": "net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "chunk_pos"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket": {
+    "packet": "clientbound/minecraft:container_set_content",
+    "class": "net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "ByteBufCodecs.CONTAINER_ID"
+    }, {
+      "name": "stateId",
+      "wire": "varint"
+    }, {
+      "name": "items",
+      "wire": "ItemStack.OPTIONAL_LIST_STREAM_CODEC"
+    }, {
+      "name": "carriedItem",
+      "wire": "ItemStack.OPTIONAL_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundStopSoundPacket": {
+    "packet": "clientbound/minecraft:stop_sound",
+    "class": "net.minecraft.network.protocol.game.ClientboundStopSoundPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "name",
+      "wire": "u8"
+    }, {
+      "name": "source",
+      "wire": "varint"
+    }, {
+      "name": "name",
+      "wire": "identifier"
+    }, {
+      "name": "source",
+      "wire": "varint"
+    }, {
+      "name": "name",
+      "wire": "u8"
+    }, {
+      "name": "name",
+      "wire": "identifier"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTagQueryPacket": {
+    "packet": "clientbound/minecraft:tag_query",
+    "class": "net.minecraft.network.protocol.game.ClientboundTagQueryPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "transactionId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket": {
+    "packet": "clientbound/minecraft:block_update",
+    "class": "net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "getPos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "getBlockState",
+      "wire": "ByteBufCodecs.idMapper"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket": {
+    "packet": "clientbound/minecraft:set_titles_animation",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "fadeIn",
+      "wire": "i32"
+    }, {
+      "name": "stay",
+      "wire": "i32"
+    }, {
+      "name": "fadeOut",
+      "wire": "i32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetTestBlockPacket": {
+    "packet": "serverbound/minecraft:set_test_block",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetTestBlockPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "position",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "mode",
+      "wire": "TestBlockMode.STREAM_CODEC"
+    }, {
+      "name": "message",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundAwardStatsPacket": {
+    "packet": "clientbound/minecraft:award_stats",
+    "class": "net.minecraft.network.protocol.game.ClientboundAwardStatsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "stats",
+      "wire": "ClientboundAwardStatsPacket.STAT_VALUES_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChatCommandPacket": {
+    "packet": "serverbound/minecraft:chat_command",
+    "class": "net.minecraft.network.protocol.game.ServerboundChatCommandPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "command",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerLookAtPacket": {
+    "packet": "clientbound/minecraft:player_look_at",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerLookAtPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "fromAnchor",
+      "wire": "varint"
+    }, {
+      "name": "x",
+      "wire": "f64"
+    }, {
+      "name": "y",
+      "wire": "f64"
+    }, {
+      "name": "z",
+      "wire": "f64"
+    }, {
+      "name": "atEntity",
+      "wire": "bool"
+    }, {
+      "name": "entity",
+      "wire": "varint"
+    }, {
+      "name": "toAnchor",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundUpdateAdvancementsPacket": {
+    "packet": "clientbound/minecraft:update_advancements",
+    "class": "net.minecraft.network.protocol.game.ClientboundUpdateAdvancementsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "shouldReset",
+      "wire": "bool"
+    }, {
+      "name": "added",
+      "wire": "ClientboundUpdateAdvancementsPacket$PositionedAdvancement.STREAM_CODEC"
+    }, {
+      "name": "removed",
+      "wire": "array:Identifier.STREAM_CODEC"
+    }, {
+      "name": "progress",
+      "wire": "AdvancementProgress.STREAM_CODEC"
+    }, {
+      "name": "showAdvancements",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetCommandMinecartPacket": {
+    "packet": "serverbound/minecraft:set_command_minecart",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetCommandMinecartPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entity",
+      "wire": "varint"
+    }, {
+      "name": "command",
+      "wire": "string"
+    }, {
+      "name": "trackOutput",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ServerboundAcceptCodeOfConductPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ServerboundContainerSlotStateChangedPacket": {
+    "packet": "serverbound/minecraft:container_slot_state_changed",
+    "class": "net.minecraft.network.protocol.game.ServerboundContainerSlotStateChangedPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slotId",
+      "wire": "varint"
+    }, {
+      "name": "containerId",
+      "wire": "varint"
+    }, {
+      "name": "newState",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ServerboundResourcePackPacket": {
+    "class": "net.minecraft.network.protocol.common.ServerboundResourcePackPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "uuid"
+    }, {
+      "name": "action",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDebugBlockValuePacket": {
+    "packet": "clientbound/minecraft:debug/block_value",
+    "class": "net.minecraft.network.protocol.game.ClientboundDebugBlockValuePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "blockPos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "update",
+      "wire": "DebugSubscription$Update.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket": {
+    "packet": "clientbound/minecraft:set_entity_motion",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "movement",
+      "wire": "Vec3.LP_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundTeleportToEntityPacket": {
+    "packet": "serverbound/minecraft:teleport_to_entity",
+    "class": "net.minecraft.network.protocol.game.ServerboundTeleportToEntityPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "uuid",
+      "wire": "uuid"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundUseItemPacket": {
+    "packet": "serverbound/minecraft:use_item",
+    "class": "net.minecraft.network.protocol.game.ServerboundUseItemPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "hand",
+      "wire": "InteractionHand.STREAM_CODEC"
+    }, {
+      "name": "sequence",
+      "wire": "varint"
+    }, {
+      "name": "yRot",
+      "wire": "f32"
+    }, {
+      "name": "xRot",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetGameRulePacket": {
+    "packet": "serverbound/minecraft:set_game_rule",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetGameRulePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entries",
+      "wire": "ServerboundSetGameRulePacket$Entry.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundRecipeBookChangeSettingsPacket": {
+    "packet": "serverbound/minecraft:recipe_book_change_settings",
+    "class": "net.minecraft.network.protocol.game.ServerboundRecipeBookChangeSettingsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "bookType",
+      "wire": "varint"
+    }, {
+      "name": "isOpen",
+      "wire": "bool"
+    }, {
+      "name": "isFiltering",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPickItemFromBlockPacket": {
+    "packet": "serverbound/minecraft:pick_item_from_block",
+    "class": "net.minecraft.network.protocol.game.ServerboundPickItemFromBlockPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "BlockPos.STREAM_CODEC"
+    }, {
+      "name": "includeData",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundServerDataPacket": {
+    "packet": "clientbound/minecraft:server_data",
+    "class": "net.minecraft.network.protocol.game.ClientboundServerDataPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "motd",
+      "wire": "ComponentSerialization.TRUSTED_CONTEXT_FREE_STREAM_CODEC"
+    }, {
+      "name": "iconBytes",
+      "wire": "ByteBufCodecs.BYTE_ARRAY"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSoundPacket": {
+    "packet": "clientbound/minecraft:sound",
+    "class": "net.minecraft.network.protocol.game.ClientboundSoundPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "source",
+      "wire": "varint"
+    }, {
+      "name": "x",
+      "wire": "i32"
+    }, {
+      "name": "y",
+      "wire": "i32"
+    }, {
+      "name": "z",
+      "wire": "i32"
+    }, {
+      "name": "volume",
+      "wire": "f32"
+    }, {
+      "name": "pitch",
+      "wire": "f32"
+    }, {
+      "name": "seed",
+      "wire": "i64"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetExperiencePacket": {
+    "packet": "clientbound/minecraft:set_experience",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetExperiencePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "experienceProgress",
+      "wire": "f32"
+    }, {
+      "name": "experienceLevel",
+      "wire": "varint"
+    }, {
+      "name": "totalExperience",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLowDiskSpaceWarningPacket": {
+    "packet": "clientbound/minecraft:low_disk_space_warning",
+    "class": "net.minecraft.network.protocol.game.ClientboundLowDiskSpaceWarningPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundSelectAdvancementsTabPacket": {
+    "packet": "clientbound/minecraft:select_advancements_tab",
+    "class": "net.minecraft.network.protocol.game.ClientboundSelectAdvancementsTabPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "tab",
+      "wire": "optional"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundServerLinksPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundServerLinksPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "links",
+      "wire": "ServerLinks.UNTRUSTED_LINKS_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket": {
+    "packet": "clientbound/minecraft:initialize_border",
+    "class": "net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "newCenterX",
+      "wire": "f64"
+    }, {
+      "name": "newCenterZ",
+      "wire": "f64"
+    }, {
+      "name": "oldSize",
+      "wire": "f64"
+    }, {
+      "name": "newSize",
+      "wire": "f64"
+    }, {
+      "name": "lerpTime",
+      "wire": "varlong"
+    }, {
+      "name": "newAbsoluteMaxSize",
+      "wire": "varint"
+    }, {
+      "name": "warningBlocks",
+      "wire": "varint"
+    }, {
+      "name": "warningTime",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetBorderSizePacket": {
+    "packet": "clientbound/minecraft:set_border_size",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetBorderSizePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "size",
+      "wire": "f64"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ClientboundFinishConfigurationPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ServerboundFinishConfigurationPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket": {
+    "packet": "clientbound/minecraft:chunk_batch_start",
+    "class": "net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.configuration.ClientboundUpdateEnabledFeaturesPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ClientboundUpdateEnabledFeaturesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "features",
+      "wire": "array:Identifier.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket": {
+    "packet": "serverbound/minecraft:set_creative_mode_slot",
+    "class": "net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "slotNum",
+      "wire": "i16"
+    }, {
+      "name": "itemStack",
+      "wire": "ItemStack.OPTIONAL_UNTRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSelectTradePacket": {
+    "packet": "serverbound/minecraft:select_trade",
+    "class": "net.minecraft.network.protocol.game.ServerboundSelectTradePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "item",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket": {
+    "packet": "clientbound/minecraft:player_abilities",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "instabuild",
+      "wire": "u8"
+    }, {
+      "name": "flyingSpeed",
+      "wire": "f32"
+    }, {
+      "name": "walkingSpeed",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundStartConfigurationPacket": {
+    "packet": "clientbound/minecraft:start_configuration",
+    "class": "net.minecraft.network.protocol.game.ClientboundStartConfigurationPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.login.ClientboundHelloPacket": {
+    "class": "net.minecraft.network.protocol.login.ClientboundHelloPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "serverId",
+      "wire": "string"
+    }, {
+      "name": "publicKey",
+      "wire": "bytes"
+    }, {
+      "name": "challenge",
+      "wire": "bytes"
+    }, {
+      "name": "shouldAuthenticate",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetTimePacket": {
+    "packet": "clientbound/minecraft:set_time",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetTimePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "gameTime",
+      "wire": "i64"
+    }, {
+      "name": "clockUpdates",
+      "wire": "ClockNetworkState.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket": {
+    "packet": "clientbound/minecraft:player_combat_kill",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "playerId",
+      "wire": "varint"
+    }, {
+      "name": "message",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ClientboundResetChatPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ClientboundResetChatPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket": {
+    "packet": "serverbound/minecraft:move_vehicle",
+    "class": "net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "movingTo",
+      "wire": "PositionAndRotation.STREAM_CODEC"
+    }, {
+      "name": "onGround",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundResourcePackPopPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundResourcePackPopPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "optional"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundDisconnectPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundDisconnectPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "reason",
+      "wire": "ComponentSerialization.TRUSTED_CONTEXT_FREE_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundAddEntityPacket": {
+    "packet": "clientbound/minecraft:add_entity",
+    "class": "net.minecraft.network.protocol.game.ClientboundAddEntityPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "uuid",
+      "wire": "uuid"
+    }, {
+      "name": "x",
+      "wire": "f64"
+    }, {
+      "name": "y",
+      "wire": "f64"
+    }, {
+      "name": "z",
+      "wire": "f64"
+    }, {
+      "name": "xRot",
+      "wire": "u8"
+    }, {
+      "name": "yRot",
+      "wire": "u8"
+    }, {
+      "name": "yHeadRot",
+      "wire": "u8"
+    }, {
+      "name": "data",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChatSessionUpdatePacket": {
+    "packet": "serverbound/minecraft:chat_session_update",
+    "class": "net.minecraft.network.protocol.game.ServerboundChatSessionUpdatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "chatSession",
+      "wire": "RemoteChatSession$Data.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundResourcePackPushPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundResourcePackPushPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "UUIDUtil.STREAM_CODEC"
+    }, {
+      "name": "url",
+      "wire": "string"
+    }, {
+      "name": "hash",
+      "wire": "ByteBufCodecs.stringUtf8"
+    }, {
+      "name": "required",
+      "wire": "bool"
+    }, {
+      "name": "prompt",
+      "wire": "ComponentSerialization.TRUSTED_CONTEXT_FREE_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundBossEventPacket": {
+    "packet": "clientbound/minecraft:boss_event",
+    "class": "net.minecraft.network.protocol.game.ClientboundBossEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "uuid"
+    }, {
+      "name": "operation",
+      "wire": "varint"
+    }, {
+      "name": "operation",
+      "wire": "delegated:ClientboundBossEventPacket$Operation"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket": {
+    "packet": "serverbound/minecraft:container_button_click",
+    "class": "net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "ByteBufCodecs.CONTAINER_ID"
+    }, {
+      "name": "buttonId",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPickItemFromEntityPacket": {
+    "packet": "serverbound/minecraft:pick_item_from_entity",
+    "class": "net.minecraft.network.protocol.game.ServerboundPickItemFromEntityPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "includeData",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerChatPacket": {
+    "packet": "clientbound/minecraft:player_chat",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerChatPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "globalIndex",
+      "wire": "varint"
+    }, {
+      "name": "sender",
+      "wire": "UUIDUtil.STREAM_CODEC"
+    }, {
+      "name": "index",
+      "wire": "varint"
+    }, {
+      "name": "signature",
+      "wire": "MessageSignature.STREAM_CODEC"
+    }, {
+      "name": "body",
+      "wire": "SignedMessageBody$Packed.STREAM_CODEC"
+    }, {
+      "name": "unsignedContent",
+      "wire": "ComponentSerialization.TRUSTED_OPTIONAL_STREAM_CODEC"
+    }, {
+      "name": "filterMask",
+      "wire": "FilterMask.STREAM_CODEC"
+    }, {
+      "name": "chatType",
+      "wire": "ChatType$Bound.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket": {
+    "packet": "clientbound/minecraft:set_default_spawn_position",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetDefaultSpawnPositionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "respawnData",
+      "wire": "LevelData$RespawnData.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundRecipeBookSeenRecipePacket": {
+    "packet": "serverbound/minecraft:recipe_book_seen_recipe",
+    "class": "net.minecraft.network.protocol.game.ServerboundRecipeBookSeenRecipePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "recipe",
+      "wire": "RecipeDisplayId.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket": {
+    "packet": "clientbound/minecraft:set_chunk_cache_radius",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "radius",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket": {
+    "packet": "serverbound/minecraft:configuration_acknowledged",
+    "class": "net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket": {
+    "packet": "clientbound/minecraft:update_attributes",
+    "class": "net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "getEntityId",
+      "wire": "varint"
+    }, {
+      "name": "getValues",
+      "wire": "ClientboundUpdateAttributesPacket$AttributeSnapshot.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChangeDifficultyPacket": {
+    "packet": "serverbound/minecraft:change_difficulty",
+    "class": "net.minecraft.network.protocol.game.ServerboundChangeDifficultyPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "difficulty",
+      "wire": "Difficulty.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.handshake.ClientIntentionPacket": {
+    "class": "net.minecraft.network.protocol.handshake.ClientIntentionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "protocolVersion",
+      "wire": "varint"
+    }, {
+      "name": "hostName",
+      "wire": "string"
+    }, {
+      "name": "port",
+      "wire": "i16"
+    }, {
+      "name": "intention",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket": {
+    "packet": "clientbound/minecraft:set_equipment",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entity",
+      "wire": "varint"
+    }, {
+      "name": "slots",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetObjectivePacket": {
+    "packet": "clientbound/minecraft:set_objective",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetObjectivePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "objectiveName",
+      "wire": "string"
+    }, {
+      "name": "method",
+      "wire": "u8"
+    }, {
+      "name": "renderType",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundStoreCookiePacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundStoreCookiePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "key",
+      "wire": "identifier"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket": {
+    "packet": "clientbound/minecraft:player_info_update",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "write",
+      "wire": "unknown"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetBorderWarningDistancePacket": {
+    "packet": "clientbound/minecraft:set_border_warning_distance",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetBorderWarningDistancePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "warningBlocks",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket": {
+    "packet": "clientbound/minecraft:set_player_team",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "write",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundChatAckPacket": {
+    "packet": "serverbound/minecraft:chat_ack",
+    "class": "net.minecraft.network.protocol.game.ServerboundChatAckPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "offset",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket": {
+    "class": "net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "Identifier.STREAM_CODEC"
+    }, {
+      "name": "payload",
+      "wire": "ServerboundCustomClickActionPacket.UNTRUSTED_TAG_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket": {
+    "packet": "clientbound/minecraft:level_particles",
+    "class": "net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "particle",
+      "wire": "ParticleTypes.STREAM_CODEC"
+    }, {
+      "name": "overrideLimiter",
+      "wire": "bool"
+    }, {
+      "name": "alwaysShow",
+      "wire": "bool"
+    }, {
+      "name": "x",
+      "wire": "f64"
+    }, {
+      "name": "y",
+      "wire": "f64"
+    }, {
+      "name": "z",
+      "wire": "f64"
+    }, {
+      "name": "xDist",
+      "wire": "f32"
+    }, {
+      "name": "yDist",
+      "wire": "f32"
+    }, {
+      "name": "zDist",
+      "wire": "f32"
+    }, {
+      "name": "xMaxSpeed",
+      "wire": "f32"
+    }, {
+      "name": "yMaxSpeed",
+      "wire": "f32"
+    }, {
+      "name": "zMaxSpeed",
+      "wire": "f32"
+    }, {
+      "name": "count",
+      "wire": "varint"
+    }, {
+      "name": "randomizationType",
+      "wire": "ClientboundLevelParticlesPacket$RandomizationType.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDamageEventPacket": {
+    "packet": "clientbound/minecraft:damage_event",
+    "class": "net.minecraft.network.protocol.game.ClientboundDamageEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "entityId",
+      "wire": "varint"
+    }, {
+      "name": "sourcePosition",
+      "wire": "optional"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundLevelEventPacket": {
+    "packet": "clientbound/minecraft:level_event",
+    "class": "net.minecraft.network.protocol.game.ClientboundLevelEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "type",
+      "wire": "i32"
+    }, {
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "data",
+      "wire": "i32"
+    }, {
+      "name": "globalEvent",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundCommandSuggestionsPacket": {
+    "packet": "clientbound/minecraft:command_suggestions",
+    "class": "net.minecraft.network.protocol.game.ClientboundCommandSuggestionsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "start",
+      "wire": "varint"
+    }, {
+      "name": "length",
+      "wire": "varint"
+    }, {
+      "name": "suggestions",
+      "wire": "ClientboundCommandSuggestionsPacket$Entry.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerCombatEnterPacket": {
+    "packet": "clientbound/minecraft:player_combat_enter",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerCombatEnterPacket",
+    "kind": "packet",
+    "fields": []
+  },
+  "net.minecraft.network.protocol.game.CommonPlayerSpawnInfo": {
+    "class": "net.minecraft.network.protocol.game.CommonPlayerSpawnInfo",
+    "kind": "struct",
+    "fields": [{
+      "name": "dimensionType",
+      "wire": "DimensionType.STREAM_CODEC"
+    }, {
+      "name": "dimension",
+      "wire": "resource_key:dimension"
+    }, {
+      "name": "seed",
+      "wire": "i64"
+    }, {
+      "name": "gameType",
+      "wire": "GameType.STREAM_CODEC"
+    }, {
+      "name": "previousGameType",
+      "wire": "GameType.OPTIONAL_STREAM_CODEC"
+    }, {
+      "name": "isDebug",
+      "wire": "bool"
+    }, {
+      "name": "isFlat",
+      "wire": "bool"
+    }, {
+      "name": "lastDeathLocation",
+      "wire": "GlobalPos.STREAM_CODEC"
+    }, {
+      "name": "portalCooldown",
+      "wire": "varint"
+    }, {
+      "name": "seaLevel",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket": {
+    "packet": "clientbound/minecraft:teleport_entity",
+    "class": "net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "change",
+      "wire": "PositionMoveRotation.STREAM_CODEC"
+    }, {
+      "name": "relatives",
+      "wire": "Relative.SET_STREAM_CODEC"
+    }, {
+      "name": "onGround",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundOpenBookPacket": {
+    "packet": "clientbound/minecraft:open_book",
+    "class": "net.minecraft.network.protocol.game.ClientboundOpenBookPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "hand",
+      "wire": "InteractionHand.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundBlockEventPacket": {
+    "packet": "clientbound/minecraft:block_event",
+    "class": "net.minecraft.network.protocol.game.ClientboundBlockEventPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "b0",
+      "wire": "u8"
+    }, {
+      "name": "b1",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundClientCommandPacket": {
+    "packet": "serverbound/minecraft:client_command",
+    "class": "net.minecraft.network.protocol.game.ServerboundClientCommandPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "action",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.common.ClientboundPostEffectsPacket": {
+    "class": "net.minecraft.network.protocol.common.ClientboundPostEffectsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "postEffects",
+      "wire": "Identifier.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundJigsawGeneratePacket": {
+    "packet": "serverbound/minecraft:jigsaw_generate",
+    "class": "net.minecraft.network.protocol.game.ServerboundJigsawGeneratePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "levels",
+      "wire": "varint"
+    }, {
+      "name": "keepJigsaws",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "registry",
+      "wire": "ClientboundRegistryDataPacket.REGISTRY_KEY_STREAM_CODEC"
+    }, {
+      "name": "entries",
+      "wire": "RegistrySynchronization$PackedRegistryEntry.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundDebugChunkValuePacket": {
+    "packet": "clientbound/minecraft:debug/chunk_value",
+    "class": "net.minecraft.network.protocol.game.ClientboundDebugChunkValuePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "chunkPos",
+      "wire": "ChunkPos.STREAM_CODEC"
+    }, {
+      "name": "update",
+      "wire": "DebugSubscription$Update.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundUpdateRecipesPacket": {
+    "packet": "clientbound/minecraft:update_recipes",
+    "class": "net.minecraft.network.protocol.game.ClientboundUpdateRecipesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "itemSets",
+      "wire": "RecipePropertySet.STREAM_CODEC"
+    }, {
+      "name": "stonecutterRecipes",
+      "wire": "SelectableRecipe$SingleInputSet.noRecipeCodec"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundSetPassengersPacket": {
+    "packet": "clientbound/minecraft:set_passengers",
+    "class": "net.minecraft.network.protocol.game.ClientboundSetPassengersPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "vehicle",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket": {
+    "packet": "clientbound/minecraft:player_info_remove",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "profileIds",
+      "wire": "UUIDUtil.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPlayerInputPacket": {
+    "packet": "serverbound/minecraft:player_input",
+    "class": "net.minecraft.network.protocol.game.ServerboundPlayerInputPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "input",
+      "wire": "Input.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundTakeItemEntityPacket": {
+    "packet": "clientbound/minecraft:take_item_entity",
+    "class": "net.minecraft.network.protocol.game.ClientboundTakeItemEntityPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "itemId",
+      "wire": "varint"
+    }, {
+      "name": "playerId",
+      "wire": "varint"
+    }, {
+      "name": "amount",
+      "wire": "varint"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundPaddleBoatPacket": {
+    "packet": "serverbound/minecraft:paddle_boat",
+    "class": "net.minecraft.network.protocol.game.ServerboundPaddleBoatPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "left",
+      "wire": "bool"
+    }, {
+      "name": "right",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundAnimatePacket": {
+    "packet": "clientbound/minecraft:animate",
+    "class": "net.minecraft.network.protocol.game.ClientboundAnimatePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "action",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundClearTitlesPacket": {
+    "packet": "clientbound/minecraft:clear_titles",
+    "class": "net.minecraft.network.protocol.game.ClientboundClearTitlesPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "resetTimes",
+      "wire": "bool"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket": {
+    "packet": "serverbound/minecraft:accept_teleportation",
+    "class": "net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "x",
+      "wire": "f64"
+    }, {
+      "name": "y",
+      "wire": "f64"
+    }, {
+      "name": "z",
+      "wire": "f64"
+    }, {
+      "name": "yRot",
+      "wire": "f32"
+    }, {
+      "name": "xRot",
+      "wire": "f32"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundPlaceGhostRecipePacket": {
+    "packet": "clientbound/minecraft:place_ghost_recipe",
+    "class": "net.minecraft.network.protocol.game.ClientboundPlaceGhostRecipePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "ByteBufCodecs.CONTAINER_ID"
+    }, {
+      "name": "recipeDisplay",
+      "wire": "RecipeDisplay.STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundRenameItemPacket": {
+    "packet": "serverbound/minecraft:rename_item",
+    "class": "net.minecraft.network.protocol.game.ServerboundRenameItemPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "name",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundOpenScreenPacket": {
+    "packet": "clientbound/minecraft:open_screen",
+    "class": "net.minecraft.network.protocol.game.ClientboundOpenScreenPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "getContainerId",
+      "wire": "ByteBufCodecs.CONTAINER_ID"
+    }, {
+      "name": "getType",
+      "wire": "resource_key:menu"
+    }, {
+      "name": "getTitle",
+      "wire": "ComponentSerialization.TRUSTED_STREAM_CODEC"
+    }]
+  },
+  "net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket": {
+    "class": "net.minecraft.network.protocol.cookie.ClientboundCookieRequestPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "key",
+      "wire": "identifier"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ServerboundSeenAdvancementsPacket": {
+    "packet": "serverbound/minecraft:seen_advancements",
+    "class": "net.minecraft.network.protocol.game.ServerboundSeenAdvancementsPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "action",
+      "wire": "varint"
+    }, {
+      "name": "tab",
+      "wire": "identifier"
+    }]
+  },
+  "net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket": {
+    "class": "net.minecraft.network.protocol.cookie.ServerboundCookieResponsePacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "key",
+      "wire": "identifier"
+    }, {
+      "name": "payload",
+      "wire": "optional"
+    }]
+  },
+  "net.minecraft.network.protocol.configuration.ClientboundCodeOfConductPacket": {
+    "class": "net.minecraft.network.protocol.configuration.ClientboundCodeOfConductPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "codeOfConduct",
+      "wire": "string"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket": {
+    "packet": "clientbound/minecraft:block_destruction",
+    "class": "net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "id",
+      "wire": "varint"
+    }, {
+      "name": "pos",
+      "wire": "position"
+    }, {
+      "name": "progress",
+      "wire": "u8"
+    }]
+  },
+  "net.minecraft.network.protocol.game.ClientboundMerchantOffersPacket": {
+    "packet": "clientbound/minecraft:merchant_offers",
+    "class": "net.minecraft.network.protocol.game.ClientboundMerchantOffersPacket",
+    "kind": "packet",
+    "fields": [{
+      "name": "containerId",
+      "wire": "varint"
+    }, {
+      "name": "villagerLevel",
+      "wire": "varint"
+    }, {
+      "name": "villagerXp",
+      "wire": "varint"
+    }, {
+      "name": "showProgress",
+      "wire": "bool"
+    }, {
+      "name": "canRestock",
+      "wire": "bool"
+    }]
+  }
+}

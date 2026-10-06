@@ -54,21 +54,151 @@ impl QexedRuntime {
             &qexed_entities::config::Entities::default(),
             Arc::new(qexed_entities::EntityIdAllocator::default()),
         )?);
-        let plugins = Arc::new(PluginManager::from_dir("./plugins"));
+        let plugins = session_plugins().clone();
         Ok(Self { config, world, players, entities, plugins })
     }
 }
 
 impl qexed_server::cluster_entities::ClusterPlayers for QexedRuntime {
     fn player_snapshots(&self) -> Vec<qexed_server::cluster_rpc::ClusterPlayerSnapshot> {
-        // TODO(assembly): PlayerManager → ClusterPlayerSnapshot 快照投影
-        Vec::new()
+        // PlayerManager → ClusterPlayerSnapshot 快照投影（v4 list_except(nil) 的全量版）。
+        self.players
+            .list_except(uuid::Uuid::nil())
+            .into_iter()
+            .map(|player| qexed_server::cluster_rpc::ClusterPlayerSnapshot {
+                profile_id: *player.profile.uuid.as_bytes(),
+                entity_id: player.entity_id,
+                username: player.profile.username.clone(),
+                dimension: player.dimension.clone(),
+                x: player.position.x,
+                y: player.position.y,
+                z: player.position.z,
+                yaw: player.position.yaw,
+                pitch: player.position.pitch,
+                on_ground: player.position.on_ground,
+            })
+            .collect()
     }
 
-    fn send_packets_to(&self, _profile_id: uuid::Uuid, _packets: Vec<bytes::Bytes>) {
-        // TODO(assembly): PlayerManager 原始包发送通道接线
+    fn send_packets_to(&self, profile_id: uuid::Uuid, packets: Vec<bytes::Bytes>) {
+        // PlayerManager 的 ClientboundPackets 事件通道回到会话 sink。
+        self.players.send_packets_to(profile_id, packets);
     }
 }
+
+/// WorldManager → 实体域 WorldAccess（方块查询/放置 + 缓存纪元）。
+struct RuntimeWorldAccess(std::sync::Arc<WorldManager>);
+
+impl qexed_entities::WorldAccess for RuntimeWorldAccess {
+    fn block_state_at(
+        &self,
+        dimension: &str,
+        position: &qexed_packet::net_types::Position,
+    ) -> Option<i32> {
+        self.0.block_state_at(dimension, position)
+    }
+
+    fn cache_epoch(&self) -> u64 {
+        self.0.cache_epoch()
+    }
+
+    fn place_blocks(
+        &self,
+        dimension: &str,
+        blocks: Vec<(qexed_packet::net_types::Position, i32)>,
+    ) -> std::result::Result<
+        Vec<qexed_entities::BlockUpdate>,
+        qexed_entities::error::EntitiesError,
+    > {
+        let updates = self.0.place_blocks(dimension, blocks).map_err(|err| {
+            // WorldError 无实体域对应变体：经 io::Error::other 包装（消息保留原文）。
+            qexed_entities::error::EntitiesError::Io(std::io::Error::other(err.to_string()))
+        })?;
+        Ok(updates
+            .into_iter()
+            .map(|update| qexed_entities::BlockUpdate {
+                position: update.location,
+                block_state: update.block_state.0,
+            })
+            .collect())
+    }
+}
+
+/// PluginManager → 实体域 EntityAiHost（payload 字段级转换；
+/// entities 与 plugins 各有一套同构 EntityAiTickQuery）。
+struct RuntimeEntityAiHost(std::sync::Arc<PluginManager>);
+
+impl qexed_entities::EntityAiHost for RuntimeEntityAiHost {
+    fn handle_entity_ai_tick(
+        &self,
+        query: qexed_entities::EntityAiTickQuery,
+    ) -> Vec<qexed_entities::EntityAiOperation> {
+        use qexed_plugins::api as plugin_api;
+        let dimension = query.entity.dimension.clone();
+        let nearby_players = query
+            .nearby_players
+            .into_iter()
+            .map(|player| plugin_api::EntityAiPlayerPayload {
+                // AI 查询只消费位置 + entity_id（entities 侧载荷即无 uuid/名字）。
+                player: plugin_api::PlayerPayloadOwned {
+                    uuid: String::new(),
+                    username: String::new(),
+                    entity_id: player.entity_id,
+                    language: String::new(),
+                    dimension: dimension.clone(),
+                },
+                position: position_payload(player.position),
+            })
+            .collect();
+        let converted = plugin_api::EntityAiTickQuery {
+            entity: plugin_api::EntityAiEntityPayload {
+                key: query.entity.key,
+                entity_id: query.entity.entity_id,
+                entity_type: query.entity.entity_type,
+                custom_type: query.entity.custom_type,
+                ai: query.entity.ai,
+                spawn_rule: query.entity.spawn_rule,
+                ai_params: query.entity.ai_params,
+                dimension: query.entity.dimension,
+                position: position_payload(query.entity.position),
+            },
+            nearby_players,
+            tick_ms: query.tick_ms,
+        };
+        self.0
+            .handle_entity_ai_tick(converted)
+            .into_iter()
+            .map(|operation| match operation {
+                plugin_api::EntityAiOperation::MoveDelta { x, y, z, yaw, pitch } => {
+                    qexed_entities::EntityAiOperation::MoveDelta { x, y, z, yaw, pitch }
+                }
+                plugin_api::EntityAiOperation::LookAt { x, y, z } => {
+                    qexed_entities::EntityAiOperation::LookAt { x, y, z }
+                }
+                plugin_api::EntityAiOperation::Remove => {
+                    qexed_entities::EntityAiOperation::Remove
+                }
+            })
+            .collect()
+    }
+}
+
+/// 实体域位置 → 插件事件位置 payload。
+fn position_payload(
+    position: qexed_entities::EntityPosition,
+) -> qexed_plugins::api::PlayerPositionPayload {
+    qexed_plugins::api::PlayerPositionPayload {
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        yaw: position.yaw,
+        pitch: position.pitch,
+        on_ground: position.on_ground,
+    }
+}
+
+/// 全局服务 tick 间隔（v4 services.rs GLOBAL_SERVICE_TICK_INTERVAL 同值）。
+const GLOBAL_SERVICE_TICK_MS: u64 = 50;
 
 impl ServerRuntime for QexedRuntime {
     fn server_config(&self) -> &ServerConfig {
@@ -76,7 +206,19 @@ impl ServerRuntime for QexedRuntime {
     }
 
     fn global_service_tick(&self) -> ServerResult<()> {
-        // TODO(assembly): tick_ai 需 5 参（世界/规则等），接线后启用
+        // v4 本地模式 tick：实体 AI/物理/掉落物（tick_ai 5 参接线）。
+        let viewers = qexed_play::plugin_bridge::PlayerViewerBridge::new(&self.players);
+        let world = RuntimeWorldAccess(self.world.clone());
+        let plugins = RuntimeEntityAiHost(self.plugins.clone());
+        self.entities
+            .tick_ai(
+                &viewers,
+                &world,
+                &plugins,
+                &qexed_entities::EntityRendering::default(),
+                GLOBAL_SERVICE_TICK_MS,
+            )
+            .map_err(|err| qexed_server::error::ServerError::msg(err.to_string()))?;
         Ok(())
     }
 
@@ -106,6 +248,21 @@ impl ConnectionHandler for QexedConnectionHandler {
             qexed_connection::connection::handle(stream, addr, context, shutdown).await;
         })
     }
+}
+
+/// 全局统计注册表（按玩家 uuid 共享——跨会话累积）。
+static STATS_REGISTRY: std::sync::OnceLock<qexed_statistics::counter::StatsRegistry> =
+    std::sync::OnceLock::new();
+
+fn stats_registry() -> &'static qexed_statistics::counter::StatsRegistry {
+    STATS_REGISTRY.get_or_init(qexed_statistics::counter::StatsRegistry::new)
+}
+
+/// 全局插件管理器（QexedRuntime 与 play 会话共享同一实例，避免重复加载）。
+static SESSION_PLUGINS: std::sync::OnceLock<Arc<PluginManager>> = std::sync::OnceLock::new();
+
+fn session_plugins() -> &'static Arc<PluginManager> {
+    SESSION_PLUGINS.get_or_init(|| Arc::new(PluginManager::from_dir("./plugins")))
 }
 
 /// 构造 play 会话启动器（注入 connection 的 ServerContext）。
@@ -148,36 +305,101 @@ async fn play_session(
     )
     .await
     .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))?;
-    let entities = qexed_entities::EntityManager::from_config(
-        &qexed_entities::config::Entities::default(),
-        std::sync::Arc::new(qexed_entities::EntityIdAllocator::default()),
+    let entities = std::sync::Arc::new(
+        qexed_entities::EntityManager::from_config(
+            &qexed_entities::config::Entities::default(),
+            std::sync::Arc::new(qexed_entities::EntityIdAllocator::default()),
+        )
+        .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))?,
+    );
+    let inventory = crate::items_registry::RealInventory::new(Default::default());
+    let items = crate::items_registry::RealItems::load();
+    let world_rules_adapter = crate::world_rules_adapter::RealWorldRules::new(world);
+    let gameplay_hooks = crate::gameplay_hooks::RealGameplay::new(
+        config.clone(),
+        players.clone(),
+        entities.clone(),
+        qexed_entities::EntityRendering::default(),
+        qexed_play::survival::StoredSurvival::default(),
+        &qexed_player::StoredInventory::default(),
+        world.clone(),
+        session_plugins().clone(),
+        world_rules_adapter.handle(),
     )
-    .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))?;
-    let inventory = BasicInventory;
+    .with_stats(stats_registry().counter(profile.uuid));
     let display = qexed_play::ServerDisplay::default();
     let shared_world: qexed_play::SharedWorld = crate::world_adapter::shared_world(world.clone());
+    // chat 命令依赖：方块结构放置面用真实 WorldManager 适配，权限先全放行
+    // （待 server 域 PermissionManager 落地后替换）。
+    let structure_sink = crate::world_adapter::RealWorld(world.clone());
+    let world_rules_handle = world_rules_adapter.handle();
+    let all_commands = AllCommandsAllowed;
 
     let deps = PlaySessionDeps {
         config: &config,
         world: shared_world,
-        world_rules: &NoWorldRules,
+        world_rules: &world_rules_adapter,
         players,
         player_data: &player_data,
         entities: &entities,
         plugins: &NoPluginEvents,
         permissions: &AllowAllPermissions,
         player_audit: &qexed_play::NoPlayerAudit,
-        items: &BasicItems,
+        items: &items,
         inventory: &inventory,
-        gameplay: &NoGameplay,
+        gameplay: &gameplay_hooks,
         secure_chat: &NoSecureChat,
         chat_filter: &NoChatFilter,
+        commands: Some(qexed_play::ChatCommandDeps {
+            world_structure: &structure_sink,
+            world_rules: &world_rules_handle,
+            plugins: session_plugins(),
+            permissions: &all_commands,
+            inventory: gameplay_hooks.inventory_handle(),
+        }),
         cluster: None,
         display,
         command_tree: bytes::Bytes::new(),
         entity_rendering: qexed_entities::EntityRendering::default(),
         player_entity_type: 1,
     };
+
+    // 登录推送全量统计（原版统计页初始数据）。
+    {
+        let mut entries: Vec<(qexed_statistics::StatKey, i64)> = gameplay_hooks
+            .stats
+            .snapshot()
+            .into_iter()
+            .filter_map(|(name, value)| qexed_statistics::persist::parse_full_name(&name).map(|key| (key, value)))
+            .collect();
+        {
+            // 原版统计页数据源：无条件推送（空统计也让客户端页面可用）。
+            if entries.is_empty() {
+                entries.push((
+                    qexed_statistics::StatKey::custom(qexed_statistics::CUSTOM_PLAY_TIME),
+                    gameplay_hooks.stats.get(&qexed_statistics::StatKey::custom(
+                        qexed_statistics::CUSTOM_PLAY_TIME,
+                    )),
+                ));
+            }
+            match qexed_statistics::packet::award_stats_packet(&entries) {
+                Ok(stats_packet) => {
+                    use qexed_packet::{Packet, PacketCodec};
+                    let mut buf = bytes::BytesMut::new();
+                    let mut writer = qexed_packet::PacketWriter::new(&mut buf);
+                    let encode = qexed_packet::net_types::VarInt(
+                        <qexed_protocol::to_client::play::award_stats::AwardStats as qexed_packet::Packet>::ID,
+                    )
+                    .serialize(&mut writer)
+                    .and_then(|()| stats_packet.serialize(&mut writer));
+                    if encode.is_ok() {
+                        let _ = sink.send_raw(buf.freeze()).await;
+                    }
+                }
+                Err(err) => log::debug!("stats push encode failed: {err}"),
+            }
+        }
+    }
 
     qexed_play::initialize(
         packets,
@@ -192,78 +414,15 @@ async fn play_session(
     .map_err(|e| qexed_connection::error::ConnectionError::msg(e.to_string()))
 }
 
+/// 命令权限默认全放行（v4 默认权限表等价；待 server 域 PermissionManager 落地后替换）。
+struct AllCommandsAllowed;
 
-/// 最小会话背包（空装备）。
-struct BasicInventory;
-
-impl qexed_play::SessionInventory for BasicInventory {
-    fn selected_slot(&self) -> usize {
-        0
-    }
-
-    fn set_player_inventory_packets(&self) -> Vec<bytes::Bytes> {
-        Vec::new()
-    }
-
-    fn visible_equipment(&self) -> Vec<qexed_protocol::to_client::play::set_equipment::EquipmentEntry> {
-        Vec::new()
-    }
-
-    fn equipment_packet(
+impl qexed_play::chat_support::CommandPermissions for AllCommandsAllowed {
+    fn can_run_command(
         &self,
-        _entity_id: i32,
-        _equipment: Vec<qexed_protocol::to_client::play::set_equipment::EquipmentEntry>,
-    ) -> qexed_play::Result<Option<qexed_protocol::to_client::play::set_equipment::SetEquipment>> {
-        Ok(None)
-    }
-}
-
-struct BasicItems;
-
-impl qexed_play::ItemRegistry for BasicItems {
-    fn is_air_block_state(&self, block_state: i32) -> bool {
-        block_state == 0
-    }
-
-    fn air_block_state(&self) -> i32 {
-        0
-    }
-
-    fn picked_item_for_block_state(&self, _block_state: i32) -> Option<i32> {
-        None
-    }
-
-    fn item_id_for_name(&self, _name: &str) -> Option<i32> {
-        None
-    }
-
-    fn simple_item(&self, _item_id: i32, _count: i32) -> qexed_protocol::types::Slot {
-        qexed_play::inventory::empty_slot()
-    }
-
-    fn empty_slot(&self) -> qexed_protocol::types::Slot {
-        qexed_play::inventory::empty_slot()
-    }
-}
-
-struct NoWorldRules;
-
-impl qexed_play::WorldRulesSource for NoWorldRules {
-    fn ensure_loaded(&self, _dimension: &str) -> qexed_play::Result<()> {
-        Ok(())
-    }
-
-    fn snapshot(&self, dimension: &str) -> qexed_play::DimensionRules {
-        qexed_play::DimensionRules {
-            dimension_type: dimension.to_string(),
-        }
-    }
-
-    fn current_time(&self, _dimension: &str) -> i64 {
-        0
-    }
-
-    fn tick_dimension_time(&self, _dimension: &str, default_day_ticks: i64) -> i64 {
-        default_day_ticks
+        _profile: &qexed_packet::net_types::GameProfile,
+        _command: &str,
+    ) -> bool {
+        true
     }
 }

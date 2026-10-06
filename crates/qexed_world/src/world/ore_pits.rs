@@ -6,7 +6,8 @@
 //! - v4 直接依赖 `super::WorldManager`（world-core 任务的 manager.rs）与
 //!   `crate::inventory`（play crate，未迁移）。这里把所需能力收敛成
 //!   [`OrePitWorld`] trait：world-core 的 WorldManager 落地后直接 impl；
-//!   block 语义判定（可替换/碰撞）在本地保守实现，TODO(play) 接真实注册表。
+//!   block 语义判定（可替换/碰撞）接 chunk_nbt 的方块语义注册表
+//!   （blocks.json 运行时加载，OnceLock 缓存）。
 //! - EntityPosition 改用 v6 `add_entity::EntityPosition`（v4 同名同构）。
 
 use std::{
@@ -36,23 +37,16 @@ fn air_block_state() -> i32 {
     0
 }
 
-/// 方块是否可被矿坑填充替换（空气等）。
+/// 方块是否可被矿坑填充替换（v4 block_item_registry().replaceable_block_states）。
 ///
-/// TODO(play)：v4 语义为 block_item_registry().replaceable_block_states，
-/// play crate 迁移后接真实注册表；当前保守地把空气以外的方块视为不可替换。
+/// 数据源：chunk_nbt 方块语义注册表（blocks.json，OnceLock 缓存）。
 fn can_replace_block_state(block_state: i32) -> bool {
-    block_state == air_block_state()
+    crate::world::chunk_nbt::can_replace_block_state(block_state)
 }
 
-/// 方块是否有碰撞箱（撤离目标找地面用）。
-///
-/// TODO(play)：v4 语义为 collision_block_states 注册表；当前以光照抑制
-/// 近似（15 = 实体方块），air 恒无碰撞。
+/// 方块是否有碰撞箱（撤离目标找地面用；v4 collision_block_states 注册表）。
 fn block_has_collision(block_state: i32) -> bool {
-    if block_state == air_block_state() {
-        return false;
-    }
-    crate::world::chunk_nbt::block_collision_hint(block_state)
+    crate::world::chunk_nbt::block_has_collision(block_state)
 }
 
 #[derive(Debug)]

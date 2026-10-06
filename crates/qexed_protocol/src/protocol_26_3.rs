@@ -1,3 +1,8 @@
+//! 26.3 协议注册表：数据源 assets/reports/packets.json（与
+//! run/datagen/generated/reports/packets.json 同哈希，由 server-26.3.jar 数据生成器产出）。
+//! 全部 id/名称直接对照该 JSON 生成；debug 系列包名中 JSON 使用斜杠（debug/block_value），
+//! 这里规范化为下划线（debug_block_value）。
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolState {
     Handshaking,
@@ -22,7 +27,7 @@ pub struct PacketSpec {
 pub const HANDSHAKING_SERVERBOUND_PACKETS: &[PacketSpec] = &[
     PacketSpec {
         id: 0x00,
-        name: "client_intention",
+        name: "serverbound_intention",
     },
 ];
 
@@ -148,74 +153,82 @@ pub const CONFIGURATION_CLIENTBOUND_PACKETS: &[PacketSpec] = &[
     },
     PacketSpec {
         id: 0x01,
-        name: "clientbound_disconnect",
+        name: "clientbound_custom_payload",
     },
     PacketSpec {
         id: 0x02,
-        name: "clientbound_finish_configuration",
+        name: "clientbound_disconnect",
     },
     PacketSpec {
         id: 0x03,
-        name: "clientbound_keep_alive",
+        name: "clientbound_finish_configuration",
     },
     PacketSpec {
         id: 0x04,
-        name: "clientbound_ping",
+        name: "clientbound_keep_alive",
     },
     PacketSpec {
         id: 0x05,
-        name: "clientbound_reset_chat",
+        name: "clientbound_ping",
     },
     PacketSpec {
         id: 0x06,
-        name: "clientbound_registry_data",
+        name: "clientbound_reset_chat",
     },
     PacketSpec {
         id: 0x07,
-        name: "clientbound_resource_pack_pop",
+        name: "clientbound_registry_data",
     },
     PacketSpec {
         id: 0x08,
-        name: "clientbound_resource_pack_push",
+        name: "clientbound_resource_pack_pop",
     },
     PacketSpec {
         id: 0x09,
+        name: "clientbound_resource_pack_push",
+    },
+    PacketSpec {
+        id: 0x0a,
         name: "clientbound_post_effects",
     },
     PacketSpec {
-        id: 0x0A,
+        id: 0x0b,
         name: "clientbound_store_cookie",
     },
     PacketSpec {
-        id: 0x0B,
+        id: 0x0c,
         name: "clientbound_transfer",
     },
     PacketSpec {
-        id: 0x0C,
+        id: 0x0d,
         name: "clientbound_update_enabled_features",
     },
     PacketSpec {
-        id: 0x0D,
+        id: 0x0e,
         name: "clientbound_update_tags",
     },
     PacketSpec {
-        id: 0x0E,
+        id: 0x0f,
         name: "clientbound_select_known_packs",
     },
     PacketSpec {
-        id: 0x0F,
+        id: 0x10,
         name: "clientbound_custom_report_details",
     },
     PacketSpec {
-        id: 0x10,
+        id: 0x11,
         name: "clientbound_server_links",
     },
     PacketSpec {
-        id: 0x11,
+        id: 0x12,
         name: "clientbound_clear_dialog",
     },
     PacketSpec {
-        id: 0x12,
+        id: 0x13,
+        name: "clientbound_show_dialog",
+    },
+    PacketSpec {
+        id: 0x14,
         name: "clientbound_code_of_conduct",
     },
 ];
@@ -262,27 +275,27 @@ pub const PLAY_SERVERBOUND_PACKETS: &[PacketSpec] = &[
         name: "serverbound_chat",
     },
     PacketSpec {
-        id: 0x0A,
+        id: 0x0a,
         name: "serverbound_chat_session_update",
     },
     PacketSpec {
-        id: 0x0B,
+        id: 0x0b,
         name: "serverbound_chunk_batch_received",
     },
     PacketSpec {
-        id: 0x0C,
+        id: 0x0c,
         name: "serverbound_client_command",
     },
     PacketSpec {
-        id: 0x0D,
+        id: 0x0d,
         name: "serverbound_client_tick_end",
     },
     PacketSpec {
-        id: 0x0E,
+        id: 0x0e,
         name: "serverbound_client_information",
     },
     PacketSpec {
-        id: 0x0F,
+        id: 0x0f,
         name: "serverbound_command_suggestion",
     },
     PacketSpec {
@@ -326,27 +339,27 @@ pub const PLAY_SERVERBOUND_PACKETS: &[PacketSpec] = &[
         name: "serverbound_entity_tag_query",
     },
     PacketSpec {
-        id: 0x1A,
+        id: 0x1a,
         name: "serverbound_interact",
     },
     PacketSpec {
-        id: 0x1B,
+        id: 0x1b,
         name: "serverbound_jigsaw_generate",
     },
     PacketSpec {
-        id: 0x1C,
+        id: 0x1c,
         name: "serverbound_keep_alive",
     },
     PacketSpec {
-        id: 0x1D,
+        id: 0x1d,
         name: "serverbound_lock_difficulty",
     },
     PacketSpec {
-        id: 0x1E,
+        id: 0x1e,
         name: "serverbound_move_player_pos",
     },
     PacketSpec {
-        id: 0x1F,
+        id: 0x1f,
         name: "serverbound_move_player_pos_rot",
     },
     PacketSpec {
@@ -390,27 +403,27 @@ pub const PLAY_SERVERBOUND_PACKETS: &[PacketSpec] = &[
         name: "serverbound_player_action",
     },
     PacketSpec {
-        id: 0x2A,
+        id: 0x2a,
         name: "serverbound_player_command",
     },
     PacketSpec {
-        id: 0x2B,
+        id: 0x2b,
         name: "serverbound_player_input",
     },
     PacketSpec {
-        id: 0x2C,
+        id: 0x2c,
         name: "serverbound_player_loaded",
     },
     PacketSpec {
-        id: 0x2D,
+        id: 0x2d,
         name: "serverbound_pong",
     },
     PacketSpec {
-        id: 0x2E,
+        id: 0x2e,
         name: "serverbound_punch",
     },
     PacketSpec {
-        id: 0x2F,
+        id: 0x2f,
         name: "serverbound_recipe_book_change_settings",
     },
     PacketSpec {
@@ -454,27 +467,27 @@ pub const PLAY_SERVERBOUND_PACKETS: &[PacketSpec] = &[
         name: "serverbound_set_creative_mode_slot",
     },
     PacketSpec {
-        id: 0x3A,
+        id: 0x3a,
         name: "serverbound_set_game_rule",
     },
     PacketSpec {
-        id: 0x3B,
+        id: 0x3b,
         name: "serverbound_set_jigsaw_block",
     },
     PacketSpec {
-        id: 0x3C,
+        id: 0x3c,
         name: "serverbound_set_structure_block",
     },
     PacketSpec {
-        id: 0x3D,
+        id: 0x3d,
         name: "serverbound_set_test_block",
     },
     PacketSpec {
-        id: 0x3E,
+        id: 0x3e,
         name: "serverbound_sign_update",
     },
     PacketSpec {
-        id: 0x3F,
+        id: 0x3f,
         name: "serverbound_spectator_action",
     },
     PacketSpec {
@@ -502,574 +515,578 @@ pub const PLAY_SERVERBOUND_PACKETS: &[PacketSpec] = &[
 pub const PLAY_CLIENTBOUND_PACKETS: &[PacketSpec] = &[
     PacketSpec {
         id: 0x00,
-        name: "clientbound_add_entity",
+        name: "clientbound_bundle_delimiter",
     },
     PacketSpec {
         id: 0x01,
-        name: "clientbound_animate",
+        name: "clientbound_add_entity",
     },
     PacketSpec {
         id: 0x02,
-        name: "clientbound_award_stats",
+        name: "clientbound_animate",
     },
     PacketSpec {
         id: 0x03,
-        name: "clientbound_block_changed_ack",
+        name: "clientbound_award_stats",
     },
     PacketSpec {
         id: 0x04,
-        name: "clientbound_block_destruction",
+        name: "clientbound_block_changed_ack",
     },
     PacketSpec {
         id: 0x05,
-        name: "clientbound_block_entity_data",
+        name: "clientbound_block_destruction",
     },
     PacketSpec {
         id: 0x06,
-        name: "clientbound_block_event",
+        name: "clientbound_block_entity_data",
     },
     PacketSpec {
         id: 0x07,
-        name: "clientbound_block_update",
+        name: "clientbound_block_event",
     },
     PacketSpec {
         id: 0x08,
-        name: "clientbound_boss_event",
+        name: "clientbound_block_update",
     },
     PacketSpec {
         id: 0x09,
+        name: "clientbound_boss_event",
+    },
+    PacketSpec {
+        id: 0x0a,
         name: "clientbound_change_difficulty",
     },
     PacketSpec {
-        id: 0x0A,
+        id: 0x0b,
         name: "clientbound_chunk_batch_finished",
     },
     PacketSpec {
-        id: 0x0B,
+        id: 0x0c,
         name: "clientbound_chunk_batch_start",
     },
     PacketSpec {
-        id: 0x0C,
+        id: 0x0d,
         name: "clientbound_chunks_biomes",
     },
     PacketSpec {
-        id: 0x0D,
+        id: 0x0e,
         name: "clientbound_clear_titles",
     },
     PacketSpec {
-        id: 0x0E,
+        id: 0x0f,
         name: "clientbound_command_suggestions",
     },
     PacketSpec {
-        id: 0x0F,
+        id: 0x10,
         name: "clientbound_commands",
     },
     PacketSpec {
-        id: 0x10,
+        id: 0x11,
         name: "clientbound_container_close",
     },
     PacketSpec {
-        id: 0x11,
+        id: 0x12,
         name: "clientbound_container_set_content",
     },
     PacketSpec {
-        id: 0x12,
+        id: 0x13,
         name: "clientbound_container_set_data",
     },
     PacketSpec {
-        id: 0x13,
+        id: 0x14,
         name: "clientbound_container_set_slot",
     },
     PacketSpec {
-        id: 0x14,
+        id: 0x15,
         name: "clientbound_cookie_request",
     },
     PacketSpec {
-        id: 0x15,
+        id: 0x16,
         name: "clientbound_cooldown",
     },
     PacketSpec {
-        id: 0x16,
+        id: 0x17,
         name: "clientbound_custom_chat_completions",
     },
     PacketSpec {
-        id: 0x17,
+        id: 0x18,
         name: "clientbound_custom_payload",
     },
     PacketSpec {
-        id: 0x18,
+        id: 0x19,
         name: "clientbound_damage_event",
     },
     PacketSpec {
-        id: 0x19,
+        id: 0x1a,
         name: "clientbound_debug_block_value",
     },
     PacketSpec {
-        id: 0x1A,
+        id: 0x1b,
         name: "clientbound_debug_chunk_value",
     },
     PacketSpec {
-        id: 0x1B,
+        id: 0x1c,
         name: "clientbound_debug_entity_value",
     },
     PacketSpec {
-        id: 0x1C,
+        id: 0x1d,
         name: "clientbound_debug_event",
     },
     PacketSpec {
-        id: 0x1D,
+        id: 0x1e,
         name: "clientbound_debug_sample",
     },
     PacketSpec {
-        id: 0x1E,
+        id: 0x1f,
         name: "clientbound_delete_chat",
     },
     PacketSpec {
-        id: 0x1F,
+        id: 0x20,
         name: "clientbound_disconnect",
     },
     PacketSpec {
-        id: 0x20,
+        id: 0x21,
         name: "clientbound_disguised_chat",
     },
     PacketSpec {
-        id: 0x21,
+        id: 0x22,
         name: "clientbound_entity_event",
     },
     PacketSpec {
-        id: 0x22,
+        id: 0x23,
         name: "clientbound_entity_position_sync",
     },
     PacketSpec {
-        id: 0x23,
+        id: 0x24,
         name: "clientbound_explode",
     },
     PacketSpec {
-        id: 0x24,
+        id: 0x25,
         name: "clientbound_add_transient_block",
     },
     PacketSpec {
-        id: 0x25,
+        id: 0x26,
         name: "clientbound_forget_level_chunk",
     },
     PacketSpec {
-        id: 0x26,
+        id: 0x27,
         name: "clientbound_game_event",
     },
     PacketSpec {
-        id: 0x27,
+        id: 0x28,
         name: "clientbound_game_rule_values",
     },
     PacketSpec {
-        id: 0x28,
+        id: 0x29,
         name: "clientbound_game_test_highlight_pos",
     },
     PacketSpec {
-        id: 0x29,
+        id: 0x2a,
         name: "clientbound_mount_screen_open",
     },
     PacketSpec {
-        id: 0x2A,
+        id: 0x2b,
         name: "clientbound_hurt_animation",
     },
     PacketSpec {
-        id: 0x2B,
+        id: 0x2c,
         name: "clientbound_initialize_border",
     },
     PacketSpec {
-        id: 0x2C,
+        id: 0x2d,
         name: "clientbound_keep_alive",
     },
     PacketSpec {
-        id: 0x2D,
+        id: 0x2e,
         name: "clientbound_level_chunk_with_light",
     },
     PacketSpec {
-        id: 0x2E,
+        id: 0x2f,
         name: "clientbound_level_event",
     },
     PacketSpec {
-        id: 0x2F,
+        id: 0x30,
         name: "clientbound_level_particles",
     },
     PacketSpec {
-        id: 0x30,
+        id: 0x31,
         name: "clientbound_light_update",
     },
     PacketSpec {
-        id: 0x31,
+        id: 0x32,
         name: "clientbound_login",
     },
     PacketSpec {
-        id: 0x32,
+        id: 0x33,
         name: "clientbound_low_disk_space_warning",
     },
     PacketSpec {
-        id: 0x33,
+        id: 0x34,
         name: "clientbound_map_item_data",
     },
     PacketSpec {
-        id: 0x34,
+        id: 0x35,
         name: "clientbound_merchant_offers",
     },
     PacketSpec {
-        id: 0x35,
+        id: 0x36,
         name: "clientbound_move_entity_pos",
     },
     PacketSpec {
-        id: 0x36,
+        id: 0x37,
         name: "clientbound_move_entity_pos_rot",
     },
     PacketSpec {
-        id: 0x37,
+        id: 0x38,
         name: "clientbound_move_minecart_along_track",
     },
     PacketSpec {
-        id: 0x38,
+        id: 0x39,
         name: "clientbound_move_entity_rot",
     },
     PacketSpec {
-        id: 0x39,
+        id: 0x3a,
         name: "clientbound_move_vehicle",
     },
     PacketSpec {
-        id: 0x3A,
+        id: 0x3b,
         name: "clientbound_open_book",
     },
     PacketSpec {
-        id: 0x3B,
+        id: 0x3c,
         name: "clientbound_open_screen",
     },
     PacketSpec {
-        id: 0x3C,
+        id: 0x3d,
         name: "clientbound_open_sign_editor",
     },
     PacketSpec {
-        id: 0x3D,
+        id: 0x3e,
         name: "clientbound_ping",
     },
     PacketSpec {
-        id: 0x3E,
+        id: 0x3f,
         name: "clientbound_pong_response",
     },
     PacketSpec {
-        id: 0x3F,
+        id: 0x40,
         name: "clientbound_place_ghost_recipe",
     },
     PacketSpec {
-        id: 0x40,
+        id: 0x41,
         name: "clientbound_player_abilities",
     },
     PacketSpec {
-        id: 0x41,
+        id: 0x42,
         name: "clientbound_player_chat",
     },
     PacketSpec {
-        id: 0x42,
+        id: 0x43,
         name: "clientbound_player_combat_end",
     },
     PacketSpec {
-        id: 0x43,
+        id: 0x44,
         name: "clientbound_player_combat_enter",
     },
     PacketSpec {
-        id: 0x44,
+        id: 0x45,
         name: "clientbound_player_combat_kill",
     },
     PacketSpec {
-        id: 0x45,
+        id: 0x46,
         name: "clientbound_player_info_remove",
     },
     PacketSpec {
-        id: 0x46,
+        id: 0x47,
         name: "clientbound_player_info_update",
     },
     PacketSpec {
-        id: 0x47,
+        id: 0x48,
         name: "clientbound_player_look_at",
     },
     PacketSpec {
-        id: 0x48,
+        id: 0x49,
         name: "clientbound_player_position",
     },
     PacketSpec {
-        id: 0x49,
+        id: 0x4a,
         name: "clientbound_player_rotation",
     },
     PacketSpec {
-        id: 0x4A,
+        id: 0x4b,
         name: "clientbound_recipe_book_add",
     },
     PacketSpec {
-        id: 0x4B,
+        id: 0x4c,
         name: "clientbound_recipe_book_remove",
     },
     PacketSpec {
-        id: 0x4C,
+        id: 0x4d,
         name: "clientbound_recipe_book_settings",
     },
     PacketSpec {
-        id: 0x4D,
+        id: 0x4e,
         name: "clientbound_remove_entities",
     },
     PacketSpec {
-        id: 0x4E,
+        id: 0x4f,
         name: "clientbound_remove_mob_effect",
     },
     PacketSpec {
-        id: 0x4F,
+        id: 0x50,
         name: "clientbound_reset_score",
     },
     PacketSpec {
-        id: 0x50,
+        id: 0x51,
         name: "clientbound_resource_pack_pop",
     },
     PacketSpec {
-        id: 0x51,
+        id: 0x52,
         name: "clientbound_resource_pack_push",
     },
     PacketSpec {
-        id: 0x52,
+        id: 0x53,
         name: "clientbound_post_effects",
     },
     PacketSpec {
-        id: 0x53,
+        id: 0x54,
         name: "clientbound_respawn",
     },
     PacketSpec {
-        id: 0x54,
+        id: 0x55,
         name: "clientbound_rotate_head",
     },
     PacketSpec {
-        id: 0x55,
+        id: 0x56,
         name: "clientbound_section_blocks_update",
     },
     PacketSpec {
-        id: 0x56,
+        id: 0x57,
         name: "clientbound_select_advancements_tab",
     },
     PacketSpec {
-        id: 0x57,
+        id: 0x58,
         name: "clientbound_server_data",
     },
     PacketSpec {
-        id: 0x58,
+        id: 0x59,
         name: "clientbound_set_action_bar_text",
     },
     PacketSpec {
-        id: 0x59,
+        id: 0x5a,
         name: "clientbound_set_border_center",
     },
     PacketSpec {
-        id: 0x5A,
+        id: 0x5b,
         name: "clientbound_set_border_lerp_size",
     },
     PacketSpec {
-        id: 0x5B,
+        id: 0x5c,
         name: "clientbound_set_border_size",
     },
     PacketSpec {
-        id: 0x5C,
+        id: 0x5d,
         name: "clientbound_set_border_warning_delay",
     },
     PacketSpec {
-        id: 0x5D,
+        id: 0x5e,
         name: "clientbound_set_border_warning_distance",
     },
     PacketSpec {
-        id: 0x5E,
+        id: 0x5f,
         name: "clientbound_set_camera",
     },
     PacketSpec {
-        id: 0x5F,
+        id: 0x60,
         name: "clientbound_set_chunk_cache_center",
     },
     PacketSpec {
-        id: 0x60,
+        id: 0x61,
         name: "clientbound_set_chunk_cache_radius",
     },
     PacketSpec {
-        id: 0x61,
+        id: 0x62,
         name: "clientbound_set_cursor_item",
     },
     PacketSpec {
-        id: 0x62,
+        id: 0x63,
         name: "clientbound_set_default_spawn_position",
     },
     PacketSpec {
-        id: 0x63,
+        id: 0x64,
         name: "clientbound_set_display_objective",
     },
     PacketSpec {
-        id: 0x64,
+        id: 0x65,
         name: "clientbound_set_entity_data",
     },
     PacketSpec {
-        id: 0x65,
+        id: 0x66,
         name: "clientbound_set_entity_link",
     },
     PacketSpec {
-        id: 0x66,
+        id: 0x67,
         name: "clientbound_set_entity_motion",
     },
     PacketSpec {
-        id: 0x67,
+        id: 0x68,
         name: "clientbound_set_equipment",
     },
     PacketSpec {
-        id: 0x68,
+        id: 0x69,
         name: "clientbound_set_experience",
     },
     PacketSpec {
-        id: 0x69,
+        id: 0x6a,
         name: "clientbound_set_health",
     },
     PacketSpec {
-        id: 0x6A,
+        id: 0x6b,
         name: "clientbound_set_held_slot",
     },
     PacketSpec {
-        id: 0x6B,
+        id: 0x6c,
         name: "clientbound_set_objective",
     },
     PacketSpec {
-        id: 0x6C,
+        id: 0x6d,
         name: "clientbound_set_passengers",
     },
     PacketSpec {
-        id: 0x6D,
+        id: 0x6e,
         name: "clientbound_set_player_inventory",
     },
     PacketSpec {
-        id: 0x6E,
+        id: 0x6f,
         name: "clientbound_set_player_team",
     },
     PacketSpec {
-        id: 0x6F,
+        id: 0x70,
         name: "clientbound_set_score",
     },
     PacketSpec {
-        id: 0x70,
+        id: 0x71,
         name: "clientbound_set_simulation_distance",
     },
     PacketSpec {
-        id: 0x71,
+        id: 0x72,
         name: "clientbound_set_subtitle_text",
     },
     PacketSpec {
-        id: 0x72,
+        id: 0x73,
         name: "clientbound_set_time",
     },
     PacketSpec {
-        id: 0x73,
+        id: 0x74,
         name: "clientbound_set_title_text",
     },
     PacketSpec {
-        id: 0x74,
+        id: 0x75,
         name: "clientbound_set_titles_animation",
     },
     PacketSpec {
-        id: 0x75,
+        id: 0x76,
         name: "clientbound_sound_entity",
     },
     PacketSpec {
-        id: 0x76,
+        id: 0x77,
         name: "clientbound_sound",
     },
     PacketSpec {
-        id: 0x77,
+        id: 0x78,
         name: "clientbound_start_configuration",
     },
     PacketSpec {
-        id: 0x78,
+        id: 0x79,
         name: "clientbound_stop_sound",
     },
     PacketSpec {
-        id: 0x79,
+        id: 0x7a,
         name: "clientbound_store_cookie",
     },
     PacketSpec {
-        id: 0x7A,
+        id: 0x7b,
         name: "clientbound_swing_animation",
     },
     PacketSpec {
-        id: 0x7B,
+        id: 0x7c,
         name: "clientbound_system_chat",
     },
     PacketSpec {
-        id: 0x7C,
+        id: 0x7d,
         name: "clientbound_tab_list",
     },
     PacketSpec {
-        id: 0x7D,
+        id: 0x7e,
         name: "clientbound_tag_query",
     },
     PacketSpec {
-        id: 0x7E,
+        id: 0x7f,
         name: "clientbound_take_item_entity",
     },
     PacketSpec {
-        id: 0x7F,
+        id: 0x80,
         name: "clientbound_teleport_entity",
     },
     PacketSpec {
-        id: 0x80,
+        id: 0x81,
         name: "clientbound_test_instance_block_status",
     },
     PacketSpec {
-        id: 0x81,
+        id: 0x82,
         name: "clientbound_ticking_state",
     },
     PacketSpec {
-        id: 0x82,
+        id: 0x83,
         name: "clientbound_ticking_step",
     },
     PacketSpec {
-        id: 0x83,
+        id: 0x84,
         name: "clientbound_transfer",
     },
     PacketSpec {
-        id: 0x84,
+        id: 0x85,
         name: "clientbound_update_advancements",
     },
     PacketSpec {
-        id: 0x85,
+        id: 0x86,
         name: "clientbound_update_attributes",
     },
     PacketSpec {
-        id: 0x86,
+        id: 0x87,
         name: "clientbound_update_mob_effect",
     },
     PacketSpec {
-        id: 0x87,
+        id: 0x88,
         name: "clientbound_update_recipes",
     },
     PacketSpec {
-        id: 0x88,
+        id: 0x89,
         name: "clientbound_update_tags",
     },
     PacketSpec {
-        id: 0x89,
+        id: 0x8a,
         name: "clientbound_projectile_power",
     },
     PacketSpec {
-        id: 0x8A,
+        id: 0x8b,
         name: "clientbound_custom_report_details",
     },
     PacketSpec {
-        id: 0x8B,
+        id: 0x8c,
         name: "clientbound_server_links",
     },
     PacketSpec {
-        id: 0x8C,
+        id: 0x8d,
         name: "clientbound_waypoint",
     },
     PacketSpec {
-        id: 0x8D,
+        id: 0x8e,
         name: "clientbound_clear_dialog",
     },
     PacketSpec {
-        id: 0x8E,
+        id: 0x8f,
         name: "clientbound_show_dialog",
     },
 ];

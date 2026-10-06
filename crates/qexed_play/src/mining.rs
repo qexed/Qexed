@@ -833,23 +833,27 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn pickaxe_is_faster_than_hand_on_stone() {
+        let stone = crate::world_access::default_block_state_id("minecraft:stone");
+        let pickaxe_id =
+            crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").expect("pickaxe id");
         let hand = crate::inventory::empty_slot();
-        let pickaxe = crate::inventory::simple_item(934, 1);
+        let pickaxe = crate::inventory::simple_item(pickaxe_id, 1);
         let plugins = empty_plugins();
 
-        let hand_duration = required_break_duration(1, &hand, &plugins);
-        let pickaxe_duration = required_break_duration(1, &pickaxe, &plugins);
+        let hand_duration = required_break_duration(stone, &hand, &plugins);
+        let pickaxe_duration = required_break_duration(stone, &pickaxe, &plugins);
 
         assert!(pickaxe_duration < hand_duration);
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn efficiency_enchantment_increases_speed() {
+        let stone = crate::world_access::default_block_state_id("minecraft:stone");
+        let pickaxe_id =
+            crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").expect("pickaxe id");
         let plugins = empty_plugins();
-        let normal = crate::inventory::simple_item(934, 1);
+        let normal = crate::inventory::simple_item(pickaxe_id, 1);
         let mut efficient = normal.clone();
         efficient.number_of_components_to_add = Some(VarInt(1));
         efficient.components_to_add = Some(vec![ComponentsToAdd::MinecraftEnchantments(
@@ -862,30 +866,35 @@ mod tests {
         )]);
 
         assert!(
-            required_break_duration(1, &efficient, &plugins)
-                < required_break_duration(1, &normal, &plugins)
+            required_break_duration(stone, &efficient, &plugins)
+                < required_break_duration(stone, &normal, &plugins)
         );
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn stone_drops_cobblestone_without_silk_touch() {
+        let stone = crate::world_access::default_block_state_id("minecraft:stone");
+        let cobblestone =
+            crate::inventory::item_id_for_name("minecraft:cobblestone").expect("cobblestone id");
         let plugins = empty_plugins();
         let drops = default_block_drops(
-            1,
+            stone,
             &BlockPosition { x: 0, y: 64, z: 0 },
             &crate::inventory::empty_slot(),
             &plugins,
         );
 
         assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].item_id.as_ref().unwrap().0, 35);
+        assert_eq!(drops[0].item_id.as_ref().unwrap().0, cobblestone);
     }
 
     #[test]
     fn silk_touch_keeps_original_block_drop() {
         let plugins = empty_plugins();
-        let mut tool = crate::inventory::simple_item(934, 1);
+        let stone = crate::world_access::default_block_state_id("minecraft:stone");
+        let pickaxe_id =
+            crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").expect("pickaxe id");
+        let mut tool = crate::inventory::simple_item(pickaxe_id, 1);
         tool.number_of_components_to_add = Some(VarInt(1));
         tool.components_to_add = Some(vec![ComponentsToAdd::MinecraftEnchantments(
             minecraft::Enchantments {
@@ -896,17 +905,26 @@ mod tests {
             },
         )]);
 
-        let drops = default_block_drops(1, &BlockPosition { x: 0, y: 64, z: 0 }, &tool, &plugins);
+        let drops = default_block_drops(
+            stone,
+            &BlockPosition { x: 0, y: 64, z: 0 },
+            &tool,
+            &plugins,
+        );
 
         assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].item_id.as_ref().unwrap().0, 1);
+        assert_eq!(drops[0].item_id.as_ref().unwrap().0, stone);
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn fortune_increases_known_ore_drop_count() {
+        // v6 26.3 报告：coal_ore 默认状态（fortune=3 时掉落 1+3=4 个）。
+        let coal_ore = crate::world_access::default_block_state_id("minecraft:coal_ore");
+        let coal_id = crate::inventory::item_id_for_name("minecraft:coal").expect("coal id");
+        let pickaxe_id =
+            crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").expect("pickaxe id");
         let plugins = empty_plugins();
-        let mut tool = crate::inventory::simple_item(934, 1);
+        let mut tool = crate::inventory::simple_item(pickaxe_id, 1);
         tool.number_of_components_to_add = Some(VarInt(1));
         tool.components_to_add = Some(vec![ComponentsToAdd::MinecraftEnchantments(
             minecraft::Enchantments {
@@ -917,11 +935,15 @@ mod tests {
             },
         )]);
 
-        let drops =
-            default_block_drops(5307, &BlockPosition { x: 0, y: 64, z: 0 }, &tool, &plugins);
+        let drops = default_block_drops(
+            coal_ore,
+            &BlockPosition { x: 0, y: 64, z: 0 },
+            &tool,
+            &plugins,
+        );
 
         assert_eq!(drops.len(), 1);
-        assert_eq!(drops[0].item_id.as_ref().unwrap().0, 899);
+        assert_eq!(drops[0].item_id.as_ref().unwrap().0, coal_id);
         assert_eq!(drops[0].item_count.0, 4);
     }
 

@@ -28,8 +28,31 @@ dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
 }
 
+compileTestJava {
+    options.release = 25
+}
+
 test {
     useJUnitPlatform()
+}
+
+tasks.register("generateVanillaReports", JavaExec) {
+    description = "Runs Mojang's data generator (--reports) on the current Minecraft version."
+    group = "verification"
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "cn.qexed.protocol.VanillaProtocolReportGenerator"
+    args layout.buildDirectory.dir("vanilla-reports").get().asFile.absolutePath
+    workingDir rootProject.projectDir
+}
+
+tasks.register("extractVanillaPacketStructs", JavaExec) {
+    description = "Extracts field-level packet wire structures from STREAM_CODEC bytecode."
+    group = "verification"
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "cn.qexed.protocol.VanillaPacketStructExtractor"
+    args layout.buildDirectory.dir("vanilla-reports/packet-structures.json").get().asFile.absolutePath
+    workingDir rootProject.projectDir
+    dependsOn tasks.named("generateVanillaReports")
 }
 
 tasks.register("buildQexedForIntegration", Exec) {

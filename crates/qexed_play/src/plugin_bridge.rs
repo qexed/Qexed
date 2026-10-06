@@ -17,8 +17,8 @@ use qexed_entities::context::{
 };
 use qexed_player::{OnlinePlayer, PlayerDamageKind, PlayerManager};
 
-pub(crate) use crate::session::{player_payload_owned, player_position_payload};
-pub(crate) use qexed_plugins::api::PlayerAction;
+pub use crate::session::{player_payload_owned, player_position_payload};
+pub use qexed_plugins::api::PlayerAction;
 
 /// qexed_protocol 与 qexed_entities 各自定义了同构的 EntityPosition（26.3 协议
 /// crate 不再提供 add_entity::EntityPosition 载体），play 域在两域边界做字段级转换。

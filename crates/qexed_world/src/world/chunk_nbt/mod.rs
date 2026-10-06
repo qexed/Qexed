@@ -1149,9 +1149,41 @@ pub fn all_section_block_states(root: &Tag) -> crate::error::Result<Vec<SectionB
     Ok(result)
 }
 
-/// 方块碰撞近似提示（ore_pits 撤离目标用）：光照抑制 15 视为实体方块。
+/// 方块是否有碰撞箱（v4 inventory::block_has_collision）。
 ///
-/// TODO(play)：play crate 的 collision_block_states 注册表迁移后替换。
+/// 数据源：blocks.json 方块语义注册表（registry::block_semantics_registry，
+/// OnceLock 缓存）。未知状态保守视为有碰撞；空气恒无碰撞。
+pub fn block_has_collision(block_state: i32) -> bool {
+    let registry = registry::block_semantics_registry();
+    if registry.air_block_states.contains(&block_state) {
+        return false;
+    }
+    if registry.known_block_states.contains(&block_state) {
+        return registry.collision_block_states.contains(&block_state);
+    }
+    true
+}
+
+/// 方块状态是否可被替换（v4 inventory::can_replace_block_state）。
+///
+/// 数据源同 block_has_collision：空气、液体、火、草本/藤蔓/海草家族
+/// 与 snow(layers=1)。
+pub fn can_replace_block_state(block_state: i32) -> bool {
+    registry::block_semantics_registry()
+        .replaceable_block_states
+        .contains(&block_state)
+}
+
+/// 方块状态是否为空气（v4 inventory::is_air_block_state，含 cave_air/
+/// void_air 的全部状态 id）。
+pub fn is_air_block_state(block_state: i32) -> bool {
+    registry::block_semantics_registry()
+        .air_block_states
+        .contains(&block_state)
+}
+
+/// 方块碰撞近似提示（光照抑制 15 视为实体方块；精确碰撞判定用
+/// block_has_collision）。
 pub fn block_collision_hint(block_state: i32) -> bool {
     let entry = block_state_entry(block_state);
     registry::light_dampening(

@@ -20,6 +20,9 @@ pub enum PlayError {
     PacketRead(#[from] qexed_connection::transport::PacketReadError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    /// 世界域错误（WorldRulesManager 的 time/gamerule 写路径）。
+    #[error("world domain error: {0}")]
+    World(#[from] qexed_world::error::WorldError),
     /// 原版注册表数据（blocks.json / registries.json 报告）加载失败。
     #[error("registry data error: {0}")]
     Registry(#[from] qexed_mojang_data::registry_sync::RegistryError),

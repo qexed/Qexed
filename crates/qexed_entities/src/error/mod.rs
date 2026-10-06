@@ -22,8 +22,9 @@ pub enum EntitiesError {
     UnsupportedProjectileKind(String),
     #[error("projectile velocity must be non-zero")]
     ZeroProjectileVelocity,
-    // TODO(storage/network): v4 通过 reqwest 访问 Mojang session server 解析 NPC 皮肤；
-    // v6 workspace 无 HTTP 客户端依赖，待 network 域迁移后接回。
     #[error("npc skin lookup unavailable in this build: {player_id}")]
     NpcSkinLookupUnavailable { player_id: String },
+    /// NPC 皮肤查询的 HTTP 层错误（reqwest）。
+    #[error("npc skin http error: {0}")]
+    NpcSkinHttp(#[from] reqwest::Error),
 }

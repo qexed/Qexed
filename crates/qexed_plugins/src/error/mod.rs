@@ -27,4 +27,7 @@ pub enum PluginsError {
     /// 插件结构化存储后端错误。
     #[error("structured storage error: {0}")]
     StructuredStorage(String),
+    /// 经济存储后端连接/初始化失败（mysql/mongodb/redis）。
+    #[error("economy storage backend error: {0}")]
+    EconomyBackend(String),
 }

@@ -6,8 +6,6 @@
 //! - 物品/方块映射（v4 crate::inventory）由 play-gameplay 任务落地后接线，
 //!   当前经 [`ItemRegistry`] trait 注入（见 context.rs 邻域约定）。
 //!
-//! TODO(play-gameplay)：inventory 域（is_air_block_state / picked_item_for_block_state /
-//! simple_item / item_id_for_name）迁移后提供默认 ItemRegistry 实现。
 
 // play-gameplay 接线前部分 API 暂未被本 crate 引用（供其改造 runtime.rs 时使用）。
 #![allow(dead_code)]
@@ -123,11 +121,8 @@ mod tests {
         }
 
         fn simple_item(&self, item_id: i32, count: i32) -> Slot {
-            Slot {
-                item_count: qexed_packet::net_types::VarInt(count),
-                item_id: Some(qexed_packet::net_types::VarInt(item_id)),
-                ..Slot::default()
-            }
+            // 26.3 Slot 序列化要求 item_count>0 时 components 计数字段存在。
+            crate::inventory::simple_item(item_id, count)
         }
 
         fn empty_slot(&self) -> Slot {
@@ -136,7 +131,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 需要 mojang 26.3 注册表数据落地"]
     fn block_drop_packets_spawn_item_entity_for_known_block() {
         let packets = block_drop_preview_packets(
             &TestItems,

@@ -62,9 +62,134 @@ async fn disabled_store_uses_default_spawn_without_connecting_backend() {
     assert_eq!(loaded.position.z, -7.0);
 }
 
-// TODO(storage): v4 的 mysql_table_name_rejects_unsafe_identifier /
-// mongodb_store_roundtrips_player_data / mysql_store_roundtrips_player_data
-// 依赖 database.rs 的 mongodb/mysql 实现（v6 未迁入，见 mod.rs 的 TODO(storage)）。
+/// 纯逻辑校验：mysql 表名只允许 ASCII 字母/数字/下划线（v4 同名测试迁移）。
+#[test]
+fn mysql_table_name_rejects_unsafe_identifier() {
+    assert!(database::validate_mysql_identifier("qexed_players_1").is_ok());
+    assert!(database::validate_mysql_identifier("qexed_players;DROP_TABLE").is_err());
+    assert!(database::validate_mysql_identifier("qexed-players").is_err());
+}
+
+/// 连接失败必须回退 Disabled 并 warn（不 panic）：engine 指向不可达端口，
+/// from_config 仍应成功构造出禁用存储的 manager（load 返回出生点默认值）。
+#[tokio::test]
+async fn mongodb_engine_falls_back_to_disabled_when_connect_fails() {
+    let temp = tempfile_dir();
+    let config = crate::config::PlayerDataConfig {
+        engine: crate::config::PlayerDataEngine::Mongodb,
+        mongodb: crate::config::MongoConfig {
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            database: "qexed".to_string(),
+            connect_timeout_ms: 200,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let manager = PlayerDataManager::from_config(&temp, &config)
+        .await
+        .unwrap();
+    let profile = GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Steve".to_string(),
+        properties: Vec::new(),
+    };
+
+    let loaded = manager
+        .load_or_default(&profile, "minecraft:overworld", &Spawn::default())
+        .await;
+    assert_eq!(loaded.position.y, 0.0);
+    manager.save(&loaded).await.unwrap();
+}
+
+#[tokio::test]
+async fn mysql_engine_falls_back_to_disabled_when_connect_fails() {
+    let temp = tempfile_dir();
+    let config = crate::config::PlayerDataConfig {
+        engine: crate::config::PlayerDataEngine::Mysql,
+        mysql: crate::config::MysqlConfig {
+            ip: "127.0.0.1".to_string(),
+            port: 1,
+            username: "qexed".to_string(),
+            password: "qexed".to_string(),
+            database: "qexed".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let manager = PlayerDataManager::from_config(&temp, &config)
+        .await
+        .unwrap();
+    let profile = GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: "Alex".to_string(),
+        properties: Vec::new(),
+    };
+
+    let loaded = manager
+        .load_or_default(&profile, "minecraft:overworld", &Spawn::default())
+        .await;
+    assert_eq!(loaded.profile_name, "Alex");
+    manager.save(&loaded).await.unwrap();
+}
+
+/// 真实 MongoDB 往返（需本地服务，默认跳过；v4 同名测试迁移）。
+#[tokio::test]
+#[ignore = "requires local MongoDB on 127.0.0.1:27017"]
+async fn mongodb_store_roundtrips_player_data() {
+    let config = crate::config::MongoConfig {
+        username: Some("qexed".to_string()),
+        password: Some("qexed".to_string()),
+        database: "qexed".to_string(),
+        auth_source: Some("admin".to_string()),
+        ..Default::default()
+    };
+    let store = database::MongoPlayerDataStore::new(&config, "players_test")
+        .await
+        .unwrap();
+    let data = test_player_data("Mongo");
+
+    store.save(&data).await.unwrap();
+    let loaded = store.load(data.uuid).await.unwrap().unwrap();
+
+    assert_eq!(loaded.uuid, data.uuid);
+    assert_eq!(loaded.profile_name, "Mongo");
+}
+
+/// 真实 MySQL 往返（需本地服务，默认跳过；v4 同名测试迁移）。
+#[tokio::test]
+#[ignore = "requires local MySQL on 127.0.0.1:3306"]
+async fn mysql_store_roundtrips_player_data() {
+    let config = crate::config::MysqlConfig {
+        username: "qexed".to_string(),
+        password: "qexed".to_string(),
+        database: "qexed".to_string(),
+        ..Default::default()
+    };
+    let store = database::MysqlPlayerDataStore::new(&config, "qexed_players_test")
+        .await
+        .unwrap();
+    let data = test_player_data("Mysql");
+
+    store.save(&data).await.unwrap();
+    let loaded = store.load(data.uuid).await.unwrap().unwrap();
+
+    assert_eq!(loaded.uuid, data.uuid);
+    assert_eq!(loaded.profile_name, "Mysql");
+}
+
+fn test_player_data(name: &str) -> PlayerData {
+    let profile = GameProfile {
+        uuid: uuid::Uuid::new_v4(),
+        username: name.to_string(),
+        properties: Vec::new(),
+    };
+    let mut data = PlayerData::from_spawn(&profile, "minecraft:overworld", &Spawn::default());
+    data.position.x = 32.0;
+    data
+}
 
 #[test]
 fn stored_slot_preserves_item_components() {

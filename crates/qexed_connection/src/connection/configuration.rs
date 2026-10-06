@@ -7,8 +7,10 @@
 //! CodeOfConduct / FinishConfiguration / Disconnect 同名。
 //!
 //! 注册表数据加载从 v4 crate::registry_sync 改为 v6 的 qexed_mojang_data。
-//! v4 的 ResourcePackManager（本地包/对象存储/HTTP 下载服务）属于
-//! qexed_server 域，此处只处理 URL 直推，其余来源留 TODO(hook)。
+//! 资源包推送的来源解析（URL 直推 / 对象存储直链 / 本地包 HTTP 下载服务）
+//! 在 super::resource_pack（连接域自持，v4 ResourcePackManager 的等价实现）；
+//! qexed_server 组装层可通过 ServerContext::set_resource_pack_offer 注入
+//! 自定义解析回调（如对象存储上传后回填 URL）覆盖默认行为。
 
 use qexed_packet::Packet;
 use qexed_protocol::{
@@ -147,7 +149,7 @@ async fn send_configured_resource_pack<R, W>(
     packets: &mut crate::transport::PacketStream<R>,
     sink: &mut crate::transport::PacketSink<W>,
     context: &ServerContext,
-    _login_host: &str,
+    login_host: &str,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -158,17 +160,25 @@ where
         return Ok(());
     }
 
-    // TODO(hook): v4 的 ResourcePackManager 支持 Local/对象存储来源并起 HTTP
-    // 下载服务；v6 归 qexed_server 域。此处 URL 为空时告警跳过（与 v4 行为一致）。
-    if resource_pack.url.trim().is_empty() {
-        log::warn!("{}", qexed_language::t("qexed.connection.config.resource_pack_no_url"));
+    // 组装层注入的 offer 回调优先（qexed_server 侧可能有对象存储上传等更强实现）；
+    // 未注入时用连接域自带的 resolve_offer：Url 直推 / 对象存储拼直链 /
+    // Local 读 zip → sha1 → 起本地 HTTP 下载服务（v4 ResourcePackManager 全量行为）。
+    let offer = match context.resource_pack_offer.clone() {
+        Some(resolve) => resolve(resource_pack, login_host)
+            .await
+            .map_err(ConnectionError::msg)?
+            .map(|(url, hash)| super::resource_pack::ResourcePackOffer { url, hash }),
+        None => super::resource_pack::resolve_offer(resource_pack, login_host).await?,
+    };
+
+    let Some(offer) = offer else {
         return Ok(());
-    }
+    };
 
     sink.send(to_client::configuration::resource_pack_push::ResourcePackPush {
         id: resource_pack.pack_id(),
-        url: resource_pack.url.clone(),
-        hash: resource_pack.hash.clone(),
+        url: offer.url,
+        hash: offer.hash,
         required: resource_pack.required,
         prompt: optional_text_component(&resource_pack.prompt),
     })
@@ -195,6 +205,7 @@ where
         };
 
         let packet_id = read_packet_id(&mut payload)?;
+        log::info!("[diag wait cfg] id=0x{:x} len={}", packet_id, payload.len());
         if packet_id != ServerboundResourcePack::ID {
             log::debug!(
                 "{}",
@@ -331,7 +342,13 @@ where
         }
 
         if packet_id == ClientInformation::ID {
-            let settings = decode_payload::<ClientInformation>(&mut payload)?;
+            let settings = match decode_payload::<ClientInformation>(&mut payload) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        log::error!("[diag] client_information decode 失败: {err:#} | payload hex={}", payload.iter().map(|b| format!("{b:02x}")).collect::<String>());
+                        return Err(err.into());
+                    }
+                };
             log::debug!(
                 "{}",
                 qexed_language::t("qexed.connection.config.client_locale").replace(
@@ -360,9 +377,9 @@ struct ConfigurationStart {
     client: ClientConfiguration,
 }
 
-/// 客户端配置信息（v4 ClientConfiguration 迁移）。
+/// 客户端配置信息（v4 ClientConfiguration 迁移；LoginOutcome 公开字段）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ClientConfiguration {
+pub struct ClientConfiguration {
     pub locale: Option<String>,
     pub displayed_skin_parts: u8,
 }

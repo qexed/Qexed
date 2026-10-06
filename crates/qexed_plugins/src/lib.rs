@@ -6,7 +6,7 @@
 //! - manager：PluginManager（加载、拓扑排序、事件分发）
 //! - host：宿主服务（经济 / 存储 / 随机池 / world edit / 实体控制 / vtable）
 //! - instance：动态库插件实例（C ABI 约定）
-//! - economy / structured_storage：存储后端（文件实现 + TODO(storage) 接口）
+//! - economy / structured_storage：存储后端（文件 + mysql/mongodb/redis 实现）
 //! - files：插件目录扫描（dll/so）
 
 pub mod api;
@@ -14,7 +14,9 @@ pub mod config;
 pub mod error;
 pub(crate) mod economy;
 mod files;
-pub(crate) mod host;
+/// 宿主服务 trait（Pathfinding/WorldEdit/EntityControl/Localize/PluginApi）公开：
+/// qexed 组装层实现这些 trait 并经 PluginManager::set_*_service 注入。
+pub mod host;
 pub(crate) mod instance;
 pub mod manager;
 pub(crate) mod structured_storage;

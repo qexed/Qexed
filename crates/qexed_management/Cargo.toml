@@ -1,0 +1,23 @@
+[package]
+name = "qexed_management"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+qexed_config.workspace = true
+qexed_config_macros.workspace = true
+qexed_log.workspace = true
+qexed_language.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid.workspace = true
+rand.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite = { workspace = true, features = ["connect"] }

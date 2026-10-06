@@ -3,9 +3,10 @@
 //! v6 差异：
 //! - 加载从 wasmtime Engine/Module 改为 libloading Library（dll/so）。
 //! - v4 依赖 qexed_player::OnlinePlayer / crate::entities::DroppedItemEntity /
-//!   crate::inventory 的 emit_*/handle_* 入参改为 api 层 payload 类型，
-//!   由 qexed_server 装配层从 v6 类型构造（OnlinePlayer 尚未迁移，
-//!   TODO(player)：qexed_player 提供在线玩家结构后补强类型入口）。
+//!   crate::inventory 的 emit_*/handle_* 入参改为 api 层 payload 类型。
+//!   qexed_player::OnlinePlayer 已落地：emit_player_join_of / emit_player_leave_of
+//!   提供强类型入口（PlayerPayload: From<&OnlinePlayer>），其余 payload 由
+//!   qexed_server 装配层从 v6 类型构造。
 //! - v4 crate::l10n 本地化经 host::LocalizeService 注入。
 
 use crate::{api, host};
@@ -427,6 +428,16 @@ impl PluginManager {
 
     pub fn emit_player_leave(&self, player: &PlayerPayload) {
         self.emit_encoded(PluginEvent::PlayerLeave, player);
+    }
+
+    /// 强类型入口（TODO(player) 清偿）：直接接收 qexed_player::OnlinePlayer。
+    pub fn emit_player_join_of(&self, player: &qexed_player::OnlinePlayer) {
+        self.emit_player_join(&PlayerPayload::from(player));
+    }
+
+    /// 强类型入口（TODO(player) 清偿）：直接接收 qexed_player::OnlinePlayer。
+    pub fn emit_player_leave_of(&self, player: &qexed_player::OnlinePlayer) {
+        self.emit_player_leave(&PlayerPayload::from(player));
     }
 
     pub fn emit_chunk_load(&self, dimension: &str, chunk_x: i32, chunk_z: i32) {
@@ -1328,6 +1339,44 @@ impl PluginManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn online_player_converts_to_player_payload() {
+        use qexed_packet::net_types::GameProfile;
+        let player = qexed_player::OnlinePlayer {
+            profile: GameProfile {
+                uuid: uuid::Uuid::new_v4(),
+                username: "Steve".to_string(),
+                properties: Vec::new(),
+            },
+            entity_id: 7,
+            game_mode: 0,
+            position: qexed_protocol::types::EntityPosition {
+                x: 0.0,
+                y: 64.0,
+                z: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            dimension: "minecraft:overworld".to_string(),
+            equipment: Vec::new(),
+            language: "en_us".to_string(),
+            displayed_skin_parts: 0x7f,
+        };
+
+        let payload = crate::api::PlayerPayload::from(&player);
+        assert_eq!(payload.uuid, player.profile.uuid.to_string());
+        assert_eq!(payload.username, "Steve");
+        assert_eq!(payload.entity_id, 7);
+        assert_eq!(payload.language, "en_us");
+        assert_eq!(payload.dimension, "minecraft:overworld");
+
+        // 强类型入口在无插件时不 panic（空事件循环）。
+        let manager = PluginManager::empty_for_tests();
+        manager.emit_player_join_of(&player);
+        manager.emit_player_leave_of(&player);
+    }
 
     #[test]
     fn empty_plugin_manager_keeps_mining_speed_unchanged() {

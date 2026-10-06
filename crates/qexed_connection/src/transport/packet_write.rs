@@ -132,7 +132,14 @@ impl<W: AsyncWrite + Unpin> PacketSink<W> {
 
     pub async fn send_encoded_frame<B: AsRef<[u8]>>(&mut self, frame: B) -> Result<(), PacketWriteError> {
         let frame = BytesMut::from(frame.as_ref());
+        if log::log_enabled!(log::Level::Info) && frame.len() < 1500 {
+            log::info!("[diag-plain] frame {}B head={}", frame.len(), frame[..frame.len().min(12)].iter().map(|b| format!("{b:02x}")).collect::<String>());
+        }
         let frame = self.encrypt_frame(&frame);
+        if log::log_enabled!(log::Level::Info) && frame.len() < 2000 {
+            let n = frame.len().min(48);
+            log::info!("[diag-wire] out {}B enc={} hex={}", frame.len(), self.encrypter.is_some(), frame[..n].iter().map(|b| format!("{b:02x}")).collect::<String>());
+        }
         self.writer
             .write_all(&frame)
             .await
@@ -372,5 +379,46 @@ mod tests {
         writer.shutdown().await.unwrap();
         let packet = reader.read_packet().await.unwrap().unwrap();
         assert_eq!(&packet[..], b"\x01hello");
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    use bytes::BytesMut;
+
+    #[test]
+    fn encrypted_compressed_roundtrip() {
+        let payload: Vec<u8> = (0..1336).map(|i| (i % 251) as u8).collect();
+        let mut sink = PacketSink::new(Vec::new());
+        sink.set_compression_threshold(256);
+        let secret = [7u8; 16];
+        sink.enable_encryption(&secret).unwrap();
+        let frame = sink.encode_frame(&payload).unwrap();
+        let enc = sink.encrypt_frame(&frame);
+        let key: [u8; 16] = secret;
+        let iv = key;
+        let mut dec = cfb8::Decryptor::<aes::Aes128>::new(&key.into(), &iv.into());
+        let mut plain = enc.to_vec();
+        dec.decrypt(&mut plain);
+        // 找 dataLen：跳过帧长 VarInt
+        use qexed_packet::PacketCodec as _;
+        let mut buf = BytesMut::from(plain.as_slice());
+        let mut r = qexed_packet::PacketReader::new(&mut buf);
+        let mut total = qexed_packet::net_types::VarInt::default();
+        total.deserialize(&mut r).unwrap();
+        let body_off = plain.len() - buf.len();
+        let body = &plain[body_off..];
+        let mut b2 = BytesMut::from(body);
+        let mut r2 = qexed_packet::PacketReader::new(&mut b2);
+        let mut data_len = qexed_packet::net_types::VarInt::default();
+        data_len.deserialize(&mut r2).unwrap();
+        assert_eq!(data_len.0 as usize, payload.len());
+        let zlib_off = body.len() - b2.len();
+        let zlib_bytes = &body[zlib_off..];
+        let mut out = Vec::new();
+        use std::io::Read as _;
+        flate2::read::ZlibDecoder::new(zlib_bytes).read_to_end(&mut out).unwrap();
+        assert_eq!(out, payload);
     }
 }

@@ -1,4 +1,4 @@
-﻿//! 生存状态机（v4 play/survival.rs 迁移）。
+//! 生存状态机（v4 play/survival.rs 迁移）。
 //!
 //! v6 适配：GameMode/Spawn 用 crate::config；EntityPosition 用
 //! qexed_protocol::types（v4 在 add_entity 包内）；StoredSurvival 未从
@@ -63,7 +63,7 @@ const NATURAL_REGEN_FOOD_THRESHOLD: i32 = 18;
 const NATURAL_REGEN_EXHAUSTION: f32 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeathMessage {
+pub enum DeathMessage {
     Starve,
     OutOfWorld,
     Fall(FallLocation),
@@ -77,7 +77,7 @@ pub(crate) enum DeathMessage {
 }
 
 impl DeathMessage {
-    pub(crate) fn translation_key(self) -> &'static str {
+    pub fn translation_key(self) -> &'static str {
         match self {
             Self::Starve => "death.attack.starve",
             Self::OutOfWorld => "death.attack.outOfWorld",
@@ -94,7 +94,7 @@ impl DeathMessage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FallLocation {
+pub enum FallLocation {
     Generic,
     Ladder,
     Vines,
@@ -119,7 +119,7 @@ impl FallLocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct FallContext {
+pub struct FallContext {
     pub in_lava: bool,
     pub landing: FallLanding,
     pub climbable: Option<FallLocation>,
@@ -136,7 +136,7 @@ impl Default for FallContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum FallLanding {
+pub enum FallLanding {
     Generic,
     Bed,
     Hay,
@@ -147,18 +147,18 @@ pub(crate) enum FallLanding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SurvivalDamage {
+pub enum SurvivalDamage {
     None,
     Damaged,
     Died(DeathMessage),
 }
 
 impl SurvivalDamage {
-    pub(crate) fn changed(self) -> bool {
+    pub fn changed(self) -> bool {
         !matches!(self, Self::None)
     }
 
-    pub(crate) fn death_message(self) -> Option<DeathMessage> {
+    pub fn death_message(self) -> Option<DeathMessage> {
         match self {
             Self::Died(message) => Some(message),
             _ => None,
@@ -167,7 +167,7 @@ impl SurvivalDamage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SurvivalState {
+pub struct SurvivalState {
     health: f32,
     food: i32,
     saturation: f32,
@@ -180,7 +180,7 @@ pub(crate) struct SurvivalState {
 }
 
 impl SurvivalState {
-    pub(crate) fn from_stored(stored: StoredSurvival, game_mode: GameMode) -> Self {
+    pub fn from_stored(stored: StoredSurvival, game_mode: GameMode) -> Self {
         let mut health = finite_or_default(stored.health, MAX_HEALTH).clamp(0.0, MAX_HEALTH);
         let mut food = stored.food.clamp(0, MAX_FOOD);
         let mut saturation =
@@ -205,7 +205,7 @@ impl SurvivalState {
         }
     }
 
-    pub(crate) fn to_stored(self) -> StoredSurvival {
+    pub fn to_stored(self) -> StoredSurvival {
         StoredSurvival {
             health: self.health,
             food: self.food,
@@ -213,7 +213,7 @@ impl SurvivalState {
         }
     }
 
-    pub(crate) fn health_packet(self) -> SetHealth {
+    pub fn health_packet(self) -> SetHealth {
         SetHealth {
             health: self.health,
             food: VarInt(self.food),
@@ -221,7 +221,7 @@ impl SurvivalState {
         }
     }
 
-    pub(crate) fn is_dead(self) -> bool {
+    pub fn is_dead(self) -> bool {
         self.dead
     }
 
@@ -231,7 +231,7 @@ impl SurvivalState {
             .unwrap_or(DeathMessage::Fall(FallLocation::Generic))
     }
 
-    pub(crate) fn respawn(&mut self) {
+    pub fn respawn(&mut self) {
         self.health = MAX_HEALTH;
         self.food = MAX_FOOD;
         self.saturation = DEFAULT_SATURATION;
@@ -265,7 +265,7 @@ impl SurvivalState {
         self.food != previous_food || (self.saturation - previous_saturation).abs() > f32::EPSILON
     }
 
-    pub(crate) fn tick(&mut self, game_mode: GameMode, elapsed: Duration) -> SurvivalDamage {
+    pub fn tick(&mut self, game_mode: GameMode, elapsed: Duration) -> SurvivalDamage {
         if game_mode != GameMode::Survival || self.dead {
             self.starvation_timer = Duration::ZERO;
             self.natural_regen_timer = Duration::ZERO;
@@ -316,7 +316,7 @@ impl SurvivalState {
         }
     }
 
-    pub(crate) fn apply_movement(
+    pub fn apply_movement(
         &mut self,
         game_mode: GameMode,
         previous: EntityPosition,
@@ -362,7 +362,7 @@ impl SurvivalState {
         self.apply_damage(damage as f32, death_message)
     }
 
-    pub(crate) fn apply_damage(
+    pub fn apply_damage(
         &mut self,
         amount: f32,
         death_message: DeathMessage,
@@ -385,7 +385,7 @@ impl SurvivalState {
         }
     }
 
-    pub(crate) fn heal(&mut self, amount: f32) -> bool {
+    pub fn heal(&mut self, amount: f32) -> bool {
         if amount <= 0.0 || self.dead || self.health >= MAX_HEALTH {
             return false;
         }
@@ -485,6 +485,92 @@ pub(crate) fn spawn_position(spawn: &Spawn) -> EntityPosition {
 
 fn finite_or_default(value: f32, default: f32) -> f32 {
     if value.is_finite() { value } else { default }
+}
+
+
+// ── gameplay hooks 装配层辅助（死亡消息协议化） ──
+
+/// 死亡消息翻译键 -> 已编码 SystemChat 广播包（v4 broadcast_death_message）。
+///
+/// 协议语义：死亡消息是 translatable 组件（如 death.attack.starve），with 参数
+/// 为死亡玩家名。返回已编码字节，供 PlayerManager::broadcast_packets_except 与
+/// 会话自身 sink.send_raw 共用同一份负载。
+pub fn death_message_broadcast_packet(
+    players: &qexed_player::PlayerManager,
+    message: DeathMessage,
+    actor: uuid::Uuid,
+) -> std::result::Result<bytes::Bytes, qexed_player::PlayerError> {
+    qexed_player::packet_bytes(qexed_protocol::to_client::play::system_chat::SystemChat {
+        content: crate::util::translatable_component(
+            message.translation_key(),
+            vec![crate::util::text_component(players.display_name(actor))],
+        ),
+        overlay: false,
+    })
+}
+
+/// 外部伤害死亡消息（v4 broadcast_external_death_message）。
+///
+/// 与 [`DeathMessage::translation_key`] 的区别：外部伤害按伤害类型 + 来源实体
+/// 名称选择更具体的翻译键（death.attack.mob / death.attack.arrow /
+/// death.attack.explosion.player 等）。
+pub fn external_death_message_broadcast_packet(
+    players: &qexed_player::PlayerManager,
+    entities: &qexed_entities::EntityManager,
+    kind: qexed_player::PlayerDamageKind,
+    source_entity_id: i32,
+    actor: uuid::Uuid,
+) -> std::result::Result<bytes::Bytes, qexed_player::PlayerError> {
+    let actor_name = crate::util::text_component(players.display_name(actor));
+    let source_name =
+        external_damage_source_name(entities, source_entity_id).map(crate::util::text_component);
+    let (key, with) = match (kind, source_name) {
+        (qexed_player::PlayerDamageKind::MobAttack, Some(source)) => {
+            ("death.attack.mob", vec![actor_name, source])
+        }
+        (qexed_player::PlayerDamageKind::Projectile, Some(source)) => {
+            ("death.attack.arrow", vec![actor_name, source])
+        }
+        (qexed_player::PlayerDamageKind::Explosion, Some(source)) => ("death.attack.explosion.player", vec![actor_name, source]),
+        (qexed_player::PlayerDamageKind::Explosion, None) => ("death.attack.explosion", vec![actor_name]),
+        (qexed_player::PlayerDamageKind::Magic, _) => ("death.attack.magic", vec![actor_name]),
+        _ => ("death.attack.generic", vec![actor_name]),
+    };
+    qexed_player::packet_bytes(qexed_protocol::to_client::play::system_chat::SystemChat {
+        content: crate::util::translatable_component(key, with),
+        overlay: false,
+    })
+}
+
+/// 外部伤害死亡消息键（v4 external_damage_death_message；DeathMessage 折叠版）。
+pub fn external_damage_death_message(kind: qexed_player::PlayerDamageKind) -> DeathMessage {
+    match kind {
+        qexed_player::PlayerDamageKind::Explosion => DeathMessage::Explosion,
+        qexed_player::PlayerDamageKind::Magic => DeathMessage::Magic,
+        qexed_player::PlayerDamageKind::Generic
+        | qexed_player::PlayerDamageKind::MobAttack
+        | qexed_player::PlayerDamageKind::Projectile => DeathMessage::Generic,
+    }
+}
+
+/// 来源实体显示名（v4 external_damage_source_name）。
+fn external_damage_source_name(
+    entities: &qexed_entities::EntityManager,
+    source_entity_id: i32,
+) -> Option<String> {
+    let entity = entities.entity_by_runtime_id(source_entity_id)?;
+    if !entity.display_name.trim().is_empty() {
+        return Some(entity.display_name);
+    }
+    if !entity.name.trim().is_empty() {
+        return Some(entity.name);
+    }
+    Some(
+        entity
+            .entity_type
+            .trim_start_matches("minecraft:")
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

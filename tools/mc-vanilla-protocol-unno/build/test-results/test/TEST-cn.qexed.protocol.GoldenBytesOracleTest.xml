@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="cn.qexed.protocol.GoldenBytesOracleTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-06T12:49:49.172Z" hostname="LAPTOP-JN7528PU" time="0.357">
+  <properties/>
+  <testcase name="interactPacketGoldenBytes()" classname="cn.qexed.protocol.GoldenBytesOracleTest" time="0.343"/>
+  <testcase name="attackPacketGoldenBytes()" classname="cn.qexed.protocol.GoldenBytesOracleTest" time="0.001"/>
+  <system-out><![CDATA[INTERACT(id=42,mainHand) = 2a00fc0b84fffffa1000
+ATTACK(entityId=300)      = ac02
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

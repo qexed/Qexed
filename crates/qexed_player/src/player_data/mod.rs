@@ -1,3 +1,4 @@
+mod database;
 mod model;
 mod vanilla;
 
@@ -53,7 +54,7 @@ pub struct PlayerDataLockGuard {
 }
 
 impl PlayerDataManager {
-    /// 从配置构造（v6：vanilla 引擎用 world_path；mongodb/mysql 见 TODO(storage)）。
+    /// 从配置构造（vanilla 引擎用 world_path；mongodb/mysql 引擎连接失败回退 Disabled）。
     pub async fn from_config(
         world_path: impl Into<PathBuf>,
         config: &crate::config::PlayerDataConfig,
@@ -71,28 +72,34 @@ impl PlayerDataManager {
                 let world_path = world_path.into();
                 Arc::new(VanillaPlayerDataStore::new(world_path.join("playerdata")))
             }
-            // TODO(storage): v6 workspace 无 mongodb/mysql 依赖。
-            // Mongodb 引擎迁移方案：MongoPlayerDataStore::new(&config.mongodb, &config.collection)
-            // —— 依赖 qexed_config 补 MongoConfig + mongodb crate 进 workspace 后在
-            //    player_data/database.rs 实现 PlayerDataStore trait（v4 代码见 qexed-v4）。
             crate::config::PlayerDataEngine::Mongodb => {
-                log::warn!(
-                    "{}",
-                    qexed_language::t("qexed.player.data.storage_unavailable")
-                        .replace("%{engine}", "mongodb")
-                );
-                Arc::new(DisabledPlayerDataStore)
+                match database::MongoPlayerDataStore::new(&config.mongodb, &config.collection).await {
+                    Ok(store) => Arc::new(store),
+                    Err(err) => {
+                        // 连接失败回退 Disabled 并 warn（不 panic）：玩家数据改用出生点默认值。
+                        log::warn!(
+                            "{}",
+                            qexed_language::t("qexed.player.data.storage_unavailable")
+                                .replace("%{engine}", "mongodb")
+                                .replace("%{error}", &format!("{err:#}"))
+                        );
+                        Arc::new(DisabledPlayerDataStore)
+                    }
+                }
             }
-            // TODO(storage): v6 workspace 无 mongodb/mysql 依赖。
-            // Mysql 引擎迁移方案：MysqlPlayerDataStore::new(&config.mysql, &config.table)
-            // —— 同上，依赖 qexed_config 补 MysqlConfig + mysql_async crate 进 workspace。
             crate::config::PlayerDataEngine::Mysql => {
-                log::warn!(
-                    "{}",
-                    qexed_language::t("qexed.player.data.storage_unavailable")
-                        .replace("%{engine}", "mysql")
-                );
-                Arc::new(DisabledPlayerDataStore)
+                match database::MysqlPlayerDataStore::new(&config.mysql, &config.table).await {
+                    Ok(store) => Arc::new(store),
+                    Err(err) => {
+                        log::warn!(
+                            "{}",
+                            qexed_language::t("qexed.player.data.storage_unavailable")
+                                .replace("%{engine}", "mysql")
+                                .replace("%{error}", &format!("{err:#}"))
+                        );
+                        Arc::new(DisabledPlayerDataStore)
+                    }
+                }
             }
         };
         Ok(Self {
@@ -175,20 +182,9 @@ impl PlayerDataManager {
 
 /// 玩家数据存储后端接口。
 ///
-/// # TODO(storage)
-/// v4 的 mongodb / mysql 实现（database.rs）依赖 v6 workspace 尚未引入的
-/// mongodb / mysql_async crate，暂不迁移；恢复时在此 trait 上实现：
-/// - MongoPlayerDataStore：update_one upsert + payload JSON + raw_nbt Binary + 租约锁
-/// - MysqlPlayerDataStore：GET_LOCK/RELEASE_LOCK + upsert SQL
-/// v4 参考实现：qexed-v4/crates/qexed/src/player_data/database.rs
-/// 玩家数据存储后端接口。
-///
-/// # TODO(storage)
-/// v4 的 mongodb / mysql 实现（database.rs）依赖 v6 workspace 尚未引入的
-/// mongodb / mysql_async crate，暂不迁移；恢复时在此 trait 上实现：
-/// - MongoPlayerDataStore：update_one upsert + payload JSON + raw_nbt Binary + 租约锁
-/// - MysqlPlayerDataStore：GET_LOCK/RELEASE_LOCK + upsert SQL
-/// v4 参考实现：qexed-v4/crates/qexed/src/player_data/database.rs
+/// 实现：vanilla（原版 .dat）、database::MongoPlayerDataStore（update_one upsert +
+/// payload JSON + raw_nbt Binary + 租约锁）、database::MysqlPlayerDataStore
+/// （GET_LOCK/RELEASE_LOCK + upsert SQL）、DisabledPlayerDataStore（禁用回退）。
 pub trait PlayerDataStore: Send + Sync + std::fmt::Debug {
     fn lock(
         &self,

@@ -25,10 +25,11 @@ use crate::{
 
 type Result<T> = std::result::Result<T, EntitiesError>;
 
-/// 方块形状/名称源（默认实现：未知状态视为整块，空气返回 None）。
+/// 方块形状/名称源。
 ///
-/// v4 从 inventory 域的注册表数据取精确碰撞箱；v6 该数据源未迁移，
-/// server 域组装时可调用 [`install_block_shape_source`] 注入真实实现。
+/// 默认实现是 crate::block_shapes::ReportBlockShapes（blocks.json 报告
+/// 运行时加载，OnceLock 缓存，v4 inventory 域精确碰撞箱语义）；
+/// server 域组装时可用 install_block_shape_source 覆盖为自定义实现。
 static BLOCK_SHAPES: std::sync::OnceLock<Box<dyn crate::context::BlockShapeSource>> =
     std::sync::OnceLock::new();
 
@@ -38,39 +39,9 @@ pub fn install_block_shape_source(source: Box<dyn crate::context::BlockShapeSour
 }
 
 fn block_shapes() -> &'static dyn crate::context::BlockShapeSource {
-    BLOCK_SHAPES.get().map(|b| b.as_ref()).unwrap_or(&DefaultBlockShapes)
-}
-
-/// 兜底形状源：未注入时使用。
-struct DefaultBlockShapes;
-
-impl crate::context::BlockShapeSource for DefaultBlockShapes {
-    fn block_collision_shape(&self, block_state: i32) -> Option<crate::context::BlockCollisionShape> {
-        if self.is_air_block_state(block_state) {
-            None
-        } else {
-            Some(crate::context::BlockCollisionShape {
-                min_x: 0.0,
-                min_y: 0.0,
-                min_z: 0.0,
-                max_x: 1.0,
-                max_y: 1.0,
-                max_z: 1.0,
-            })
-        }
-    }
-
-    fn block_name_for_state(&self, block_state: i32) -> Option<String> {
-        (block_state != 0).then(|| "minecraft:stone".to_string())
-    }
-
-    fn is_air_block_state(&self, block_state: i32) -> bool {
-        block_state == 0
-    }
-
-    fn air_block_state(&self) -> i32 {
-        0
-    }
+    static REPORT_SHAPES: crate::block_shapes::ReportBlockShapes =
+        crate::block_shapes::ReportBlockShapes;
+    BLOCK_SHAPES.get().map(|b| b.as_ref()).unwrap_or(&REPORT_SHAPES)
 }
 
 /// 通过全局源取碰撞箱（pathfinding 复用）。
@@ -1870,7 +1841,7 @@ impl EntityManager {
         simplify_stacked_entities(entities, rendering)
     }
 
-    pub(crate) fn managed_entity_view_packets(
+    pub fn managed_entity_view_packets(
         &self,
         dimension: &str,
         viewer_position: EntityPosition,
@@ -2858,19 +2829,16 @@ impl CollisionCache {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // TODO(storage/network): 网络域接回后恢复使用
 struct MojangNameLookup {
     id: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // TODO(storage/network)
 struct MojangProfile {
     properties: Vec<MojangProperty>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // TODO(storage/network)
 struct MojangProperty {
     name: String,
     value: String,
@@ -2878,23 +2846,75 @@ struct MojangProperty {
     signature: Option<String>,
 }
 
-// TODO(storage/network): v4 用 reqwest 访问 Mojang session server 解析 NPC 皮肤；
-// v6 workspace 无 HTTP 客户端，待 network 域迁移后恢复实现。
-async fn resolve_skin_by_player_id(
-    _client: &SkinLookupClient,
-    player_id: &str,
-) -> Result<Option<MojangProperty>> {
-    let _ = player_id;
-    Err(EntitiesError::NpcSkinLookupUnavailable {
-        player_id: player_id.to_string(),
-    })
-}
-
-/// 占位 HTTP 客户端类型（网络域迁移后替换为真实客户端）。
+/// NPC 皮肤查询客户端（Mojang session server，v4 语义）。
+///
+/// 内部复用一个惰性初始化的 reqwest::Client；未联网/被墙时查询返回
+/// Err 并由调用方记警告日志，实体仍以无皮肤状态生成。
 #[derive(Debug, Default)]
 pub struct SkinLookupClient;
 
-#[cfg_attr(not(test), allow(dead_code))] // TODO(storage/network)
+impl SkinLookupClient {
+    fn http(&self) -> &'static reqwest::Client {
+        static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        CLIENT.get_or_init(|| reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default())
+    }
+}
+
+/// 解析 NPC 皮肤（v4 resolve_skin_by_player_id）：
+/// 1. player_id 是 UUID → 直接查 session server；
+/// 2. 是玩家名 → 先经 api.mojang.com 换 UUID；
+/// 3. 取 profile.properties 里的 textures 属性（value + signature）。
+async fn resolve_skin_by_player_id(
+    client: &SkinLookupClient,
+    player_id: &str,
+) -> Result<Option<MojangProperty>> {
+    let Some(uuid) = resolve_uuid(client, player_id).await? else {
+        return Ok(None);
+    };
+
+    let url = format!(
+        "https://sessionserver.mojang.com/session/minecraft/profile/{uuid}?unsigned=false"
+    );
+    let response = client.http().get(url).send().await?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT
+        || response.status() == reqwest::StatusCode::NOT_FOUND
+    {
+        return Ok(None);
+    }
+    let response = response.error_for_status()?;
+    let profile: MojangProfile = response.json().await?;
+    Ok(profile
+        .properties
+        .into_iter()
+        .find(|property| property.name == "textures"))
+}
+
+/// 玩家名/UUID → 无横线 UUID（v4 resolve_uuid）。
+async fn resolve_uuid(client: &SkinLookupClient, player_id: &str) -> Result<Option<String>> {
+    if let Some(uuid) = normalize_uuid(player_id) {
+        return Ok(Some(uuid));
+    }
+
+    let name = player_id.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+
+    let url = format!("https://api.mojang.com/users/profiles/minecraft/{name}");
+    let response = client.http().get(url).send().await?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT
+        || response.status() == reqwest::StatusCode::NOT_FOUND
+    {
+        return Ok(None);
+    }
+    let response = response.error_for_status()?;
+    let data: MojangNameLookup = response.json().await?;
+    Ok(Some(data.id))
+}
+
 pub(crate) fn normalize_uuid(input: &str) -> Option<String> {
     let id = input.trim();
     if id.is_empty() {

@@ -153,6 +153,56 @@ impl MenuRuntime {
         changes
     }
 
+    /// v4 sync_hotbar_items(inventory) 的 v6 等价：直接操作 play 域的
+    /// PlayerInventory（&mut），供 chat 的插件 ResetInventory 恢复菜单物品。
+    pub fn sync_hotbar_items_inventory(
+        &self,
+        items: &dyn ItemRegistry,
+        inventory: &mut crate::inventory::PlayerInventory,
+    ) -> Vec<usize> {
+        if !self.enabled() {
+            return Vec::new();
+        }
+
+        let mut changes = Vec::new();
+        let configured_slots = self
+            .config
+            .hotbar_items
+            .iter()
+            .map(|item| usize::from(item.slot.min(8)))
+            .collect::<HashSet<_>>();
+
+        if !self.config.fixed_slots_only && self.config.reset_inventory_on_join {
+            for slot in 0..9 {
+                if configured_slots.contains(&slot) {
+                    continue;
+                }
+                if inventory.set_hotbar_slot(slot, items.empty_slot()).is_some() {
+                    changes.push(slot);
+                }
+            }
+        }
+
+        for item in &self.config.hotbar_items {
+            let slot = usize::from(item.slot.min(8));
+            if !self.config.reset_inventory_on_join
+                && inventory
+                    .hotbar_item(slot)
+                    .is_some_and(|existing| existing.item_count.0 > 0)
+            {
+                continue;
+            }
+            if inventory
+                .set_hotbar_slot(slot, hotbar_slot_item(items, item))
+                .is_some()
+            {
+                changes.push(slot);
+            }
+        }
+
+        changes
+    }
+
     pub fn fixed_hotbar_slot(&self, slot: usize) -> bool {
         if !self.enabled() {
             return false;
@@ -528,11 +578,8 @@ mod tests {
             }
         }
         fn simple_item(&self, item_id: i32, count: i32) -> Slot {
-            Slot {
-                item_count: V(count),
-                item_id: Some(V(item_id)),
-                ..Slot::default()
-            }
+            // 26.3 Slot 序列化要求 item_count>0 时 components 计数字段存在。
+            crate::inventory::simple_item(item_id, count)
         }
         fn empty_slot(&self) -> Slot {
             Slot::default()
@@ -544,17 +591,31 @@ mod tests {
         slots: std::sync::Mutex<Vec<Option<Slot>>>,
     }
 
-    impl HotbarSync for TestHotbar {
+    /// 空槽语义与 PlayerInventory 对齐：None 与 Some(空物品) 等价（写空不算变更）。
+fn is_empty_hotbar_slot(slot: &Option<Slot>) -> bool {
+    slot.as_ref().is_none_or(|item| item.item_count.0 <= 0)
+}
+
+impl HotbarSync for TestHotbar {
         fn hotbar_item(&self, slot: usize) -> Option<Slot> {
-            self.slots.lock().unwrap().get(slot).cloned().flatten()
+            self.slots
+                .lock()
+                .unwrap()
+                .get(slot)
+                .cloned()
+                .flatten()
+                .filter(|item| item.item_count.0 > 0)
         }
         fn set_hotbar_slot(&self, slot: usize, item: Slot) -> bool {
             let mut slots = self.slots.lock().unwrap();
             while slots.len() <= slot {
                 slots.push(None);
             }
-            let changed = slots[slot].as_ref() != Some(&item);
-            slots[slot] = Some(item);
+            let was_empty = is_empty_hotbar_slot(&slots[slot]);
+            let now_empty = item.item_count.0 <= 0;
+            let changed = was_empty != now_empty
+                || (!was_empty && slots[slot].as_ref() != Some(&item));
+            slots[slot] = (!now_empty).then_some(item);
             changed
         }
         fn hotbar_slots(&self) -> Vec<Option<Slot>> {
@@ -563,7 +624,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "TODO(data): 依赖注册表数据"]
     async fn menu_click_resyncs_content_before_returning_action() {
         let runtime = MenuRuntime::new(&Menus {
             enable: true,
@@ -679,7 +739,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn sync_hotbar_items_only_overwrites_configured_slots_by_default() {
         let runtime = MenuRuntime::new(&Menus {
             enable: true,
@@ -702,8 +761,9 @@ mod tests {
         assert!(runtime.reset_inventory_on_join());
         let changes = runtime.sync_hotbar_items(&TestItems, &hotbar);
 
-        // reset_inventory_on_join + 非 fixed_slots_only：清空 8 个未配置槽 + 写入 1 个配置槽
-        assert_eq!(changes.len(), 9);
+        // reset_inventory_on_join + 非 fixed_slots_only：清空未配置槽（空槽不产生变更）+
+        // 写入 1 个配置槽（v4 同名测试断言 1 次变更：只覆写已配置的槽）。
+        assert_eq!(changes.len(), 1);
         assert!(runtime.fixed_hotbar_slot(4));
         assert!(!runtime.fixed_hotbar_slot(3));
         let item = hotbar.hotbar_item(4).unwrap();

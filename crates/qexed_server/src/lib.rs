@@ -22,6 +22,7 @@ pub mod context;
 pub mod error;
 pub mod l10n;
 pub mod placeholders;
+pub mod resource_pack;
 pub mod server;
 pub mod services;
 pub mod status;

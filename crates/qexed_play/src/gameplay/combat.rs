@@ -1,4 +1,4 @@
-﻿//! 玩家攻击实体（v4 play/gameplay/combat.rs 迁移）。
+//! 玩家攻击实体（v4 play/gameplay/combat.rs 迁移）。
 //!
 //! v6 适配：
 //! - 集群实体伤害（v4 ClusterEntityController::damage_entity）经本文件定义的
@@ -362,6 +362,40 @@ where
     sink.send(packet).await?;
     players.broadcast_packets_except(uuid::Uuid::nil(), vec![bytes]);
     Ok(())
+}
+
+
+// ── gameplay hooks 装配层辅助（外部伤害反馈） ──
+
+/// 受击朝向：从伤害来源反推受击动画 yaw（v4 damage_yaw_from_source）。
+pub fn damage_yaw_from_source(
+    position: EntityPosition,
+    source: EntityPosition,
+) -> f32 {
+    let dx = source.x - position.x;
+    let dz = source.z - position.z;
+    if dx.abs() <= f64::EPSILON && dz.abs() <= f64::EPSILON {
+        return position.yaw;
+    }
+    (dz.atan2(dx).to_degrees() as f32) - 90.0
+}
+
+/// 外部伤害击退速度（v4 external_damage_knockback）。
+pub fn external_damage_knockback_packet(
+    entity_id: i32,
+    position: EntityPosition,
+    source: EntityPosition,
+    strength: f32,
+) -> SetEntityMotion {
+    let dx = position.x - source.x;
+    let dz = position.z - source.z;
+    let length = (dx * dx + dz * dz).sqrt().max(0.0001);
+    SetEntityMotion {
+        id: VarInt(entity_id),
+        movement_x: dx / length * f64::from(strength),
+        movement_y: 0.35,
+        movement_z: dz / length * f64::from(strength),
+    }
 }
 
 fn base_attack_damage(slot: &qexed_protocol::types::Slot) -> f32 {

@@ -1,8 +1,10 @@
 use bytes::Bytes;
-use qexed_config::app::qexed::server::Scoreboard;
 use qexed_protocol::to_client::play::{
     set_display_objective::SetDisplayObjective, set_objective::SetObjective, set_score::SetScore,
 };
+
+use crate::config::Scoreboard;
+use crate::context::PlaceholderContext;
 
 use super::util::text_component;
 
@@ -87,7 +89,7 @@ pub(super) fn custom_sidebar_packets(
 pub(super) fn clear_sidebar_packet(objective: &str) -> crate::error::Result<Vec<Bytes>> {
     Ok(vec![
         packet_bytes(SetDisplayObjective::clear_sidebar())?,
-        packet_bytes(SetObjective::remove(objective_name(objective)))?,
+        packet_bytes(set_objective_remove(objective_name(objective)))?,
     ])
 }
 
@@ -102,7 +104,7 @@ fn sidebar_packets_with_lines(
 
     let objective_name = objective_name(&config.objective);
     let mut packets = vec![
-        packet_bytes(SetObjective::create(
+        packet_bytes(set_objective_create(
             objective_name.clone(),
             text_component(title.unwrap_or(&config.title)),
         ))?,
@@ -132,8 +134,8 @@ fn render_lobby_lines(
     max_players: i32,
 ) -> Vec<String> {
     let labels = lobby.server_labels(status);
-    let context = qexed_server::placeholders::PlaceholderContext {
-        online_players,
+    let context = PlaceholderContext {
+        online_players: online_players as i32,
         max_players,
         lobby_online_servers: lobby.online_server_count(status),
         lobby_total_servers: lobby.total_server_count(status),
@@ -147,7 +149,7 @@ fn render_lobby_lines(
         .lines
         .iter()
         .map(|line| {
-            qexed_server::placeholders::format_placeholders(
+            render_placeholders(
                 placeholders_enabled,
                 plugins,
                 Some(player),
@@ -157,6 +159,81 @@ fn render_lobby_lines(
         })
         .collect()
 }
+
+/**
+ * 本地占位符渲染（v4 qexed_server::placeholders::format_placeholders 的 play 子集）。
+ *
+ * 迁移规则禁止 qexed_play 依赖 qexed_server，因此侧边栏只用原生占位符
+ * （%online_players% 等全局/大厅 token + {servers} 大括号别名）；插件占位符
+ * （PlaceholderProvider 查询）归 server 域，TODO(assembly)：装配层若需完整
+ * 插件占位符，经 context::PlaceholderRenderer 注入后替换本实现。
+ */
+fn render_placeholders(
+    enabled: bool,
+    plugins: &qexed_plugins::PluginManager,
+    player: Option<&qexed_player::OnlinePlayer>,
+    text: &str,
+    context: &PlaceholderContext,
+) -> String {
+    let _ = plugins;
+    if !enabled {
+        return text.to_string();
+    }
+    let mut rendered = text.to_string();
+    rendered = rendered
+        .replace("%online_players%", &context.online_players.to_string())
+        .replace("%max_players%", &context.max_players.to_string())
+        .replace(
+            "%lobby_online_servers%",
+            &context.lobby_online_servers.to_string(),
+        )
+        .replace(
+            "%lobby_total_servers%",
+            &context.lobby_total_servers.to_string(),
+        )
+        .replace("%lobby_servers%", &context.lobby_servers)
+        .replace("{online_servers}", &context.lobby_online_servers.to_string())
+        .replace("{total_servers}", &context.lobby_total_servers.to_string())
+        .replace("{servers}", &context.lobby_servers);
+    if let Some(player) = player {
+        rendered = rendered
+            .replace("%player_name%", &player.profile.username)
+            .replace("%player_uuid%", &player.profile.uuid.to_string())
+            .replace("%player_language%", &player.language)
+            .replace("%player_dimension%", &player.dimension);
+    }
+    rendered
+}
+
+/// v4 SetObjective::create 的本地等价（v6 协议 crate 无该构造器）。
+pub(super) fn set_objective_create(
+    objective_name: impl Into<String>,
+    display_name: qexed_protocol::types::TextComponent,
+) -> SetObjective {
+    SetObjective {
+        objective_name: objective_name.into(),
+        method: METHOD_OBJECTIVE_ADD,
+        display_name,
+        render_type: qexed_packet::net_types::VarInt(RENDER_TYPE_INTEGER),
+        number_format: None,
+    }
+}
+
+/// v4 SetObjective::remove 的本地等价。
+pub(super) fn set_objective_remove(objective_name: impl Into<String>) -> SetObjective {
+    SetObjective {
+        objective_name: objective_name.into(),
+        method: METHOD_OBJECTIVE_REMOVE,
+        display_name: qexed_protocol::types::TextComponent::default(),
+        render_type: qexed_packet::net_types::VarInt(RENDER_TYPE_INTEGER),
+        number_format: None,
+    }
+}
+
+/// SetObjective method 字段取值（v4 set_objective::METHOD_*；26.3 语义不变）。
+pub(super) const METHOD_OBJECTIVE_ADD: i8 = 0;
+const METHOD_OBJECTIVE_REMOVE: i8 = 1;
+const RENDER_TYPE_INTEGER: i32 = 0;
 
 fn objective_name(configured: &str) -> String {
     let mut name: String = configured
@@ -175,12 +252,12 @@ fn line_owner(index: usize) -> String {
 }
 
 fn packet_bytes<T: qexed_packet::Packet>(packet: T) -> crate::error::Result<Bytes> {
-    qexed_player::packet_bytes(packet)
+    qexed_player::packet_bytes(packet).map_err(crate::error::PlayError::from)
 }
 
 #[cfg(test)]
 mod tests {
-    use qexed_config::app::qexed::server::Scoreboard;
+    use crate::config::Scoreboard;
     use qexed_packet::{Packet, PacketCodec, PacketReader, net_types::VarInt};
     use qexed_protocol::to_client::play::{
         set_display_objective::SetDisplayObjective, set_objective::SetObjective,
@@ -212,10 +289,7 @@ mod tests {
 
         let objective = decode_packet::<SetObjective>(&packets[0]);
         assert_eq!(objective.objective_name, "qexed.exampleobj");
-        assert_eq!(
-            objective.method,
-            qexed_protocol::to_client::play::set_objective::METHOD_ADD
-        );
+        assert_eq!(objective.method, super::METHOD_OBJECTIVE_ADD);
 
         let first_score = decode_packet::<SetScore>(&packets[2]);
         assert_eq!(first_score.owner, "qexed_line_0");
@@ -240,7 +314,7 @@ mod tests {
             ],
         };
         let lobby =
-            super::super::lobby::LobbyRuntime::new(&qexed_config::app::qexed::server::Lobby {
+            super::super::lobby::LobbyRuntime::new(&crate::config::Lobby {
                 enable: true,
                 menu_items: vec![
                     transfer_item(10, "survival", "Survival"),
@@ -317,7 +391,7 @@ mod tests {
             },
             entity_id: 1,
             game_mode: 0,
-            position: qexed_protocol::to_client::play::qexed_protocol::types::EntityPosition::default(),
+            position: qexed_protocol::types::EntityPosition::default(),
             dimension: "minecraft:overworld".to_string(),
             equipment: Vec::new(),
             language: "en_us".to_string(),
@@ -329,12 +403,12 @@ mod tests {
         slot: u8,
         target: &str,
         name: &str,
-    ) -> qexed_config::app::qexed::server::LobbyMenuItem {
-        qexed_config::app::qexed::server::LobbyMenuItem {
+    ) -> crate::config::LobbyMenuItem {
+        crate::config::LobbyMenuItem {
             slot,
             name: name.to_string(),
-            action: qexed_config::app::qexed::server::LobbyAction {
-                kind: qexed_config::app::qexed::server::LobbyActionKind::Transfer,
+            action: crate::config::LobbyAction {
+                kind: crate::config::LobbyActionKind::Transfer,
                 target: target.to_string(),
                 message: String::new(),
             },

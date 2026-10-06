@@ -185,7 +185,8 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         };
 
         let value_type: syn::Expr = if is_sub {
-            syn::parse_quote!(stringify!(#ty))
+            // stringify! 产出 &'static str，doc_field 的 value_type 参数是 String。
+            syn::parse_quote!(stringify!(#ty).to_string())
         } else {
             syn::parse_quote!(<#meta_ty as qexed_doc::DocValue>::type_label())
         };

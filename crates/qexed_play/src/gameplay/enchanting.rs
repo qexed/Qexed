@@ -1262,7 +1262,6 @@ mod tests {
     const DIMENSION: &str = "minecraft:overworld";
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn bookshelf_count_requires_clear_transmitter_space() {
         let world = crate::world_access::InMemoryWorld::default();
         let table = BlockPosition { x: 0, y: 64, z: 0 };
@@ -1277,7 +1276,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn config_offer_level_scales_with_bookshelves() {
         let item_id = crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").unwrap();
         let item = crate::inventory::simple_item(item_id, 1);
@@ -1301,7 +1299,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn min_bookshelves_still_filters_locked_options() {
         let item_id = crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").unwrap();
         let item = crate::inventory::simple_item(item_id, 1);
@@ -1322,7 +1319,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn existing_enchantments_respect_reenchanting_config() {
         let item_id = crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").unwrap();
         let mut item = crate::inventory::simple_item(item_id, 1);
@@ -1344,7 +1340,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn vanilla_supported_items_block_misconfigured_crossbow_enchantment_on_pickaxe() {
         let item_id = crate::inventory::item_id_for_name("minecraft:diamond_pickaxe").unwrap();
         let item = crate::inventory::simple_item(item_id, 1);
@@ -1382,7 +1377,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn visible_offer_selection_prefers_previewable_vanilla_pool() {
         let offers = vec![
             test_offer("minecraft:efficiency", 15, false),
@@ -1403,7 +1397,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn high_level_vanilla_offer_can_include_additional_enchantments() {
         let primary = test_offer("minecraft:efficiency", 10, false).with_required_level(30);
         let candidates = vec![
@@ -1429,7 +1422,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang 注册表数据"]
     fn additional_enchantments_skip_vanilla_exclusive_set_conflicts() {
         let primary = test_offer("minecraft:fortune", 10, false).with_required_level(30);
         let candidates = vec![

@@ -7,7 +7,7 @@
 //! - WorldManager/WorldRulesManager -> [`WorldChunkSource`]/[`WorldRulesSource`] trait
 //! - 生存/挖矿/玩法/聊天命令/计分板/Geyser 子系统归 play-gameplay 任务，本核心经
 //!   [`GameplayHooks`] trait 回调（默认 NoGameplay 为 no-op）；
-//!   TODO(play-gameplay)：各子系统迁移后替换为直接调用
+//!   chat 命令已经 ChatCommandDeps 接线（见下）；其余子系统仍经 hook 回调
 //! - 集群实体视图经 [`ClusterEntityView`] trait（None 时跳过）
 //! - SecureChat/Authenticator 经 [`SecureChatHook`] trait
 //! - 内容过滤经 [`ChatFilter`] trait（v4 content_filter；server 域有同名配置）
@@ -160,7 +160,7 @@ pub struct SessionTickContext<'a> {
 
 /// gameplay 域回调面（v4 play.rs 内联调用的 survival/gameplay/mining/chat 等子系统的收敛点）。
 ///
-/// TODO(play-gameplay)：survival / gameplay / mining / chat / scoreboard / geyser /
+/// chat 命令已接线（session_core ChatCommand 分支 + ChatCommandDeps）；
 /// recipes 模块迁移后，装配层实现本 trait 并接通完整逻辑；当前 [`NoGameplay`]
 /// 提供最小 no-op 行为（会话循环照常运转，仅无 gameplay 效果）。
 pub trait GameplayHooks: Send + Sync {
@@ -327,6 +327,9 @@ pub struct PlaySessionDeps<'a> {
     pub gameplay: &'a dyn GameplayHooks,
     pub secure_chat: &'a dyn SecureChatHook,
     pub chat_filter: &'a dyn ChatFilter,
+    /// 聊天命令处理依赖（chat::handle_chat_command 的具体类型面；装配层提供，
+    /// None 时命令退化为 gameplay.handle_command 的默认路径）。
+    pub commands: Option<ChatCommandDeps<'a>>,
     pub cluster: Option<&'a dyn ClusterEntityView>,
     pub display: ServerDisplay,
     pub command_tree: bytes::Bytes,
@@ -334,6 +337,27 @@ pub struct PlaySessionDeps<'a> {
     pub player_entity_type: i32,
 }
 
+/// chat::handle_chat_command 需要的具体依赖面（v4 直接以会话局部变量传入）。
+///
+/// play-core 的会话循环持有 sink/chunk_state/位置等会话态，但 world 结构放置、
+/// WorldRulesManager（gamerule/time 命令的具体方法）、PluginManager（插件命令
+/// 执行）与命令权限是跨会话共享的具体类型，由装配层构造并随
+/// [`PlaySessionDeps`] 注入。背包句柄共享（RealGameplay 已持有同款 Mutex）。
+pub struct ChatCommandDeps<'a> {
+    /// 方块批量放置（/structure、插件 action）。
+    pub world_structure: &'a dyn crate::world_access::WorldStructureSink,
+    /// 维度规则（/time、/gamerule 读写具体方法）。
+    pub world_rules: &'a qexed_world::world::WorldRulesManager,
+    /// 插件命令执行与配置重载。
+    pub plugins: &'a qexed_plugins::PluginManager,
+    /// 命令权限（chat_support::CommandPermissions）。
+    pub permissions: &'a dyn crate::chat_support::CommandPermissions,
+    /// 会话背包（/give、插件 GiveItem/ResetInventory action）。
+    /// 会话背包（/give、插件 GiveItem/ResetInventory action）。
+    /// tokio 互斥锁（Arc 共享）：chat 命令处理是 async，守卫需跨 await 保持 Send。
+    pub inventory:
+        &'a std::sync::Arc<tokio::sync::Mutex<crate::inventory::PlayerInventory>>,
+}
 /// 初始化 play 会话并发包初始状态（v4 play::initialize）。
 pub async fn initialize<R, W>(
     packets: &mut PacketStream<R>,
@@ -533,7 +557,7 @@ async fn wait_for_play_packets<R, W>(
     _player_data_lock: &PlayerDataLockGuard,
     mut play_dimension: String,
     mut chunk_state: ChunkSendState,
-    _next_teleport_id: i32,
+    mut next_teleport_id: i32,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()>
 where
@@ -587,8 +611,9 @@ where
     }
     let mut lobby_broadcast_index = 0usize;
     let mut lobby_menu_open = false;
-    // TODO(play-gameplay)：菜单点击处理接入后恢复使用
-    let _menus = MenuRuntime::new(&deps.config.menus);
+    // 菜单运行时（chat 命令的 /lobby 与插件 OpenMenu action 用；
+    // 点击处理（handle_container_click）待 play-gameplay 迭代接入）。
+    let menus = MenuRuntime::new(&deps.config.menus);
     let mut active_config_menu: Option<String> = None;
     let mut players_hidden = false;
     let mut visible_player_entities = deps
@@ -616,6 +641,9 @@ where
     let (chunk_sender, mut chunk_receiver) = tokio::sync::mpsc::unbounded_channel();
     chunk_state.refresh_pending_chunks();
     let fluid = FluidRuntime::new();
+    // 基岸版表单/自定义 payload 运行时（chat 命令的插件 action 需要）。
+    let mut geyser_runtime = crate::geyser::GeyserRuntime::default();
+    let _ = &mut geyser_runtime;
     let fluid_seeds = chunk_state
         .send_center_chunk_first(sink, &world, deps.plugins)
         .await?;
@@ -1050,8 +1078,88 @@ where
                         "command",
                         &format!("/{}", command.command),
                     );
-                    let ctx = tick_context(session_profile_id, session_entity_id, &play_dimension, position, current_game_mode);
-                    deps.gameplay.handle_command(&ctx, &command.command)?;
+                    // v4 play.rs ChatCommand 分支：命令处理以 chat 域的
+                    // handle_chat_command 为主（依赖面由装配层经
+                    // deps.commands 注入）；未提供时回退到
+                    // gameplay.handle_command 默认实现。
+                    let mut teleport_id = next_teleport_id;
+                    let outcome = match deps.commands.as_ref() {
+                        Some(commands) => {
+                            let mut inventory = commands.inventory.lock().await;
+                            crate::chat::handle_chat_command(
+                                sink,
+                                deps.config,
+                                commands.world_structure,
+                                &world,
+                                commands.world_rules,
+                                deps.players,
+                                &fluid,
+                                deps.entities,
+                                commands.permissions,
+                                commands.plugins,
+                                profile,
+                                session_entity_id,
+                                &command.command,
+                                &lobby,
+                                &mut lobby_status,
+                                &menus,
+                                &mut active_config_menu,
+                                &mut players_hidden,
+                                &mut visible_player_entities,
+                                position,
+                                deps.entity_rendering.player_distance,
+                                &chunk_sender,
+                                &mut chunk_state,
+                                &mut position,
+                                &mut teleport_id,
+                                &mut play_dimension,
+                                &mut geyser_runtime,
+                                &mut inventory,
+                            )
+                            .await?
+                        }
+                        None => {
+                            let ctx = tick_context(
+                                session_profile_id,
+                                session_entity_id,
+                                &play_dimension,
+                                position,
+                                current_game_mode,
+                            );
+                            let teleported =
+                                deps.gameplay.handle_command(&ctx, &command.command)?;
+                            crate::chat::CommandOutcome {
+                                teleported,
+                                ..crate::chat::CommandOutcome::default()
+                            }
+                        }
+                    };
+                    next_teleport_id = teleport_id;
+                    if outcome.opened_lobby_menu {
+                        lobby_menu_open = true;
+                    }
+                    if outcome.opened_config_menu {
+                        active_config_menu = outcome.opened_config_menu_id;
+                    }
+                    if outcome.teleported {
+                        lobby_menu_open = false;
+                        session.player.position = position;
+                        session.player.dimension = play_dimension.clone();
+                        visible_player_entities.clear();
+                        if !players_hidden {
+                            refresh_visible_players(
+                                sink,
+                                deps.players,
+                                profile.uuid,
+                                deps.player_entity_type,
+                                &play_dimension,
+                                position,
+                                deps.entity_rendering.player_distance,
+                                &mut visible_player_entities,
+                            )
+                            .await?;
+                        }
+                    }
                     sink.flush().await?;
                     tokio::task::yield_now().await;
                     continue;

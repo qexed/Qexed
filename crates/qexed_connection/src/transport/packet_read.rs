@@ -69,7 +69,16 @@ impl<R: AsyncRead + Unpin> PacketStream<R> {
             .try_into()
             .expect("length checked above");
         let iv = key; // Minecraft 协议：CFB8 IV 与密钥相同
-        self.decrypter = Some(AesCfb8::new(&key.into(), &iv.into()));
+        let mut decrypter = AesCfb8::new(&key.into(), &iv.into());
+        // 关键修复：客户端常把 Key 包与后续加密包放在同一 TCP 段发出。
+        // 启用解密时必须立即解密 buffer 里已存在的密文残留，
+        // 否则残留密文会被当明文帧解析（表现为后续包 id 乱码/长度爆炸）。
+        if !self.buffer.is_empty() {
+            let mut pending_plain = std::mem::take(&mut self.buffer);
+            decrypter.decrypt(&mut pending_plain);
+            self.buffer = pending_plain;
+        }
+        self.decrypter = Some(decrypter);
         Ok(())
     }
 
@@ -134,6 +143,9 @@ impl<R: AsyncRead + Unpin> PacketStream<R> {
             let mut decrypted = bytes.to_vec();
             decrypter.decrypt(&mut decrypted);
             self.buffer.extend_from_slice(&decrypted);
+            if log::log_enabled!(log::Level::Info) && decrypted.len() < 100 {
+                log::info!("[diag-rx] {}B dec hex={}", decrypted.len(), decrypted.iter().map(|b| format!("{b:02x}")).collect::<String>());
+            }
         } else {
             self.buffer.extend_from_slice(bytes);
         }

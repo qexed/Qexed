@@ -1,20 +1,22 @@
 //! 连接握手子模块（v4 connection/ 迁移）。
 //!
 //! ServerContext 里的 world/players/entities 等运行时管理器在 v6 属于其他 crate，
-//! 这里收敛为连接域自身需要的状态（认证器 / 配置 / 行为守则文本），
-//! 其余以 TODO(hook) 形式留接口给 qexed_server 组装。
+//! 这里收敛为连接域自身需要的状态（认证器 / 配置 / 行为守则文本 / 资源包下载服务），
+//! 跨域能力（play 启动 / 封禁查询 / 插件初始化）以回调注入，避免依赖环。
 
 mod codec;
 mod configuration;
 mod context;
 mod login;
+mod resource_pack;
 mod status_handle;
 
 
 #[cfg(test)]
 #[cfg(test)]
 use configuration::handle_configuration;
-pub use context::{PlayLauncherFn, ServerContext};
+pub use context::{PlayLauncherFn, PluginsInitFn, ResourcePackOfferFn, ServerContext};
+pub use login::LoginOutcome;
 
 use qexed_protocol::to_server::handshaking::client_intention::ClientIntention;
 use tokio::net::TcpStream;

@@ -496,3 +496,138 @@ mod tests {
         assert!(ContentFilterConfig::SECRETS.contains(&"api_token"));
     }
 }
+
+// ------- 资源包配置（v4 迁移）-------
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ResourcePack {
+    #[serde(default)]
+    pub enable: bool,
+
+    #[serde(default)]
+    pub source: ResourcePackSource,
+
+    #[serde(default = "default_resource_pack_id")]
+    pub id: uuid::Uuid,
+
+    #[serde(default)]
+    pub url: String,
+
+    #[serde(default = "default_resource_pack_path")]
+    pub path: String,
+
+    #[serde(default = "default_resource_pack_download_bind")]
+    pub download_bind: String,
+
+    #[serde(default)]
+    pub download_host: String,
+
+    #[serde(default)]
+    pub object_storage: ResourcePackObjectStorage,
+
+    #[serde(default)]
+    pub hash: String,
+
+    #[serde(default)]
+    pub required: bool,
+
+    #[serde(default)]
+    pub prompt: String,
+
+    #[serde(default = "default_resource_pack_disconnect_message")]
+    pub disconnect_message: String,
+}
+
+impl Default for ResourcePack {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            source: ResourcePackSource::default(),
+            id: default_resource_pack_id(),
+            url: String::new(),
+            path: default_resource_pack_path(),
+            download_bind: default_resource_pack_download_bind(),
+            download_host: String::new(),
+            object_storage: ResourcePackObjectStorage::default(),
+            hash: String::new(),
+            required: false,
+            prompt: String::new(),
+            disconnect_message: default_resource_pack_disconnect_message(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePackSource {
+    #[default]
+    Url,
+    Local,
+    ObjectStorage,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ResourcePackObjectStorage {
+    #[serde(default)]
+    pub provider: ResourcePackObjectStorageProvider,
+
+    #[serde(default)]
+    pub public_base_url: String,
+
+    #[serde(default)]
+    pub endpoint: String,
+
+    #[serde(default)]
+    pub bucket: String,
+
+    #[serde(default = "default_resource_pack_object_key")]
+    pub object_key: String,
+
+    #[serde(default)]
+    pub force_path_style: bool,
+}
+
+impl Default for ResourcePackObjectStorage {
+    fn default() -> Self {
+        Self {
+            provider: ResourcePackObjectStorageProvider::default(),
+            public_base_url: String::new(),
+            endpoint: String::new(),
+            bucket: String::new(),
+            object_key: default_resource_pack_object_key(),
+            force_path_style: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePackObjectStorageProvider {
+    #[default]
+    Generic,
+    TencentCos,
+    TencentEo,
+    HuaweiObs,
+    HuaweiCdn,
+    AliyunOss,
+    AwsS3,
+}
+
+fn default_resource_pack_id() -> uuid::Uuid {
+    uuid::Uuid::from_u128(0x11111111_2222_3333_4444_555555555555)
+}
+
+fn default_resource_pack_path() -> String {
+    "resourcepacks/server.zip".to_string()
+}
+
+fn default_resource_pack_object_key() -> String {
+    "resourcepacks/server.zip".to_string()
+}
+
+fn default_resource_pack_download_bind() -> String {
+    "0.0.0.0:25566".to_string()
+}
+
+fn default_resource_pack_disconnect_message() -> String {
+    "This server requires its resource pack.".to_string()
+}

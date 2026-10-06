@@ -96,10 +96,23 @@ pub(crate) fn lang_dir() -> Option<PathBuf> {
 fn data_roots() -> Vec<PathBuf> {
     let version = qexed_config::MC_VERSION;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    vec![
+    // 运行目录相对布局（服务器 cwd=run/ 或 repo 根）；
+    // 测试/工具的 cwd 是各 crate 目录，额外用编译期工作区根锦定。
+    let mut roots = vec![
         cwd.join("cache/mojang").join(version).join("data/minecraft"),
+        cwd.join("run/cache/mojang").join(version).join("data/minecraft"),
         cwd.join("assets/vanilla_json/minecraft"),
-    ]
+    ];
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf);
+    if let Some(workspace) = workspace {
+        roots.push(workspace.join("run/cache/mojang").join(version).join("data/minecraft"));
+        roots.push(workspace.join("cache/mojang").join(version).join("data/minecraft"));
+        roots.push(workspace.join("assets/vanilla_json/minecraft"));
+    }
+    roots
 }
 
 fn data_root_has_required_registries(root: &std::path::Path) -> bool {

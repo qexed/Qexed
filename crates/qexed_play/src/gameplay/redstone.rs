@@ -2012,7 +2012,6 @@ impl From<&BlockPosition> for PosKey {
 }
 
 #[cfg(test)]
-#[ignore = "TODO(data): 依赖 blocks.json 方块状态表"]
 mod tests {
     use super::*;
 
@@ -2095,7 +2094,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn redstone_block_powers_wire_with_decay() {
         let world = test_world();
         let source = pos(0, 64, 0);
@@ -2136,7 +2134,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn redstone_wire_propagates_one_block_down() {
         let world = test_world();
         let source = pos(0, 64, 0);
@@ -2167,7 +2164,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn redstone_block_lights_lamp() {
         let world = test_world();
         let source = pos(0, 64, 0);
@@ -2189,7 +2185,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn target_block_power_feeds_redstone_wire() {
         let world = test_world();
         let target = pos(0, 64, 0);
@@ -2211,7 +2206,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn powered_tnt_turns_to_air_for_priming() {
         let world = test_world();
         let source = pos(0, 64, 0);
@@ -2272,7 +2266,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn solid_block_conducts_power_to_lamp() {
         let world = test_world();
         let source = pos(0, 64, 0);
@@ -2307,7 +2300,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn daylight_detector_runtime_updates_power() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2332,7 +2324,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn weighted_pressure_plate_uses_player_count_power() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2376,7 +2367,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn tripwire_runtime_powers_when_player_intersects() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2414,7 +2404,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn tripwire_runtime_syncs_attached_hooks() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2496,7 +2485,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn observer_pulses_after_observed_block_change() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2533,7 +2521,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn repeater_power_change_waits_for_configured_delay_once() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2592,7 +2579,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn redstone_lamp_turn_off_waits_two_ticks_once() {
         let world = test_world();
         let rules = test_world_rules();
@@ -2635,7 +2621,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn lever_interaction_toggles_powered_property() {
         let lever = crate::world_access::default_block_state_id("minecraft:lever");
 
@@ -2647,7 +2632,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn button_interaction_powers_temporarily() {
         let button = crate::world_access::default_block_state_id("minecraft:stone_button");
 
@@ -2659,7 +2643,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn powered_side_repeater_locks_repeater() {
         let world = test_world();
         let source = pos(-2, 64, 0);
@@ -2705,7 +2688,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn comparator_compare_mode_turns_off_when_side_input_is_stronger() {
         let world = test_world();
         let rear = pos(-1, 64, 0);
@@ -2737,7 +2719,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn comparator_subtract_mode_outputs_rear_minus_side_strength() {
         let world = test_world();
         let rear = pos(-1, 64, 0);
@@ -2787,7 +2768,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn comparator_reads_state_based_block_strength() {
         let world = test_world();
         let composter = pos(-1, 64, 0);
@@ -2825,7 +2805,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn powered_door_updates_open_and_powered_state() {
         let world = test_world();
         let source = pos(0, 64, 0);
@@ -2870,7 +2849,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn powered_crafter_updates_triggered_state() {
         let world = test_world();
         let source = pos(0, 64, 0);

@@ -2,8 +2,8 @@
 //! 迁移自 v4 crates/qexed/src/content_filter.rs；
 //! anyhow → crate::error::ServerError，配置类型换成 crate::config::ContentFilterConfig。
 //!
-//! v4 的 Api 引擎走 reqwest；v6 服务器 crate 不引 HTTP 客户端依赖，
-//! Api 引擎保留接口与数据结构，实际请求体见 TODO(net)。
+//! Api 引擎走 reqwest（POST api_url，Bearer api_token，
+//! ApiRequest{text} → ApiResponse{block,filtered_text,reason}）。
 
 use serde::{Deserialize, Serialize};
 
@@ -86,10 +86,54 @@ impl ContentFilter {
             return Ok(FilterAction::Allow(message.to_string()));
         }
 
-        // TODO(net): v6 服务器 crate 暂不引 reqwest；接入后按 v4 语义：
-        // POST api_url（Bearer api_token）ApiRequest{text} → ApiResponse{block,filtered_text,reason}。
-        log::warn!("{}", qexed_language::t("qexed.server.content_filter.api_unavailable"));
-        Ok(FilterAction::Allow(message.to_string()))
+        // v4 语义：POST api_url（Bearer api_token）ApiRequest{text}
+        // → ApiResponse{block,filtered_text,reason}。失败放行并记警告
+        // （过滤服务不可用不应阻断聊天）。
+        let client = api_client();
+        let mut request = client
+            .post(self.config.api_url.trim())
+            .json(&ApiRequest { text: message });
+        let token = self.config.api_token.trim();
+        if !token.is_empty() {
+            request = request.bearer_auth(token);
+        }
+
+        match request.send().await {
+            Ok(response) => match response.error_for_status() {
+                Ok(response) => match response.json::<ApiResponse>().await {
+                    Ok(data) if data.block => Ok(FilterAction::Block {
+                        reason: data.reason.unwrap_or_default(),
+                    }),
+                    Ok(data) => Ok(FilterAction::Allow(
+                        data.filtered_text.unwrap_or_else(|| message.to_string()),
+                    )),
+                    Err(err) => {
+                        log::warn!(
+                            "{}",
+                            qexed_language::t("qexed.server.content_filter.api_invalid_response")
+                                .replace("%{error}", &err.to_string())
+                        );
+                        Ok(FilterAction::Allow(message.to_string()))
+                    }
+                },
+                Err(err) => {
+                    log::warn!(
+                        "{}",
+                        qexed_language::t("qexed.server.content_filter.api_status_error")
+                            .replace("%{error}", &err.to_string())
+                    );
+                    Ok(FilterAction::Allow(message.to_string()))
+                }
+            },
+            Err(err) => {
+                log::warn!(
+                    "{}",
+                    qexed_language::t("qexed.server.content_filter.api_unavailable")
+                        .replace("%{error}", &err.to_string())
+                );
+                Ok(FilterAction::Allow(message.to_string()))
+            }
+        }
     }
 
     pub fn block_message(&self) -> &str {
@@ -115,21 +159,30 @@ fn load_words(path: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Api 引擎请求体（保留 v4 结构，接网络层时直接复用）。
-#[allow(dead_code)]
+/// Api 引擎请求体（v4 结构）。
 #[derive(Serialize)]
 struct ApiRequest<'a> {
     text: &'a str,
 }
 
-/// Api 引擎响应体（保留 v4 结构，接网络层时直接复用）。
-#[allow(dead_code)]
+/// Api 引擎响应体（v4 结构）。
 #[derive(Deserialize, Default)]
 struct ApiResponse {
     #[serde(default)]
     block: bool,
     filtered_text: Option<String>,
     reason: Option<String>,
+}
+
+/// 过滤 API 客户端（OnceLock 复用连接池）。
+fn api_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default()
+    })
 }
 
 #[cfg(test)]
@@ -160,6 +213,38 @@ mod tests {
         assert_eq!(
             filter.check_chat("bad text").await.unwrap(),
             FilterAction::Allow("*** text".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn api_engine_with_empty_url_allows_message() {
+        let config = ContentFilterConfig {
+            enable: true,
+            engine: ContentFilterEngine::Api,
+            ..ContentFilterConfig::default()
+        };
+        let filter = ContentFilter::from_config(&config).unwrap();
+
+        assert_eq!(
+            filter.check_chat("hello").await.unwrap(),
+            FilterAction::Allow("hello".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn api_engine_unreachable_service_allows_message() {
+        // 不可达端点：请求失败走放行路径（过滤服务故障不阻断聊天）。
+        let config = ContentFilterConfig {
+            enable: true,
+            engine: ContentFilterEngine::Api,
+            api_url: "http://127.0.0.1:1/filter".to_string(),
+            ..ContentFilterConfig::default()
+        };
+        let filter = ContentFilter::from_config(&config).unwrap();
+
+        assert_eq!(
+            filter.check_chat("hello").await.unwrap(),
+            FilterAction::Allow("hello".to_string())
         );
     }
 }

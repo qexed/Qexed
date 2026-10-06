@@ -537,6 +537,21 @@ impl WorldManager {
         self.read_only
     }
 
+    /// 公开包装（组装层适配用）：区块流体种子。
+    pub fn fluid_positions_in_chunk_public(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> Result<Vec<(qexed_packet::net_types::Position, i32)>> {
+        self.fluid_positions_in_chunk(dimension, chunk_x, chunk_z)
+    }
+
+    /// 公开包装（组装层适配用）：冲刷延迟方块写（autosave 后调用）。
+    pub fn flush_block_writes_public(&self) {
+        self.flush_block_writes();
+    }
+
     pub fn begin_session(&self) -> WorldSession {
         self.active_sessions.fetch_add(1, Ordering::AcqRel);
         WorldSession {
@@ -2476,15 +2491,6 @@ fn light_from_packet_data(
     }
 
 
-    /// 公开包装（组装层适配用）。
-    pub fn fluid_positions_in_chunk_public(
-        &self,
-        dimension: &str,
-        chunk_x: i32,
-        chunk_z: i32,
-    ) -> Result<Vec<(qexed_packet::net_types::Position, i32)>> {
-        self.fluid_positions_in_chunk(dimension, chunk_x, chunk_z)
-    }
 
     Light {
         sky_light_mask: mask_from_bytes(&data.sky_y_mask.0),
@@ -2513,14 +2519,10 @@ impl Light {
 
 /// 方块状态是否为空气（v4 crate::inventory::is_air_block_state）。
 ///
-/// TODO(play)：v4 语义为 block_item_registry().air_block_states（含 cave_air/
-/// void_air 全部状态）；play crate 迁移后接真实注册表。当前用 chunk_nbt
-/// 注册表按状态名判定。
+/// 数据源：chunk_nbt 方块语义注册表（blocks.json 运行时加载，OnceLock 缓存），
+/// 覆盖 air/cave_air/void_air 的全部状态 id。
 fn is_air_block_state(block_state: i32) -> bool {
-    matches!(
-        chunk_nbt::registry::block_state_entry(block_state).name.as_str(),
-        "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
-    )
+    chunk_nbt::is_air_block_state(block_state)
 }
 
 /// 压缩帧编码（v4 qexed_tcp_connect::PacketSink::encode_payload_frame_with_threshold）。

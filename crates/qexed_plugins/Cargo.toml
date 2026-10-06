@@ -12,6 +12,8 @@ qexed_log.workspace = true
 qexed_language.workspace = true
 qexed_protocol.workspace = true
 qexed_packet.workspace = true
+# emit_player_* 强类型入口需要 qexed_player::OnlinePlayer（单向依赖，无环）。
+qexed_player.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
@@ -20,3 +22,7 @@ log.workspace = true
 libloading.workspace = true
 uuid.workspace = true
 rand.workspace = true
+mongodb.workspace = true
+mysql_async.workspace = true
+redis.workspace = true
+qexed_integrity.workspace = true

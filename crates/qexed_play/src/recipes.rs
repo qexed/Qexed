@@ -103,10 +103,14 @@ impl RecipeBookRegistry {
             qexed_mojang_data::registry_sync::load_registry_id_map("minecraft:recipe_book_category")
                 .unwrap_or_else(|_| fallback_category_ids());
         let mut registry = Self::default();
-        let root = std::path::Path::new("cache")
-            .join("mojang")
-            .join(qexed_config::MC_VERSION)
-            .join("data/minecraft/recipe");
+        // 数据根候选：cwd 相对（服务器运行目录）+ 编译期工作区根（测试 cwd 是 crate 目录）。
+        let root = mojang_recipe_dir()
+            .ok_or_else(|| {
+                crate::error::PlayError::msg(format!(
+                    "mojang recipe data not found for {}",
+                    qexed_config::MC_VERSION
+                ))
+            })?;
 
         for entry in std::fs::read_dir(&root)? {
             let path = entry?.path();
@@ -581,13 +585,35 @@ fn dedup_varints(items: &mut Vec<VarInt>) {
     items.dedup_by_key(|item| item.0);
 }
 
+/// Mojang 配方数据目录候选（运行目录 cache/ 与工作区 run/cache/）。
+pub(crate) fn mojang_recipe_dir() -> Option<std::path::PathBuf> {
+    let relative = ["cache", "run/cache"].map(|base| {
+        std::path::Path::new(base)
+            .join("mojang")
+            .join(qexed_config::MC_VERSION)
+            .join("data/minecraft/recipe")
+    });
+    let workspace = option_env!("CARGO_MANIFEST_DIR")
+        .map(std::path::Path::new)
+        .and_then(|dir| dir.parent().and_then(|parent| parent.parent()))
+        .map(|root| {
+            root.join("run/cache")
+                .join("mojang")
+                .join(qexed_config::MC_VERSION)
+                .join("data/minecraft/recipe")
+        });
+    relative
+        .into_iter()
+        .chain(workspace)
+        .find(|root| root.is_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use qexed_packet::{Packet, PacketReader, PacketWriter};
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn initial_recipe_book_contains_many_vanilla_recipes() {
         let packet = recipe_book_add_packet();
 
@@ -641,7 +667,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(data): 依赖 mojang blocks.json 注册表数据"]
     fn update_recipes_contains_furnace_and_stonecutter_property_sets() {
         let packet = update_recipes_packet();
 

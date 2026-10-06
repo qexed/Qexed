@@ -19,6 +19,10 @@ members = [
     "crates/macros/qexed_doc_macros",
     "crates/macros/qexed_config_macros",
     "crates/macros/qexed_error_macros",
+    "crates/qexed_profiler",
+    "crates/qexed_management",
+    "crates/qexed_statistics",
+    "crates/qexed_integrity",
     "crates/qexed_doc_to_mdx",
 
     # 文档示例校验（docker 复现 MDX verify 清单）
@@ -49,6 +53,10 @@ qexed_log.path = "crates/qexed_log"
 qexed_language.path = "crates/qexed_language"
 qexed_doc.path = "crates/qexed_doc"
 qexed_doc_macros.path = "crates/macros/qexed_doc_macros"
+qexed_integrity.path = "crates/qexed_integrity"
+qexed_statistics.path = "crates/qexed_statistics"
+qexed_management.path = "crates/qexed_management"
+qexed_profiler.path = "crates/qexed_profiler"
 qexed_error_macros.path = "crates/macros/qexed_error_macros"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_club = { path = 'crates/qexed_club' }
@@ -90,9 +98,15 @@ flate2 = "1.1"
 libloading = "0.9"
 rayon = "1.11"
 rand = "0.8"
+tokio-tungstenite = "0.28"
+futures-util = "0.3"
+mongodb = "3.4.1"
+mysql_async = "0.36.1"
+redis = { version = "1.0.2", features = ["tokio-comp"] }
 tokio-stream = "0.1"
 base64 = "0.22"
 hmac = "0.12"
+sha2 = "0.10"
 aes = "0.8"
 cfb8 = { version = "0.8.1", features = ["std"] }
 openssl = { version = "0.10", features = ["vendored"] }

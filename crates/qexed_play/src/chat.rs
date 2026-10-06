@@ -1,4 +1,4 @@
-﻿//! 玩家聊天命令处理（v4 play/chat.rs 迁移，play-gameplay 任务）。
+//! 玩家聊天命令处理（v4 play/chat.rs 迁移，play-gameplay 任务）。
 //!
 //! 状态：核心命令逻辑（teleport/gamemode/give/time/gamerule/entity/npc/structure/
 //! 插件 action 应用等）已按 v6 适配；入口 `handle_chat_command` 仍依赖 play-core
@@ -10,21 +10,62 @@
 
 use qexed_packet::net_types::VarInt;
 use qexed_protocol::to_client::play::{
-    boss_event::{BossBarColor, BossBarOverlay, BossBarProperties, BossEvent},
+    boss_event::{BossBarColor, BossBarOverlay, BossEvent, BossEventOperation},
     custom_payload::CustomPayload,
-    player_position::PlayerPosition,
+    player_position::{PlayerPosition, PositionMoveRotation},
     respawn::{KEEP_NO_DATA, Respawn},
     system_chat::SystemChat,
     transfer::Transfer,
 };
 use qexed_protocol::types::EntityPosition;
 
-use crate::config::ForwardingMode;
+use crate::config::{ForwardingMode, GameMode};
 
 use qexed_player::{PlayerDamageKind, PlayerManager};
 
 use crate::error::Result;
-use crate::util::{text_component, translatable_component};
+use crate::util::{spawn_position, text_component, translatable_component};
+
+/// v4 boss_event::BossBarProperties 的本地等价（v6 协议 crate 未定义该结构；
+/// 三个布尔值直接进 BossEventOperation::Add）。
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+struct BossBarProperties {
+    darken_screen: bool,
+    play_music: bool,
+    create_world_fog: bool,
+}
+
+/// v4 BossEvent::add_with_options 的本地等价（协议 crate 类型，不能写 inherent impl）。
+#[allow(clippy::too_many_arguments)]
+fn boss_event_add_with_options(
+    id: uuid::Uuid,
+    name: qexed_packet::net_types::AnyNbt,
+    progress: f32,
+    color: BossBarColor,
+    overlay: BossBarOverlay,
+    properties: BossBarProperties,
+) -> BossEvent {
+    BossEvent {
+        id,
+        operation: BossEventOperation::Add {
+            name,
+            progress,
+            color,
+            overlay,
+            darken_screen: properties.darken_screen,
+            play_music: properties.play_music,
+            create_world_fog: properties.create_world_fog,
+        },
+    }
+}
+
+/// v4 BossEvent::remove 的本地等价。
+fn boss_event_remove(id: uuid::Uuid) -> BossEvent {
+    BossEvent {
+        id,
+        operation: BossEventOperation::Remove,
+    }
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct CommandOutcome {
@@ -38,6 +79,7 @@ pub(crate) async fn handle_chat_command<W>(
     sink: &mut qexed_connection::transport::PacketSink<W>,
     config: &crate::config::PlayConfig,
     world: &dyn crate::world_access::WorldStructureSink,
+    chunk_world: &crate::chunks::SharedWorld,
     world_rules: &qexed_world::world::WorldRulesManager,
     players: &PlayerManager,
     fluid: &crate::FluidRuntime,
@@ -175,7 +217,13 @@ where
             Ok(CommandOutcome::default())
         }
         "lobby" => {
-            lobby.open_menu(sink, lobby_status).await?;
+            lobby
+                .open_menu(
+                    sink,
+                    &crate::inventory::InventoryItemRegistry,
+                    lobby_status,
+                )
+                .await?;
             sink.send(SystemChat {
                 content: translatable_component(
                     "commands.trigger.simple.success",
@@ -221,10 +269,31 @@ where
                 .await?;
                 return Ok(CommandOutcome::default());
             };
+            // v6 ProxyConnectContext 以 ProxyTransfer trait 注入代理切换回调；
+            // chat 域的代理转移走 apply_proxy_connect_action（bungeecord 通道）。
+            struct ChatProxyTransfer<'a>(
+                &'a qexed_plugins::PluginManager,
+                &'a qexed_player::PlayerManager,
+            );
+
+            impl crate::lobby::ProxyTransfer for ChatProxyTransfer<'_> {
+                fn apply(
+                    &self,
+                    server_id: &str,
+                    message: &str,
+                    actor: uuid::Uuid,
+                ) -> std::result::Result<bool, String> {
+                    // 同步 trait 无法驱动异步 sink；此处返回 false 交给
+                    // transfer_to_server 的后续降级路径（apply_proxy_connect_action
+                    // 由调用方在需要时直接调用）。
+                    let _ = (server_id, message, actor, self.0, self.1);
+                    Ok(false)
+                }
+            }
+
             let proxy_context = crate::lobby::ProxyConnectContext {
                 server_config: &config.server,
-                plugins,
-                players,
+                transfer: &ChatProxyTransfer(plugins, players),
                 actor: profile.uuid,
             };
             lobby
@@ -233,9 +302,9 @@ where
             Ok(CommandOutcome::default())
         }
         "spawn" => {
-            super::teleport_to_spawn(
+            teleport_to_spawn(
                 sink,
-                world,
+                chunk_world,
                 world_rules,
                 players,
                 plugins,
@@ -271,8 +340,10 @@ where
             let teleported = handle_teleport_command(
                 sink,
                 world,
+                chunk_world,
                 world_rules,
                 &config.world,
+                fluid,
                 players,
                 plugins,
                 profile,
@@ -382,23 +453,19 @@ where
             Ok(CommandOutcome::default())
         }
         _ => {
+            // v4 直接传 OnlinePlayer；v6 插件 ABI 用 PlayerPayloadOwned 序列化载荷。
+            let plugin_player = qexed_plugins::api::PlayerPayloadOwned {
+                uuid: profile.uuid.to_string(),
+                username: profile.username.clone(),
+                entity_id: actor_entity_id,
+                language: players
+                    .player_by_uuid(profile.uuid)
+                    .map(|player| player.language)
+                    .unwrap_or_else(|| config.language.clone()),
+                dimension: play_dimension.to_string(),
+            };
             let plugin_response = plugins.execute_command(
-                &qexed_player::OnlinePlayer {
-                    profile: profile.clone(),
-                    entity_id: actor_entity_id,
-                    game_mode: config.world.game_mode.protocol_id() as i32,
-                    position: *position,
-                    dimension: play_dimension.to_string(),
-                    equipment: Vec::new(),
-                    language: players
-                        .player_by_uuid(profile.uuid)
-                        .map(|player| player.language)
-                        .unwrap_or_else(|| config.language.clone()),
-                    displayed_skin_parts: players
-                        .player_by_uuid(profile.uuid)
-                        .map(|player| player.displayed_skin_parts)
-                        .unwrap_or(qexed_player::DEFAULT_DISPLAYED_SKIN_PARTS),
-                },
+                &plugin_player,
                 &name,
                 argument.as_str(),
             );
@@ -409,8 +476,10 @@ where
                         sink,
                         Some(&config.server),
                         world,
+                        chunk_world,
                         world_rules,
                         &config.world,
+                        fluid,
                         entities,
                         players,
                         plugins,
@@ -451,22 +520,26 @@ where
 }
 
 fn version_message() -> String {
+    // v4 经 shadow_rs 报告构建分支/commit；v6 qexed_play 不引 shadow 依赖，
+    // 以编译期环境变量占位（TODO(assembly)：本体组装层注入真实构建信息）。
     format!(
         "{} {}{} (Minecraft {}, branch {}, commit {})",
         env!("CARGO_PKG_NAME"),
         if cfg!(debug_assertions) { "dev-" } else { "" },
         env!("CARGO_PKG_VERSION"),
         qexed_config::MC_VERSION,
-        shadow_rs::branch(),
-        crate::build::SHORT_COMMIT,
+        option_env!("QEXED_BUILD_BRANCH").unwrap_or("unknown"),
+        option_env!("QEXED_BUILD_COMMIT").unwrap_or("unknown"),
     )
 }
 
 async fn handle_teleport_command<W>(
     sink: &mut qexed_connection::transport::PacketSink<W>,
     world: &dyn crate::world_access::WorldStructureSink,
+    chunk_world: &crate::chunks::SharedWorld,
     world_rules: &qexed_world::world::WorldRulesManager,
     world_config: &crate::config::WorldConfig,
+    fluid: &crate::FluidRuntime,
     players: &PlayerManager,
     plugins: &qexed_plugins::PluginManager,
     profile: &qexed_packet::net_types::GameProfile,
@@ -504,8 +577,10 @@ where
             teleport_command_target(
                 sink,
                 world,
+                chunk_world,
                 world_rules,
                 world_config,
+                fluid,
                 players,
                 plugins,
                 source.clone(),
@@ -529,8 +604,10 @@ where
             teleport_command_target(
                 sink,
                 world,
+                chunk_world,
                 world_rules,
                 world_config,
+                fluid,
                 players,
                 plugins,
                 target,
@@ -555,8 +632,10 @@ where
             teleport_command_target(
                 sink,
                 world,
+                chunk_world,
                 world_rules,
                 world_config,
+                fluid,
                 players,
                 plugins,
                 target,
@@ -590,8 +669,10 @@ where
 async fn teleport_command_target<W>(
     sink: &mut qexed_connection::transport::PacketSink<W>,
     world: &dyn crate::world_access::WorldStructureSink,
+    chunk_world: &crate::chunks::SharedWorld,
     world_rules: &qexed_world::world::WorldRulesManager,
     world_config: &crate::config::WorldConfig,
+    fluid: &crate::FluidRuntime,
     players: &PlayerManager,
     plugins: &qexed_plugins::PluginManager,
     target: qexed_player::OnlinePlayer,
@@ -613,9 +694,10 @@ where
     if target.profile.uuid == executor {
         *executor_teleported |= teleport_current_player(
             sink,
-            world,
+            chunk_world,
             world_rules,
             world_config,
+            fluid,
             players,
             plugins,
             executor,
@@ -665,9 +747,10 @@ where
 #[allow(clippy::too_many_arguments)]
 async fn teleport_current_player<W>(
     sink: &mut qexed_connection::transport::PacketSink<W>,
-    world: &dyn crate::world_access::WorldStructureSink,
+    chunk_world: &crate::chunks::SharedWorld,
     world_rules: &qexed_world::world::WorldRulesManager,
     world_config: &crate::config::WorldConfig,
+    fluid: &crate::FluidRuntime,
     players: &PlayerManager,
     plugins: &qexed_plugins::PluginManager,
     actor: uuid::Uuid,
@@ -694,7 +777,7 @@ where
             )),
             dimension_name: destination_dimension.to_string(),
             hashed_seed: 0,
-            game_mode: world_config.game_mode.protocol_id(),
+            game_mode: world_config.game_mode.protocol_id() as u8,
             previous_game_mode: -1,
             is_debug: false,
             is_flat: true,
@@ -711,22 +794,24 @@ where
 
     let teleport_id = *next_teleport_id;
     *next_teleport_id = next_teleport_id.saturating_add(1);
-    sink.send(Position {
-        teleport_id: VarInt(teleport_id),
-        x: position.x,
-        y: position.y,
-        z: position.z,
-        dx: 0.0,
-        dy: 0.0,
-        dz: 0.0,
-        yaw: position.yaw,
-        pitch: position.pitch,
-        flags: 0,
-    })
+    // v4 position::Position{teleport_id, x/y/z, dx/dy/dz, yaw/pitch, flags} ->
+    // v6 player_position::PlayerPosition{id, change: PositionMoveRotation, relatives}
+    sink.send(player_position_packet(
+        teleport_id,
+        position.x,
+        position.y,
+        position.z,
+        0.0,
+        0.0,
+        0.0,
+        position.yaw,
+        position.pitch,
+        0,
+    ))
     .await?;
 
     if changed_dimension {
-        super::send_respawn_player_state(
+        send_respawn_player_state(
             sink,
             world_config,
             world_rules,
@@ -734,26 +819,159 @@ where
             *position,
         )
         .await?;
-        chunk_state
+        let fluid_seeds = chunk_state
             .reset_dimension_after_respawn(
                 sink,
                 chunk_sender,
-                world,
+                chunk_world,
                 plugins,
                 destination_dimension.to_string(),
                 position.x,
                 position.z,
             )
             .await?;
+        fluid_enqueue_fluid_seeds(fluid, destination_dimension, fluid_seeds);
         players.update_position_and_dimension(actor, destination_dimension.to_string(), *position);
     } else {
-        chunk_state
-            .reset_after_respawn(sink, chunk_sender, world, plugins, position.x, position.z)
+        let fluid_seeds = chunk_state
+            .reset_after_respawn(sink, chunk_sender, chunk_world, plugins, position.x, position.z)
             .await?;
+        fluid_enqueue_fluid_seeds(fluid, play_dimension, fluid_seeds);
         players.update_position(actor, *position);
     }
 
     Ok(true)
+}
+
+/// v4 position::Position 的 v6 等价构造（PlayerPosition + PositionMoveRotation）。
+#[allow(clippy::too_many_arguments)]
+fn player_position_packet(
+    teleport_id: i32,
+    x: f64,
+    y: f64,
+    z: f64,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+    yaw: f32,
+    pitch: f32,
+    relatives: i32,
+) -> PlayerPosition {
+    PlayerPosition {
+        id: VarInt(teleport_id),
+        change: PositionMoveRotation {
+            x,
+            y,
+            z,
+            delta_x: dx,
+            delta_y: dy,
+            delta_z: dz,
+            y_rot: yaw,
+            x_rot: pitch,
+        },
+        relatives,
+    }
+}
+
+/// 传送回出生点（v4 play.rs teleport_to_spawn；v6 在 chat 域本地实现）。
+#[allow(clippy::too_many_arguments)]
+async fn teleport_to_spawn<W>(
+    sink: &mut qexed_connection::transport::PacketSink<W>,
+    chunk_world: &crate::chunks::SharedWorld,
+    world_rules: &qexed_world::world::WorldRulesManager,
+    players: &PlayerManager,
+    plugins: &qexed_plugins::PluginManager,
+    fluid: &crate::FluidRuntime,
+    world_config: &crate::config::WorldConfig,
+    dimension: &str,
+    actor: uuid::Uuid,
+    chunk_sender: &tokio::sync::mpsc::UnboundedSender<crate::chunks::ChunkLoadResult>,
+    chunk_state: &mut crate::chunks::ChunkSendState,
+    position: &mut EntityPosition,
+    next_teleport_id: &mut i32,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    *position = spawn_position(&world_config.spawn);
+    let teleport_id = *next_teleport_id;
+    *next_teleport_id = next_teleport_id.saturating_add(1);
+    sink.send(player_position_packet(
+        teleport_id,
+        position.x,
+        position.y,
+        position.z,
+        0.0,
+        0.0,
+        0.0,
+        position.yaw,
+        position.pitch,
+        0,
+    ))
+    .await?;
+    send_respawn_player_state(sink, world_config, world_rules, dimension, *position).await?;
+    let fluid_seeds = chunk_state
+        .reset_after_respawn(sink, chunk_sender, chunk_world, plugins, position.x, position.z)
+        .await?;
+    fluid_enqueue_fluid_seeds(fluid, dimension, fluid_seeds);
+    players.update_position(actor, *position);
+    Ok(())
+}
+
+/// 重生状态包（v4 super::send_respawn_player_state；v6 bootstrap 版本收
+/// &dyn WorldRulesSource，这里按 chat 域持有的具体 WorldRulesManager 内联同构实现）。
+async fn send_respawn_player_state<W>(
+    sink: &mut qexed_connection::transport::PacketSink<W>,
+    world_config: &crate::config::WorldConfig,
+    world_rules: &qexed_world::world::WorldRulesManager,
+    dimension: &str,
+    position: EntityPosition,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    crate::bootstrap::send_respawn_player_state(
+        sink,
+        world_config,
+        &WorldRulesManagerAdapter(world_rules),
+        dimension,
+        position,
+    )
+    .await
+}
+
+/// WorldRulesManager -> crate::context::WorldRulesSource 桥（bootstrap 复用）。
+struct WorldRulesManagerAdapter<'a>(&'a qexed_world::world::WorldRulesManager);
+
+impl crate::context::WorldRulesSource for WorldRulesManagerAdapter<'_> {
+    fn ensure_loaded(&self, dimension: &str) -> Result<()> {
+        self.0.ensure_loaded(dimension)?;
+        Ok(())
+    }
+
+    fn snapshot(&self, dimension: &str) -> crate::context::DimensionRules {
+        let snapshot = self.0.snapshot(dimension);
+        crate::context::DimensionRules {
+            dimension_type: snapshot.dimension_type,
+        }
+    }
+
+    fn current_time(&self, dimension: &str) -> i64 {
+        self.0.current_time(dimension)
+    }
+
+    fn tick_dimension_time(&self, dimension: &str, _default_day_ticks: i64) -> i64 {
+        self.0.tick_dimension_time(dimension)
+    }
+}
+
+/// v4 FluidRuntime::enqueue_fluid_seeds 直呼的薄包装（v6 FluidRuntime 为空运行时）。
+fn fluid_enqueue_fluid_seeds(
+    fluid: &crate::FluidRuntime,
+    dimension: &str,
+    seeds: Vec<crate::chunks::FluidSeed>,
+) {
+    fluid.enqueue_fluid_seeds(dimension, seeds);
 }
 
 fn command_source_player(
@@ -1563,12 +1781,10 @@ where
             .await?;
         }
         ["objectives", "add", objective, "dummy"] => {
-            sink.send(
-                qexed_protocol::to_client::play::set_objective::SetObjective::create(
-                    sanitize_scoreboard_objective(objective),
-                    text_component(*objective),
-                ),
-            )
+            sink.send(super::scoreboard::set_objective_create(
+                sanitize_scoreboard_objective(objective),
+                text_component(*objective),
+            ))
             .await?;
             send_translatable(
                 sink,
@@ -1579,12 +1795,10 @@ where
         }
         ["objectives", "add", objective, "dummy", display @ ..] if !display.is_empty() => {
             let display = display.join(" ");
-            sink.send(
-                qexed_protocol::to_client::play::set_objective::SetObjective::create(
-                    sanitize_scoreboard_objective(objective),
-                    text_component(display),
-                ),
-            )
+            sink.send(super::scoreboard::set_objective_create(
+                sanitize_scoreboard_objective(objective),
+                text_component(display),
+            ))
             .await?;
             send_translatable(
                 sink,
@@ -1594,11 +1808,9 @@ where
             .await?;
         }
         ["objectives", "remove", objective] => {
-            sink.send(
-                qexed_protocol::to_client::play::set_objective::SetObjective::remove(
-                    sanitize_scoreboard_objective(objective),
-                ),
-            )
+            sink.send(super::scoreboard::set_objective_remove(
+                sanitize_scoreboard_objective(objective),
+            ))
             .await?;
             send_translatable(
                 sink,
@@ -1814,7 +2026,7 @@ where
                 entity_type,
                 entity_type_id_override: None,
                 dimension: dimension.to_string(),
-                position: player_position,
+                position: crate::plugin_bridge::entities_position(player_position),
                 name: name.clone(),
                 display_name: name,
                 skin_textures: String::new(),
@@ -1841,7 +2053,7 @@ where
                     return Ok(());
                 }
             };
-            entities.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
+            entities.send_spawn_to_rendered_viewers(&crate::plugin_bridge::PlayerViewerBridge::new(players), rendering, &entity)?;
             send_translatable(
                 sink,
                 "commands.summon.success",
@@ -1854,7 +2066,7 @@ where
                 send_entity_usage(sink, argument).await?;
                 return Ok(());
             };
-            let moved = match entities.move_entity_local(key, player_position) {
+            let moved = match entities.move_entity_local(key, crate::plugin_bridge::entities_position(player_position)) {
                 Ok(entity) => entity,
                 Err(err) => {
                     send_translatable(
@@ -1866,7 +2078,7 @@ where
                     return Ok(());
                 }
             };
-            entities.send_move_to_rendered_viewers(players, rendering, &moved)?;
+            entities.send_move_to_rendered_viewers(&crate::plugin_bridge::PlayerViewerBridge::new(players), rendering, &moved)?;
             send_translatable(
                 sink,
                 "commands.teleport.success.location.single",
@@ -1896,7 +2108,7 @@ where
                     return Ok(());
                 }
             };
-            entities.send_remove_to_rendered_viewers(players, rendering, &removed)?;
+            entities.send_remove_to_rendered_viewers(&crate::plugin_bridge::PlayerViewerBridge::new(players), rendering, &removed)?;
             send_translatable(
                 sink,
                 "commands.bossbar.remove.success",
@@ -1970,7 +2182,7 @@ where
                 entity_type: args.entity_type,
                 entity_type_id_override: None,
                 dimension: dimension.to_string(),
-                position: player_position,
+                position: crate::plugin_bridge::entities_position(player_position),
                 name: args.name.clone(),
                 display_name: args.name,
                 skin_textures: String::new(),
@@ -1997,7 +2209,7 @@ where
                     return Ok(());
                 }
             };
-            entities.send_spawn_to_rendered_viewers(players, rendering, &entity)?;
+            entities.send_spawn_to_rendered_viewers(&crate::plugin_bridge::PlayerViewerBridge::new(players), rendering, &entity)?;
             send_translatable(
                 sink,
                 "commands.summon.success",
@@ -2017,7 +2229,7 @@ where
                 send_npc_usage(sink, argument).await?;
                 return Ok(());
             }
-            let moved = match entities.move_entity_local(key, player_position) {
+            let moved = match entities.move_entity_local(key, crate::plugin_bridge::entities_position(player_position)) {
                 Ok(entity) => entity,
                 Err(err) => {
                     send_translatable(
@@ -2029,7 +2241,7 @@ where
                     return Ok(());
                 }
             };
-            entities.send_move_to_rendered_viewers(players, rendering, &moved)?;
+            entities.send_move_to_rendered_viewers(&crate::plugin_bridge::PlayerViewerBridge::new(players), rendering, &moved)?;
             send_translatable(
                 sink,
                 "commands.teleport.success.location.single",
@@ -2066,7 +2278,7 @@ where
                     return Ok(());
                 }
             };
-            entities.send_remove_to_rendered_viewers(players, rendering, &removed)?;
+            entities.send_remove_to_rendered_viewers(&crate::plugin_bridge::PlayerViewerBridge::new(players), rendering, &removed)?;
             send_translatable(
                 sink,
                 "commands.bossbar.remove.success",
@@ -2120,7 +2332,7 @@ fn normalize_npc_spawn_entity_type(value: &str) -> Option<String> {
         return None;
     }
     let entity_type = value.to_string();
-    qexed_entities::entity_type_id(&entity_type)
+    qexed_entities::registry::entity_type_id(&entity_type)
         .is_ok()
         .then_some(entity_type)
 }
@@ -2534,10 +2746,7 @@ where
     ));
 
     for plugin_command in plugins.plugin_commands() {
-        if !permissions
-            .can_run_command(profile, &plugin_command.name)
-            .await?
-        {
+        if !permissions.can_run_command(profile, &plugin_command.name) {
             continue;
         }
         entries.push(crate::chat_support::localized_plugin_help_entry(
@@ -2572,8 +2781,10 @@ pub(crate) async fn apply_plugin_action<W>(
     sink: &mut qexed_connection::transport::PacketSink<W>,
     server_config: Option<&crate::config::ServerProxyConfig>,
     world: &dyn crate::world_access::WorldStructureSink,
+    chunk_world: &crate::chunks::SharedWorld,
     world_rules: &qexed_world::world::WorldRulesManager,
     world_config: &crate::config::WorldConfig,
+    fluid: &crate::FluidRuntime,
     entities: &qexed_entities::EntityManager,
     players: &qexed_player::PlayerManager,
     plugins: &qexed_plugins::PluginManager,
@@ -2639,9 +2850,10 @@ where
             };
             let teleported = teleport_current_player(
                 sink,
-                world,
+                chunk_world,
                 world_rules,
                 world_config,
+                fluid,
                 players,
                 plugins,
                 actor,
@@ -2657,7 +2869,7 @@ where
             if teleported && let Some(server_config) = server_config {
                 for packet in entities.managed_entity_view_packets(
                     play_dimension,
-                    *position,
+                    crate::plugin_bridge::entities_position(*position),
                     &server_config.entity_rendering,
                 )? {
                     sink.send_raw(packet).await?;
@@ -2696,25 +2908,20 @@ where
             Ok(false)
         }
         qexed_plugins::api::PlayerAction::OpenMenu { menu } => {
-            let render_context = crate::menus::MenuRenderContext::from_player(
-                server_config,
-                plugins,
-                players,
-                actor,
-            );
+            let render_context = menu_render_context(server_config, players, actor);
             let username = players
                 .player_by_uuid(actor)
                 .map(|player| player.profile.username)
                 .unwrap_or_default();
-            let opened = menus
-                .open_menu_for_client(
-                    sink,
-                    &menu,
-                    Some(&render_context),
-                    &username,
-                    geyser.as_deref_mut(),
-                )
-                .await?;
+            let opened = open_menu_for_client(
+                menus,
+                sink,
+                &menu,
+                Some(&render_context),
+                &username,
+                geyser.as_deref_mut(),
+            )
+            .await?;
             *active_config_menu = opened;
             Ok(false)
         }
@@ -2726,7 +2933,7 @@ where
             enchantments,
             plugin_enchantments,
         } => {
-            let Some(slot) = crate::plugin_action_item_stack(
+            let Some(slot) = plugin_action_item_stack(
                 &item,
                 count,
                 &name,
@@ -2752,7 +2959,7 @@ where
                     .player_by_uuid(actor)
                     .map(|player| player.entity_id)
                     .unwrap_or_default();
-                crate::sync_inventory_changes(
+                sync_inventory_changes(
                     sink,
                     players,
                     actor,
@@ -2788,17 +2995,22 @@ where
             };
             *inventory = crate::inventory::PlayerInventory::empty();
             if restore_menu_items {
-                let _ = menus.sync_hotbar_items(inventory);
+                // v4 menus.sync_hotbar_items(inventory)；v6 经
+                // sync_hotbar_items_inventory 直接写 play 域 PlayerInventory。
+                let _ = menus.sync_hotbar_items_inventory(
+                    &crate::inventory::InventoryItemRegistry,
+                    inventory,
+                );
             }
             let actor_entity_id = players
                 .player_by_uuid(actor)
                 .map(|player| player.entity_id)
                 .unwrap_or_default();
-            crate::resync_inventory_state(sink, players, actor, actor_entity_id, inventory).await?;
+            resync_inventory_state(sink, players, actor, actor_entity_id, inventory).await?;
             Ok(true)
         }
         qexed_plugins::api::PlayerAction::SetPlayersVisible { visible } => {
-            crate::set_other_players_visible(
+            set_other_players_visible(
                 sink,
                 players,
                 actor,
@@ -2848,21 +3060,21 @@ where
                     .unwrap_or_default()
             };
             if let Err(err) = entities.spawn_visual_projectile(
-                players,
+                &crate::plugin_bridge::PlayerViewerBridge::new(players),
                 &server_config.entity_rendering,
                 qexed_entities::VisualProjectileSpawnRequest {
                     kind,
                     configured_event,
                     tag,
                     dimension,
-                    position: EntityPosition {
+                    position: crate::plugin_bridge::entities_position(EntityPosition {
                         x,
                         y,
                         z,
                         yaw: 0.0,
                         pitch: 0.0,
                         on_ground: false,
-                    },
+                    }),
                     velocity_x,
                     velocity_y,
                     velocity_z,
@@ -2946,7 +3158,7 @@ where
             color,
             overlay,
         } => {
-            sink.send(BossEvent::add_with_options(
+            sink.send(boss_event_add_with_options(
                 plugin_boss_bar_uuid(actor, &id),
                 text_component(if title.trim().is_empty() {
                     "Loading"
@@ -2962,7 +3174,7 @@ where
             Ok(false)
         }
         qexed_plugins::api::PlayerAction::RemoveBossBar { id } => {
-            sink.send(BossEvent::remove(plugin_boss_bar_uuid(actor, &id)))
+            sink.send(boss_event_remove(plugin_boss_bar_uuid(actor, &id)))
                 .await?;
             Ok(false)
         }
@@ -3012,6 +3224,311 @@ where
             Ok(false)
         }
     }
+}
+
+/// 菜单渲染上下文（v4 menus::MenuRenderContext::from_player；v6 占位符渲染经
+/// PlaceholderRenderer 注入，chat 域先用 NoPlaceholders + 会话统计上下文）。
+fn menu_render_context<'a>(
+    server_config: Option<&crate::config::ServerProxyConfig>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+) -> crate::menus::MenuRenderContext<'a> {
+    crate::menus::MenuRenderContext::new(
+        server_config.is_some_and(|config| config.placeholders.enable),
+        &crate::context::NoPlaceholders,
+        players.player_by_uuid(actor),
+        crate::context::PlaceholderContext {
+            online_players: players.online_count() as i32,
+            max_players: server_config.map(|config| config.max_player).unwrap_or(-1),
+            lobby_online_servers: 0,
+            lobby_total_servers: 0,
+            lobby_servers: "none".to_string(),
+        },
+    )
+}
+
+/// 为客户端打开菜单（v4 menus::open_menu_for_client；基岩玩家走 Geyser 表单）。
+async fn open_menu_for_client<W>(
+    menus: &crate::menus::MenuRuntime,
+    sink: &mut qexed_connection::transport::PacketSink<W>,
+    menu_id: &str,
+    render_context: Option<&crate::menus::MenuRenderContext<'_>>,
+    username: &str,
+    mut geyser: Option<&mut crate::geyser::GeyserRuntime>,
+) -> Result<Option<String>>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if let Some(geyser) = geyser.as_deref_mut()
+        && geyser.client_payload(username).bedrock
+    {
+        let Some(form) = menus.bedrock_form(menu_id, render_context)? else {
+            return Ok(None);
+        };
+        let packet = geyser.form_packet(
+            crate::geyser::BedrockFormType::Simple,
+            None,
+            form.plugin_form_id,
+            &form.json,
+        )?;
+        sink.send(packet).await?;
+        return Ok(Some(form.menu_id));
+    }
+    menus
+        .open_menu(sink, &crate::inventory::InventoryItemRegistry, menu_id, render_context)
+        .await
+}
+
+/// 插件 GiveItem 的物品构造（v4 play.rs plugin_action_item_stack）。
+#[allow(clippy::too_many_arguments)]
+fn plugin_action_item_stack(
+    item_name: &str,
+    count: i32,
+    display_name: &str,
+    lore: &[String],
+    enchantments: &[qexed_plugins::api::ItemEnchantment],
+    plugin_enchantments: &[qexed_plugins::api::PluginEnchantment],
+) -> Option<qexed_protocol::types::Slot> {
+    let item_id = crate::inventory::item_id_for_name(&normalize_resource_key(item_name))?;
+    let mut item = crate::inventory::simple_item(item_id, count.clamp(1, 64));
+    let mut components = Vec::new();
+
+    let vanilla_enchantments = enchantments
+        .iter()
+        .filter(|enchantment| enchantment.level > 0)
+        .filter_map(|enchantment| {
+            vanilla_enchantment_id(&enchantment.id).map(|id| {
+                qexed_protocol::types::minecraft::Enchantment {
+                    enchantment: VarInt(id),
+                    level: VarInt(enchantment.level),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    if !vanilla_enchantments.is_empty() {
+        components.push(
+            qexed_protocol::types::ComponentsToAdd::MinecraftEnchantments(
+                qexed_protocol::types::minecraft::Enchantments {
+                    enchantments: vanilla_enchantments,
+                },
+            ),
+        );
+    }
+
+    if !plugin_enchantments.is_empty() {
+        let enchantments = plugin_enchantments
+            .iter()
+            .filter(|enchantment| enchantment.level > 0 && !enchantment.id.trim().is_empty())
+            .map(|enchantment| {
+                (
+                    enchantment.id.trim().to_string(),
+                    qexed_nbt::Tag::Int(enchantment.level),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        if !enchantments.is_empty() {
+            let mut root = std::collections::HashMap::new();
+            root.insert(
+                "qexed:enchantments".to_string(),
+                qexed_nbt::Tag::Compound(std::sync::Arc::new(enchantments)),
+            );
+            components.push(qexed_protocol::types::ComponentsToAdd::MinecraftCustomData(
+                qexed_protocol::types::minecraft::CustomData {
+                    data: qexed_nbt::Tag::Compound(std::sync::Arc::new(root)),
+                },
+            ));
+        }
+    }
+
+    let display_name = display_name.trim();
+    if !display_name.is_empty() {
+        components.push(qexed_protocol::types::ComponentsToAdd::MinecraftItemName(
+            qexed_protocol::types::minecraft::ItemName {
+                name: text_component(display_name),
+            },
+        ));
+    }
+    if !lore.is_empty() {
+        components.push(qexed_protocol::types::ComponentsToAdd::MinecraftLore(
+            qexed_protocol::types::minecraft::Lore {
+                lines: lore.iter().map(|line| text_component(line)).collect(),
+            },
+        ));
+    }
+
+    if !components.is_empty() {
+        item.number_of_components_to_add = Some(VarInt(components.len() as i32));
+        item.components_to_add = Some(components);
+    }
+    Some(item)
+}
+
+/// 原版附魔 id（v4 经 registries.json 报告；v6 用内置常用表兜底，
+/// TODO(assembly)：server 域注入完整注册表后替换）。
+fn vanilla_enchantment_id(value: &str) -> Option<i32> {
+    let key = normalize_resource_key(value);
+    const IDS: &[(&str, i32)] = &[
+        ("minecraft:protection", 0),
+        ("minecraft:fire_protection", 1),
+        ("minecraft:feather_falling", 2),
+        ("minecraft:blast_protection", 3),
+        ("minecraft:projectile_protection", 4),
+        ("minecraft:respiration", 5),
+        ("minecraft:aqua_affinity", 6),
+        ("minecraft:thorns", 7),
+        ("minecraft:depth_strider", 8),
+        ("minecraft:sharpness", 9),
+        ("minecraft:smite", 10),
+        ("minecraft:bane_of_arthropods", 11),
+        ("minecraft:knockback", 12),
+        ("minecraft:fire_aspect", 13),
+        ("minecraft:looting", 14),
+        ("minecraft:efficiency", 15),
+        ("minecraft:silk_touch", 16),
+        ("minecraft:unbreaking", 17),
+        ("minecraft:fortune", 18),
+        ("minecraft:power", 19),
+        ("minecraft:punch", 20),
+        ("minecraft:flame", 21),
+        ("minecraft:infinity", 22),
+        ("minecraft:luck_of_the_sea", 23),
+        ("minecraft:lure", 24),
+    ];
+    IDS.iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, id)| *id)
+}
+
+/// 背包槽位变更同步（v4 play.rs sync_inventory_changes）。
+async fn sync_inventory_changes<W>(
+    sink: &mut qexed_connection::transport::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    selected_slot: usize,
+    changes: Vec<crate::inventory::InventorySlotChange>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut equipment = Vec::new();
+    for change in changes {
+        match change {
+            crate::inventory::InventorySlotChange::Hotbar { slot, item } => {
+                sink.send(crate::inventory::set_player_inventory_packet(slot, item.clone()))
+                    .await?;
+                if slot == selected_slot {
+                    equipment.push(crate::inventory::Equipment::mainhand(item));
+                }
+            }
+            crate::inventory::InventorySlotChange::Main { slot, item } => {
+                sink.send(crate::inventory::set_player_main_inventory_packet(slot, item))
+                    .await?;
+            }
+            crate::inventory::InventorySlotChange::Equipment { slot, item } => {
+                equipment.push(crate::inventory::Equipment::new(slot, item));
+            }
+        }
+    }
+
+    if !equipment.is_empty() {
+        sink.send(crate::inventory::equipment_packet(entity_id, equipment.clone()))
+            .await?;
+        let entries = equipment.iter().map(|e| e.to_entry()).collect::<Vec<_>>();
+        players.update_equipment(actor, entries);
+    }
+    Ok(())
+}
+
+/// 全量背包重同步（v4 play.rs resync_inventory_state）。
+async fn resync_inventory_state<W>(
+    sink: &mut qexed_connection::transport::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    entity_id: i32,
+    inventory: &crate::inventory::PlayerInventory,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    sink.send(qexed_protocol::to_client::play::set_held_slot::SetHeldSlot {
+        slot: VarInt(inventory.selected_slot() as i32),
+    })
+    .await?;
+    for packet in inventory.set_player_inventory_packets() {
+        sink.send(packet).await?;
+    }
+    let equipment = inventory.visible_equipment();
+    sink.send(crate::inventory::equipment_packet(entity_id, equipment.clone()))
+        .await?;
+    let entries = equipment.iter().map(|e| e.to_entry()).collect::<Vec<_>>();
+    players.update_equipment(actor, entries);
+    Ok(())
+}
+
+/// 其他玩家可见性切换（v4 play.rs set_other_players_visible）。
+#[allow(clippy::too_many_arguments)]
+async fn set_other_players_visible<W>(
+    sink: &mut qexed_connection::transport::PacketSink<W>,
+    players: &PlayerManager,
+    actor: uuid::Uuid,
+    dimension: &str,
+    viewer_position: EntityPosition,
+    render_distance: f64,
+    visible_player_entities: &mut std::collections::HashSet<uuid::Uuid>,
+    visible: bool,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    if visible {
+        visible_player_entities.clear();
+        let player_entity_type = qexed_entities::registry::entity_type_id("minecraft:player")?;
+        for player in players.list_except(actor) {
+            if player.dimension != dimension {
+                continue;
+            }
+            if !within_horizontal_distance(viewer_position, player.position, render_distance) {
+                continue;
+            }
+            for packet in qexed_player::spawn_player_packets(&player, player_entity_type)? {
+                sink.send_raw(packet).await?;
+            }
+            visible_player_entities.insert(player.profile.uuid);
+        }
+        return Ok(());
+    }
+
+    let ids = players
+        .list_except(actor)
+        .into_iter()
+        .filter(|player| player.dimension == dimension)
+        .map(|player| player.entity_id)
+        .collect::<Vec<_>>();
+    visible_player_entities.clear();
+    if !ids.is_empty() {
+        sink.send(
+            qexed_protocol::to_client::play::remove_entities::RemoveEntities {
+                entity_ids: ids.into_iter().map(VarInt).collect(),
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// 水平距离判定（v4 within_horizontal_distance；session_core 同构实现）。
+fn within_horizontal_distance(
+    viewer: EntityPosition,
+    other: EntityPosition,
+    distance: f64,
+) -> bool {
+    if distance <= 0.0 {
+        return false;
+    }
+    let dx = viewer.x - other.x;
+    let dz = viewer.z - other.z;
+    (dx * dx + dz * dz) <= distance * distance
 }
 
 fn plugin_damage_kind(kind: &str) -> PlayerDamageKind {
@@ -3066,22 +3583,31 @@ where
         return Ok(());
     }
 
-    const RELATIVE_POSITION_AND_ROTATION: i32 = 0x01 | 0x02 | 0x04 | 0x08 | 0x10;
-    const RELATIVE_DELTA: i32 = 0x20 | 0x40 | 0x80;
+    // net.minecraft.world.entity.Relative 位掩码（v6 player_position 常量）。
+    const RELATIVE_POSITION_AND_ROTATION: i32 =
+        qexed_protocol::to_client::play::player_position::RELATIVE_X
+            | qexed_protocol::to_client::play::player_position::RELATIVE_Y
+            | qexed_protocol::to_client::play::player_position::RELATIVE_Z
+            | qexed_protocol::to_client::play::player_position::RELATIVE_Y_ROT
+            | qexed_protocol::to_client::play::player_position::RELATIVE_X_ROT;
+    const RELATIVE_DELTA: i32 =
+        qexed_protocol::to_client::play::player_position::RELATIVE_DELTA_X
+            | qexed_protocol::to_client::play::player_position::RELATIVE_DELTA_Y
+            | qexed_protocol::to_client::play::player_position::RELATIVE_DELTA_Z;
     let teleport_id = *next_teleport_id;
     *next_teleport_id = next_teleport_id.saturating_add(1);
-    sink.send(Position {
-        teleport_id: VarInt(teleport_id),
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-        dx: x,
-        dy: y,
-        dz: z,
-        yaw: 0.0,
-        pitch: 0.0,
-        flags: RELATIVE_POSITION_AND_ROTATION | if additive { RELATIVE_DELTA } else { 0 },
-    })
+    sink.send(player_position_packet(
+        teleport_id,
+        0.0,
+        0.0,
+        0.0,
+        x,
+        y,
+        z,
+        0.0,
+        0.0,
+        RELATIVE_POSITION_AND_ROTATION | if additive { RELATIVE_DELTA } else { 0 },
+    ))
     .await?;
     log::debug!(
         "sent player velocity action: x={x}, y={y}, z={z}, additive={additive}, player_x={}, player_y={}, player_z={}",
@@ -3359,7 +3885,7 @@ fn emit_proxy_connect_result(
         );
         return;
     };
-    plugins.emit_proxy_connect_result(&qexed_plugins::ProxyConnectResultPayload {
+    plugins.emit_proxy_connect_result(&qexed_plugins::api::ProxyConnectResultPayload {
         player: qexed_plugins::api::PlayerPayloadOwned {
             uuid: player.profile.uuid.to_string(),
             username: player.profile.username,

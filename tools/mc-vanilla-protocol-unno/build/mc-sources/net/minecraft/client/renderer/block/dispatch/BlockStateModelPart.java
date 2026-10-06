@@ -1,0 +1,30 @@
+package net.minecraft.client.renderer.block.dispatch;
+
+import java.util.List;
+import net.minecraft.client.resources.model.ModelBaker;
+import net.minecraft.client.resources.model.ResolvableModel;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.client.resources.model.sprite.Material;
+import net.minecraft.core.Direction;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import org.jspecify.annotations.Nullable;
+
+@OnlyIn(Dist.CLIENT)
+public interface BlockStateModelPart extends net.neoforged.neoforge.client.extensions.BlockStateModelPartExtension {
+    List<BakedQuad> getQuads(@Nullable Direction direction);
+
+    /** @deprecated Neo: Use {@link #ambientOcclusion()} instead. */
+    @Deprecated
+    boolean useAmbientOcclusion();
+
+    Material.Baked particleMaterial();
+
+    @BakedQuad.MaterialFlags
+    int materialFlags();
+
+    @OnlyIn(Dist.CLIENT)
+    public interface Unbaked extends ResolvableModel {
+        BlockStateModelPart bake(ModelBaker modelBakery);
+    }
+}

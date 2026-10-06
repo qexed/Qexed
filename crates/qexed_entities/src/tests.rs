@@ -73,10 +73,14 @@ fn simple_item(item_id: i32, count: i32) -> Slot {
 
 #[test]
 fn entity_type_id_is_loaded_from_current_report() {
-    assert_eq!(entity_type_id("minecraft:player").unwrap(), 155);
+    // v6 报告（26.3 registries.json minecraft:entity_type，161 项）的 protocol_id。
+    assert_eq!(entity_type_id("minecraft:player").unwrap(), 159);
     assert_eq!(entity_type_id("minecraft:armor_stand").unwrap(), 5);
-    assert_eq!(entity_type_id("minecraft:item").unwrap(), 71);
-    assert_eq!(entity_type_id("minecraft:villager").unwrap(), 139);
+    assert_eq!(entity_type_id("minecraft:item").unwrap(), 72);
+    assert_eq!(entity_type_id("minecraft:villager").unwrap(), 143);
+    // 全量表：兜底表之外的长尾实体也可解析。
+    assert_eq!(entity_type_id("minecraft:allay").unwrap(), 2);
+    assert!(entity_type_id("minecraft:warden").unwrap() > 0);
 }
 
 #[test]

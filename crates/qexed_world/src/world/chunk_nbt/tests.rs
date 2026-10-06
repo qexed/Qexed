@@ -253,6 +253,51 @@ fn water_plant_counts_as_fluid_and_light_dampening() {
 }
 
 #[test]
+fn block_semantics_match_v4_registry_sets() {
+    // air/cave_air/void_air 全部状态为空气且可替换、无碰撞。
+    for name in ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"] {
+        let Some(state) = default_block_state_id_if_known(name) else {
+            continue;
+        };
+        assert!(is_air_block_state(state), "{name} should be air");
+        assert!(can_replace_block_state(state), "{name} should be replaceable");
+        assert!(!block_has_collision(state), "{name} should have no collision");
+    }
+    // 石头：有碰撞、不可替换。
+    let stone = default_block_state_id_if_known("minecraft:stone").unwrap();
+    assert!(block_has_collision(stone));
+    assert!(!can_replace_block_state(stone));
+    // 海草/草/水：无碰撞、可替换（v4 无碰撞家族）。
+    for name in [
+        "minecraft:seagrass",
+        "minecraft:short_grass",
+        "minecraft:water",
+        "minecraft:fern",
+    ] {
+        let Some(state) = default_block_state_id_if_known(name) else {
+            continue;
+        };
+        assert!(!block_has_collision(state), "{name} should have no collision");
+        assert!(can_replace_block_state(state), "{name} should be replaceable");
+    }
+    // snow layers=1 可替换且有碰撞；layers 越大仍不可替换。
+    let snow_layers_one = super::block_state(
+        "minecraft:snow",
+        &[("layers".to_string(), "1".to_string())],
+    )
+    .id;
+    assert!(can_replace_block_state(snow_layers_one));
+    assert!(block_has_collision(snow_layers_one));
+    let snow_layers_three = super::block_state(
+        "minecraft:snow",
+        &[("layers".to_string(), "3".to_string())],
+    )
+    .id;
+    assert!(!can_replace_block_state(snow_layers_three));
+    assert!(block_has_collision(snow_layers_three));
+}
+
+#[test]
 fn waterlogged_block_counts_as_fluid_dampening() {
     assert!(has_fluid(
         "minecraft:sea_pickle",

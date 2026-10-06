@@ -329,7 +329,8 @@ impl Default for Menus {
 }
 
 fn default_menus_fixed_slots_only() -> bool {
-    false
+    // v4 原默认：菜单物品只锁定已配置的槽位（fixed_hotbar_slot 仅对配置槽为 true）。
+    true
 }
 
 /// 快捷栏菜单物品（v4 server::MenuHotbarItem）。
@@ -678,16 +679,26 @@ fn default_chat_rate_window_secs() -> u64 {
 
 /// qexed_play 根配置（app_config 宏，路径 /play.toml）。
 #[qexed_config_macros::app_config("/", "play")]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayConfig {
     /// 世界/会话域配置。
+    #[serde(default)]
     pub world: WorldConfig,
     /// 大厅配置。
+    #[serde(default)]
     pub lobby: Lobby,
     /// 菜单配置。
+    #[serde(default)]
     pub menus: Menus,
     /// 玩家消息配置。
+    #[serde(default)]
     pub player_messages: PlayerMessages,
+    /// 服务器 chat/代理子集（v4 config.server）。
+    #[serde(default)]
+    pub server: ServerProxyConfig,
+    /// 服务器语言（v4 config.language；玩家 locale 回退）。
+    #[serde(default = "default_play_language")]
+    pub language: String,
     /// 玩法开关（gameplay 域）。
     #[serde(default)]
     pub gameplay: GameplayConfig,
@@ -700,9 +711,49 @@ impl Default for PlayConfig {
             lobby: Lobby::default(),
             menus: Menus::default(),
             player_messages: PlayerMessages::default(),
+            server: ServerProxyConfig::default(),
+            language: default_play_language(),
             gameplay: GameplayConfig::default(),
         }
     }
+}
+
+fn default_play_language() -> String {
+    "zh-CN".to_string()
+}
+
+// ─────────────────────── Scoreboard（play-gameplay 任务） ───────────────────────
+
+/// 侧边栏记分板配置（v4 server::Scoreboard）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Scoreboard {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_scoreboard_objective")]
+    pub objective: String,
+    #[serde(default = "default_scoreboard_title")]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<String>,
+}
+
+impl Default for Scoreboard {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            objective: default_scoreboard_objective(),
+            title: default_scoreboard_title(),
+            lines: Vec::new(),
+        }
+    }
+}
+
+fn default_scoreboard_objective() -> String {
+    "qexed".to_string()
+}
+
+fn default_scoreboard_title() -> String {
+    "Qexed".to_string()
 }
 
 // ─────────────────────── ServerProxy ───────────────────────
@@ -718,8 +769,20 @@ pub enum ForwardingMode {
     BungeeCord,
 }
 
-/// 服务器代理配置（v4 server::Server 的代理子集；大厅转移判定用）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+impl std::fmt::Display for ForwardingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            Self::None => "none",
+            Self::Velocity => "velocity",
+            Self::Victory => "victory",
+            Self::BungeeCord => "bungeecord",
+        };
+        f.write_str(label)
+    }
+}
+
+/// 服务器代理配置（v4 server::Server 的 chat/大厅子集）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ServerProxyConfig {
     #[serde(default)]
     pub proxy: bool,
@@ -729,6 +792,18 @@ pub struct ServerProxyConfig {
     pub proxy_online_mode: bool,
     #[serde(default)]
     pub proxy_server_id: String,
+    /// 服务器最大玩家数（/list 与占位符用）。
+    #[serde(default = "default_server_max_player")]
+    pub max_player: i32,
+    /// 占位符渲染开关。
+    #[serde(default = "default_server_placeholders")]
+    pub placeholders: Placeholders,
+    /// 实体渲染距离（entity/npc 命令与实体可见性）。
+    #[serde(default)]
+    pub entity_rendering: qexed_entities::EntityRendering,
+    /// 侧边栏记分板配置（/scoreboard 命令）。
+    #[serde(default)]
+    pub scoreboard: Scoreboard,
 }
 
 impl Default for ServerProxyConfig {
@@ -738,9 +813,47 @@ impl Default for ServerProxyConfig {
             proxy_protocol: ForwardingMode::None,
             proxy_online_mode: true,
             proxy_server_id: String::new(),
+            max_player: default_server_max_player(),
+            placeholders: Placeholders::default(),
+            entity_rendering: qexed_entities::EntityRendering::default(),
+            scoreboard: Scoreboard::default(),
         }
     }
 }
+
+fn default_server_max_player() -> i32 {
+    20
+}
+
+/// 占位符开关（v4 server::Placeholders）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Placeholders {
+    #[serde(default = "default_server_placeholders_enable")]
+    pub enable: bool,
+}
+
+impl Default for Placeholders {
+    fn default() -> Self {
+        Self {
+            enable: default_server_placeholders_enable(),
+        }
+    }
+}
+
+fn default_server_placeholders() -> Placeholders {
+    Placeholders::default()
+}
+
+fn default_server_placeholders_enable() -> bool {
+    true
+}
+
+/// v4 server::Server 的 play 域短名（chat/大厅路径以 config.server 引用）。
+pub type Server = ServerProxyConfig;
+
+/// 实体渲染配置短名（chat 的 entity/npc 命令以 crate::config::EntityRendering 引用；
+/// 类型本体在 qexed_entities，这里再导出保持 v4 调用路径）。
+pub use qexed_entities::EntityRendering;
 
 // ─────────────────────── Gameplay（play-gameplay 任务） ───────────────────────
 

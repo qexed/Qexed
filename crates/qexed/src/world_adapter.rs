@@ -1,7 +1,8 @@
 //! WorldManager → play 域 WorldChunkSource 的适配器（v4 ServerContext.world 的直连）。
 
 use bytes::Bytes;
-use qexed_play::context::{BlockPosition, PlacedBlockUpdate, WorldChunkSource};
+use qexed_packet::net_types::Position as BlockPosition;
+use qexed_play::context::{PlacedBlockUpdate, WorldChunkSource};
 use qexed_play::{PlayError, Result, SharedWorld};
 use qexed_protocol::to_client::play::level_chunk_with_light::LevelChunkWithLight;
 use qexed_world::world::WorldManager;
@@ -69,7 +70,7 @@ impl WorldChunkSource for RealWorld {
         chunk_x: i32,
         chunk_z: i32,
     ) -> Result<Vec<(BlockPosition, i32)>> {
-        let list = qexed_world::world::self.0.fluid_positions_in_chunk_public(dimension, chunk_x, chunk_z)
+        let list = self.0.fluid_positions_in_chunk_public(dimension, chunk_x, chunk_z)
             .map_err(map_err)?;
         Ok(list)
     }
@@ -125,6 +126,37 @@ impl WorldChunkSource for RealWorld {
     }
 }
 
+impl qexed_play::world_access::WorldBlockSource for RealWorld {
+    fn block_state_at(&self, dimension: &str, position: &BlockPosition) -> Option<i32> {
+        self.0.block_state_at(dimension, position)
+    }
+}
+impl qexed_play::world_access::WorldStructureSink for RealWorld {
+    fn place_blocks(
+        &self,
+        dimension: &str,
+        blocks: Vec<(BlockPosition, i32)>,
+    ) -> qexed_play::Result<
+        Vec<qexed_protocol::to_client::play::block_update::BlockUpdate>,
+    > {
+        self.0
+            .place_blocks(dimension, blocks)
+            .map_err(map_err)
+    }
+
+    fn dynamic_light_enabled(&self) -> bool {
+        self.0.dynamic_light_enabled()
+    }
+
+    fn light_update(
+        &self,
+        dimension: &str,
+        chunk_x: i32,
+        chunk_z: i32,
+    ) -> qexed_protocol::to_client::play::light_update::LightUpdate {
+        self.0.light_update(dimension, chunk_x, chunk_z)
+    }
+}
 fn map_err(err: qexed_world::error::WorldError) -> PlayError {
     PlayError::msg(err.to_string())
 }

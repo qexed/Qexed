@@ -79,6 +79,9 @@ pub struct ConnectionConfig {
     /// ```autodoc
     /// <Name>qexed.crates.connection.config.ConnectionConfig.resource_pack</Name>
     /// ```
+    /// ```autodoc
+    /// <Attr name="sub" />
+    /// ```
     pub resource_pack: ResourcePack,
 }
 
@@ -149,7 +152,12 @@ impl std::str::FromStr for ForwardingMode {
 }
 
 /// 资源包推送配置（v4 `ResourcePack` 的连接相关子集）。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// ```autodoc
+/// <Name>qexed.crates.connection.config.ResourcePack</Name>
+/// <Attr name="writable" />
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Doc)]
 pub struct ResourcePack {
     /// ```autodoc
     /// <Name>qexed.crates.connection.config.ResourcePack.enable</Name>
@@ -186,21 +194,36 @@ pub struct ResourcePack {
     /// <Default>Resource pack is required</Default>
     /// ```
     pub disconnect_message: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePack.source</Name>
+    /// <Select>Url</Select>
+    /// <Select>Local</Select>
+    /// <Select>ObjectStorage</Select>
+    /// <Default>Url</Default>
+    /// ```
+    pub source: ResourcePackSource,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePack.path</Name>
+    /// <Default>resourcepacks/server.zip</Default>
+    /// ```
+    pub path: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePack.download_bind</Name>
+    /// <Default>0.0.0.0:25566</Default>
+    /// ```
+    pub download_bind: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePack.download_host</Name>
+    /// <Default></Default>
+    /// ```
+    pub download_host: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePack.object_storage</Name>
+    /// <Attr name="sub" />
+    /// ```
+    pub object_storage: ResourcePackObjectStorage,
 }
 
-// TODO(doc): <Attr name="sub"/> 在当前 qexed_doc_macros 生成 &str 与 String 参数不匹配，
-// 暂以宽松 DocValue（接受任意对象）代替嵌套 schema；上游宏修复后改回 sub + Doc 派生。
-impl qexed_doc::DocValue for ResourcePack {
-    const TYPE: &'static str = "object";
-    const VARIANTS: &'static [&'static str] = &[];
-    fn validate(value: &qexed_doc::serde_json::Value) -> Result<(), String> {
-        if value.is_object() {
-            Ok(())
-        } else {
-            Err("expected resource pack object".to_string())
-        }
-    }
-}
 impl Default for ResourcePack {
     fn default() -> Self {
         Self {
@@ -211,8 +234,53 @@ impl Default for ResourcePack {
             required: false,
             prompt: String::new(),
             disconnect_message: "Resource pack is required".to_string(),
+            source: ResourcePackSource::default(),
+            path: "resourcepacks/server.zip".to_string(),
+            download_bind: "0.0.0.0:25566".to_string(),
+            download_host: String::new(),
+            object_storage: ResourcePackObjectStorage::default(),
         }
     }
+}
+
+/// 资源包来源（v4 `ResourcePackSource`；serde snake_case 与 v4/v6 server 域一致）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, DocValue)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePackSource {
+    #[default]
+    Url,
+    Local,
+    ObjectStorage,
+}
+
+/// 对象存储资源包直链参数（v4 `ResourcePackObjectStorage` 子集：只算 URL，不上传）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Doc)]
+pub struct ResourcePackObjectStorage {
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePackObjectStorage.public_base_url</Name>
+    /// <Default></Default>
+    /// ```
+    pub public_base_url: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePackObjectStorage.endpoint</Name>
+    /// <Default></Default>
+    /// ```
+    pub endpoint: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePackObjectStorage.bucket</Name>
+    /// <Default></Default>
+    /// ```
+    pub bucket: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePackObjectStorage.object_key</Name>
+    /// <Default>resourcepacks/server.zip</Default>
+    /// ```
+    pub object_key: String,
+    /// ```autodoc
+    /// <Name>qexed.crates.connection.config.ResourcePackObjectStorage.force_path_style</Name>
+    /// <Default>false</Default>
+    /// ```
+    pub force_path_style: bool,
 }
 
 impl ConnectionConfig {

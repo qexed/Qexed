@@ -360,12 +360,12 @@ fn furnace_registry() -> &'static FurnaceRegistry {
 }
 
 fn load_recipes() -> FurnaceRegistry {
-    let root = std::path::Path::new("cache")
-        .join("mojang")
-        .join(qexed_config::MC_VERSION)
-        .join("data/minecraft/recipe");
+    // 数据根候选：运行目录相对路径 + 编译期工作区根（复用 recipes 域的候选逻辑）。
+    let root = crate::recipes::mojang_recipe_dir();
     let mut recipes = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&root) {
+    if let Some(root) = root
+        && let Ok(entries) = std::fs::read_dir(root)
+    {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("json") {

@@ -9,7 +9,10 @@
 //! i18n：fallback/unknown 警告文案走 `qexed_language::t("qexed.world.registry.*")`
 //!（world-features 任务已写入 locales）。
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
 
 use qexed_mojang_data::registry_sync::{
     load_blocks_report, load_dynamic_registry_id_map, load_registry_id_map,
@@ -423,6 +426,173 @@ pub(in crate::world) struct BlockStateRegistry {
     pub(in crate::world) default_state_by_name: HashMap<String, BlockStateDefinition>,
     pub(in crate::world) metadata_by_name: HashMap<String, BlockMetadata>,
     pub(in crate::world) global_bits: usize,
+}
+
+/// 方块语义注册表（v4 inventory 域 block_item_registry 的 world 域子集）。
+///
+/// v4 从 blocks.json 的 definition.type 推导可替换/碰撞集合；v6 的
+/// blocks.json 报告不含 definition 节点，因此按 v4 语义（同一批
+/// definition type 的成员方块名）做名字级分类，状态集合在加载
+/// blocks.json 时展开（含 snow 的 layers=1 特例）。
+pub(in crate::world) struct BlockSemanticsRegistry {
+    /// 全部空气状态（air/cave_air/void_air 的所有状态 id）。
+    pub(in crate::world) air_block_states: HashSet<i32>,
+    /// 可被矿坑/放置替换的状态（空气、液体、火、草本/藤蔓/海草等）。
+    pub(in crate::world) replaceable_block_states: HashSet<i32>,
+    /// 有碰撞箱的状态（= 已知状态 - 无碰撞家族 - 空气）。
+    pub(in crate::world) collision_block_states: HashSet<i32>,
+    /// 报告中出现的全部状态 id（未知状态保守视为有碰撞）。
+    pub(in crate::world) known_block_states: HashSet<i32>,
+}
+
+/// 无碰撞方块名家族（v4 definition.type 投影：air/liquid/fire/tall_grass/
+/// dry_vegetation/flower/tall_flower/pink_petals/wildflowers/leaf_litter/
+/// vine/cave_vines/twisting_vines/weeping_vines/kelp/seagrass 的成员）。
+const NO_COLLISION_BLOCK_NAMES: &[&str] = &[
+    "minecraft:air",
+    "minecraft:cave_air",
+    "minecraft:void_air",
+    "minecraft:water",
+    "minecraft:lava",
+    "minecraft:fire",
+    "minecraft:soul_fire",
+    "minecraft:short_grass",
+    "minecraft:tall_grass",
+    "minecraft:fern",
+    "minecraft:large_fern",
+    "minecraft:dead_bush",
+    "minecraft:bush",
+    "minecraft:firefly_bush",
+    "minecraft:short_dry_grass",
+    "minecraft:tall_dry_grass",
+    "minecraft:allium",
+    "minecraft:azure_bluet",
+    "minecraft:blue_orchid",
+    "minecraft:cornflower",
+    "minecraft:dandelion",
+    "minecraft:golden_dandelion",
+    "minecraft:lilac",
+    "minecraft:lily_of_the_valley",
+    "minecraft:orange_tulip",
+    "minecraft:oxeye_daisy",
+    "minecraft:peony",
+    "minecraft:pink_tulip",
+    "minecraft:poppy",
+    "minecraft:red_tulip",
+    "minecraft:rose_bush",
+    "minecraft:sunflower",
+    "minecraft:torchflower",
+    "minecraft:torchflower_crop",
+    "minecraft:white_tulip",
+    "minecraft:wildflowers",
+    "minecraft:closed_eyeblossom",
+    "minecraft:open_eyeblossom",
+    "minecraft:pink_petals",
+    "minecraft:leaf_litter",
+    "minecraft:vine",
+    "minecraft:cave_vines",
+    "minecraft:cave_vines_plant",
+    "minecraft:twisting_vines",
+    "minecraft:twisting_vines_plant",
+    "minecraft:weeping_vines",
+    "minecraft:weeping_vines_plant",
+    "minecraft:kelp",
+    "minecraft:kelp_plant",
+    "minecraft:seagrass",
+    "minecraft:tall_seagrass",
+];
+
+/// snow（v4 minecraft:snow_layer）：仅 layers=1 可替换（始终有碰撞）。
+const SNOW_BLOCK_NAME: &str = "minecraft:snow";
+
+fn block_name_is_replaceable(name: &str) -> bool {
+    NO_COLLISION_BLOCK_NAMES.contains(&name)
+}
+
+pub(in crate::world) fn block_semantics_registry() -> &'static BlockSemanticsRegistry {
+    static REGISTRY: OnceLock<BlockSemanticsRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        load_block_semantics_registry().unwrap_or_else(|err| {
+            log::warn!(
+                "{}",
+                qexed_language::t("qexed.world.registry.block_state_fallback")
+                    .replace("%{error}", &format!("{err:#}"))
+            );
+            BlockSemanticsRegistry::fallback()
+        })
+    })
+}
+
+fn load_block_semantics_registry(
+) -> Result<BlockSemanticsRegistry, qexed_mojang_data::registry_sync::RegistryError> {
+    let value = load_blocks_report()?;
+    let blocks = value.as_object().ok_or_else(|| {
+        qexed_mojang_data::registry_sync::RegistryError::msg("block report root is not object")
+    })?;
+
+    let mut air_block_states = HashSet::new();
+    let mut replaceable_block_states = HashSet::new();
+    let mut collision_block_states = HashSet::new();
+    let mut known_block_states = HashSet::new();
+
+    for (name, block) in blocks {
+        let is_air =
+            matches!(name.as_str(), "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air");
+        let replaceable_by_name = block_name_is_replaceable(name);
+        let is_snow = name == SNOW_BLOCK_NAME;
+        let Some(states) = block.get("states").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for state in states {
+            let Some(id) = state.get("id").and_then(serde_json::Value::as_i64) else {
+                continue;
+            };
+            let Ok(id) = i32::try_from(id) else {
+                continue;
+            };
+            known_block_states.insert(id);
+            if is_air {
+                air_block_states.insert(id);
+            }
+            let snow_layers_one = is_snow
+                && state
+                    .get("properties")
+                    .and_then(|properties| properties.get("layers"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(|layers| layers == "1");
+            if replaceable_by_name || snow_layers_one {
+                replaceable_block_states.insert(id);
+            }
+            // 碰撞（v4 block_state_has_collision）：非无碰撞家族即有碰撞（snow 有）。
+            if !replaceable_by_name {
+                collision_block_states.insert(id);
+            }
+        }
+    }
+
+    if known_block_states.is_empty() {
+        return Err(qexed_mojang_data::registry_sync::RegistryError::msg(
+            "block report contains no block states",
+        ));
+    }
+
+    Ok(BlockSemanticsRegistry {
+        air_block_states,
+        replaceable_block_states,
+        collision_block_states,
+        known_block_states,
+    })
+}
+
+impl BlockSemanticsRegistry {
+    fn fallback() -> Self {
+        Self {
+            air_block_states: HashSet::from([AIR_BLOCK_STATE_ID]),
+            replaceable_block_states: HashSet::from([AIR_BLOCK_STATE_ID]),
+            collision_block_states: HashSet::from([1]),
+            known_block_states: HashSet::from([AIR_BLOCK_STATE_ID, 1]),
+        }
+    }
 }
 
 pub(in crate::world) struct BlockMetadata {

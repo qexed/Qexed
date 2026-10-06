@@ -181,12 +181,30 @@ async fn execute(
 }
 
 fn handle_profile(action: ProfileAction) {
-    // TODO(profiler): v4 的 qexed_profiler 独立 crate 未列入本次迁移范围；
-    // 迁移后恢复 enable/disable/report_html 三态。
+    let Some(p) = qexed_profiler::get() else {
+        print_console("Profiler not initialized");
+        return;
+    };
     match action {
-        ProfileAction::Start => print_console("Profiler not available in this build"),
-        ProfileAction::Stop => print_console("Profiler not available in this build"),
-        ProfileAction::Report => print_console("Profiler not available in this build"),
+        ProfileAction::Start => {
+            p.enable();
+            print_console("Profiler started. Run 'profile report' to generate.");
+        }
+        ProfileAction::Stop => {
+            p.disable();
+            print_console("Profiler stopped.");
+        }
+        ProfileAction::Report => {
+            p.disable();
+            let html = p.report_html();
+            let path = std::env::current_dir()
+                .unwrap_or_default()
+                .join("profile_report.html");
+            match std::fs::write(&path, &html) {
+                Ok(_) => print_console(format!("Report written: {}", path.display())),
+                Err(err) => print_console(format!("Failed to write report: {err}")),
+            }
+        }
     }
 }
 

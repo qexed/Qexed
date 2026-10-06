@@ -32,19 +32,20 @@ mod util;
 
 // play-gameplay 任务落地的模块（已适配 v6：本 crate config/error + qexed_player/
 // qexed_entities/qexed_plugins/qexed_world(规则)/qexed_mojang_data + world_access trait）：
-mod gameplay;
+pub mod gameplay;
 pub(crate) mod l10n;
 mod mining;
-mod pathfinding;
-pub(crate) mod plugin_bridge;
+/// 寻路（A*）：pub 供 qexed 组装层的插件寻路宿主服务（v4 ServerPathfindingService）使用。
+pub mod pathfinding;
+pub mod plugin_bridge;
 mod recipes;
 mod structures;
-mod survival;
-mod world_access;
+pub mod survival;
+pub mod world_access;
 pub mod inventory;
 
 // play-gameplay 的命令支持面（权限 trait + 命令名/帮助文案；chat.rs 与装配层用）：
-pub(crate) mod chat_support;
+pub mod chat_support;
 
 // TODO(play-gameplay)：chat / geyser / scoreboard / tests 仍引用 play-core 未稳定的
 // LobbyRuntime/MenuRuntime/GeyserRuntime/ChunkSendState 接线（play-core 任务进行中）。
@@ -52,10 +53,11 @@ pub(crate) mod chat_support;
 // 插件 action）已完成 v6 适配（协议路径/错误类型/world_access/chat_support），
 // 待 play-core 基座定稿后在 handle_chat_command/apply_plugin_action 的会话参数上
 // 接线并取消注释：
-// mod chat;
-// mod geyser;
-// mod scoreboard;
-// mod tests;
+mod chat;
+mod geyser;
+mod scoreboard;
+#[cfg(test)]
+mod tests;
 // mod runtime;
 
 pub use bootstrap::{ServerDisplay, SessionInventory, SurvivalSnapshot, entities_position};
@@ -72,12 +74,14 @@ pub use context::{
     NoPluginEvents, PermissionLookup, PlaceholderContext, PlaceholderRenderer, PlayerAuditLog,
     PluginEventSink, WorldChunkSource, WorldRulesSource, WorldSessionGuard,
 };
-pub use drops::ItemRegistry;
+pub use drops::{ItemRegistry, collect_dropped_items};
 pub use error::{PlayError, Result};
+pub use util::spawn_position;
 pub use lobby::{LobbyRuntime, LobbyServerStatus, LobbyStatusSnapshot, NoProxyTransfer, ProxyTransfer};
 pub use menus::{HotbarSync, MenuRuntime};
 pub use session_core::{
-    ChatFilter, ChatRateLimit, FilterAction, GameplayHooks, NoChatFilter, NoGameplay,
-    NoSecureChat, PlaySessionDeps, SecureChatHook, SessionTickContext, FluidRuntime, initialize,
+    ChatCommandDeps, ChatFilter, ChatRateLimit, FilterAction, GameplayHooks, NoChatFilter,
+    NoGameplay, NoSecureChat, PlaySessionDeps, SecureChatHook, SessionTickContext, FluidRuntime,
+    initialize,
 };
 pub use session::player_payload;

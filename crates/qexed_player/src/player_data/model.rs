@@ -231,6 +231,13 @@ impl From<&StoredSlot> for Slot {
     }
 }
 
+/// 数据库存储用的结构化 payload：raw_nbt 单独存列/字段，不进 JSON。
+pub(super) fn structured_payload(data: &PlayerData) -> PlayerData {
+    let mut payload = data.clone();
+    payload.raw_nbt.clear();
+    payload
+}
+
 fn legacy_slot(value: &StoredSlot) -> Slot {
     let item_count = value.item_count.unwrap_or_default();
     if item_count <= 0 {
