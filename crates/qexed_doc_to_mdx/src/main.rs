@@ -1,6 +1,7 @@
 mod export_item;
 mod render;
 mod render_lang_index;
+mod render_packet;
 mod render_root;
 mod route;
 
@@ -33,9 +34,12 @@ struct Args {
     /// 目标语言列表，逗号分隔。
     #[arg(long, default_value = "zh-CN,en")]
     langs: String,
-    /// Next.js app 目录根。
+    /// Next.js app 目录根（配置文档）。
     #[arg(long, default_value = "./app")]
     out: PathBuf,
+    /// 网络数据包文档输出根（文档站 `app/docs/protocol`）。空则跳过。
+    #[arg(long, default_value = "")]
+    packets_out: String,
 }
 
 #[tokio::main]
@@ -105,6 +109,63 @@ async fn main() -> anyhow::Result<()> {
     generated += 1;
     println!("generated {} [root]", root_file.display());
 
+    if !args.packets_out.is_empty() {
+        generated += write_packet_docs(PathBuf::from(&args.packets_out), &langs).await?;
+    }
+
     println!("done: {generated} files across {} languages", langs.len());
     Ok(())
+}
+
+async fn write_packet_docs(out: PathBuf, langs: &[&str]) -> anyhow::Result<usize> {
+    let _linked = qexed_protocol::link_packet_docs();
+    let docs = qexed_packet::collect_packet_docs();
+    println!("packets: {} (linked {})", docs.len(), _linked);
+    let mut n = 0usize;
+    for lang in langs {
+        let table = qexed_language::load_translations(shadow::SHORT_COMMIT, lang).await?;
+        let zh = matches!(*lang, "zh-CN" | "zh" | "zh-Hans");
+        let index_title = if zh { "网络数据包" } else { "Network packets" };
+        let index = crate::render_packet::render_packet_index(
+            &docs,
+            &table,
+            lang,
+            index_title,
+            qexed_config::MC_VERSION,
+            shadow::COMMIT_HASH,
+        );
+        let index_file = if zh {
+            out.join("page.mdx")
+        } else {
+            out.join("en").join("page.mdx")
+        };
+        if let Some(parent) = index_file.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(&index_file, index).await?;
+        n += 1;
+        println!("generated {} [packet-index]", index_file.display());
+
+        for doc in &docs {
+            let mdx = crate::render_packet::render_packet_mdx(
+                doc,
+                &table,
+                lang,
+                qexed_config::MC_VERSION,
+                shadow::COMMIT_HASH,
+            );
+            let rel = doc.slug();
+            let file = if zh {
+                out.join(&rel).join("page.mdx")
+            } else {
+                out.join(&rel).join("en").join("page.mdx")
+            };
+            if let Some(parent) = file.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::write(&file, mdx).await?;
+            n += 1;
+        }
+    }
+    Ok(n)
 }

@@ -12,11 +12,37 @@ serde_json = { workspace = true }
 shadow-rs = { workspace = true }
 tklog.workspace = true
 qexed_log.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
 anyhow = { workspace = true }
 log = { workspace = true }
 qexed_config.workspace = true
 qexed_language.workspace = true
 qexed_mojang_data.workspace = true
+thiserror.workspace = true
+
+qexed_server.workspace = true
+
+qexed_play.workspace = true
+
+qexed_world.workspace = true
+
+qexed_player.workspace = true
+
+qexed_entities.workspace = true
+
+qexed_plugins.workspace = true
+
+qexed_connection.workspace = true
+
+qexed_protocol.workspace = true
+
+qexed_packet.workspace = true
+
+qexed_nbt.workspace = true
+
+bytes.workspace = true
+
+uuid.workspace = true
+
 [build-dependencies]
 shadow-rs.workspace = true

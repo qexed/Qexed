@@ -80,7 +80,7 @@ fn is_untranslated(table: &Translations, key: &str) -> bool {
 /// 缺失翻译的显式标注：文档站一眼可见哪些词条待补，不再静默串成其它语言。
 fn untranslated_mark(table: &Translations, key: &str) -> &'static str {
     if is_untranslated(table, key) {
-        " <!-- TODO: translate -->"
+        " {/* TODO: translate */}"
     } else {
         ""
     }
@@ -394,7 +394,7 @@ mod tests {
         let table = Translations::from_json(qexed_language::EN_JSON).unwrap();
         assert_eq!(
             untranslated_mark(&table, "qexed.missing.key.for.test"),
-            " <!-- TODO: translate -->"
+            " {/* TODO: translate */}"
         );
         assert_eq!(untranslated_mark(&table, "qexed.crates.log.config.LogConfig"), "");
     }

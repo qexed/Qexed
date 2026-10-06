@@ -1,8 +1,8 @@
 pub mod error;
 mod config_path;
 mod config;
-pub const PROTOCOL_VERSION: i32 = 775;
-pub const MC_VERSION: &'static str = "26.1.2";
+pub const PROTOCOL_VERSION: i32 = 777;
+pub const MC_VERSION: &'static str = "26.3";
 
 pub use config::Config;
 /// 必须调用！！！

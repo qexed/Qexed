@@ -1,0 +1,42 @@
+# Overlay for dsh --profile headless: same Grok 4.6 as the web GUI.
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: grok-build
+    model: grok-4.6
+    reasoningEffort: high
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      grok-build:
+        apiKeyEnv: GROK_BUILD_API_KEY
+        api: openai-completions
+        baseURL: https://new.fastaicode.top/v1
+        displayName: Grok Build
+        defaultContextWindow: 262144
+        defaultMaxTokens: 32768
+        defaultInput:
+          - text
+          - image
+        reasoning: high
+        streamIdleTimeoutMs: 600000
+        timeoutMs: 600000
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+          supportsReasoningEffort: true
+        models:
+          - id: grok-4.6
+            name: Grok 4.6
+            contextWindow: 2000000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh

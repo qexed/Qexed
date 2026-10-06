@@ -62,11 +62,12 @@ pub(super) fn extract_minecraft_data(
     ))?;
 
     log::info!(
-        "Mojang registry data cached: version={}, registry_files={}, lang_files={}, path={}",
-        qexed_config::MC_VERSION,
-        extracted,
-        lang_extracted,
-        data_root.display()
+        "{}",
+        qexed_language::t("qexed.mojang_data.cached")
+            .replace("%{version}", qexed_config::MC_VERSION)
+            .replace("%{registry_files}", &extracted.to_string())
+            .replace("%{lang_files}", &lang_extracted.to_string())
+            .replace("%{path}", &data_root.display().to_string())
     );
     Ok(())
 }

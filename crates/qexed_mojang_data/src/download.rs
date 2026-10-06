@@ -21,8 +21,10 @@ pub(super) fn download_if_needed(
             Ok(()) => return Ok(()),
             Err(err) => {
                 log::warn!(
-                    "Mojang 缓存 jar 校验失败，将重新下载: path={}, error={err}",
-                    target.display()
+                    "{}",
+                    qexed_language::t("qexed.mojang_data.jar.checksum_failed")
+                        .replace("%{path}", &target.display().to_string())
+                        .replace("%{error}", &err.to_string())
                 );
             }
         }

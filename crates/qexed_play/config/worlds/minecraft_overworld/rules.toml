@@ -1,0 +1,7 @@
+dimension = "minecraft:overworld"
+dimension_type = "minecraft:overworld"
+read_only = false
+block_updates = true
+light = "static"
+light_algorithm = "fast"
+time = { value = 0, daylight_cycle = true, tick_step = 1 }

@@ -18,6 +18,7 @@ members = [
     "crates/qexed_doc",
     "crates/macros/qexed_doc_macros",
     "crates/macros/qexed_config_macros",
+    "crates/macros/qexed_error_macros",
     "crates/qexed_doc_to_mdx",
 
     # 文档示例校验（docker 复现 MDX verify 清单）
@@ -25,6 +26,21 @@ members = [
 
     # Mojang jar数据
     "crates/qexed_mojang_data",
+
+    # 网络包与注册表
+    "crates/qexed_packet",
+    "crates/qexed_protocol",
+    "crates/qexed_nbt",
+    "crates/macros/qexed_packet_macros",
+
+    # v4 全量迁移功能域
+    "crates/qexed_world",
+    "crates/qexed_play",
+    "crates/qexed_entities",
+    "crates/qexed_plugins",
+    "crates/qexed_connection",
+    "crates/qexed_player",
+    "crates/qexed_server",
 ]
 [workspace.dependencies]
 qexed_toml.path = "crates/qexed_toml"
@@ -33,9 +49,22 @@ qexed_log.path = "crates/qexed_log"
 qexed_language.path = "crates/qexed_language"
 qexed_doc.path = "crates/qexed_doc"
 qexed_doc_macros.path = "crates/macros/qexed_doc_macros"
+qexed_error_macros.path = "crates/macros/qexed_error_macros"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_club = { path = 'crates/qexed_club' }
 qexed_mojang_data.path = "crates/qexed_mojang_data"
+qexed_packet.path = "crates/qexed_packet"
+qexed_protocol.path = "crates/qexed_protocol"
+qexed_nbt.path = "crates/qexed_nbt"
+qexed_packet_macros.path = "crates/macros/qexed_packet_macros"
+
+qexed_world.path = "crates/qexed_world"
+qexed_play.path = "crates/qexed_play"
+qexed_entities.path = "crates/qexed_entities"
+qexed_plugins.path = "crates/qexed_plugins"
+qexed_connection.path = "crates/qexed_connection"
+qexed_player.path = "crates/qexed_player"
+qexed_server.path = "crates/qexed_server"
 
 serde = "1.0.229"
 serde_json = "1"
@@ -53,3 +82,21 @@ colored = "3.1.1"
 tklog = "0.3.0"
 anyhow = "1.0.104"
 log = "0.4.34"
+
+bytes = "1.11"
+uuid = { version = "1.17", features = ["v3", "v4", "serde"] }
+byteorder = "1.5"
+flate2 = "1.1"
+libloading = "0.9"
+rayon = "1.11"
+rand = "0.8"
+tokio-stream = "0.1"
+base64 = "0.22"
+hmac = "0.12"
+aes = "0.8"
+cfb8 = { version = "0.8.1", features = ["std"] }
+openssl = { version = "0.10", features = ["vendored"] }
+sha1 = "0.10"
+inventory = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+hex = "0.4"

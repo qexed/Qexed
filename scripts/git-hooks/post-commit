@@ -1,0 +1,16 @@
+#!/bin/sh
+REPO_UNIX=$(cd "$(dirname "$0")/../.." && pwd)
+if command -v cygpath >/dev/null 2>&1; then
+  REPO=$(cygpath -w "$REPO_UNIX")
+  PS1=$(cygpath -w "$REPO_UNIX/scripts/docs-actors/run.ps1")
+else
+  REPO=$REPO_UNIX
+  PS1="$REPO_UNIX/scripts/docs-actors/run.ps1"
+fi
+if [ ! -f "$REPO_UNIX/scripts/docs-actors/run.ps1" ]; then
+  exit 0
+fi
+mkdir -p "$REPO_UNIX/../qexed-v6-doc/.docs-actors" 2>/dev/null || true
+# Visible local actor window so a commit actually shows something running.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$PS1' -WindowStyle Normal" >/dev/null 2>&1
+exit 0

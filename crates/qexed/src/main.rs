@@ -1,3 +1,5 @@
+mod runtime;
+
 use clap::Parser;
 use qexed_club::{arg_fields, ServerArgs};
 use shadow_rs::shadow;
@@ -24,7 +26,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main() -> anyhow::Result<()> {
     if let Err(err) = run().await {
-        log::error!("{err}");
+        log::error!("{}", qexed_language::t("qexed.runtime.error").replace("%{error}", &err.to_string()));
     }
     Ok(())
 }
@@ -91,9 +93,25 @@ async fn run() -> anyhow::Result<()> {
     qexed_log::init().await?;
     qexed_language::init(shadow::SHORT_COMMIT, args.language.as_deref()).await?;
     qexed_mojang_data::init().await?;
-    loop{
-        log::info!("test");
-        std::thread::sleep(std::time::Duration::from_secs(5)); // 等待 5 秒
-    }
+    qexed_mojang_data::registry_sync::ensure_data_ready()?;
+
+    // 组装真实运行时并启动服务器主循环
+    let server_config = qexed_server::config::ServerConfig::default();
+    let services = std::sync::Arc::new(qexed_server::context::ServerServices::load());
+    let connection_ctx = qexed_connection::connection::ServerContext::new(
+        qexed_connection::config::ConnectionConfig::default(),
+    )
+    .await?;
+
+    let runtime = std::sync::Arc::new(runtime::QexedRuntime::new(
+        server_config.clone(),
+        "./world",
+    )?);
+    let handler = std::sync::Arc::new(runtime::QexedConnectionHandler {
+        context: connection_ctx,
+    });
+
+    log::info!("{}", qexed_language::t("qexed.server.starting"));
+    qexed_server::server::run(server_config, runtime, services, handler).await?;
     Ok(())
 }

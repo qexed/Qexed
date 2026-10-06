@@ -1,0 +1,25 @@
+name: Dispatch website docs update
+
+on:
+  push:
+    branches:
+      - v6
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger website docs update
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_REPO_DISPATCH_TOKEN }}
+        run: |
+            gh api repos/qexed/qexed-doc/dispatches \
+              --method POST \
+              --field event_type=qexed-updated \
+              --field "client_payload[repository]=${GITHUB_REPOSITORY}" \
+              --field "client_payload[ref]=${GITHUB_REF_NAME}" \
+              --field "client_payload[sha]=${GITHUB_SHA}"
