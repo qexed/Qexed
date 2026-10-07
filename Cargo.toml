@@ -25,8 +25,15 @@ members = [
 
     # Mojang jar数据
     "crates/qexed_mojang_data",
+
+    # NBT
+    "crates/qexed_nbt",
 ]
 [workspace.dependencies]
+uuid = { version = "1", features = ["v4"] }
+flate2 = "1"
+byteorder = "1"
+bytes = "1"
 qexed_toml.path = "crates/qexed_toml"
 qexed_config.path = "crates/qexed_config"
 qexed_log.path = "crates/qexed_log"
