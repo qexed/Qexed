@@ -1,1 +1,0 @@
-public class T { Object o = java.lang.classfile.ClassFile.of(); }
