@@ -21,6 +21,11 @@ use self::{
 };
 use crate::error::{IoCtx, MojangDataError};
 
+/// 本 crate 锁定的 Minecraft 版本（下载与缓存目录命名用）。
+pub const MC_VERSION: &str = "26.1.2";
+/// 本 crate 锁定的 Minecraft 协议版本号。
+pub const PROTOCOL_VERSION: i32 = 775;
+
 /// 加载配置、下载 Mojang jar（如需）并解压 `data/minecraft` 到缓存目录。
 pub async fn init() -> Result<(), MojangDataError> {
     let config = MojangDataConfig::load_and_create_default(true)?;
@@ -31,7 +36,7 @@ pub async fn init() -> Result<(), MojangDataError> {
 }
 
 fn sync_data(config: &MojangDataConfig) -> Result<std::path::PathBuf, MojangDataError> {
-    let version = qexed_config::MC_VERSION;
+    let version = MC_VERSION;
     let cache_root = mojang_cache_root().join(version);
     let data_root = cache_root.join("data/minecraft");
 

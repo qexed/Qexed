@@ -323,3 +323,67 @@ fn load_overrides_placeholder_with_secret_value() {
     // 加载后被 secrets 覆盖为真值
     assert_eq!(Cfg::load_file(false).unwrap().token, "sk-abc");
 }
+
+// ---------------------------------------------------------------------------
+// 根目录覆写（ROOT）与显式根目录（*_at）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn root_const_override_writes_to_own_directory() {
+    setup();
+
+    #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+    struct Cfg { name: String }
+    impl Config for Cfg {
+        const ROOT: Option<&'static str> = Some("root_override_dir");
+        const PATH: &'static str = "sub";
+        const NAME: &'static str = "config";
+    }
+
+    let cfg = Cfg { name: "own-root".into() };
+    Cfg::save_file(&cfg).unwrap();
+
+    // 落在 ROOT 覆写的目录，而不是全局根目录
+    let in_override = std::path::Path::new("root_override_dir").join("sub").join("config.toml");
+    assert!(in_override.exists());
+    let global = config_path().unwrap().join("sub").join("config.toml");
+    assert!(!global.exists());
+
+    // 从覆写目录加载回来
+    assert_eq!(Cfg::load_file(false).unwrap().name, "own-root");
+
+    std::fs::remove_dir_all("root_override_dir").unwrap();
+}
+
+#[test]
+fn explicit_root_at_apis_do_not_need_init() {
+    // 该测试故意不调用 setup()：*_at API 不依赖 init_config_path。
+    // 但 OnceLock 是进程级的，其他测试可能已初始化；这里用独立临时目录验证语义即可。
+    let tmp = std::env::temp_dir().join(format!(
+        "qexed_config_at_test_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+    struct CfgAt { name: String }
+    impl Config for CfgAt {
+        const PATH: &'static str = "deep/dir";
+        const NAME: &'static str = "config";
+    }
+
+    let cfg = CfgAt { name: "at-api".into() };
+    CfgAt::save_file_at(&tmp, &cfg).unwrap();
+
+    let expected = tmp.join("deep/dir").join("config.toml");
+    assert!(expected.exists());
+    assert_eq!(CfgAt::load_file_at(&tmp, false).unwrap().name, "at-api");
+
+    // load_and_create_default_at 在文件缺失时自动创建
+    std::fs::remove_dir_all(&tmp).unwrap();
+    let loaded = CfgAt::load_and_create_default_at(&tmp, false).unwrap();
+    assert_eq!(loaded, CfgAt::default());
+    assert!(tmp.join("deep/dir").join("config.toml").exists());
+
+    std::fs::remove_dir_all(&tmp).unwrap();
+}

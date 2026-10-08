@@ -2,10 +2,26 @@
 name = "qexed_config"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "Trait-based TOML configuration framework: implement one trait to get create/load/save with default merging, unknown-field preservation, and automatic secret splitting into .secrets/."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/qexed/Qexed"
+keywords = ["config", "toml", "settings", "secrets", "configuration"]
+categories = ["config"]
+
+[features]
+# 进程级全局配置根目录（内部历史设计）。
+# 默认关闭：新项目用 Config::ROOT 覆写或 *_at 方法。
+# 启用后恢复 init_config_path / config_path 全局 API。
+global-root = []
+
 [dependencies]
-qexed_toml.workspace = true
+qexed_toml = { version = "0.1", path = "../qexed_toml" }
 serde.workspace = true
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
 toml_edit = { workspace = true, features = ["serde"] }
+
+# 现有测试基于全局根目录（setup 里 init_config_path），仅在该特征下编译运行
+[[test]]
+name = "config_secrets"
+required-features = ["global-root"]

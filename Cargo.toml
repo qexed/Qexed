@@ -43,7 +43,7 @@ flate2 = "1"
 byteorder = "1"
 bytes = "1"
 qexed_toml.path = "crates/qexed_toml"
-qexed_config.path = "crates/qexed_config"
+qexed_config = { path = "crates/qexed_config", features = ["global-root"] }
 qexed_log.path = "crates/qexed_log"
 qexed_language.path = "crates/qexed_language"
 qexed_doc.path = "crates/qexed_doc"

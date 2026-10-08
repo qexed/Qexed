@@ -5,6 +5,7 @@ use std::{
 };
 
 use super::paths::DATA_MARKER;
+use crate::MC_VERSION;
 use crate::error::{IoCtx, MojangDataError};
 
 pub(super) fn extract_minecraft_data(
@@ -63,7 +64,7 @@ pub(super) fn extract_minecraft_data(
 
     log::info!(
         "Mojang registry data cached: version={}, registry_files={}, lang_files={}, path={}",
-        qexed_config::MC_VERSION,
+        MC_VERSION,
         extracted,
         lang_extracted,
         data_root.display()

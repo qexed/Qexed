@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{config_path::config_file, error::ConfigError};
+use crate::{config_path::config_file_at, error::ConfigError};
+#[cfg(feature = "global-root")]
+use crate::config_path::config_path;
 
 /// 确保路径的父目录存在（相当于 `mkdir -p $(dirname path)`）。
 fn ensure_parent(path: &std::path::Path) -> Result<(), ConfigError> {
@@ -17,13 +19,22 @@ fn ensure_parent(path: &std::path::Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// 机密文件路径：与主文件同模块目录，位于 `<PATH>/.secrets/<NAME>.toml`。
-fn secret_file(path: &str, name: &str) -> Result<PathBuf, ConfigError> {
+/// 机密文件路径：与主文件同模块目录，位于 `<ROOT>/<PATH>/.secrets/<NAME>.toml`。
+fn secret_file_at(base: &std::path::Path, path: &str, name: &str) -> Result<PathBuf, ConfigError> {
     let rel = format!("{path}/.secrets");
-    config_file(&rel, name)
+    config_file_at(base, &rel, name)
 }
 
 pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
+    /// 自定义配置根目录；`None`(默认)时使用 `init_config_path` 设置的全局根目录。
+    ///
+    /// 需要独立于全局根目录的配置（如测试、多实例应用）可覆写：
+    /// ```rust,ignore
+    /// const ROOT: Option<&'static str> = Some("./my_app_config");
+    /// ```
+    /// 也可以在运行期用 `load_*_at` / `save_file_at` 等方法指定任意根目录。
+    const ROOT: Option<&'static str> = None;
+
     /// 文件所在目录路径(相对配置文件夹)
     const PATH: &'static str;
     /// 文件名(相对文件所在目录路径)（不用写.toml,会自动补全的)
@@ -72,21 +83,46 @@ pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
     /// ```
     const SECRETS: &'static [&'static str] = &[];
 
+    /// 本实现的根目录：`ROOT` 覆写值，或（启用 `global-root` 特征时）
+    /// `init_config_path` 设置的全局根目录。
+    ///
+    /// 未覆写 `ROOT` 且全局根目录不可用时返回 `ConfigError::NotInitialized`。
+    fn root() -> Result<std::borrow::Cow<'static, std::path::Path>, ConfigError> {
+        match Self::ROOT {
+            Some(fixed) => Ok(std::borrow::Cow::Borrowed(std::path::Path::new(fixed))),
+            #[cfg(feature = "global-root")]
+            None => Ok(std::borrow::Cow::Borrowed(config_path()?.as_path())),
+            #[cfg(not(feature = "global-root"))]
+            None => Err(ConfigError::NotInitialized),
+        }
+    }
+
     // 读取文件(没有则新建)
     // 若save为true,则读取后覆盖原文件
     fn load_and_create_default(save: bool) -> Result<Self, ConfigError> {
-        let path = config_file(Self::PATH, Self::NAME)?;
+        let base = Self::root()?;
+        Self::load_and_create_default_at(&base, save)
+    }
+
+    /// [`Config::load_and_create_default`] 的显式根目录版本。
+    fn load_and_create_default_at(base: &std::path::Path, save: bool) -> Result<Self, ConfigError> {
+        let path = config_file_at(base, Self::PATH, Self::NAME)?;
         if !qexed_toml::has_file(&path)? {
-            Self::create_file(None)?;
+            Self::create_file_at(base, None)?;
         }
-        Ok(Self::load_file(save)?)
+        Ok(Self::load_file_at(base, save)?)
     }
 
     // 新建文件
     // 按 SECRETS 规则拆成主文件 + secrets 文件，分别落盘
     fn create_file(config: Option<&Self>) -> Result<(), ConfigError> {
-        let path = config_file(Self::PATH, Self::NAME)?;
-        let secret_path = secret_file(Self::PATH, Self::NAME)?;
+        Self::create_file_at(&Self::root()?, config)
+    }
+
+    /// [`Config::create_file`] 的显式根目录版本。
+    fn create_file_at(base: &std::path::Path, config: Option<&Self>) -> Result<(), ConfigError> {
+        let path = config_file_at(base, Self::PATH, Self::NAME)?;
+        let secret_path = secret_file_at(base, Self::PATH, Self::NAME)?;
 
         let doc = match config {
             Some(c) => qexed_toml::to_document(c)?,
@@ -109,8 +145,13 @@ pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
     // 读取文件
     // 若save为true,则读取后覆盖原文件
     fn load_file(save: bool) -> Result<Self, ConfigError> {
-        let path = config_file(Self::PATH, Self::NAME)?;
-        let secret_path = secret_file(Self::PATH, Self::NAME)?;
+        Self::load_file_at(&Self::root()?, save)
+    }
+
+    /// [`Config::load_file`] 的显式根目录版本。
+    fn load_file_at(base: &std::path::Path, save: bool) -> Result<Self, ConfigError> {
+        let path = config_file_at(base, Self::PATH, Self::NAME)?;
+        let secret_path = secret_file_at(base, Self::PATH, Self::NAME)?;
 
         let config_documentmut = qexed_toml::load_file(&path)?;
 
@@ -128,7 +169,7 @@ pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
 
         let config: Self = qexed_toml::from_document(config_load)?;
         if save {
-            Self::save_file(&config)?;
+            Self::save_file_at(base, &config)?;
         }
         Ok(config)
     }
@@ -137,8 +178,13 @@ pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
     // 先把新配置合到磁盘上的旧主文件（保留未知字段），
     // 再按 SECRETS 拆成主文件 + secrets 文件落盘
     fn save_file(config: &Self) -> Result<(), ConfigError> {
-        let path = config_file(Self::PATH, Self::NAME)?;
-        let secret_path = secret_file(Self::PATH, Self::NAME)?;
+        Self::save_file_at(&Self::root()?, config)
+    }
+
+    /// [`Config::save_file`] 的显式根目录版本。
+    fn save_file_at(base: &std::path::Path, config: &Self) -> Result<(), ConfigError> {
+        let path = config_file_at(base, Self::PATH, Self::NAME)?;
+        let secret_path = secret_file_at(base, Self::PATH, Self::NAME)?;
 
         let new_doc = qexed_toml::to_document(config)?;
 

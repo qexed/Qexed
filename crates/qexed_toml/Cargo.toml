@@ -2,7 +2,13 @@
 name = "qexed_toml"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "TOML utilities on top of toml_edit: format-preserving deep merge, document-level serde, and secret field splitting (main file for git, secrets in .secrets/)."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/qexed/Qexed"
+keywords = ["toml", "config", "merge", "secrets", "toml_edit"]
+categories = ["config", "encoding"]
+
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }

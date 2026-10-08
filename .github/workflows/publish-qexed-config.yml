@@ -1,34 +1,44 @@
-# Publish ONLY the qexed_nbt crate to crates.io when its version changes.
+# Publish ONLY the qexed_config crate to crates.io when its version changes.
 # 使用 Trusted Publishing（OIDC），无需在 GitHub Secrets 存放长期 API token。
 #
+# ── 依赖顺序 ──────────────────────────────────────────────────────
+# qexed_config 依赖 qexed_toml（crates.io 版本）。若两者同一天 bump:
+#   1. 先发 qexed_toml（其 workflow 会自动触发）
+#   2. 等它上线后再 push qexed_config 的版本变更（或手动 workflow_dispatch）
+# 同一 push 同时 bump 两者时：本 workflow 会等 toml 的发布完成后拉到新版本
+# （cargo 解析的是 crates.io 上的最新 qexed_toml）。
+#
 # ── 一次性设置（Trusted Publishing 不支持创建新 crate，首次发布须手动）──
-# 1. [已完成] qexed_nbt 0.1.0 已手动发布
-# 2. [已完成] crates.io → qexed_nbt → Settings → Trusted Publishing 已登记:
+# 1. 手动首发（只需一次，且必须在 qexed_toml 已上线之后）:
+#      cargo login
+#      cargo publish -p qexed_config --registry crates-io
+#      # 注意：发布的是默认特性（无 global-root），workspace 内部用法不受影响
+# 2. 到 crates.io → qexed_config → Settings → Trusted Publishing → Add:
 #      Repository owner:  qexed
 #      Repository name:   Qexed
-#      Workflow filename: publish-qexed-nbt.yml
+#      Workflow filename: publish-qexed-config.yml  <- 必须与本文件名完全一致
 #      Environment:       （留空）
 #
 # ── 本地验证（不会真正上传）────────────────────────────────────────
-#   cargo publish --dry-run -p qexed_nbt --registry crates-io --allow-dirty
+#   cargo publish --dry-run -p qexed_config --registry crates-io --allow-dirty
+#   （需要 qexed_toml 已在 crates.io 上，否则依赖解析会失败）
 #
 # ── 触发条件（全部满足才发布）─────────────────────────────────────
 #   1. push 到 v6 分支
-#   2. crates/qexed_nbt/Cargo.toml 的 version 字段发生变化
+#   2. crates/qexed_config/Cargo.toml 的 version 字段发生变化
 #   3. 该版本在 crates.io 上不存在（重复版本会跳过而不是失败）
 
-name: Publish qexed_nbt
+name: Publish qexed_config
 
 on:
   push:
     branches: [v6]
     paths:
-      - "crates/qexed_nbt/**"
-      - ".github/workflows/publish-qexed-nbt.yml"
+      - "crates/qexed_config/**"
+      - "crates/qexed_toml/**"   # 依赖版本变更也可能触发 config 重发场景
+      - ".github/workflows/publish-qexed-config.yml"
   workflow_dispatch:
 
-# contents: write  -> push 版本 tag
-# id-token: write  -> OIDC 令牌交换（Trusted Publishing 必需）
 permissions:
   contents: write
   id-token: write
@@ -38,7 +48,7 @@ env:
 
 jobs:
   publish:
-    name: Publish qexed_nbt to crates.io
+    name: Publish qexed_config to crates.io
     runs-on: ubuntu-latest
 
     steps:
@@ -56,7 +66,7 @@ jobs:
       - name: Cache cargo registry and target directory
         uses: Swatinem/rust-cache@v2
 
-      - name: Check if qexed_nbt version changed
+      - name: Check if qexed_config version changed
         id: version
         run: |
           PREVIOUS_SHA="${{ github.event.before }}"
@@ -71,11 +81,11 @@ jobs:
             fi
           fi
 
-          echo "Comparing $PREVIOUS_SHA..$CURRENT_SHA for crates/qexed_nbt/Cargo.toml version"
+          echo "Comparing $PREVIOUS_SHA..$CURRENT_SHA for crates/qexed_config/Cargo.toml version"
 
-          OLD_VERSION=$(git show "$PREVIOUS_SHA:crates/qexed_nbt/Cargo.toml" 2>/dev/null \
+          OLD_VERSION=$(git show "$PREVIOUS_SHA:crates/qexed_config/Cargo.toml" 2>/dev/null \
             | grep -E '^version\s*=' | head -1 | sed 's/version\s*=\s*"\(.*\)"/\1/')
-          NEW_VERSION=$(grep -E '^version\s*=' crates/qexed_nbt/Cargo.toml \
+          NEW_VERSION=$(grep -E '^version\s*=' crates/qexed_config/Cargo.toml \
             | head -1 | sed 's/version\s*=\s*"\(.*\)"/\1/')
 
           echo "old=$OLD_VERSION new=$NEW_VERSION"
@@ -83,7 +93,7 @@ jobs:
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
           if [ -z "$NEW_VERSION" ]; then
-            echo "::error::Failed to parse version from crates/qexed_nbt/Cargo.toml"
+            echo "::error::Failed to parse version from crates/qexed_config/Cargo.toml"
             exit 1
           fi
 
@@ -99,30 +109,33 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         run: |
           VERSION="${{ steps.version.outputs.new }}"
-          echo "Checking https://crates.io/api/v1/crates/qexed_nbt/$VERSION"
+          echo "Checking https://crates.io/api/v1/crates/qexed_config/$VERSION"
           STATUS=$(curl -sf -o /dev/null -w '%{http_code}' \
-            "https://crates.io/api/v1/crates/qexed_nbt/$VERSION" || echo "000")
+            "https://crates.io/api/v1/crates/qexed_config/$VERSION" || echo "000")
           if [ "$STATUS" = "200" ]; then
-            echo "qexed_nbt @ $VERSION already exists on crates.io, skipping publish."
+            echo "qexed_config @ $VERSION already exists on crates.io, skipping publish."
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run tests
+      # 两种特性配置都测：默认（发布形态）+ global-root（内部用法）
+      - name: Run tests (default features)
         if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
-        run: cargo test -p qexed_nbt
+        run: cargo test -p qexed_config
 
-      # Trusted Publishing: OIDC 令牌换取 30 分钟有效的临时发布 token
-      # （action 的 post 阶段会自动吊销该 token，无需任何 GitHub Secret）
+      - name: Run tests (global-root feature)
+        if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
+        run: cargo test -p qexed_config --features global-root
+
       - name: Authenticate to crates.io (Trusted Publishing)
         id: auth
         if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
         uses: rust-lang/crates-io-auth-action@v1
 
-      - name: Publish qexed_nbt
+      - name: Publish qexed_config
         if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
-        run: cargo publish -p qexed_nbt
+        run: cargo publish -p qexed_config
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
@@ -130,7 +143,7 @@ jobs:
         if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
         run: |
           VERSION="${{ steps.version.outputs.new }}"
-          TAG="qexed_nbt-v$VERSION"
+          TAG="qexed_config-v$VERSION"
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "Tag $TAG already exists, skipping."
           else
@@ -144,6 +157,7 @@ jobs:
           echo "::error::Publish workflow failed. Check logs above for details."
           echo "If auth failed (403), check the crates.io Trusted Publishing config:"
           echo "  - Repository owner/name: qexed / Qexed"
-          echo "  - Workflow filename: publish-qexed-nbt.yml (must match exactly)"
+          echo "  - Workflow filename: publish-qexed-config.yml (must match exactly)"
           echo "  - Environment field: empty (we don't use a GH environment)"
+          echo "If dependency resolution failed: confirm qexed_toml is published on crates.io."
           echo "Also confirm this job keeps 'id-token: write' permission."
