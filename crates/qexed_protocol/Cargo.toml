@@ -1,0 +1,24 @@
+[package]
+name = "qexed_protocol"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_config.workspace = true
+qexed_config_macros.workspace = true
+qexed_language.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+tokio.workspace = true
+tklog.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+# 下面的库自己写
+qexed_nbt.workspace = true
+qexed_packet.workspace = true
+qexed_packet_macros.workspace = true
+
+bytes.workspace = true
+uuid.workspace = true

@@ -82,6 +82,57 @@ gradle extractFriendlyByteBufUsage -PbytebufTarget=net.minecraft.network.Registr
 universe although the declaration was not found in the indexed jars (should not
 happen with the joined jar).
 
+## Packet structures (per-packet wire format)
+
+```powershell
+gradle extractPacketStructures
+# -> build/packet-structures/packet-structures.json
+# -> build/packet-structures/packet-structures.csv
+```
+
+Produces the ordered field list for every packet class:
+
+```jsonc
+"net.minecraft.network.protocol.game.ClientboundAddEntityPacket": {
+  "packet": "minecraft:add_entity",
+  "direction": "clientbound",
+  "ids": {"play": 1},
+  "source": "constructor+write",
+  "fields": [
+    { "name": "id",   "wire": "varint", "line": 96 },
+    { "name": "uuid", "wire": "uuid",   "line": 97 },
+    { "name": "x",    "wire": "f64_be", "line": 99 },
+    ...
+  ]
+}
+```
+
+Analysis sources, in priority order (vanilla mixes all three styles):
+
+1. **decoding constructor** — read order is the wire order; names resolved from
+   the PUTFIELD that stores each decoded value (javac emits it after the read);
+   nested buffer-consuming constructors are expanded recursively;
+2. **STREAM_CODEC chains** — `StreamCodec.composite/map` and `Packet.codec`
+   in `<clinit>` or factory methods; field names from getter lambdas or
+   method references; wire types from `ByteBufCodecs.*` constants and factory
+   calls, with registry keys captured from `Registries.X` GETSTATICs;
+3. **write() method** — same walk on the write side, as a fallback.
+
+Packet ids are joined from Mojang's own datagen `packets.json` when the
+sibling `mc-vanilla-protocol` project has generated it (override with
+`-PpacketsJson=<path>`). Wire type vocabulary: `varint`, `varlong`,
+`i32_be`, `i64_be`, `i16_be`, `i8/u8`, `f32_be`, `f64_be`, `bool`,
+`string_utf8`, `uuid`, `nbt`, `identifier`, `block_pos_i64`,
+`vec3_f64`, `registry:<key>`, `array[<elem>]`, `codec:<Owner.FIELD>`,
+`struct:<Class>` — designed as a stable base for generated read/write code.
+
+Known limits (marked in output, not silently wrong): 21 packets have empty
+structures (bundle delimiters, keep-alive style no-field packets, abstract
+bases) and ~19 use dispatch/member-codec shapes whose inner branches are
+reported as `unknown` or `codec:Owner.FIELD` references to expand in a
+follow-up pass.
+
+
 ## Tests
 
 ```powershell

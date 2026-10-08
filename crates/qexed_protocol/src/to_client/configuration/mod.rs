@@ -1,0 +1,21 @@
+// 自动生成
+pub mod add_resource_pack;
+pub mod clear_dialog;
+pub mod code_of_conduct;
+pub mod cookie_request;
+pub mod custom_payload;
+pub mod custom_report_details;
+pub mod disconnect;
+pub mod feature_flags;
+pub mod finish_configuration;
+pub mod keep_alive;
+pub mod ping;
+pub mod registry_data;
+pub mod remove_resource_pack;
+pub mod reset_chat;
+pub mod select_known_packs;
+pub mod server_links;
+pub mod show_dialog;
+pub mod store_cookie;
+pub mod tags;
+pub mod transfer;

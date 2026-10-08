@@ -15,6 +15,7 @@ final class WireMap {
             case "readTrustedNbt", "readNbt" -> "nbt";
             case "readNullable", "readOptional" -> "optional";
             case "readEnum" -> "varint_enum";
+            case "readEnumSet" -> "bitset_enum";
             case "readEnumCount" -> "varint_enum_count";
             case "readById" -> "varint_by_id";
             case "readRegistry" -> "registry_id";
@@ -34,6 +35,9 @@ final class WireMap {
 
     /** FriendlyByteBuf writeXxx -> wire type. */
     static String wireOfWrite(String method) {
+        if (method.equals("writeNbt")) {
+            return "nbt";
+        }
         String w = wireOfCommon(method, "write");
         if (w != null) {
             return w;
@@ -67,6 +71,7 @@ final class WireMap {
             case "readInt", "writeInt" -> "i32_be";
             case "readLong", "writeLong" -> "i64_be";
             case "readShort", "writeShort" -> "i16_be";
+            case "readUnsignedShort", "writeUnsignedShort" -> "u16_be";
             case "readByte", "writeByte" -> "i8";
             case "readUnsignedByte", "writeUnsignedByte" -> "u8";
             case "readDouble", "writeDouble" -> "f64_be";

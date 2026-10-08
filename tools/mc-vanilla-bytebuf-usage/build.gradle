@@ -4,6 +4,67 @@ import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.process.CommandLineArgumentProvider
 
+/** CLI args for the golden sampler. */
+class GoldenCliArgs implements CommandLineArgumentProvider {
+    @Internal
+    File outDir
+
+    @InputFiles
+    FileCollection jars
+
+    @Override
+    Iterable<String> asArguments() {
+        def argv = ["--out", outDir.absolutePath]
+        jars.each { f -> argv += ["--jar", f.absolutePath] }
+        return argv
+    }
+}
+
+/** CLI args for the NBT usage extractor. */
+class NbtCliArgs implements CommandLineArgumentProvider {
+    @Internal
+    File outDir
+
+    @Input
+    String mcVersion
+
+    @InputFiles
+    FileCollection jars
+
+    @Override
+    Iterable<String> asArguments() {
+        def argv = ["--out", outDir.absolutePath, "--mc-version", mcVersion]
+        jars.each { f -> argv += ["--jar", f.absolutePath] }
+        return argv
+    }
+}
+
+/** CLI args for the packet-structure extractor. */
+class PacketStructCliArgs implements CommandLineArgumentProvider {
+    @Internal
+    File outDir
+
+    @Input
+    String mcVersion
+
+    @Input
+    @org.gradle.api.tasks.Optional
+    String packetsJson
+
+    @InputFiles
+    FileCollection jars
+
+    @Override
+    Iterable<String> asArguments() {
+        def argv = ["--out", outDir.absolutePath, "--mc-version", mcVersion]
+        if (packetsJson != null && new File(packetsJson).isFile()) {
+            argv += ["--packets-json", packetsJson]
+        }
+        jars.each { f -> argv += ["--jar", f.absolutePath] }
+        return argv
+    }
+}
+
 /** Supplies extractor CLI args from properly annotated properties. */
 class ByteBufCliArgs implements CommandLineArgumentProvider {
     @Internal
@@ -103,6 +164,51 @@ tasks.register("extractFriendlyByteBufUsage", JavaExec) {
             outDir: layout.buildDirectory.dir("bytebuf-usage").get().asFile,
             target: providers.gradleProperty("bytebufTarget").orElse("net.minecraft.network.FriendlyByteBuf").get(),
             mcVersion: mcVersion,
+            jars: configurations.minecraft))
+}
+
+tasks.register("extractPacketStructures", JavaExec) {
+    description = "Extracts per-packet wire structures (ordered fields) from the vanilla jar."
+    group = "verification"
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "cn.qexed.bytebuf.PacketStructureExtractor"
+    jvmArgs "-Xmx3g"
+    workingDir rootProject.projectDir
+    dependsOn tasks.named("compileJava")
+    argumentProviders.add(new PacketStructCliArgs(
+            outDir: layout.buildDirectory.dir("packet-structures").get().asFile,
+            mcVersion: mcVersion,
+            packetsJson: providers.gradleProperty("packetsJson")
+                    .orElse(rootProject.projectDir.parentFile.toPath()
+                            .resolve("mc-vanilla-protocol/build/vanilla-reports/reports/packets.json")
+                            .toFile().absolutePath).get(),
+            jars: configurations.minecraft))
+}
+
+tasks.register("extractNbtUsage", JavaExec) {
+    description = "Extracts every NBT-touching method (readNbt/writeNbt/CompoundTag builders) from the vanilla jar."
+    group = "verification"
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "cn.qexed.bytebuf.NbtUsageExtractor"
+    jvmArgs "-Xmx3g"
+    workingDir rootProject.projectDir
+    dependsOn tasks.named("compileJava")
+    argumentProviders.add(new NbtCliArgs(
+            outDir: layout.buildDirectory.dir("nbt-usage").get().asFile,
+            mcVersion: mcVersion,
+            jars: configurations.minecraft))
+}
+
+tasks.register("generateGoldenSamples", JavaExec) {
+    description = "Generates golden wire samples by decoding random bytes with VANILLA codecs and re-encoding."
+    group = "verification"
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "cn.qexed.bytebuf.RandomPacketSampler"
+    jvmArgs "-Xmx3g"
+    workingDir rootProject.projectDir
+    dependsOn tasks.named("compileJava")
+    argumentProviders.add(new GoldenCliArgs(
+            outDir: layout.buildDirectory.dir("golden-samples").get().asFile,
             jars: configurations.minecraft))
 }
 

@@ -18,6 +18,7 @@ members = [
     "crates/qexed_doc",
     "crates/macros/qexed_doc_macros",
     "crates/macros/qexed_config_macros",
+    "crates/macros/qexed_packet_macros",
     "crates/qexed_doc_to_mdx",
 
     # 文档示例校验（docker 复现 MDX verify 清单）
@@ -26,10 +27,17 @@ members = [
     # Mojang jar数据
     "crates/qexed_mojang_data",
 
+
+
     # NBT
     "crates/qexed_nbt",
+    "crates/qexed_protocol",
+    "crates/qexed_packet",
 ]
 [workspace.dependencies]
+qexed_packet.path = "crates/qexed_packet"
+qexed_protocol.path = "crates/qexed_protocol"
+qexed_nbt.path = "crates/qexed_nbt"
 uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
 byteorder = "1"
@@ -41,6 +49,7 @@ qexed_language.path = "crates/qexed_language"
 qexed_doc.path = "crates/qexed_doc"
 qexed_doc_macros.path = "crates/macros/qexed_doc_macros"
 qexed_config_macros.path = "crates/macros/qexed_config_macros"
+qexed_packet_macros.path = "crates/macros/qexed_packet_macros"
 qexed_club = { path = 'crates/qexed_club' }
 qexed_mojang_data.path = "crates/qexed_mojang_data"
 

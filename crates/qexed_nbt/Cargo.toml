@@ -2,6 +2,12 @@
 name = "qexed_nbt"
 version = "0.1.0"
 edition = "2024"
+description = "Minecraft Java Edition NBT (Named Binary Tag) tree model with big-endian codecs: named disk format (level.dat, gzip auto-detect), network format, and Serde support."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/qexed/Qexed"
+keywords = ["minecraft", "nbt", "serialization", "serde", "parser"]
+categories = ["encoding", "parser-implementations", "game-development"]
 
 [dependencies]
 
@@ -11,5 +17,6 @@ serde = { workspace = true, features = ["derive"] }
 flate2.workspace = true
 byteorder.workspace = true
 bytes.workspace = true
+
 [dev-dependencies]
 serde_json.workspace = true
