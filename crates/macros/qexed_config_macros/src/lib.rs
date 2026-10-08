@@ -1,11 +1,13 @@
 //! app_config：代替手写 impl qexed_config::Config。
 //!
 //! 用法：
-//! #[qexed_config_macros::app_config("/", "log", secrets = ["level.token"])]
+//! #[qexed_config_macros::app_config("/", "log")]
 //!
-//! 生成 impl Config（PATH/NAME/SECRETS），并把 <File>path/name.toml</File> 与
-//! <Secrets>...</Secrets> 注入类型的 autodoc 块（没有则补一个完整块），
-//! schema 的 file/secrets 随之自动生成，不必在 autodoc 和 impl 两处重复声明。
+//! 生成 `impl ::qexed_config::Config`（PATH/NAME/SECRETS，前导 `::` 强制解析到
+//! extern prelude，调用方本地的同名模块/导入不会干扰），并把 <File>path/name.toml</File>
+//! 与 <Secrets>...</Secrets> 注入类型的 autodoc 块（没有则补一个完整块）。
+//! 机密规则只来自 autodoc 标签（<Secret /> 字段级、<Secrets> 结构体级），
+//! 不接受 secrets 参数。
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -91,7 +93,7 @@ fn expand(
     Ok(quote! {
         #item_struct
 
-        impl qexed_config::Config for #name {
+        impl ::qexed_config::Config for #name {
             const PATH: &'static str = #path_lit;
             const NAME: &'static str = #name_lit;
             const SECRETS: &'static [&'static str] = &[#(#secrets_lits),*];

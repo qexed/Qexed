@@ -1,0 +1,148 @@
+# Publish ONLY the qexed_config_macros crate to crates.io when its version changes.
+# 使用 Trusted Publishing（OIDC），无需在 GitHub Secrets 存放长期 API token。
+#
+# ── 一次性设置（Trusted Publishing 不支持创建新 crate，首次发布须手动）──
+# 1. 手动首发（只需一次）:
+#      cargo login
+#      cargo publish -p qexed_config_macros --registry crates-io
+# 2. 到 crates.io → qexed_config_macros → Settings → Trusted Publishing → Add:
+#      Repository owner:  qexed
+#      Repository name:   Qexed
+#      Workflow filename: publish-qexed-config-macros.yml   <- 必须与本文件名完全一致
+#      Environment:       （留空）
+#
+# ── 本地验证（不会真正上传）────────────────────────────────────────
+#   cargo publish --dry-run -p qexed_config_macros --registry crates-io --allow-dirty
+#
+# ── 触发条件（全部满足才发布）─────────────────────────────────────
+#   1. push 到 v6 分支
+#   2. crates/macros/qexed_config_macros/Cargo.toml 的 version 字段发生变化
+#   3. 该版本在 crates.io 上不存在（重复版本会跳过而不是失败）
+
+name: Publish qexed_config_macros
+
+on:
+  push:
+    branches: [v6]
+    paths:
+      - "crates/macros/qexed_config_macros/**"
+      - ".github/workflows/publish-qexed-config-macros.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish qexed_config_macros to crates.io
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Fetch full history with tags
+        run: git fetch --prune --unshallow --tags || git fetch --prune --tags
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.1"
+
+      - name: Cache cargo registry and target directory
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check if qexed_config_macros version changed
+        id: version
+        run: |
+          PREVIOUS_SHA="${{ github.event.before }}"
+          CURRENT_SHA="${{ github.sha }}"
+
+          if [ -z "$PREVIOUS_SHA" ] || [ "$PREVIOUS_SHA" = "0000000000000000000000000000000000000000" ]; then
+            PREVIOUS_SHA=$(git describe --tags --abbrev=0 2>/dev/null || true)
+            if [ -z "$PREVIOUS_SHA" ]; then
+              echo "No previous commit available, skipping version comparison."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "Comparing $PREVIOUS_SHA..$CURRENT_SHA for crates/macros/qexed_config_macros/Cargo.toml version"
+
+          OLD_VERSION=$(git show "$PREVIOUS_SHA:crates/macros/qexed_config_macros/Cargo.toml" 2>/dev/null \
+            | grep -E '^version\s*=' | head -1 | sed 's/version\s*=\s*"\(.*\)"/\1/')
+          NEW_VERSION=$(grep -E '^version\s*=' crates/macros/qexed_config_macros/Cargo.toml \
+            | head -1 | sed 's/version\s*=\s*"\(.*\)"/\1/')
+
+          echo "old=$OLD_VERSION new=$NEW_VERSION"
+          echo "old=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$NEW_VERSION" ]; then
+            echo "::error::Failed to parse version from crates/macros/qexed_config_macros/Cargo.toml"
+            exit 1
+          fi
+
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version unchanged ($NEW_VERSION), nothing to publish."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if version exists on crates.io
+        id: cratesio
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          echo "Checking https://crates.io/api/v1/crates/qexed_config_macros/$VERSION"
+          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' \
+            "https://crates.io/api/v1/crates/qexed_config_macros/$VERSION" || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "qexed_config_macros @ $VERSION already exists on crates.io, skipping publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # proc-macro crate：编译通过即是测试（无独立测试目标）
+      - name: Verify build
+        if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
+        run: cargo build -p qexed_config_macros
+
+      - name: Authenticate to crates.io (Trusted Publishing)
+        id: auth
+        if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish qexed_config_macros
+        if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
+        run: cargo publish -p qexed_config_macros
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Create version tag
+        if: steps.version.outputs.changed == 'true' && steps.cratesio.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          TAG="qexed_config_macros-v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists, skipping."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Publish workflow failed. Check logs above for details."
+          echo "If auth failed (403), check the crates.io Trusted Publishing config:"
+          echo "  - Repository owner/name: qexed / Qexed"
+          echo "  - Workflow filename: publish-qexed-config-macros.yml (must match exactly)"
+          echo "  - Environment field: empty (we don't use a GH environment)"
+          echo "Also confirm this job keeps 'id-token: write' permission."

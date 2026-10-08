@@ -1204,7 +1204,9 @@ name = "qexed_config_macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
+ "qexed_config",
  "quote",
+ "serde",
  "syn 2.0.119",
 ]
 
