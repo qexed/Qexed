@@ -63,7 +63,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-qexed_config.workspace = true
+qexed_config = { workspace = true, features = ["global-root"] }
 qexed_config_macros.workspace = true
 qexed_language.workspace = true
 qexed_doc.workspace = true
