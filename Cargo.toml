@@ -33,8 +33,14 @@ members = [
     "crates/qexed_nbt",
     "crates/qexed_protocol",
     "crates/qexed_packet",
+    "crates/qexed_anvil",
+    "crates/qexed_forge",
+    "crates/qexed_server",
 ]
 [workspace.dependencies]
+qexed_anvil.path = "crates/qexed_anvil"
+qexed_forge.path = "crates/qexed_forge"
+qexed_server.path = "crates/qexed_server"
 qexed_packet.path = "crates/qexed_packet"
 qexed_protocol.path = "crates/qexed_protocol"
 qexed_nbt.path = "crates/qexed_nbt"

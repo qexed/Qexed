@@ -1,6 +1,6 @@
 [package]
 name = "qexed_nbt"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Minecraft Java Edition NBT (Named Binary Tag) tree model with big-endian codecs: named disk format (level.dat, gzip auto-detect), network format, and Serde support."
 license = "MIT"

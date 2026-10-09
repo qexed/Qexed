@@ -1,5 +1,8 @@
 //! Named (disk) NBT codec: compound root WITH a name; optional gzip via flate2.
-use crate::net::{read_compound_content, read_string, write_compound_content, write_string};
+use crate::net::{
+    read_compound_content, read_compound_content_lossy, read_string, read_string_lossy,
+    write_compound_content, write_string,
+};
 use crate::{NbtError, Tag, tag_id};
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
@@ -17,6 +20,19 @@ impl NbtIo {
         }
         let name = read_string(&mut reader)?;
         Ok((name, Tag::Compound(Arc::new(read_compound_content(&mut reader)?))))
+    }
+
+    /// [`NbtIo::from_reader`] 的宽松版本：字符串含非法 UTF-8 时用 U+FFFD 替换，
+    /// 而不是整体失败（真实世界存档里的实体名等字段可能出现这种情况）。
+    /// 注意：宽松读取的数据再写回会永久替换掉原始字节。
+    pub fn from_reader_lossy<R: Read>(mut reader: R) -> Result<(String, Tag), NbtError> {
+        let id = reader.read_u8()?;
+        if id != tag_id::COMPOUND {
+            return Err(NbtError::Deserialize(format!(
+                "named NBT root must be Compound, got 0x{id:02X}")));
+        }
+        let name = read_string_lossy(&mut reader)?;
+        Ok((name, Tag::Compound(Arc::new(read_compound_content_lossy(&mut reader)?))))
     }
 
     pub fn to_writer<W: Write>(mut writer: W, name: &str, tag: &Tag) -> Result<(), NbtError> {
@@ -67,6 +83,11 @@ pub fn to_file<P: AsRef<std::path::Path>>(
 
 pub fn from_slice(data: &[u8]) -> Result<(String, Tag), NbtError> {
     NbtIo::from_reader(Cursor::new(data))
+}
+
+/// [`from_slice`] 的宽松版本（非法 UTF-8 字符串以 U+FFFD 替换）。见 [`NbtIo::from_reader_lossy`]。
+pub fn from_slice_lossy(data: &[u8]) -> Result<(String, Tag), NbtError> {
+    NbtIo::from_reader_lossy(Cursor::new(data))
 }
 
 pub fn to_vec(name: &str, tag: &Tag) -> Result<Vec<u8>, NbtError> {

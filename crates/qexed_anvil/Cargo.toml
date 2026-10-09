@@ -1,0 +1,37 @@
+[package]
+name = "qexed_anvil"
+version = "0.1.0"
+edition = "2024"
+description = "Minecraft Java Edition Anvil world save toolkit: .mca region files (sector table, zlib/gzip chunks), chunk NBT sections with name-based block/biome palettes, and dimension path conventions."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/qexed/Qexed"
+keywords = ["minecraft", "anvil", "mca", "world", "nbt"]
+categories = ["game-development", "parser-implementations", "encoding"]
+
+[features]
+default = []
+# Qexed 内部集成：AnvilConfig（qexed_config 体系）。
+# 通用场景无需开启；开启后额外依赖 qexed_config / qexed_doc 等内部 crate。
+"qexed" = [
+    "dep:qexed_config",
+    "dep:qexed_config_macros",
+    "dep:qexed_doc",
+    "dep:qexed_doc_macros",
+    "dep:serde",
+]
+
+[dependencies]
+qexed_nbt = { version = "0.2", path = "../qexed_nbt" }
+flate2.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, optional = true }
+
+qexed_config = { version = "0.2", path = "../qexed_config", optional = true, features = ["global-root"] }
+qexed_config_macros = { version = "0.1", path = "../macros/qexed_config_macros", optional = true }
+qexed_doc = { version = "0.1", path = "../qexed_doc", optional = true }
+qexed_doc_macros = { version = "0.1", path = "../macros/qexed_doc_macros", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

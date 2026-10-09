@@ -1174,11 +1174,28 @@ dependencies = [
  "qexed_language",
  "qexed_log",
  "qexed_mojang_data",
+ "qexed_server",
  "serde",
  "serde_json",
  "shadow-rs",
  "tklog",
  "tokio",
+]
+
+[[package]]
+name = "qexed_anvil"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "flate2",
+ "qexed_config",
+ "qexed_config_macros",
+ "qexed_doc",
+ "qexed_doc_macros",
+ "qexed_nbt",
+ "serde",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -1191,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "qexed_config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "qexed_toml",
  "serde",
@@ -1201,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "qexed_config_macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "qexed_config",
@@ -1261,6 +1278,16 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "qexed_forge"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "qexed_nbt",
+ "qexed_packet",
+ "thiserror",
 ]
 
 [[package]]
@@ -1331,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "qexed_nbt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1389,6 +1416,22 @@ dependencies = [
  "tklog",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "qexed_server"
+version = "0.1.0"
+dependencies = [
+ "qexed_config",
+ "qexed_config_macros",
+ "qexed_doc",
+ "qexed_doc_macros",
+ "qexed_language",
+ "qexed_toml",
+ "serde",
+ "thiserror",
+ "tklog",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,18 @@
+[package]
+name = "qexed_forge"
+version = "0.1.0"
+edition = "2024"
+description = "Wire-protocol support for accepting Minecraft Forge clients: FML login handshake (forge:handshake channel), mod-list negotiation, and Forge configuration-phase channels."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/qexed/Qexed"
+keywords = ["minecraft", "forge", "fml", "protocol", "handshake"]
+categories = ["game-development", "network-programming"]
+
+[dependencies]
+qexed_packet.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+qexed_nbt.workspace = true

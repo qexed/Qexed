@@ -1,0 +1,21 @@
+[package]
+name = "qexed_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_config = { workspace = true, features = ["global-root"] }
+qexed_config_macros.workspace = true
+qexed_language.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+tokio.workspace = true
+tklog.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+# 下面的库自己写
+[dev-dependencies]
+qexed_toml.workspace = true
+qexed_config.workspace = true

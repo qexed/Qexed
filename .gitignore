@@ -8,3 +8,5 @@
 /tools
 *.log
 *.log.gz
+/.tmp
+/mc-worldgen

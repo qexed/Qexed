@@ -10,11 +10,24 @@ pub struct NetNbtIo;
 
 impl NetNbtIo {
     /// Reads a network NBT root: a single END byte (null) or a nameless compound.
-    pub fn from_reader<R: Read>(mut reader: R, _has_length_prefix: bool) -> Result<Tag, NbtError> {
+    pub fn from_reader<R: Read>(reader: R, _has_length_prefix: bool) -> Result<Tag, NbtError> {
+        Self::from_reader_impl(reader, _has_length_prefix, false)
+    }
+
+    /// [`NetNbtIo::from_reader`] 的宽松版本（非法 UTF-8 字符串以 U+FFFD 替换）。
+    pub fn from_reader_lossy<R: Read>(reader: R, _has_length_prefix: bool) -> Result<Tag, NbtError> {
+        Self::from_reader_impl(reader, _has_length_prefix, true)
+    }
+
+    fn from_reader_impl<R: Read>(mut reader: R, _has_length_prefix: bool, lossy: bool) -> Result<Tag, NbtError> {
         let id = reader.read_u8()?;
         match id {
             tag_id::END => Ok(Tag::End),
-            tag_id::COMPOUND => Ok(Tag::Compound(Arc::new(read_compound_content(&mut reader)?))),
+            tag_id::COMPOUND => Ok(Tag::Compound(Arc::new(if lossy {
+                read_compound_content_lossy(&mut reader)?
+            } else {
+                read_compound_content(&mut reader)?
+            }))),
             other => Err(NbtError::Deserialize(format!(
                 "network NBT root must be Compound or END, got 0x{other:02X}"))),
         }
@@ -37,10 +50,22 @@ impl NetNbtIo {
 // ===== shared value-level codec (used by network and named formats) =====
 
 pub(crate) fn read_string<R: Read>(r: &mut R) -> Result<String, NbtError> {
+    read_string_impl(r, false)
+}
+
+pub(crate) fn read_string_lossy<R: Read>(r: &mut R) -> Result<String, NbtError> {
+    read_string_impl(r, true)
+}
+
+fn read_string_impl<R: Read>(r: &mut R, lossy: bool) -> Result<String, NbtError> {
     let len = r.read_u16::<BigEndian>()? as usize;
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
-    String::from_utf8(buf).map_err(|e| NbtError::Deserialize(format!("invalid UTF-8 string: {e}")))
+    if lossy {
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    } else {
+        String::from_utf8(buf).map_err(|e| NbtError::Deserialize(format!("invalid UTF-8 string: {e}")))
+    }
 }
 
 pub(crate) fn write_string<W: Write>(w: &mut W, s: &str) -> Result<(), NbtError> {
@@ -54,14 +79,22 @@ pub(crate) fn write_string<W: Write>(w: &mut W, s: &str) -> Result<(), NbtError>
 }
 
 pub(crate) fn read_compound_content<R: Read>(r: &mut R) -> Result<HashMap<String, Tag>, NbtError> {
+    read_compound_content_impl(r, false)
+}
+
+pub(crate) fn read_compound_content_lossy<R: Read>(r: &mut R) -> Result<HashMap<String, Tag>, NbtError> {
+    read_compound_content_impl(r, true)
+}
+
+fn read_compound_content_impl<R: Read>(r: &mut R, lossy: bool) -> Result<HashMap<String, Tag>, NbtError> {
     let mut map = HashMap::new();
     loop {
         let id = r.read_u8()?;
         if id == tag_id::END {
             return Ok(map);
         }
-        let name = read_string(r)?;
-        map.insert(name, read_value(r, id)?);
+        let name = if lossy { read_string_lossy(r)? } else { read_string(r)? };
+        map.insert(name, read_value_impl(r, id, lossy)?);
     }
 }
 
@@ -78,7 +111,7 @@ pub(crate) fn write_compound_content<W: Write>(
     Ok(())
 }
 
-pub(crate) fn read_value<R: Read>(r: &mut R, id: u8) -> Result<Tag, NbtError> {
+fn read_value_impl<R: Read>(r: &mut R, id: u8, lossy: bool) -> Result<Tag, NbtError> {
     Ok(match id {
         tag_id::END => Tag::End,
         tag_id::BYTE => Tag::Byte(r.read_i8()?),
@@ -95,17 +128,17 @@ pub(crate) fn read_value<R: Read>(r: &mut R, id: u8) -> Result<Tag, NbtError> {
             }
             Tag::ByteArray(Arc::from(v))
         }
-        tag_id::STRING => Tag::String(Arc::from(read_string(r)?)),
+        tag_id::STRING => Tag::String(Arc::from(if lossy { read_string_lossy(r)? } else { read_string(r)? })),
         tag_id::LIST => {
             let elem = r.read_u8()?;
             let len = r.read_i32::<BigEndian>()?;
             let mut items = Vec::with_capacity(len.max(0) as usize);
             for _ in 0..len {
-                items.push(read_value(r, elem)?);
+                items.push(read_value_impl(r, elem, lossy)?);
             }
             Tag::List(ListHeader { tag_id: elem, length: len }, Arc::from(items))
         }
-        tag_id::COMPOUND => Tag::Compound(Arc::new(read_compound_content(r)?)),
+        tag_id::COMPOUND => Tag::Compound(Arc::new(read_compound_content_impl(r, lossy)?)),
         tag_id::INT_ARRAY => {
             let len = read_len(r)?;
             let mut v = Vec::with_capacity(len);

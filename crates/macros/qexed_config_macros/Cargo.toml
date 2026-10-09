@@ -1,6 +1,6 @@
 [package]
 name = "qexed_config_macros"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Proc-macro attribute #[app_config(PATH, NAME)] that implements qexed_config::Config for a struct, deriving SECRETS from <Secret>/<Secrets> autodoc tags."
 license = "MIT"

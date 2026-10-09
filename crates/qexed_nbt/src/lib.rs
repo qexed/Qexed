@@ -7,7 +7,7 @@ use thiserror::Error;
 pub mod named;
 pub mod net;
 
-pub use named::{from_file, from_slice, to_file, to_vec, NbtIo};
+pub use named::{from_file, from_slice, from_slice_lossy, to_file, to_vec, NbtIo};
 pub mod nbt_serde;
 
 #[derive(Error, Debug)]

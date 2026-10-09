@@ -1,6 +1,6 @@
 [package]
 name = "qexed_config"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Trait-based TOML configuration framework: implement one trait to get create/load/save with default merging, unknown-field preservation, and automatic secret splitting into .secrets/."
 license = "MIT"
