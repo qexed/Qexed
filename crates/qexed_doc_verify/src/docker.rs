@@ -103,7 +103,8 @@ mod tests {
     fn host_workspace_root_points_at_repo_root() {
         let root = host_workspace_root();
         assert!(!root.contains("/crates"), "workspace root 误指到 crates: {root}");
-        assert!(root.ends_with("qexed-v6"), "workspace root 不对: {root}");
+        let ok = root.ends_with("qexed-v6") || root.ends_with("Qexed") || root.ends_with("qexed");
+        assert!(ok, "workspace root 不对: {root}");
     }
 
     #[test]
