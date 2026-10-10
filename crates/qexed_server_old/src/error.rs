@@ -25,4 +25,7 @@ pub enum ServerError {
 
     #[error("unexpected state: {0}")]
     UnexpectedState(String),
+
+    #[error("registry sync error: {0}")]
+    RegistrySync(String),
 }

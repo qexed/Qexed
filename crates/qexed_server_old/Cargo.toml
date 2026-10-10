@@ -1,5 +1,5 @@
 [package]
-name = "qexed_server"
+name = "qexed_server_legacy"
 version = "0.1.0"
 edition = "2024"
 description = "Minecraft server connection layer: async packet framing, login, configuration, minimal play. Keeps the qexed binary lean."
@@ -14,24 +14,29 @@ flate2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
-uuid = { version = "1", features = ["v3"] }
+uuid = { workspace = true, features = ["v3"] }
 qexed_nbt.workspace = true
 
-openssl = "0.10"
+openssl = { workspace = true }
 
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 
-sha1 = "0.10"
+sha1 = { workspace = true }
 
-hex = "0.4"
+hex = { workspace = true }
 
-base64 = "0.22"
+base64 = { workspace = true }
 
-rand = "0.8"
+rand = { workspace = true }
 
 serde.workspace = true
 
 anyhow.workspace = true
 
+qexed_mojang_data.workspace = true
+
+log.workspace = true
+
 [dev-dependencies]
-uuid = { version = "1", features = ["v4"] }
+uuid = { workspace = true, features = ["v4"] }
+qexed_mojang_data.workspace = true

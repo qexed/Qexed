@@ -178,7 +178,7 @@ for (dim, stats) in &report.dimensions {
 开启 `qexed` 特征可得到接入 qexed_config 体系的 `AnvilConfig`。通用场景不需要：
 
 ```toml
-qexed_anvil = { version = "0.1", features = ["qexed"] }
+qexed_anvil = {  features = ["qexed"] }
 ```
 
 ## MSRV

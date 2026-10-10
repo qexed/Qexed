@@ -8,11 +8,11 @@ publish = false
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sha2 = "0.10"
-tempfile = "3"
+sha2 = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[bin]]
 name = "qexed-doc-verify"

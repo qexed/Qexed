@@ -132,10 +132,7 @@ impl Authenticator {
 impl AuthenticatorInner {
     fn create() -> anyhow::Result<Self> {
         let private_key = Rsa::generate(1024)?;
-        let public_key_der = {
-            let pkey = PKey::from_rsa(private_key.public_key())?;
-            pkey.public_key_to_der()?
-        };
+        let public_key_der = private_key.public_key_to_der()?;
         let http = reqwest::Client::builder()
             .user_agent(format!("qexed/{}", env!("CARGO_PKG_VERSION")))
             .build()?;

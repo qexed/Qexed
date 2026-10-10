@@ -95,7 +95,7 @@ pub fn unpack_indices_spanning(
                 let next = if cell + 1 < data.len() { data[cell + 1] as u64 } else { 0 };
                 value |= next << (64 - shift);
             }
-            let value = ((value & mask) as usize);
+            let value = (value & mask) as usize;
             if value >= palette_len {
                 return Err(AnvilError::PaletteIndexOutOfRange { index: value, palette_len });
             }

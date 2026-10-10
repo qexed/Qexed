@@ -36,8 +36,18 @@ members = [
     "crates/qexed_anvil",
     "crates/qexed_forge",
     "crates/qexed_server",
+    # 连接层旧实现（login/configuration/play 状态机），registry 同步已迁到 mojang 缓存
+    "crates/qexed_server_old",
+    "crates/qexed_registry",
+    "crates/qexed_tcp_connect",
+    "crates/qexed_auth",
+    "crates/qexed_chat",
 ]
 [workspace.dependencies]
+qexed_chat.path = "crates/qexed_chat"
+qexed_auth.path = "crates/qexed_auth"
+qexed_tcp_connect.path = "crates/qexed_tcp_connect"
+qexed_registry.path = "crates/qexed_registry"
 qexed_anvil.path = "crates/qexed_anvil"
 qexed_forge.path = "crates/qexed_forge"
 qexed_server.path = "crates/qexed_server"
@@ -58,6 +68,7 @@ qexed_config_macros.path = "crates/macros/qexed_config_macros"
 qexed_packet_macros.path = "crates/macros/qexed_packet_macros"
 qexed_club = { path = 'crates/qexed_club' }
 qexed_mojang_data.path = "crates/qexed_mojang_data"
+qexed_server_legacy.path = "crates/qexed_server_old"
 
 serde = "1.0.229"
 serde_json = "1"
@@ -75,3 +86,16 @@ colored = "3.1.1"
 tklog = "0.3.0"
 anyhow = "1.0.104"
 log = "0.4.34"
+axum = "0.8"
+base64 = "0.22"
+hex = "0.4"
+openssl = "0.10.81"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false }
+sha1 = "0.10"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3"
+zip = { version = "2.4", default-features = false }
+async-stream = "0.3.6"
+tokio-stream = "0.1.19"

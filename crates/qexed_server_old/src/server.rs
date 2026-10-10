@@ -15,8 +15,6 @@ pub struct ServerConfig {
     pub protocol_info: ProtocolInfo,
     pub compression_threshold: i32,
     pub play: PlayOptions,
-    /// registry 数据（registry_data 通道的 NBT 载荷；空 = 跳过）。
-    pub registry_payload: Vec<u8>,
     pub motd: String,
     pub max_players: i32,
 }
@@ -31,7 +29,6 @@ impl Default for ServerConfig {
             },
             compression_threshold: 256,
             play: PlayOptions::default(),
-            registry_payload: Vec::new(),
             motd: "A qexed server".to_string(),
             max_players: 20,
         }
@@ -105,8 +102,8 @@ where
             )
             .await?;
 
-            // 3. 配置
-            configuration::handle_configuration(&mut conn, &config.registry_payload).await?;
+            // 3. 配置（registry 数据由 configuration 内部从 mojang 缓存加载）
+            configuration::handle_configuration(&mut conn).await?;
 
             // 4. 游玩
             let _session = play::handle_play(&mut conn, &login_outcome, &config.play, |_| {}).await?;

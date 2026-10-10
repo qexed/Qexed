@@ -59,7 +59,7 @@ fn upgrades_1_12_chunk_to_palette_layout() {
 #[test]
 fn flatten_state_maps_common_ids() {
     use qexed_anvil::upgrade::flatten_state;
-    use qexed_anvil::chunk::BlockStateRef;
+    
 
     // 石头系
     assert_eq!(flatten_state(1, 0).unwrap().name, "minecraft:stone");

@@ -1,191 +1,155 @@
-//! 注册表同步：从本地 vanilla 数据构造 configuration 阶段的 registry/tags 包。
-//! 移植自 v4 的 registry_sync（数据源改为 v6 的 assets + mojang_data 缓存）。
+//! 注册表同步：从 qexed_mojang_data 缓存构造 configuration 阶段的 registry/tags 包。
+//!
+//! 数据源（全部来自 `qexed_mojang_data` 的缓存，不再读取仓库 assets）：
+//! - 动态注册表内容/tags：`cache/mojang/<ver>/data/minecraft`
+//! - 静态注册表 protocol_id 映射：`cache/mojang/<ver>/reports/registries.json`
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+mod registries;
+mod tags;
+mod util;
 
-use qexed_nbt::{ListHeader, Tag, tag_id};
-use qexed_protocol::to_client::configuration::registry_data::{Entries, RegistryData};
-use serde_json::Value;
+pub use registries::{
+    load_blocks_report, load_dynamic_registry_id_map, load_registry_id_map, load_registry_packets,
+};
+pub use tags::load_tag_packet;
+
+use qexed_protocol::types::KnownPacks;
 
 pub const VANILLA_FEATURE: &str = "minecraft:vanilla";
 
-const DECOMPILED_ROOT: &str = "assets/decompiled_source/src/data/minecraft";
-const REGISTRIES_REPORT: &str = "assets/reports/registries.json";
-
-/// 需要在 configuration 阶段同步的动态注册表。
-pub const SYNCHRONIZED_REGISTRIES: &[&str] = &[
-    "worldgen/biome", "chat_type", "trim_pattern", "trim_material",
-    "wolf_variant", "wolf_sound_variant", "pig_variant", "pig_sound_variant",
-    "frog_variant", "cat_variant", "cat_sound_variant", "cow_variant",
-    "cow_sound_variant", "chicken_variant", "chicken_sound_variant",
-    "painting_variant", "dimension_type", "damage_type", "banner_pattern",
-    "enchantment", "jukebox_song", "instrument", "dialog",
+const STATIC_TAG_REGISTRIES: &[&str] = &[
+    "block",
+    "entity_type",
+    "fluid",
+    "game_event",
+    "item",
+    "point_of_interest_type",
+    "potion",
 ];
 
-/// 数据根（相对运行目录）。
-fn data_roots() -> Vec<PathBuf> {
-    vec![PathBuf::from(DECOMPILED_ROOT)]
+const SYNCHRONIZED_REGISTRIES: &[&str] = &[
+    "worldgen/biome",
+    "chat_type",
+    "trim_pattern",
+    "trim_material",
+    "wolf_variant",
+    "wolf_sound_variant",
+    "pig_variant",
+    "pig_sound_variant",
+    "frog_variant",
+    "cat_variant",
+    "cat_sound_variant",
+    "cow_sound_variant",
+    "cow_variant",
+    "chicken_sound_variant",
+    "chicken_variant",
+    "zombie_nautilus_variant",
+    "painting_variant",
+    "dimension_type",
+    "damage_type",
+    "banner_pattern",
+    "enchantment",
+    "jukebox_song",
+    "instrument",
+    "test_environment",
+    "test_instance",
+    "dialog",
+    "world_clock",
+    "timeline",
+];
+
+pub fn known_packs() -> Vec<KnownPacks> {
+    vec![KnownPacks {
+        namespace: "minecraft".to_string(),
+        id: "core".to_string(),
+        version: qexed_mojang_data::MC_VERSION.to_string(),
+    }]
 }
 
-/// 加载全部同步注册表为 registry_data 包。
-pub fn load_registry_packets(include_contents: bool) -> anyhow::Result<Vec<RegistryData>> {
-    let roots = data_roots();
-    let mut packets = Vec::new();
-    for registry in SYNCHRONIZED_REGISTRIES {
-        let Some(dir) = roots.iter().map(|r| r.join(registry)).find(|p| p.exists()) else {
-            continue;
-        };
-        let mut entries = Vec::new();
-        for path in json_files(&dir)? {
-            let entry_id = entry_id_from_path(&dir, &path, registry)?;
-            let data = if include_contents {
-                Some(json_to_nbt(&read_json(&path)?)?)
-            } else {
-                None
-            };
-            entries.push(Entries { entry_id, data });
-        }
-        if entries.is_empty() { continue }
-        entries.sort_by(|a, b| a.entry_id.cmp(&b.entry_id));
-        packets.push(RegistryData {
-            id: format!("minecraft:{registry}"),
-            entries,
-        });
-    }
-    Ok(packets)
+pub fn accepts_vanilla_core_pack(packs: &[KnownPacks]) -> bool {
+    let known = known_packs();
+    packs.iter().any(|pack| known.contains(pack))
 }
 
-// ---------------------------------------------------------------------------
-// JSON -> NBT / 文件枚举（v4 util 的移植）
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
 
-pub(crate) fn json_files(root: &std::path::Path) -> anyhow::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    collect_json_files(root, &mut files)?;
-    files.sort();
-    Ok(files)
-}
+    use super::{accepts_vanilla_core_pack, known_packs, load_registry_packets, load_tag_packet};
 
-fn collect_json_files(dir: &std::path::Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(&path, files)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn entry_id_from_path(root: &std::path::Path, path: &std::path::Path, registry: &str) -> anyhow::Result<String> {
-    let relative = path.strip_prefix(root)?;
-    let mut id = relative
-        .with_extension("")
-        .to_string_lossy()
-        .replace('\\', "/");
-    if id.contains(':') {
-        return Ok(id);
-    }
-    if registry.contains('/') {
-        id = id.trim_start_matches('/').to_string();
-    }
-    Ok(format!("minecraft:{id}"))
-}
-
-fn read_json(path: &std::path::Path) -> anyhow::Result<Value> {
-    let content = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&content)?)
-}
-
-pub(crate) fn json_to_nbt(value: &Value) -> anyhow::Result<Tag> {
-    match value {
-        Value::Null => Ok(Tag::End),
-        Value::Bool(v) => Ok(Tag::Byte(i8::from(*v))),
-        Value::Number(v) => number_to_nbt(v),
-        Value::String(v) => Ok(Tag::String(Arc::from(v.as_str()))),
-        Value::Array(values) => array_to_nbt(values),
-        Value::Object(values) => {
-            let mut map = HashMap::new();
-            for (key, value) in values {
-                map.insert(key.clone(), json_to_nbt(value)?);
-            }
-            Ok(Tag::Compound(Arc::new(map)))
+    /// 测试数据源：workspace 的 run/ 缓存（与主程序一致），缺失时现场初始化。
+    fn ensure_cache() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mojang_cache = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .map(|root| root.join("run").join("cache").join("mojang"))
+            .expect("workspace root");
+        let _ = qexed_mojang_data::set_cache_dir(&mojang_cache);
+        if qexed_mojang_data::data_dir().is_err() || qexed_mojang_data::reports_dir().is_err() {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(qexed_mojang_data::init()).expect("mojang data init");
         }
     }
-}
 
-fn number_to_nbt(value: &serde_json::Number) -> anyhow::Result<Tag> {
-    if let Some(v) = value.as_i64() {
-        if (i32::MIN as i64..=i32::MAX as i64).contains(&v) {
-            Ok(Tag::Int(v as i32))
-        } else {
-            Ok(Tag::Long(v))
-        }
-    } else if let Some(v) = value.as_u64() {
-        if v <= i32::MAX as u64 {
-            Ok(Tag::Int(v as i32))
-        } else {
-            Ok(Tag::Long(v as i64))
-        }
-    } else if let Some(v) = value.as_f64() {
-        Ok(Tag::Float(v as f32))
-    } else {
-        anyhow::bail!("unsupported JSON number: {value}")
+    #[test]
+    fn loads_vanilla_registry_packets_from_mojang_cache() {
+        ensure_cache();
+        let packets = load_registry_packets(true).unwrap();
+        assert!(
+            packets
+                .iter()
+                .any(|packet| packet.id == "minecraft:worldgen/biome")
+        );
+        assert!(
+            packets
+                .iter()
+                .any(|packet| packet.id == "minecraft:dimension_type")
+        );
     }
-}
 
-fn array_to_nbt(values: &[Value]) -> anyhow::Result<Tag> {
-    if values.is_empty() {
-        return Ok(Tag::List(ListHeader { tag_id: tag_id::END, length: 0 }, Arc::from([])));
+    #[test]
+    fn can_skip_vanilla_registry_contents_for_known_pack_clients() {
+        ensure_cache();
+        let packets = load_registry_packets(false).unwrap();
+        let biome = packets
+            .iter()
+            .find(|packet| packet.id == "minecraft:worldgen/biome")
+            .unwrap();
+
+        assert!(!biome.entries.is_empty());
+        assert!(biome.entries.iter().all(|entry| entry.data.is_none()));
     }
-    let items: Vec<Tag> = values.iter().map(json_to_nbt).collect::<Result<Vec<_>, _>>()?;
-    let tag_id = items[0].tag_id();
-    if items.iter().all(|item| item.tag_id() == tag_id) {
-        return Ok(Tag::List(ListHeader { tag_id, length: items.len() as i32 }, Arc::from(items)));
+
+    #[test]
+    fn loads_tags_from_mojang_cache() {
+        ensure_cache();
+        let packet = load_tag_packet().unwrap();
+        let damage_type_tags = packet
+            .tags
+            .iter()
+            .find(|tags| tags.registry == "minecraft:damage_type")
+            .expect("minecraft:damage_type tags must be synchronized");
+        let fire_tag = damage_type_tags
+            .tags
+            .iter()
+            .find(|tag| tag.name == "minecraft:is_fire")
+            .expect("minecraft:damage_type/minecraft:is_fire is required by client item component initialization");
+        assert!(
+            !fire_tag.entries.is_empty(),
+            "minecraft:damage_type/minecraft:is_fire must resolve to damage type ids"
+        );
     }
-    let wrapped = items
-        .into_iter()
-        .map(|item| {
-            let mut map = HashMap::new();
-            map.insert("value".to_string(), item);
-            Tag::Compound(Arc::new(map))
-        })
-        .collect::<Vec<_>>();
-    Ok(Tag::List(ListHeader { tag_id: tag_id::COMPOUND, length: wrapped.len() as i32 }, Arc::from(wrapped)))
-}
 
-/// 静态注册表 ID 映射（从 registries.json 报告）。
-pub fn load_registry_id_map(registry_id: &str) -> anyhow::Result<HashMap<String, i32>> {
-    let path = PathBuf::from(REGISTRIES_REPORT);
-    let value: Value = if path.exists() {
-        read_json(&path)?
-    } else {
-        serde_json::from_str(include_str!("../../../assets/reports/registries.json"))?
-    };
-    let entries = value
-        .get(registry_id)
-        .and_then(|r| r.get("entries"))
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow::anyhow!("registry not found: {registry_id}"))?;
-    Ok(entries
-        .iter()
-        .filter_map(|(entry, v)| {
-            v.get("protocol_id")
-                .and_then(Value::as_i64)
-                .and_then(|id| i32::try_from(id).ok())
-                .map(|id| (normalize_identifier(entry), id))
-        })
-        .collect())
-}
-
-pub(crate) fn normalize_identifier(value: &str) -> String {
-    if value.contains(':') {
-        value.to_string()
-    } else {
-        format!("minecraft:{value}")
+    #[test]
+    fn known_packs_negotiation() {
+        let packs = known_packs();
+        assert_eq!(packs.len(), 1);
+        assert_eq!(packs[0].namespace, "minecraft");
+        assert!(accepts_vanilla_core_pack(&packs));
+        assert!(!accepts_vanilla_core_pack(&[]));
     }
 }

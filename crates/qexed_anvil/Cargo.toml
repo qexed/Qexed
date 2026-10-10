@@ -22,16 +22,16 @@ default = []
 ]
 
 [dependencies]
-qexed_nbt = { version = "0.2", path = "../qexed_nbt" }
+qexed_nbt = { workspace = true }
 flate2.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, optional = true }
 
-qexed_config = { version = "0.2", path = "../qexed_config", optional = true, features = ["global-root"] }
-qexed_config_macros = { version = "0.1", path = "../macros/qexed_config_macros", optional = true }
-qexed_doc = { version = "0.1", path = "../qexed_doc", optional = true }
-qexed_doc_macros = { version = "0.1", path = "../macros/qexed_doc_macros", optional = true }
+qexed_config = { workspace = true, features = ["global-root"], optional = true }
+qexed_config_macros = { workspace = true, optional = true }
+qexed_doc = { workspace = true, optional = true }
+qexed_doc_macros = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }

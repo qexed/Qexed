@@ -16,7 +16,7 @@ categories = ["config"]
 global-root = []
 
 [dependencies]
-qexed_toml = { version = "0.1", path = "../qexed_toml" }
+qexed_toml = { workspace = true }
 serde.workspace = true
 thiserror = { workspace = true }
 toml_edit = { workspace = true, features = ["serde"] }

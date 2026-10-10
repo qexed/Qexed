@@ -15,6 +15,18 @@ tklog.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 
+qexed_nbt.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+qexed_registry.workspace = true
+qexed_tcp_connect.workspace = true
+qexed_mojang_data.workspace = true
+qexed_auth.workspace = true
+
+serde_json.workspace = true
+log.workspace = true
+bytes.workspace = true
+rand.workspace = true
 # 下面的库自己写
 [dev-dependencies]
 qexed_toml.workspace = true

@@ -30,7 +30,7 @@
 qexed_config = "0.1"
 
 # 如需兼容历史的进程级全局根目录（init_config_path / config_path）：
-# qexed_config = { version = "0.1", features = ["global-root"] }
+# qexed_config = {  features = ["global-root"] }
 ```
 
 ## 快速上手

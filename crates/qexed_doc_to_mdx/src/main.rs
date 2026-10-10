@@ -21,7 +21,7 @@ fn export_items() -> anyhow::Result<Vec<export_item::ExportItem>> {
         export_item::ExportItem::of::<qexed_log::config::LogConfig>()?,
         export_item::ExportItem::of::<qexed_language::config::LanguageConfig>()?,
         export_item::ExportItem::of::<qexed_mojang_data::config::MojangDataConfig>()?,
-        
+        export_item::ExportItem::of::<qexed_server::config::ServerConfig>()?,
         // 新增配置 crate 时一行搞定：
         // ExportItem::of::<qexed_xxx::config::XxxConfig>(),
     ])

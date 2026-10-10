@@ -19,5 +19,7 @@ qexed_config.workspace = true
 qexed_language.workspace = true
 qexed_mojang_data.workspace = true
 qexed_server.workspace = true
+qexed_auth.workspace = true
+qexed_registry.workspace = true
 [build-dependencies]
 shadow-rs.workspace = true

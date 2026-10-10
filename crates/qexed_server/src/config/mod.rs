@@ -37,6 +37,11 @@ pub struct ServerConfig {
     /// <Attr name="writable" />
     /// ```
     pub max_players: i32,
+    /// ```autodoc
+    /// <Name>qexed.crates.server.config.ServerConfig.online_mode</Name>
+    /// <Attr name="writable" />
+    /// ```
+    pub online_mode: bool,
 }
 
 impl Default for ServerConfig {
@@ -47,6 +52,7 @@ impl Default for ServerConfig {
             play: play::PlayOptionsConfig::default(),
             motd: "A qexed server".to_string(),
             max_players: 20,
+            online_mode:true
         }
     }
 }

@@ -6,7 +6,7 @@ use qexed_protocol::to_server::handshaking::set_protocol::SetProtocol;
 use qexed_protocol::to_server::login::login_acknowledged::LoginAcknowledged;
 use qexed_protocol::to_server::login::login_start::LoginStart;
 use qexed_protocol::to_server::status::ping_start::PingStart;
-use qexed_server::transport::Connection;
+use qexed_server_legacy::transport::Connection;
 
 type C = Connection<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
 
@@ -16,19 +16,30 @@ async fn read_packet<T: Packet>(conn: &mut C, what: &str) -> T {
         Some(p) => p,
         None => panic!("closed at {}", what),
     };
-    let id = qexed_server::transport::read_packet_id(&mut payload).unwrap();
+    let id = qexed_server_legacy::transport::read_packet_id(&mut payload).unwrap();
     assert_eq!(id, T::ID, "packet id at {}", what);
-    qexed_server::transport::decode_payload(&mut payload).unwrap()
+    qexed_server_legacy::transport::decode_payload(&mut payload).unwrap()
+}
+
+fn ensure_mojang_cache() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mojang_cache = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|root| root.join("run").join("cache").join("mojang"))
+        .expect("workspace root");
+    let _ = qexed_mojang_data::set_cache_dir(&mojang_cache);
 }
 
 #[tokio::test]
 async fn full_login_flow_over_tcp() {
-    let config = qexed_server::ServerConfig {
+    ensure_mojang_cache();
+    let config = qexed_server_legacy::ServerConfig {
         bind: "127.0.0.1:0".to_string(),
         compression_threshold: 16,
         ..Default::default()
     };
-    let handle = qexed_server::serve(config).await.unwrap();
+    let handle = qexed_server_legacy::serve(config).await.unwrap();
     let addr = handle.local_addr;
 
     let socket = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -58,14 +69,44 @@ async fn full_login_flow_over_tcp() {
     let brand: s2c::configuration::custom_payload::CustomPayload = read_packet(&mut conn, "brand").await;
     assert_eq!(brand.channel, "minecraft:brand");
 
+    let flags: s2c::configuration::feature_flags::FeatureFlags = read_packet(&mut conn, "feature flags").await;
+    assert!(flags.features.iter().any(|f| f == "minecraft:vanilla"));
+
     let _packs: s2c::configuration::select_known_packs::SelectKnownPacks = read_packet(&mut conn, "known packs").await;
+    // 模拟原版客户端：已带 vanilla core 数据 → 服务器发送省略内容的 registry 包
     conn.send(&qexed_protocol::to_server::configuration::select_known_packs::SelectKnownPacks {
-        entries: Vec::new(),
+        entries: vec![qexed_protocol::types::KnownPacks {
+            namespace: "minecraft".to_string(),
+            id: "core".to_string(),
+            version: qexed_mojang_data::MC_VERSION.to_string(),
+        }],
     })
     .await
     .unwrap();
 
-    let _finish: s2c::configuration::finish_configuration::FinishConfiguration = read_packet(&mut conn, "config finish").await;
+    // 吞掉所有 registry_data (0x07) 与 tags (0x0d)，直到 finish (0x03)
+    let mut registry_count = 0usize;
+    let mut saw_tags = false;
+    loop {
+        let mut payload = conn.reader.read_packet().await.unwrap().expect("open");
+        let id = qexed_server_legacy::transport::read_packet_id(&mut payload).unwrap();
+        match id {
+            0x07 => {
+                let packet: s2c::configuration::registry_data::RegistryData =
+                    qexed_server_legacy::transport::decode_payload(&mut payload).unwrap();
+                // vanilla core 客户端不需要完整内容
+                assert!(packet.entries.iter().all(|e| e.data.is_none()));
+                registry_count += 1;
+            }
+            0x0d => {
+                saw_tags = true;
+            }
+            0x03 => break,
+            other => panic!("unexpected configuration packet id {other:#x}"),
+        }
+    }
+    assert!(registry_count > 0, "registry_data packets must be sent");
+    assert!(saw_tags, "tags packet must be sent");
     conn.send(&qexed_protocol::to_server::configuration::finish_configuration::FinishConfiguration::default())
         .await
         .unwrap();
@@ -80,11 +121,11 @@ async fn full_login_flow_over_tcp() {
 
 #[tokio::test]
 async fn status_ping_flow() {
-    let config = qexed_server::ServerConfig {
+    let config = qexed_server_legacy::ServerConfig {
         bind: "127.0.0.1:0".to_string(),
         ..Default::default()
     };
-    let handle = qexed_server::serve(config).await.unwrap();
+    let handle = qexed_server_legacy::serve(config).await.unwrap();
     let socket = tokio::net::TcpStream::connect(handle.local_addr).await.unwrap();
     let (rh, wh) = socket.into_split();
     let mut conn = Connection::new(rh, wh);

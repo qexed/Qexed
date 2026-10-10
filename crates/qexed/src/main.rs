@@ -91,9 +91,13 @@ async fn run() -> anyhow::Result<()> {
     qexed_log::init().await?;
     qexed_language::init(shadow::SHORT_COMMIT, args.language.as_deref()).await?;
     qexed_mojang_data::init().await?;
-    loop{
-        log::info!("test");
-        std::thread::sleep(std::time::Duration::from_secs(5)); // 等待 5 秒
-    }
+    qexed_auth::init()?;
+    // qexed_registry::i
+    // 启动服务器
+    let handle = qexed_server::init().await?;
+    log::info!("qexed listening");
+
+    tokio::signal::ctrl_c().await?;
+    // handle.shutdown();
     Ok(())
 }
