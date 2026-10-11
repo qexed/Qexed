@@ -11,4 +11,28 @@ use serde::{Deserialize, Serialize};
 /// ```
 #[qexed_config_macros::app_config("/", "chat")]
 #[derive(Debug, Default, Serialize, Deserialize, Doc)]
-pub struct ChatConfig {}
+pub struct ChatConfig {
+    /// ```autodoc
+    /// <Name>qexed.crates.chat.config.ChatConfig.rate_limit_window_secs</Name>
+    /// <Attr name="writable" />
+    /// ```
+    pub rate_limit_window_secs: u64,
+    
+    /// ```autodoc
+    /// <Name>qexed.crates.chat.config.ChatConfig.rate_limit_max_messages</Name>
+    /// <Attr name="writable" />
+    /// ```
+    pub rate_limit_max_messages: usize,
+    
+    /// ```autodoc
+    /// <Name>qexed.crates.chat.config.ChatConfig.max_length</Name>
+    /// <Attr name="writable" />
+    /// ```
+    pub max_length: usize,
+    
+    /// ```autodoc
+    /// <Name>qexed.crates.chat.config.ChatConfig.secure_chat_enabled</Name>
+    /// <Attr name="writable" />
+    /// ```
+    pub secure_chat_enabled: bool,
+}

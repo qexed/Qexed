@@ -4,6 +4,9 @@ pub enum ChatError {
     #[error("crypto error: {0}")]
     Crypto(#[from] openssl::error::ErrorStack),
 
+    #[error("packet encode error: {0}")]
+    Encode(String),
+
     // ── SecureChatSession::new / verify_message ──
     #[error("missing signed chat message signature")]
     MissingSignature,
@@ -27,4 +30,12 @@ pub enum ChatError {
     IgnoredAcknowledged(usize),
     #[error("last-seen checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: u8, actual: u8 },
+
+    // ── chat rate limit / 状态 ──
+    #[error("chat message rate limited")]
+    RateLimited,
+    #[error("chat message too long: {length} > {max_length}")]
+    MessageTooLong { length: usize, max_length: usize },
+    #[error("secure chat session is required but not initialized")]
+    SecureChatRequired,
 }

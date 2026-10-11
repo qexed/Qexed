@@ -18,3 +18,5 @@ qexed_protocol.workspace = true
 openssl = { workspace = true }
 uuid = { workspace = true }
 qexed_packet.workspace = true
+bytes.workspace = true
+qexed_nbt.workspace = true

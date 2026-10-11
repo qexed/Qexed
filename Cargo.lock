@@ -1342,12 +1342,14 @@ dependencies = [
 name = "qexed_chat"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "openssl",
  "qexed_config",
  "qexed_config_macros",
  "qexed_doc",
  "qexed_doc_macros",
  "qexed_language",
+ "qexed_nbt",
  "qexed_packet",
  "qexed_protocol",
  "serde",
