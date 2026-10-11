@@ -1412,6 +1412,7 @@ dependencies = [
  "chrono",
  "clap",
  "log",
+ "qexed_auth",
  "qexed_config",
  "qexed_config_macros",
  "qexed_doc",
@@ -1477,6 +1478,23 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "qexed_light"
+version = "0.1.0"
+dependencies = [
+ "qexed_anvil",
+ "qexed_config",
+ "qexed_config_macros",
+ "qexed_doc",
+ "qexed_doc_macros",
+ "qexed_language",
+ "qexed_nbt",
+ "serde",
+ "thiserror",
+ "tklog",
  "tokio",
 ]
 

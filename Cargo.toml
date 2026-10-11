@@ -42,8 +42,10 @@ members = [
     "crates/qexed_tcp_connect",
     "crates/qexed_auth",
     "crates/qexed_chat",
+    "crates/qexed_light",
 ]
 [workspace.dependencies]
+qexed_light.path = "crates/qexed_light"
 qexed_chat.path = "crates/qexed_chat"
 qexed_auth.path = "crates/qexed_auth"
 qexed_tcp_connect.path = "crates/qexed_tcp_connect"

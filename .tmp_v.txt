@@ -1,0 +1,19 @@
+﻿cargo :    Compiling qexed_light v0.1.0 (E:\code\qexed-v6\crates\qexed_light)
+At line:1 char:129
++ ... ew($false); cargo test -p qexed_light --features vanilla-verify --tes ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling qe...es\qexed_light):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
+     Running tests\vanilla_compare.rs (target\debug\deps\vanilla_compare-7e28e2982c728a0a.exe)
+
+running 2 tests
+save not found, skip
+test matches_vanilla_26_1_2_nether ... ok
+[overworld (8,8) Fast] sky: 0/0 (0.00%) mismatched, block: 0/0 (0.00%) mismatched
+test matches_vanilla_26_1_2_overworld ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+

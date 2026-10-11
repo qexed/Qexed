@@ -92,12 +92,23 @@ async fn run() -> anyhow::Result<()> {
     qexed_language::init(shadow::SHORT_COMMIT, args.language.as_deref()).await?;
     qexed_mojang_data::init().await?;
     qexed_auth::init()?;
-    // qexed_registry::i
     // 启动服务器
     let handle = qexed_server::init().await?;
-    log::info!("qexed listening");
 
-    tokio::signal::ctrl_c().await?;
-    // handle.shutdown();
+    tokio::select! {
+        // 1. 外部：ctrl+c
+        result = tokio::signal::ctrl_c() => {
+            if let Err(err) = result {
+                log::warn!("ctrl+c listener failed: {err}");
+            }
+            log::info!("ctrl+c received, shutting down");
+            handle.shutdown();
+        }
+        // 2. 内部：任意地方调了 handle.shutdown()
+        _ = handle.wait() => {
+            log::info!("server shutdown requested internally");
+        }
+    }
+
     Ok(())
 }

@@ -1,0 +1,27 @@
+[package]
+name = "qexed_light"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# 与原版 26.1.2 存档光照逐格对比（需要 mc-worldgen/mc-saves 数据）
+vanilla-verify = []
+
+[dependencies]
+qexed_config = { workspace = true, features = ["global-root"] }
+qexed_config_macros.workspace = true
+qexed_language.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+tokio.workspace = true
+tklog.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+# 下面的库自己写
+
+[dev-dependencies]
+qexed_anvil.workspace = true
+qexed_nbt.workspace = true

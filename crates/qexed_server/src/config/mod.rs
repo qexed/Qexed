@@ -14,11 +14,13 @@ pub mod play;
 pub struct ServerConfig {
     /// ```autodoc
     /// <Name>qexed.crates.server.config.ServerConfig.bind</Name>
+    /// <Default>"0.0.0.0:25565"</Default>
     /// <Attr name="writable" />
     /// ```
     pub bind: String,
     /// ```autodoc
     /// <Name>qexed.crates.server.config.ServerConfig.compression_threshold</Name>
+    /// <Default>256</Default>
     /// <Attr name="writable" />
     /// ```
     pub compression_threshold: i32,
@@ -29,16 +31,19 @@ pub struct ServerConfig {
     pub play: play::PlayOptionsConfig,
     /// ```autodoc
     /// <Name>qexed.crates.server.config.ServerConfig.motd</Name>
+    /// <Default>"A qexed server"</Default>
     /// <Attr name="writable" />
     /// ```
     pub motd: String,
     /// ```autodoc
     /// <Name>qexed.crates.server.config.ServerConfig.max_players</Name>
+    /// <Default>20</Default>
     /// <Attr name="writable" />
     /// ```
     pub max_players: i32,
     /// ```autodoc
     /// <Name>qexed.crates.server.config.ServerConfig.online_mode</Name>
+    /// <Default>true</Default>
     /// <Attr name="writable" />
     /// ```
     pub online_mode: bool,
