@@ -1,4 +1,4 @@
-use toml_edit::{value, Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value, value};
 
 use crate::{TomlError, merge};
 
@@ -304,10 +304,8 @@ fn prune_empty(item: &mut Item) -> bool {
             let mut i = 0;
             while i < arr.len() {
                 let should_remove = {
-                    let mut tmp = Item::Table(std::mem::replace(
-                        arr.get_mut(i).unwrap(),
-                        Table::new(),
-                    ));
+                    let mut tmp =
+                        Item::Table(std::mem::replace(arr.get_mut(i).unwrap(), Table::new()));
                     let r = prune_empty(&mut tmp);
                     if let Item::Table(t) = tmp {
                         *arr.get_mut(i).unwrap() = t;

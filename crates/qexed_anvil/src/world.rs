@@ -34,7 +34,10 @@ impl WorldLayout {
         self.data_version
             .map(|v| v < migrate::DATA_VERSION_1_18)
             .unwrap_or(false)
-            || self.legacy_mcr_files.iter().any(|p| p.to_string_lossy().contains("region"))
+            || self
+                .legacy_mcr_files
+                .iter()
+                .any(|p| p.to_string_lossy().contains("region"))
     }
 }
 

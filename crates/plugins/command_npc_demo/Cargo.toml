@@ -1,0 +1,16 @@
+[package]
+name = "qexed-plugin-command_npc_demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+qexed_plugin.workspace = true
+qexed_plugin_api.workspace = true
+qexed_plugin_sdk.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+async-trait.workspace = true

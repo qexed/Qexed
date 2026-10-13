@@ -1,9 +1,9 @@
 use bytes::BufMut as _;
+use qexed_packet::error::PacketError;
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
     net_types::{GameProfile, ProfileProperty, VarInt},
 };
-use qexed_packet::error::PacketError;
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct PlayerInfoUpdate {

@@ -77,7 +77,8 @@ where
     })
     .await?;
 
-    conn.read_packet::<LoginAcknowledged>("login acknowledged").await?;
+    conn.read_packet::<LoginAcknowledged>("login acknowledged")
+        .await?;
     Ok(outcome)
 }
 

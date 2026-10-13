@@ -1,12 +1,12 @@
 //! 光照引擎：天光 + 方块光传播（对齐 MC 26.1.2 语义）。
 //!
 //! 架构（继承 v4 light.rs，参数化到 26.1.2 维度几何）：
-//! 1. 列扫描：自顶向下，opacity=0 保持、否则 -max(1, opacity)；
+//! 1. 列扫描：自顶向下，opacity=0 时 15 级直射保持、非直射 -1，否则 -max(1, opacity)；
 //! 2. 邻居独立预计算：每个有数据的邻居 chunk 各自跑"列扫描 + 内部扩散"，
 //!    得到与中心 chunk 边界相邻列的天光值（v4 的 fast_neighbourhood_sky_values）；
 //! 3. 边界播种：以邻居预计算值为源向中心 chunk 引入（水平进入 -max(1,opacity)）；
 //!    缺数据的邻居方向不播种（不臆造开天空）；
-//! 4. BFS 扩散：向下无衰减（天空直射规则），水平/向上 -max(1, opacity)；
+//! 4. BFS 扩散：仅 15 级直射天光向下穿透明方块无衰减，其余 -max(1, opacity)；
 //! 5. 可选射线追踪（RayTrace）：从暗点向 9 个斜上方向追踪开天空。
 //!
 //! 方块光：亮度源自播种（光源格 = luminance）+ 邻居边界播种 + BFS
@@ -38,7 +38,10 @@ pub struct LightEngine {
 
 impl LightEngine {
     pub fn new(dimension: DimensionGeometry, algorithm: SkyLightAlgorithm) -> Self {
-        Self { dimension, algorithm }
+        Self {
+            dimension,
+            algorithm,
+        }
     }
 
     pub fn dimension(&self) -> &DimensionGeometry {
@@ -99,8 +102,8 @@ impl LightEngine {
         // 1. 中心列扫描
         let mut queue = VecDeque::new();
         scan_sky_columns(center_opacity, out.sky_light_mut(), &mut queue, geometry);
-        // 2. 邻居播种：有光照值用光照值，没有的 chunk 方向退回独立预计算值
-        let neighbour_sky = self.neighbourhood_sky_values(opacity);
+        // 2. 邻居播种：有光照值用光照值，只有缺光照数据的方向才退回独立预计算值
+        let neighbour_sky = self.fallback_sky_values(opacity, light);
         seed_sky_from_light(opacity, light, &neighbour_sky, &mut out, &mut queue);
         // 3. BFS
         spread_sky(center_opacity, out.sky_light_mut(), queue, geometry);
@@ -138,6 +141,37 @@ impl LightEngine {
         }
         // 3. BFS
         spread_block(center, out.block_light_mut(), queue, geometry);
+        out
+    }
+
+    /// 仅为「有 opacity、无光照数据」的方向做单块天光预计算（播种回退值）。
+    ///
+    /// 有光照数据的方向播种直接读光照值（[seed_sky_from_light]），独立预计算
+    /// 根本不会被读到——TCP/原生路径 opacity 与光照都成对入库，常规 8 个
+    /// 邻居方向全部跳过，省掉 8 次「列扫描 + 全块 BFS」的纯浪费。
+    fn fallback_sky_values(
+        &self,
+        opacity: &OpacityNeighborhood,
+        light: &LightNeighborhood,
+    ) -> NeighbourSkyValues {
+        let geometry = self.geometry();
+        let mut out: NeighbourSkyValues = std::array::from_fn(|_| None);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let index = LightNeighborhood::chunk_index(dx, dz).expect("in-range offset");
+                if light.chunk(dx, dz).is_some() {
+                    continue;
+                }
+                let Some(chunk) = opacity.chunk(dx, dz) else {
+                    continue;
+                };
+                let mut values = vec![0_u8; geometry.chunk_light_len];
+                let mut queue = VecDeque::new();
+                scan_sky_columns(chunk, &mut values, &mut queue, geometry);
+                spread_sky(chunk, &mut values, queue, geometry);
+                out[index] = Some(values);
+            }
+        }
         out
     }
 
@@ -185,6 +219,9 @@ fn scan_sky_columns(
                 let opacity = chunk.opacity()[index].min(15);
                 if opacity > 0 {
                     light = light.saturating_sub(opacity.max(1));
+                } else if light < 15 {
+                    // 已被削弱的非直射光向下每格 -1（原版：仅 15 级直射免费下行）
+                    light = light.saturating_sub(1);
                 }
                 if light > sky[index] {
                     sky[index] = light;
@@ -213,11 +250,33 @@ fn seed_sky_from_neighbours(
     for y in geometry.world_min_y..=geometry.world_max_y {
         for z in 0..16 {
             seed_sky_cell(opacity, neighbour_sky, out, queue, 0, y, z, -1, y, z as i32);
-            seed_sky_cell(opacity, neighbour_sky, out, queue, 15, y, z, 16, y, z as i32);
+            seed_sky_cell(
+                opacity,
+                neighbour_sky,
+                out,
+                queue,
+                15,
+                y,
+                z,
+                16,
+                y,
+                z as i32,
+            );
         }
         for x in 0..16 {
             seed_sky_cell(opacity, neighbour_sky, out, queue, x, y, 0, x as i32, y, -1);
-            seed_sky_cell(opacity, neighbour_sky, out, queue, x, y, 15, x as i32, y, 16);
+            seed_sky_cell(
+                opacity,
+                neighbour_sky,
+                out,
+                queue,
+                x,
+                y,
+                15,
+                x as i32,
+                y,
+                16,
+            );
         }
     }
 }
@@ -262,12 +321,60 @@ fn seed_sky_from_light(
     let geometry = out.geometry();
     for y in geometry.world_min_y..=geometry.world_max_y {
         for z in 0..16 {
-            seed_sky_light_cell(opacity, light, neighbour_sky, out, queue, 0, y, z, -1, y, z as i32);
-            seed_sky_light_cell(opacity, light, neighbour_sky, out, queue, 15, y, z, 16, y, z as i32);
+            seed_sky_light_cell(
+                opacity,
+                light,
+                neighbour_sky,
+                out,
+                queue,
+                0,
+                y,
+                z,
+                -1,
+                y,
+                z as i32,
+            );
+            seed_sky_light_cell(
+                opacity,
+                light,
+                neighbour_sky,
+                out,
+                queue,
+                15,
+                y,
+                z,
+                16,
+                y,
+                z as i32,
+            );
         }
         for x in 0..16 {
-            seed_sky_light_cell(opacity, light, neighbour_sky, out, queue, x, y, 0, x as i32, y, -1);
-            seed_sky_light_cell(opacity, light, neighbour_sky, out, queue, x, y, 15, x as i32, y, 16);
+            seed_sky_light_cell(
+                opacity,
+                light,
+                neighbour_sky,
+                out,
+                queue,
+                x,
+                y,
+                0,
+                x as i32,
+                y,
+                -1,
+            );
+            seed_sky_light_cell(
+                opacity,
+                light,
+                neighbour_sky,
+                out,
+                queue,
+                x,
+                y,
+                15,
+                x as i32,
+                y,
+                16,
+            );
         }
     }
 }
@@ -351,8 +458,13 @@ fn spread_sky(
         for (nx, ny, nz) in neighbours(x, y, z, geometry) {
             let n_index = geometry.block_index(nx, ny, nz);
             let n_opacity = chunk.opacity()[n_index].min(15);
-            // 向下且透明：无衰减（天空直射规则）；其余 -max(1, opacity)
-            let cost = if ny == y - 1 && n_opacity == 0 { 0 } else { n_opacity.max(1) };
+            // 原版规则：仅 15 级直射天光向下穿透明方块无衰减；
+            // 已被削弱的侧向光向下每格 -max(1, opacity)；其余方向 -max(1, opacity)
+            let cost = if ny == y - 1 && source == 15 && n_opacity == 0 {
+                0
+            } else {
+                n_opacity.max(1)
+            };
             let candidate = source.saturating_sub(cost);
             if candidate > sky[n_index] {
                 sky[n_index] = candidate;
@@ -374,10 +486,14 @@ fn ray_trace_sky(
 ) {
     const RAYS: [(i32, i32, i32); 9] = [
         (0, 1, 0),
-        (-1, 1, 0), (1, 1, 0),
-        (0, 1, -1), (0, 1, 1),
-        (-1, 1, -1), (-1, 1, 1),
-        (1, 1, -1), (1, 1, 1),
+        (-1, 1, 0),
+        (1, 1, 0),
+        (0, 1, -1),
+        (0, 1, 1),
+        (-1, 1, -1),
+        (-1, 1, 1),
+        (1, 1, -1),
+        (1, 1, 1),
     ];
     let mut queue = VecDeque::new();
     for x in 0..16 {
@@ -533,7 +649,12 @@ fn unpack_index(index: usize, geometry: &LightGeometry) -> (usize, i32, usize) {
     (x, geometry.world_min_y + y_offset, z)
 }
 
-fn neighbours(x: usize, y: i32, z: usize, geometry: &LightGeometry) -> impl Iterator<Item = (usize, i32, usize)> {
+fn neighbours(
+    x: usize,
+    y: i32,
+    z: usize,
+    geometry: &LightGeometry,
+) -> impl Iterator<Item = (usize, i32, usize)> {
     [
         (x > 0).then(|| (x - 1, y, z)),
         (x < 15).then(|| (x + 1, y, z)),

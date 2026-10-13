@@ -73,7 +73,6 @@ pub enum PacketError {
     // ========================================================================
     // 枚举判别值 / 必填字段 / 定长负载
     // ========================================================================
-
     /// 不支持的枚举判别值或类型 id：`unsupported {what}: {value}`
     #[error("unsupported {what}: {value}")]
     UnsupportedValue { what: &'static str, value: i32 },

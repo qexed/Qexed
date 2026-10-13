@@ -138,10 +138,12 @@ fn run_datagen(
     }
 
     std::fs::remove_dir_all(&work_dir).ok();
-    std::fs::write(reports_dir.join(REPORTS_MARKER), mc_version).io_ctx(
-        "无法写入 reports ready 标记",
-    )?;
-    log::info!("Mojang reports 就绪: {copied} 个文件, path={}", reports_dir.display());
+    std::fs::write(reports_dir.join(REPORTS_MARKER), mc_version)
+        .io_ctx("无法写入 reports ready 标记")?;
+    log::info!(
+        "Mojang reports 就绪: {copied} 个文件, path={}",
+        reports_dir.display()
+    );
     Ok(())
 }
 

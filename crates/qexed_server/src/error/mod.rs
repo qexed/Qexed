@@ -10,4 +10,10 @@ pub enum ServerError {
     Auth(#[from] qexed_auth::error::AuthError),
     #[error("protocol error: {0}")]
     Protocol(String),
+    #[error("play error: {0}")]
+    Play(#[from] qexed_play::error::PlayError),
+    #[error("plugin path already initialized: {0}")]
+    PluginAlready(#[from] qexed_plugin_api::PluginError),
+    #[error("plugin error: {0}")]
+    Plugin(String),
 }

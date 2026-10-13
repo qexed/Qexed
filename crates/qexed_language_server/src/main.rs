@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser as _;
-use qexed_language_server::{export, router, LanguageRoot};
+use qexed_language_server::{LanguageRoot, export, router};
 
 /// 语言文件服务器：提供翻译文件的 HTTP 服务，或静态导出为可托管目录。
 #[derive(Debug, clap::Parser)]

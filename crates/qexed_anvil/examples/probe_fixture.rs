@@ -42,7 +42,17 @@ fn main() {
                 eprintln!("  Level keys: {:?}", lk);
                 if let Some(qexed_nbt::Tag::List(_, items)) = level.get("Sections") {
                     eprintln!("  legacy Sections: {} items", items.len());
-                    let populated = items.iter().filter_map(|s| match s { qexed_nbt::Tag::Compound(c) if c.contains_key("Palette") || c.contains_key("Blocks") => Some(c), _ => None }).next();
+                    let populated = items
+                        .iter()
+                        .filter_map(|s| match s {
+                            qexed_nbt::Tag::Compound(c)
+                                if c.contains_key("Palette") || c.contains_key("Blocks") =>
+                            {
+                                Some(c)
+                            }
+                            _ => None,
+                        })
+                        .next();
                     if let Some(first) = populated {
                         let mut sk: Vec<&String> = first.keys().collect();
                         sk.sort();

@@ -34,12 +34,12 @@ pub mod migrate;
 pub mod palette;
 pub mod paths;
 pub mod region;
-pub mod world;
 pub mod upgrade;
+pub mod world;
 
 #[cfg(feature = "qexed")]
 pub mod config;
 
-pub use chunk::{BlockStateRef, SectionBlocks, SectionBiomes};
+pub use chunk::{BlockStateRef, SectionBiomes, SectionBlocks};
 pub use error::AnvilError;
 pub use region::{AnvilRegion, ChunkData};

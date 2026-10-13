@@ -42,8 +42,8 @@ pub(super) fn download_if_needed(
         ))?;
     }
     let tmp = target.with_extension("jar.tmp");
-    let file = File::create(&tmp)
-        .io_ctx(format!("无法写入 Mojang jar 临时缓存: {}", tmp.display()))?;
+    let file =
+        File::create(&tmp).io_ctx(format!("无法写入 Mojang jar 临时缓存: {}", tmp.display()))?;
     let mut writer = ProgressWriter::new(kind, file, total);
     let copied = response.copy_to(&mut writer)?;
     writer.finish();

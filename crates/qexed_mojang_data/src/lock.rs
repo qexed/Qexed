@@ -16,10 +16,8 @@ pub(super) struct DownloadLock {
 impl DownloadLock {
     pub(super) fn acquire(path: &Path) -> Result<Self, MojangDataError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).io_ctx(format!(
-                "无法创建 Mojang 下载锁目录: {}",
-                parent.display()
-            ))?;
+            std::fs::create_dir_all(parent)
+                .io_ctx(format!("无法创建 Mojang 下载锁目录: {}", parent.display()))?;
         }
 
         for _ in 0..LOCK_WAIT_ATTEMPTS {

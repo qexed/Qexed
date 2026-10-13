@@ -26,7 +26,8 @@ pub(super) fn extract_minecraft_data(
         tmp_root.display()
     ))?;
 
-    let file = File::open(jar_path).io_ctx(format!("无法打开 Mojang jar: {}", jar_path.display()))?;
+    let file =
+        File::open(jar_path).io_ctx(format!("无法打开 Mojang jar: {}", jar_path.display()))?;
     let reader = BufReader::new(file);
     let mut archive = zip::ZipArchive::new(reader)?;
 
@@ -97,19 +98,13 @@ where
 
         let target = tmp_root.join("minecraft").join(relative);
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).io_ctx(format!(
-                "无法创建 Mojang 数据目录: {}",
-                parent.display()
-            ))?;
+            std::fs::create_dir_all(parent)
+                .io_ctx(format!("无法创建 Mojang 数据目录: {}", parent.display()))?;
         }
-        let mut output = File::create(&target).io_ctx(format!(
-            "无法写入 Mojang 数据文件: {}",
-            target.display()
-        ))?;
-        std::io::copy(&mut entry, &mut output).io_ctx(format!(
-            "无法抽取 Mojang 数据文件: {}",
-            target.display()
-        ))?;
+        let mut output = File::create(&target)
+            .io_ctx(format!("无法写入 Mojang 数据文件: {}", target.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .io_ctx(format!("无法抽取 Mojang 数据文件: {}", target.display()))?;
         extracted += 1;
     }
     Ok(extracted)
@@ -140,19 +135,13 @@ where
 
         let target = tmp_root.join("minecraft").join("lang").join(relative);
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).io_ctx(format!(
-                "无法创建 Mojang lang 目录: {}",
-                parent.display()
-            ))?;
+            std::fs::create_dir_all(parent)
+                .io_ctx(format!("无法创建 Mojang lang 目录: {}", parent.display()))?;
         }
-        let mut output = File::create(&target).io_ctx(format!(
-            "无法写入 Mojang lang 文件: {}",
-            target.display()
-        ))?;
-        std::io::copy(&mut entry, &mut output).io_ctx(format!(
-            "无法抽取 Mojang lang 文件: {}",
-            target.display()
-        ))?;
+        let mut output = File::create(&target)
+            .io_ctx(format!("无法写入 Mojang lang 文件: {}", target.display()))?;
+        std::io::copy(&mut entry, &mut output)
+            .io_ctx(format!("无法抽取 Mojang lang 文件: {}", target.display()))?;
         extracted += 1;
     }
     Ok(extracted)
@@ -226,10 +215,8 @@ mod tests {
     #[test]
     fn rejects_non_minecraft_lang_path() {
         assert!(
-            strip_minecraft_lang_prefix(Path::new(
-                "data/minecraft/tags/damage_type/is_fire.json"
-            ))
-            .is_none()
+            strip_minecraft_lang_prefix(Path::new("data/minecraft/tags/damage_type/is_fire.json"))
+                .is_none()
         );
     }
 }

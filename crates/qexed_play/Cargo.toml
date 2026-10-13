@@ -1,0 +1,36 @@
+[package]
+name = "qexed_play"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_scoreboard.workspace = true
+qexed_config = { workspace = true, features = ["global-root"] }
+qexed_config_macros.workspace = true
+qexed_language.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+tokio.workspace = true
+tklog.workspace = true
+log.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+# 协议层（play 包定义 / 编解码）
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+qexed_tcp_connect.workspace = true
+bytes.workspace = true
+
+# 行为包（具体玩法语义拆分到各自 crate）
+qexed_chat.workspace = true
+qexed_command.workspace = true
+qexed_plugin_api.workspace = true
+qexed_plugin.workspace = true
+qexed_world.workspace = true
+qexed_profiler.workspace = true
+qexed_stat.workspace = true
+qexed_jev.workspace = true
+
+uuid.workspace = true

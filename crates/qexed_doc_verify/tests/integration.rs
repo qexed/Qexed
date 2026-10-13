@@ -57,18 +57,17 @@ fn doc_site_pages_manifests_are_self_consistent() {
         .unwrap_or_else(|_| workspace_root().parent().unwrap().join("qexed-v6-doc"));
     if !doc_site.exists() {
         // CI 只 checkout 本仓库时没有文档站：跳过而非失败（本地开发照常严查）。
-        eprintln!("skip: 文档站目录不存在（{}），如需校验请 checkout 或设 DOC_SITE_DIR", doc_site.display());
+        eprintln!(
+            "skip: 文档站目录不存在（{}），如需校验请 checkout 或设 DOC_SITE_DIR",
+            doc_site.display()
+        );
         return;
     }
 
     // 站点全部 MDX 页面里必须至少有 1 页带 verify 清单，且全部自洽
-    let pages = qexed_doc_verify::collect_mdx_pages(&doc_site.join("app"))
-        .expect("遍历文档站页面失败");
-    assert!(
-        pages.len() >= 30,
-        "文档站页面数量异常: {}",
-        pages.len()
-    );
+    let pages =
+        qexed_doc_verify::collect_mdx_pages(&doc_site.join("app")).expect("遍历文档站页面失败");
+    assert!(pages.len() >= 30, "文档站页面数量异常: {}", pages.len());
 
     let mut with_manifest = 0usize;
     let mut failures = Vec::new();
@@ -82,10 +81,7 @@ fn doc_site_pages_manifests_are_self_consistent() {
             failures.push(format!("{}: {err}", page.display()));
         }
     }
-    assert!(
-        with_manifest >= 1,
-        "文档站没有任何页面带 verify 清单"
-    );
+    assert!(with_manifest >= 1, "文档站没有任何页面带 verify 清单");
     assert!(
         failures.is_empty(),
         "以下页面清单校验失败:\n{}",
@@ -102,11 +98,14 @@ async fn doc_site_pages_reproduce_in_docker() {
         .unwrap_or_else(|_| workspace_root().parent().unwrap().join("qexed-v6-doc"));
     if !doc_site.exists() {
         // CI 只 checkout 本仓库时没有文档站：跳过而非失败。
-        eprintln!("skip: 文档站目录不存在（{}），如需校验请 checkout 或设 DOC_SITE_DIR", doc_site.display());
+        eprintln!(
+            "skip: 文档站目录不存在（{}），如需校验请 checkout 或设 DOC_SITE_DIR",
+            doc_site.display()
+        );
         return;
     }
-    let pages = qexed_doc_verify::collect_mdx_pages(&doc_site.join("app"))
-        .expect("遍历文档站页面失败");
+    let pages =
+        qexed_doc_verify::collect_mdx_pages(&doc_site.join("app")).expect("遍历文档站页面失败");
 
     let mut checked = 0usize;
     for page in &pages {

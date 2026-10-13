@@ -49,7 +49,9 @@ fn region_file_migration_end_to_end() {
         "unicode.chunk",
     ];
     let roots: Vec<_> = sources.iter().filter_map(|n| load(n)).collect();
-    if roots.is_empty() { return };
+    if roots.is_empty() {
+        return;
+    };
 
     // 迁移前指纹（含每区块坐标假设：lx = index）
     let fingerprints: Vec<_> = roots.iter().map(|r| block_fingerprint(r)).collect();
@@ -62,7 +64,9 @@ fn region_file_migration_end_to_end() {
             let lx = (index % 4) as i32;
             let lz = (index / 4) as i32;
             let bytes = qexed_nbt::to_vec("", root).unwrap();
-            region.write_chunk(lx, lz, ChunkData::zlib(&bytes).unwrap()).unwrap();
+            region
+                .write_chunk(lx, lz, ChunkData::zlib(&bytes).unwrap())
+                .unwrap();
         }
         region.save().unwrap();
     }
@@ -71,7 +75,12 @@ fn region_file_migration_end_to_end() {
     let stats = migrate::migrate_region_file(&mca, &MigrateOptions::default()).unwrap();
     assert_eq!(
         stats,
-        MigrationStats { migrated: roots.len(), modern: 0, unsupported: 0, failed: 0 },
+        MigrationStats {
+            migrated: roots.len(),
+            modern: 0,
+            unsupported: 0,
+            failed: 0
+        },
         "all chunks migrated",
     );
 
@@ -88,7 +97,11 @@ fn region_file_migration_end_to_end() {
         assert!(fields.get("Level").is_none(), "chunk {index} modern");
         assert!(fields.get("sections").is_some());
 
-        assert_eq!(&block_fingerprint(&root), expected, "chunk {index} blocks preserved");
+        assert_eq!(
+            &block_fingerprint(&root),
+            expected,
+            "chunk {index} blocks preserved"
+        );
     }
 
     // 4) 二次迁移：全部 AlreadyModern，文件不再变化

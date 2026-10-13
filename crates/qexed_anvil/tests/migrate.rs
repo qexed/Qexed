@@ -41,7 +41,9 @@ fn all_block_refs(root: &Tag) -> Vec<(i32, Vec<chunk::BlockStateRef>, Vec<usize>
 
 #[test]
 fn migrates_1_17_chunk_to_modern_layout() {
-    let Some(root) = load("1.17.1.chunk") else { return };
+    let Some(root) = load("1.17.1.chunk") else {
+        return;
+    };
     let before = all_block_refs(&root);
     let (migrated, outcome) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     assert_eq!(outcome, MigrationOutcome::Migrated);
@@ -60,17 +62,27 @@ fn migrates_1_17_chunk_to_modern_layout() {
 
 #[test]
 fn migrated_chunk_reads_with_modern_api_and_writes_back() {
-    let Some(root) = load("1.17.1.chunk") else { return };
+    let Some(root) = load("1.17.1.chunk") else {
+        return;
+    };
     let (migrated, _) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     let state = chunk::block_state_at(&migrated, 8, 40, 8).unwrap();
     assert!(state.is_some());
     let target = chunk::BlockStateRef::new("minecraft:diamond_block");
     let edited = chunk::set_block_state(
-        &migrated, 8, 40, 8, &target,
+        &migrated,
+        8,
+        40,
+        8,
+        &target,
         &chunk::BlockStateRef::new("minecraft:stone"),
         "minecraft:plains",
-    ).unwrap();
-    assert_eq!(chunk::block_state_at(&edited, 8, 40, 8).unwrap().unwrap(), target);
+    )
+    .unwrap();
+    assert_eq!(
+        chunk::block_state_at(&edited, 8, 40, 8).unwrap().unwrap(),
+        target
+    );
     let bytes = qexed_nbt::to_vec("", &edited).unwrap();
     let back = qexed_nbt::from_slice(&bytes).unwrap().1;
     assert_eq!(back, edited);
@@ -78,7 +90,9 @@ fn migrated_chunk_reads_with_modern_api_and_writes_back() {
 
 #[test]
 fn modern_chunk_passes_through() {
-    let Some(root) = load("issue99-chunk.nbt") else { return };
+    let Some(root) = load("issue99-chunk.nbt") else {
+        return;
+    };
     let (out, outcome) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     assert_eq!(outcome, MigrationOutcome::AlreadyModern);
     assert_eq!(out, root);
@@ -86,7 +100,9 @@ fn modern_chunk_passes_through() {
 
 #[test]
 fn pre_flattening_chunk_upgrades_through_pipeline() {
-    let Some(root) = load("1.12.chunk") else { return };
+    let Some(root) = load("1.12.chunk") else {
+        return;
+    };
     let (upgraded, outcome) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     assert_eq!(outcome, MigrationOutcome::MigratedPreFlattening);
     let fields = chunk::root_compound(&upgraded).unwrap();
@@ -98,15 +114,25 @@ fn pre_flattening_chunk_upgrades_through_pipeline() {
 }
 #[test]
 fn migrated_sections_carry_named_biomes() {
-    let Some(root) = load("1.17.1.chunk") else { return };
+    let Some(root) = load("1.17.1.chunk") else {
+        return;
+    };
     let (migrated, _) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     let fields = chunk::root_compound(&migrated).unwrap();
-    let Tag::List(_, sections) = fields.get("sections").unwrap() else { panic!() };
+    let Tag::List(_, sections) = fields.get("sections").unwrap() else {
+        panic!()
+    };
     let mut biome_named = 0;
     for section in sections.iter() {
-        let Tag::Compound(section_map) = section else { continue };
-        let Some(Tag::Compound(biomes)) = section_map.get("biomes") else { continue };
-        let Some(Tag::List(_, palette)) = biomes.get("palette") else { continue };
+        let Tag::Compound(section_map) = section else {
+            continue;
+        };
+        let Some(Tag::Compound(biomes)) = section_map.get("biomes") else {
+            continue;
+        };
+        let Some(Tag::List(_, palette)) = biomes.get("palette") else {
+            continue;
+        };
         for entry in palette.iter() {
             if let Tag::String(name) = entry {
                 assert!(name.contains(':'), "namespaced: {name}");
@@ -120,9 +146,15 @@ fn migrated_sections_carry_named_biomes() {
 #[test]
 fn migrate_all_legacy_fixture_chunks() {
     for name in [
-        "1.17.0.chunk", "1.17.1-custom-heights.chunk", "1.17.1.chunk",
-        "etho.chunk", "etho-max-heights.chunk", "etho-old-heightmaps.chunk",
-        "etho-old-in-new.chunk", "etho-old-in-new2.chunk", "unicode.chunk",
+        "1.17.0.chunk",
+        "1.17.1-custom-heights.chunk",
+        "1.17.1.chunk",
+        "etho.chunk",
+        "etho-max-heights.chunk",
+        "etho-old-heightmaps.chunk",
+        "etho-old-in-new.chunk",
+        "etho-old-in-new2.chunk",
+        "unicode.chunk",
     ] {
         let Some(root) = load(name) else { continue };
         let before = all_block_refs(&root);
@@ -137,7 +169,9 @@ fn migrate_all_legacy_fixture_chunks() {
 
 #[test]
 fn migrated_chunk_uses_modern_field_names() {
-    let Some(root) = load("1.17.1.chunk") else { return };
+    let Some(root) = load("1.17.1.chunk") else {
+        return;
+    };
     let (migrated, _) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     let fields = chunk::root_compound(&migrated).unwrap();
     for key in ["block_entities", "block_ticks", "fluid_ticks"] {
@@ -150,20 +184,30 @@ fn migrated_chunk_uses_modern_field_names() {
 
 #[test]
 fn custom_height_world_migrates_with_correct_biomes() {
-    let Some(root) = load("1.17.1-custom-heights.chunk") else { return };
+    let Some(root) = load("1.17.1-custom-heights.chunk") else {
+        return;
+    };
     let (migrated, outcome) = migrate::migrate_chunk(&root, &MigrateOptions::default()).unwrap();
     assert_eq!(outcome, MigrationOutcome::Migrated);
     let fields = chunk::root_compound(&migrated).unwrap();
     assert_eq!(fields.get("yPos"), Some(&Tag::Int(-9)));
-    let Tag::List(_, sections) = fields.get("sections").unwrap() else { panic!() };
+    let Tag::List(_, sections) = fields.get("sections").unwrap() else {
+        panic!()
+    };
     assert!(!sections.is_empty());
     for section in sections.iter() {
-        let Tag::Compound(section_map) = section else { continue };
+        let Tag::Compound(section_map) = section else {
+            continue;
+        };
         let Some(Tag::Compound(biomes)) = section_map.get("biomes") else {
             panic!("section missing biomes");
         };
-        let Some(Tag::List(_, palette)) = biomes.get("palette") else { panic!() };
-        let Tag::String(name) = palette.first().unwrap() else { panic!() };
+        let Some(Tag::List(_, palette)) = biomes.get("palette") else {
+            panic!()
+        };
+        let Tag::String(name) = palette.first().unwrap() else {
+            panic!()
+        };
         assert_eq!(&**name, "minecraft:snowy_taiga", "biome 19 mapped");
     }
 }

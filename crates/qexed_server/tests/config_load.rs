@@ -40,5 +40,8 @@ fn nested_play_partial_file_fills_defaults() {
     let cfg = ServerConfig::load_file_at(&dir, false).unwrap();
     assert_eq!(cfg.bind, "1.2.3.4:1");
     assert_eq!(cfg.max_players, 99);
-    assert_eq!(cfg.play.view_distance, 8, "missing play section gets defaults");
+    assert_eq!(
+        cfg.play.view_distance, 8,
+        "missing play section gets defaults"
+    );
 }

@@ -53,8 +53,8 @@ fn default_true() -> bool {
 impl Default for MojangDataConfig {
     fn default() -> Self {
         Self {
-            version_manifest_url:
-                "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json".to_string(),
+            version_manifest_url: "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+                .to_string(),
             http_timeout: 120,
             java_path: String::new(),
             datagen: true,

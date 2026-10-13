@@ -35,7 +35,9 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
 fn probe_detects_real_world_layout() {
     let Some(dir) = fixtures_dir() else { return };
     let w = dir.join("goworld");
-    if !w.exists() { return };
+    if !w.exists() {
+        return;
+    };
 
     let layout: WorldLayout = world::probe(&w).unwrap();
     assert!(layout.has_level_dat);
@@ -53,7 +55,9 @@ fn probe_detects_real_world_layout() {
 fn migrate_world_on_modern_world_updates_level_dat_only() {
     let Some(dir) = fixtures_dir() else { return };
     let w = dir.join("goworld");
-    if !w.exists() { return };
+    if !w.exists() {
+        return;
+    };
 
     let tmp = tempfile::tempdir().unwrap();
     let copy = tmp.path().join("world");
@@ -66,10 +70,17 @@ fn migrate_world_on_modern_world_updates_level_dat_only() {
     // 目标版本(3337) > 当前(2865)：level.dat 应被更新且字段保留
     assert!(report.level_dat_updated);
     let (_, root) = qexed_nbt::from_file(copy.join("level.dat")).unwrap();
-    let qexed_nbt::Tag::Compound(fields) = &root else { panic!() };
-    let qexed_nbt::Tag::Compound(data) = fields.get("Data").unwrap() else { panic!() };
+    let qexed_nbt::Tag::Compound(fields) = &root else {
+        panic!()
+    };
+    let qexed_nbt::Tag::Compound(data) = fields.get("Data").unwrap() else {
+        panic!()
+    };
     assert_eq!(data.get("DataVersion"), Some(&qexed_nbt::Tag::Int(3337)));
-    assert!(data.contains_key("LevelName") || data.contains_key("SpawnX"), "other fields kept");
+    assert!(
+        data.contains_key("LevelName") || data.contains_key("SpawnX"),
+        "other fields kept"
+    );
 }
 
 #[test]
@@ -77,7 +88,9 @@ fn migrate_world_full_legacy_flow() {
     let Some(dir) = fixtures_dir() else { return };
     let chunk_path = dir.join("1.17.1.chunk");
     let level_src = dir.join("goworld/level.dat");
-    if !chunk_path.exists() || !level_src.exists() { return };
+    if !chunk_path.exists() || !level_src.exists() {
+        return;
+    };
 
     let tmp = tempfile::tempdir().unwrap();
     let w = tmp.path().join("world");
@@ -86,13 +99,12 @@ fn migrate_world_full_legacy_flow() {
 
     // level.dat -> DataVersion 2730 (1.17)
     let (_, root) = qexed_nbt::from_file(&level_src).unwrap();
-    let qexed_nbt::Tag::Compound(fields_arc) = &root else { panic!() };
+    let qexed_nbt::Tag::Compound(fields_arc) = &root else {
+        panic!()
+    };
     let mut fields = fields_arc.as_ref().clone();
     if let Some(qexed_nbt::Tag::Compound(data)) = fields.get_mut("Data") {
-        std::sync::Arc::make_mut(data).insert(
-            "DataVersion".to_string(),
-            qexed_nbt::Tag::Int(2730),
-        );
+        std::sync::Arc::make_mut(data).insert("DataVersion".to_string(), qexed_nbt::Tag::Int(2730));
     }
     let root = qexed_nbt::Tag::Compound(std::sync::Arc::new(fields));
     qexed_nbt::to_file(w.join("level.dat"), "", &root, true).unwrap();
@@ -104,7 +116,9 @@ fn migrate_world_full_legacy_flow() {
     {
         use qexed_anvil::region::{AnvilRegion, ChunkData};
         let mut region = AnvilRegion::new(region_dir.join("r.0.0.mca"));
-        region.write_chunk(0, 0, ChunkData::zlib(&serialized).unwrap()).unwrap();
+        region
+            .write_chunk(0, 0, ChunkData::zlib(&serialized).unwrap())
+            .unwrap();
         region.save().unwrap();
     }
 

@@ -31,7 +31,7 @@ impl PacketCodec for NumberFormat {
             other => Err(PacketError::UnsupportedValue {
                 what: "number format type id",
                 value: other,
-            })
+            }),
         }
     }
 }
@@ -135,7 +135,11 @@ fn read_byte_array(
     }
     let len = len.0 as usize;
     if len > max_size {
-        return Err(PacketError::LengthExceedsMax { name, count: len, max: max_size });
+        return Err(PacketError::LengthExceedsMax {
+            name,
+            count: len,
+            max: max_size,
+        });
     }
     if len > r.buf.remaining() {
         return Err(PacketError::LengthExceedsRemaining {
@@ -719,7 +723,7 @@ impl PacketCodec for ComponentsToAdd {
                 return Err(PacketError::UnsupportedValue {
                     what: "data component type id",
                     value: other,
-                })
+                });
             }
         };
         Ok(())
@@ -760,7 +764,9 @@ impl PacketCodec for IDSet {
         self.r#type.serialize(w)?;
         if self.r#type.0 == 0 {
             let Some(tag_name) = &self.tag_name else {
-                return Err(PacketError::MissingRequired { what: "IDSet tag_name" });
+                return Err(PacketError::MissingRequired {
+                    what: "IDSet tag_name",
+                });
             };
             tag_name.serialize(w)?;
         } else {
@@ -1798,7 +1804,7 @@ mod tests {
         qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
     }
 }
-pub mod slot_display_types { 
+pub mod slot_display_types {
 
     pub mod minecraft {
         use qexed_packet::{error::PacketError, net_types::VarInt};
@@ -1816,9 +1822,13 @@ pub mod slot_display_types {
         }
         impl qexed_packet::PacketCodec for ItemStack {
             fn serialize(&self, w: &mut qexed_packet::PacketWriter) -> Result<(), PacketError> {
-                let item_id = self.item_stack.item_id.as_ref().ok_or(PacketError::MissingRequired {
-                    what: "item_id (required for item stack display)",
-                })?;
+                let item_id =
+                    self.item_stack
+                        .item_id
+                        .as_ref()
+                        .ok_or(PacketError::MissingRequired {
+                            what: "item_id (required for item stack display)",
+                        })?;
                 item_id.serialize(w)?;
                 self.item_stack.item_count.serialize(w)?;
 
@@ -1850,7 +1860,10 @@ pub mod slot_display_types {
                 Ok(())
             }
 
-            fn deserialize(&mut self, r: &mut qexed_packet::PacketReader) -> Result<(), PacketError> {
+            fn deserialize(
+                &mut self,
+                r: &mut qexed_packet::PacketReader,
+            ) -> Result<(), PacketError> {
                 let mut item_id = VarInt::default();
                 item_id.deserialize(r)?;
                 let mut item_count = VarInt::default();

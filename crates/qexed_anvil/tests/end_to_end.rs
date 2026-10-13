@@ -14,14 +14,20 @@ fn chunk_root(chunk_x: i32, chunk_z: i32) -> Tag {
         "minecraft:plains",
     );
     let sections = Tag::List(
-        ListHeader { tag_id: tag_id::COMPOUND, length: 1 },
+        ListHeader {
+            tag_id: tag_id::COMPOUND,
+            length: 1,
+        },
         Arc::from(vec![Tag::Compound(Arc::new(section))]),
     );
     let mut root = HashMap::new();
     root.insert("DataVersion".to_string(), Tag::Int(4790));
     root.insert("xPos".to_string(), Tag::Int(chunk_x));
     root.insert("zPos".to_string(), Tag::Int(chunk_z));
-    root.insert("Status".to_string(), Tag::String(Arc::from("minecraft:full")));
+    root.insert(
+        "Status".to_string(),
+        Tag::String(Arc::from("minecraft:full")),
+    );
     root.insert("sections".to_string(), sections);
     Tag::Compound(Arc::new(root))
 }
@@ -84,16 +90,7 @@ fn paths_helpers() {
         paths::dimension_region_dir(root, "minecraft:the_end"),
         root.join("DIM1").join("region")
     );
-    assert_eq!(
-        paths::region_file_name(31, 32),
-        "r.0.1.mca"
-    );
-    assert_eq!(
-        paths::region_file_name(-1, -33),
-        "r.-1.-2.mca"
-    );
-    assert_eq!(
-        paths::floor_div(-7, 2),
-        -4
-    );
+    assert_eq!(paths::region_file_name(31, 32), "r.0.1.mca");
+    assert_eq!(paths::region_file_name(-1, -33), "r.-1.-2.mca");
+    assert_eq!(paths::floor_div(-7, 2), -4);
 }

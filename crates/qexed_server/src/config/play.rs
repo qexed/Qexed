@@ -1,4 +1,4 @@
-use qexed_doc_macros::{Doc,};
+use qexed_doc_macros::Doc;
 use serde::{Deserialize, Serialize};
 
 /// PLAY 阶段的服务器选项。

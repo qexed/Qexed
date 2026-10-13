@@ -6,7 +6,10 @@ where
 {
     fn serialize(&self, w: &mut crate::PacketWriter) -> Result<(), PacketError> {
         if self.len() > i32::MAX as usize {
-            return Err(PacketError::LengthExceedsVarIntMax { name: "vec", len: self.len() });
+            return Err(PacketError::LengthExceedsVarIntMax {
+                name: "vec",
+                len: self.len(),
+            });
         }
 
         VarInt(self.len() as i32).serialize(w)?;

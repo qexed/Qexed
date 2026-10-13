@@ -1,7 +1,7 @@
 //! Login 阶段：LoginStart →（可选正版认证）→ LoginSuccess → LoginAcknowledged
-//!            → Configuration → （暂）Play Disconnect。
+//!            → Configuration → Play（委托 qexed_play）。
 
-use qexed_auth::{offline_profile, Authenticator};
+use qexed_auth::{Authenticator, offline_profile};
 use qexed_packet::net_types::GameProfile;
 use qexed_protocol::{
     to_client,
@@ -9,13 +9,12 @@ use qexed_protocol::{
         handshaking::set_protocol::SetProtocol,
         login::{
             encryption_begin::EncryptionBegin as ServerboundEncryptionBegin,
-            login_acknowledged::LoginAcknowledged,
-            login_start::LoginStart,
+            login_acknowledged::LoginAcknowledged, login_start::LoginStart,
         },
     },
 };
 
-use crate::codec::{read_expected_packet, text_component};
+use crate::codec::read_expected_packet;
 use crate::configuration::handle_configuration;
 use crate::consts::{LOGIN_TIMEOUT, SESSION_VERIFY_TIMEOUT};
 use crate::error::ServerError;
@@ -68,6 +67,21 @@ where
     };
     log::debug!("profile resolved: uuid={}", profile.uuid);
 
+    // 2.5 登录压缩（原版语义：先 Set Compression 再 LoginSuccess，此后
+    // 两侧全部帧按 threshold 压缩；threshold <= 0 = 不启用）。
+    // 区块包动辄几十 KB，zlib 后通常缩到 1/5 以下——带宽与序列化开销双降。
+    let threshold = context.config.compression_threshold;
+    if threshold > 0 {
+        sink.send(to_client::login::compress::Compress {
+            threshold: qexed_packet::net_types::VarInt(threshold),
+        })
+        .await?;
+        sink.set_compression_threshold(threshold);
+        packets.set_compression_threshold(threshold);
+        sink.flush().await?;
+        log::debug!("login compression enabled: threshold={threshold}");
+    }
+
     // 3. LoginSuccess
     sink.send(to_client::login::success::Success {
         game_profile: profile.clone(),
@@ -86,12 +100,28 @@ where
         client.displayed_skin_parts,
     );
 
-    // 6. Play 阶段暂未实现 → Play Disconnect
-    sink.send(to_client::play::disconnect::Disconnect {
-        reason: text_component("Play phase is not implemented yet."),
-    })
-    .await?;
-    sink.flush().await?;
+    // 6. Play 阶段：委托 qexed_play 驱动，直到客户端断开
+    let player = qexed_play::session::PlayPlayer::new(
+        profile,
+        qexed_play::session::PlayContextConfig {
+            view_distance: context.config.play.view_distance,
+            simulation_distance: context.config.play.simulation_distance,
+            dimension_name: context.config.play.dimension_name.clone(),
+            dimension_type: context.config.play.dimension_type,
+            hashed_seed: context.config.play.hashed_seed,
+            online_mode: context.config.online_mode,
+        },
+        context.play_config.game_mode,
+    );
+    qexed_play::handle_play(
+        packets,
+        sink,
+        player,
+        &context.chat_config,
+        &context.play_config,
+    )
+    .await
+    .map_err(ServerError::Play)?;
 
     Ok(())
 }

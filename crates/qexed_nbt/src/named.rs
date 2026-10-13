@@ -16,10 +16,14 @@ impl NbtIo {
         let id = reader.read_u8()?;
         if id != tag_id::COMPOUND {
             return Err(NbtError::Deserialize(format!(
-                "named NBT root must be Compound, got 0x{id:02X}")));
+                "named NBT root must be Compound, got 0x{id:02X}"
+            )));
         }
         let name = read_string(&mut reader)?;
-        Ok((name, Tag::Compound(Arc::new(read_compound_content(&mut reader)?))))
+        Ok((
+            name,
+            Tag::Compound(Arc::new(read_compound_content(&mut reader)?)),
+        ))
     }
 
     /// [`NbtIo::from_reader`] 的宽松版本：字符串含非法 UTF-8 时用 U+FFFD 替换，
@@ -29,15 +33,21 @@ impl NbtIo {
         let id = reader.read_u8()?;
         if id != tag_id::COMPOUND {
             return Err(NbtError::Deserialize(format!(
-                "named NBT root must be Compound, got 0x{id:02X}")));
+                "named NBT root must be Compound, got 0x{id:02X}"
+            )));
         }
         let name = read_string_lossy(&mut reader)?;
-        Ok((name, Tag::Compound(Arc::new(read_compound_content_lossy(&mut reader)?))))
+        Ok((
+            name,
+            Tag::Compound(Arc::new(read_compound_content_lossy(&mut reader)?)),
+        ))
     }
 
     pub fn to_writer<W: Write>(mut writer: W, name: &str, tag: &Tag) -> Result<(), NbtError> {
         let Tag::Compound(map) = tag else {
-            return Err(NbtError::Serialize("named NBT root must be Compound".into()));
+            return Err(NbtError::Serialize(
+                "named NBT root must be Compound".into(),
+            ));
         };
         writer.write_u8(tag_id::COMPOUND)?;
         write_string(&mut writer, name)?;
@@ -75,7 +85,11 @@ pub fn to_file<P: AsRef<std::path::Path>>(
 
     let file = File::create(path)?;
     if compress {
-        NbtIo::to_writer(GzEncoder::new(BufWriter::new(file), Compression::default()), name, tag)
+        NbtIo::to_writer(
+            GzEncoder::new(BufWriter::new(file), Compression::default()),
+            name,
+            tag,
+        )
     } else {
         NbtIo::to_writer(BufWriter::new(file), name, tag)
     }

@@ -1,0 +1,17 @@
+[package]
+name = "qexed-plugin-slime_jump"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+qexed_plugin.workspace = true
+qexed_plugin_api.workspace = true
+qexed_plugin_sdk.workspace = true
+serde = { workspace = true, features = ["derive"] }
+qexed_toml.workspace = true
+toml_edit = { workspace = true, features = ["serde"] }
+async-trait.workspace = true

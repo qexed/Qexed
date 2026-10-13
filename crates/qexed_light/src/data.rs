@@ -49,7 +49,10 @@ impl ChunkLightData {
 
     /// 读取天光（越界坐标按 0 处理，供邻域查询兜底）。
     pub fn sky_at(&self, x: usize, y: i32, z: usize) -> u8 {
-        if x >= 16 || z >= 16 || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y) {
+        if x >= 16
+            || z >= 16
+            || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y)
+        {
             return 0;
         }
         self.sky_light[self.geometry.block_index(x, y, z)]
@@ -57,7 +60,10 @@ impl ChunkLightData {
 
     /// 读取方块光。
     pub fn block_at(&self, x: usize, y: i32, z: usize) -> u8 {
-        if x >= 16 || z >= 16 || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y) {
+        if x >= 16
+            || z >= 16
+            || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y)
+        {
             return 0;
         }
         self.block_light[self.geometry.block_index(x, y, z)]
@@ -180,13 +186,22 @@ pub struct BlockLightProps {
 
 impl Default for BlockLightProps {
     fn default() -> Self {
-        Self { opacity: 0, luminance: 0 }
+        Self {
+            opacity: 0,
+            luminance: 0,
+        }
     }
 }
 
 impl BlockLightProps {
-    pub const AIR: Self = Self { opacity: 0, luminance: 0 };
-    pub const SOLID: Self = Self { opacity: 15, luminance: 0 };
+    pub const AIR: Self = Self {
+        opacity: 0,
+        luminance: 0,
+    };
+    pub const SOLID: Self = Self {
+        opacity: 15,
+        luminance: 0,
+    };
 }
 
 /// 一 chunk 的方块光学属性缓存（长度 = chunk_light_len，下标同 block_index）。
@@ -229,8 +244,17 @@ impl ChunkOpacity {
         &self.luminance
     }
 
-    pub fn set(&mut self, x: usize, y: i32, z: usize, props: BlockLightProps) -> Result<(), LightError> {
-        if x >= 16 || z >= 16 || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y) {
+    pub fn set(
+        &mut self,
+        x: usize,
+        y: i32,
+        z: usize,
+        props: BlockLightProps,
+    ) -> Result<(), LightError> {
+        if x >= 16
+            || z >= 16
+            || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y)
+        {
             return Err(LightError::BlockOutOfBounds { x, y, z });
         }
         let index = self.geometry.block_index(x, y, z);
@@ -240,14 +264,20 @@ impl ChunkOpacity {
     }
 
     pub fn opacity_at(&self, x: usize, y: i32, z: usize) -> Option<u8> {
-        if x >= 16 || z >= 16 || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y) {
+        if x >= 16
+            || z >= 16
+            || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y)
+        {
             return None;
         }
         Some(self.opacity[self.geometry.block_index(x, y, z)])
     }
 
     pub fn luminance_at(&self, x: usize, y: i32, z: usize) -> Option<u8> {
-        if x >= 16 || z >= 16 || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y) {
+        if x >= 16
+            || z >= 16
+            || !(self.geometry.world_min_y..=self.geometry.world_max_y).contains(&y)
+        {
             return None;
         }
         Some(self.luminance[self.geometry.block_index(x, y, z)])
@@ -341,7 +371,16 @@ mod tests {
         center.set(15, 0, 0, BlockLightProps::SOLID).unwrap();
         let mut nb = OpacityNeighborhood::single(center);
         let mut west = ChunkOpacity::filled(g, BlockLightProps::AIR);
-        west.set(0, 0, 0, BlockLightProps { opacity: 3, luminance: 0 }).unwrap();
+        west.set(
+            0,
+            0,
+            0,
+            BlockLightProps {
+                opacity: 3,
+                luminance: 0,
+            },
+        )
+        .unwrap();
         nb.set(-1, 0, west);
         // 中心 x=0 的西侧是 west chunk x=15（空气）
         assert_eq!(nb.opacity_at(-1, 0, 0), Some(0));

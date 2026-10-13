@@ -1,4 +1,3 @@
-
 use std::io;
 
 #[derive(Debug, thiserror::Error)]
@@ -24,4 +23,3 @@ pub enum TomlError {
     #[error("toml_edit error: {0}")]
     TomlEditError(#[from] toml_edit::TomlError),
 }
-

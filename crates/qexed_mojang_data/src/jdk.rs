@@ -96,7 +96,10 @@ pub(super) fn ensure_java(
         let path = PathBuf::from(config_java_path.trim());
         match java_major_version(&path) {
             Ok(Some(actual)) if actual >= major => {
-                return Ok(JavaRuntime { java_bin: path, source: JavaSource::Config });
+                return Ok(JavaRuntime {
+                    java_bin: path,
+                    source: JavaSource::Config,
+                });
             }
             Ok(Some(actual)) => log::warn!(
                 "配置的 java 版本过低 (需要 >= {major}, 实际 {actual})，将尝试自动发现或下载"
@@ -121,7 +124,10 @@ pub(super) fn ensure_java(
         if let Ok(Some(actual)) = java_major_version(&candidate)
             && actual >= major
         {
-            return Ok(JavaRuntime { java_bin: candidate, source: JavaSource::JavaHome });
+            return Ok(JavaRuntime {
+                java_bin: candidate,
+                source: JavaSource::JavaHome,
+            });
         }
     }
 
@@ -130,7 +136,10 @@ pub(super) fn ensure_java(
         if let Ok(Some(actual)) = java_major_version(&candidate)
             && actual >= major
         {
-            return Ok(JavaRuntime { java_bin: candidate, source: JavaSource::Path });
+            return Ok(JavaRuntime {
+                java_bin: candidate,
+                source: JavaSource::Path,
+            });
         }
     }
 
@@ -141,7 +150,10 @@ pub(super) fn ensure_java(
     if let Ok(Some(actual)) = java_major_version(&cached_bin)
         && actual >= major
     {
-        return Ok(JavaRuntime { java_bin: cached_bin, source: JavaSource::Downloaded });
+        return Ok(JavaRuntime {
+            java_bin: cached_bin,
+            source: JavaSource::Downloaded,
+        });
     }
 
     // 5. 下载
@@ -150,10 +162,15 @@ pub(super) fn ensure_java(
             // 禁止下载时兜底使用用户配置（已告警过版本不符）。
             let path = PathBuf::from(config_java_path.trim());
             if path.is_file() {
-                return Ok(JavaRuntime { java_bin: path, source: JavaSource::Config });
+                return Ok(JavaRuntime {
+                    java_bin: path,
+                    source: JavaSource::Config,
+                });
             }
         }
-        return Err(MojangDataError::JavaNotFound { required_major: major });
+        return Err(MojangDataError::JavaNotFound {
+            required_major: major,
+        });
     }
 
     let platform = current_platform()?;
@@ -180,7 +197,10 @@ pub(super) fn ensure_java(
         "Temurin JRE 缓存就绪: version={major}, path={}",
         target.display()
     );
-    Ok(JavaRuntime { java_bin: bin, source: JavaSource::Downloaded })
+    Ok(JavaRuntime {
+        java_bin: bin,
+        source: JavaSource::Downloaded,
+    })
 }
 
 fn java_bin_in(java_home: &Path) -> PathBuf {
@@ -193,7 +213,11 @@ fn java_bin_in(java_home: &Path) -> PathBuf {
 }
 
 fn find_java_on_path() -> Option<PathBuf> {
-    let name = if cfg!(target_os = "windows") { "java.exe" } else { "java" };
+    let name = if cfg!(target_os = "windows") {
+        "java.exe"
+    } else {
+        "java"
+    };
     let path_var = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_var) {
         let candidate = dir.join(name);
@@ -275,9 +299,7 @@ fn fetch_with_retry(
     const ATTEMPTS: usize = 2;
     let mut last_err = None;
     for attempt in 1..=ATTEMPTS {
-        let request = client
-            .get(url)
-            .timeout(std::time::Duration::from_secs(120));
+        let request = client.get(url).timeout(std::time::Duration::from_secs(120));
         match request.send().and_then(|r| r.error_for_status()) {
             Ok(response) => return Ok(response),
             Err(err) => {
@@ -292,17 +314,17 @@ fn fetch_with_retry(
     Err(last_err.expect("at least one attempt"))
 }
 
-fn download_jre(
-    platform: &Platform,
-    major: u32,
-    target: &Path,
-) -> Result<(), MojangDataError> {
+fn download_jre(platform: &Platform, major: u32, target: &Path) -> Result<(), MojangDataError> {
     let marker = target.with_extension("ready");
     if marker.is_file() {
         return Ok(());
     }
 
-    log::info!("开始下载 Temurin JRE {major} ({}/{})", platform.os, platform.arch);
+    log::info!(
+        "开始下载 Temurin JRE {major} ({}/{})",
+        platform.os,
+        platform.arch
+    );
 
     // 第一步：解析官方 307 跳转拿到 GitHub 文件名（轻量请求，只到 Cloudflare 边缘）。
     let official_url = adoptium_url(platform, major);
@@ -326,16 +348,12 @@ fn download_jre(
     let (mut response, used_url) = fetch_first_available(&download_client, &sources)?;
 
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).io_ctx(format!(
-            "无法创建 JRE 缓存目录: {}",
-            parent.display()
-        ))?;
+        std::fs::create_dir_all(parent)
+            .io_ctx(format!("无法创建 JRE 缓存目录: {}", parent.display()))?;
     }
     let archive = target.with_extension("downloading");
-    let mut file = std::fs::File::create(&archive).io_ctx(format!(
-        "无法创建 JRE 临时文件: {}",
-        archive.display()
-    ))?;
+    let mut file = std::fs::File::create(&archive)
+        .io_ctx(format!("无法创建 JRE 临时文件: {}", archive.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
@@ -378,23 +396,18 @@ fn download_jre(
         .collect();
     if entries.len() == 1 && entries[0].path().is_dir() {
         let inner = entries[0].path();
-        std::fs::rename(&inner, target).io_ctx(format!(
-            "无法安装 JRE 到缓存: {}",
-            target.display()
-        ))?;
+        std::fs::rename(&inner, target)
+            .io_ctx(format!("无法安装 JRE 到缓存: {}", target.display()))?;
         std::fs::remove_dir_all(&extract_tmp).ok();
     } else {
-        std::fs::rename(&extract_tmp, target).io_ctx(format!(
-            "无法安装 JRE 到缓存: {}",
-            target.display()
-        ))?;
+        std::fs::rename(&extract_tmp, target)
+            .io_ctx(format!("无法安装 JRE 到缓存: {}", target.display()))?;
     }
 
     std::fs::remove_file(&archive).ok();
     // ready 标记记录版本，便于排查
-    std::fs::write(&marker, format!("major={major}\nsha256={digest}\n")).io_ctx(
-        "无法写入 JRE ready 标记",
-    )?;
+    std::fs::write(&marker, format!("major={major}\nsha256={digest}\n"))
+        .io_ctx("无法写入 JRE ready 标记")?;
     Ok(())
 }
 
@@ -604,7 +617,10 @@ mod tests {
 
     #[test]
     fn adoptium_url_shape() {
-        let p = Platform { os: "windows", arch: "x64" };
+        let p = Platform {
+            os: "windows",
+            arch: "x64",
+        };
         assert_eq!(
             adoptium_url(&p, 25),
             "https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse"

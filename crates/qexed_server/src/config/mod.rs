@@ -57,7 +57,7 @@ impl Default for ServerConfig {
             play: play::PlayOptionsConfig::default(),
             motd: "A qexed server".to_string(),
             max_players: 20,
-            online_mode:true
+            online_mode: true,
         }
     }
 }

@@ -1,8 +1,8 @@
+use qexed_packet::error::PacketError;
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
     net_types::{AnyNbt, VarInt},
 };
-use qexed_packet::error::PacketError;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct BossEvent {
@@ -212,7 +212,7 @@ impl PacketCodec for BossEventOperation {
                 return Err(PacketError::UnsupportedValue {
                     what: "boss event operation",
                     value: other,
-                })
+                });
             }
         };
         Ok(())
@@ -257,7 +257,7 @@ impl PacketCodec for BossBarColor {
                 return Err(PacketError::UnsupportedValue {
                     what: "boss bar color",
                     value: other,
-                })
+                });
             }
         };
         Ok(())
@@ -292,7 +292,7 @@ impl PacketCodec for BossBarOverlay {
                 return Err(PacketError::UnsupportedValue {
                     what: "boss bar overlay",
                     value: other,
-                })
+                });
             }
         };
         Ok(())

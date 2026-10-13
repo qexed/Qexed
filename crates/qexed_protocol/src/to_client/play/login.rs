@@ -1,8 +1,8 @@
+use qexed_packet::error::PacketError;
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
     net_types::{Position, VarInt},
 };
-use qexed_packet::error::PacketError;
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Login {

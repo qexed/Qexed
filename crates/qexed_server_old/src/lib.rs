@@ -4,14 +4,14 @@
 //! CONFIGURATION 协商、PLAY 最小流程（join + keepalive + 空世界区块）。
 //! qexed 主程序保持轻量，只做装配。
 
-pub mod transport;
 pub mod auth;
-pub mod login;
 pub mod configuration;
+pub mod error;
+pub mod login;
 pub mod play;
 pub mod registry_sync;
-pub mod error;
 pub mod server;
+pub mod transport;
 
 pub use error::ServerError;
 pub use server::{ServerConfig, ServerHandle, serve};

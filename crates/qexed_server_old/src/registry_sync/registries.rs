@@ -8,9 +8,7 @@ use serde_json::Value;
 
 use super::{
     SYNCHRONIZED_REGISTRIES,
-    util::{
-        entry_id_from_path, json_files, json_to_nbt, normalize_identifier, read_json,
-    },
+    util::{entry_id_from_path, json_files, json_to_nbt, normalize_identifier, read_json},
 };
 
 pub fn load_registry_packets(include_contents: bool) -> Result<Vec<RegistryData>> {

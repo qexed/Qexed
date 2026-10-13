@@ -22,14 +22,18 @@ fn fixtures_dir() -> Option<PathBuf> {
 fn load(name: &str) -> Option<Tag> {
     let dir = fixtures_dir()?;
     let path = dir.join(name);
-    if !path.exists() { return None };
+    if !path.exists() {
+        return None;
+    };
     let bytes = std::fs::read(path).unwrap();
     Some(qexed_nbt::from_slice_lossy(&bytes).unwrap().1)
 }
 
 #[test]
 fn upgrades_1_12_chunk_to_palette_layout() {
-    let Some(root) = load("1.12.chunk") else { return };
+    let Some(root) = load("1.12.chunk") else {
+        return;
+    };
 
     let (upgraded, stats) = upgrade::upgrade_chunk_1_12(&root, 3337).unwrap();
 
@@ -59,7 +63,6 @@ fn upgrades_1_12_chunk_to_palette_layout() {
 #[test]
 fn flatten_state_maps_common_ids() {
     use qexed_anvil::upgrade::flatten_state;
-    
 
     // 石头系
     assert_eq!(flatten_state(1, 0).unwrap().name, "minecraft:stone");
@@ -71,14 +74,23 @@ fn flatten_state_maps_common_ids() {
     assert_eq!(log.name, "minecraft:oak_log");
     assert!(log.properties.iter().any(|(k, v)| k == "axis" && v == "x"));
     let log_z = flatten_state(17, 0b1000).unwrap(); // dir=2 -> axis=z
-    assert!(log_z.properties.iter().any(|(k, v)| k == "axis" && v == "z"));
+    assert!(
+        log_z
+            .properties
+            .iter()
+            .any(|(k, v)| k == "axis" && v == "z")
+    );
     // 火把朝向
     assert_eq!(flatten_state(50, 1).unwrap().name, "minecraft:wall_torch");
     assert_eq!(flatten_state(50, 5).unwrap().name, "minecraft:torch");
     // 雪层
     let snow = flatten_state(78, 3).unwrap();
     assert_eq!(snow.name, "minecraft:snow");
-    assert!(snow.properties.iter().any(|(k, v)| k == "layers" && v == "3"));
+    assert!(
+        snow.properties
+            .iter()
+            .any(|(k, v)| k == "layers" && v == "3")
+    );
     // 空气与未知
     assert_eq!(flatten_state(0, 0).unwrap().name, "minecraft:air");
     assert!(flatten_state(255, 15).is_none());
@@ -87,7 +99,9 @@ fn flatten_state_maps_common_ids() {
 #[test]
 fn upgraded_chunk_migrates_to_modern() {
     // 1.12 -> 1.13 后再走 migrate（1.13 -> 1.18+）：完整升级链
-    let Some(root) = load("1.12.chunk") else { return };
+    let Some(root) = load("1.12.chunk") else {
+        return;
+    };
     let (upgraded, _) = upgrade::upgrade_chunk_1_12(&root, 2724).unwrap(); // 1.17
 
     // 伪装成 1.13-1.17 布局（Sections/Palette 平铺）——upgrade 已产出 sections 容器化布局，
@@ -95,8 +109,12 @@ fn upgraded_chunk_migrates_to_modern() {
     let (final_chunk, outcome) = qexed_anvil::migrate::migrate_chunk(
         &upgraded,
         &qexed_anvil::migrate::MigrateOptions::default(),
-    ).unwrap();
-    assert_eq!(outcome, qexed_anvil::migrate::MigrationOutcome::AlreadyModern);
+    )
+    .unwrap();
+    assert_eq!(
+        outcome,
+        qexed_anvil::migrate::MigrationOutcome::AlreadyModern
+    );
 
     // 最终区块可用现代 API 读方块
     let sections = chunk::all_section_blocks(&final_chunk).unwrap();

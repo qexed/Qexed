@@ -1,0 +1,36 @@
+# qexed_jev：jev 模型推理网关（默认内嵌服务，可切远端 HTTP）。
+#
+# 依赖方向（对齐 MIGRATION-PLAN 的叶子原则）：
+# - 被依赖方：qexed_server（加载配置、构造 JevService）、未来的 qexed_chat 集成层；
+# - 依赖方：无任何 qexed_* crate（与 qexed_light 同级的叶子，协议/聊天层都不见它），
+#   qexed_chat 保持"协议/签名/限速"职责，AI 回复由上层从本 crate 取，避免反向依赖边。
+[package]
+name = "qexed_jev"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+# 启用远端 HTTP 推理（OpenAI 兼容 /chat/completions）。
+# 默认关闭：内嵌模式零网络依赖，编译更快、二进制更小。
+remote = ["dep:reqwest"]
+
+[dependencies]
+qexed_config = { workspace = true, features = ["global-root"] }
+qexed_config_macros.workspace = true
+qexed_doc.workspace = true
+qexed_doc_macros.workspace = true
+
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+
+# 远端模式（feature = "remote"）
+reqwest = { workspace = true, optional = true, features = ["json", "rustls-tls"] }
+llama-cpp-2 = { version = "0.1.154", default-features = false, features = ["openmp"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde_json.workspace = true

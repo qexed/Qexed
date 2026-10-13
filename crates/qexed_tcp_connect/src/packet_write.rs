@@ -116,9 +116,7 @@ impl<W: AsyncWrite + Unpin> PacketSink<W> {
         self.send_raw(Self::build_send_packet(packet)?).await
     }
 
-    pub fn build_send_packet<T: qexed_packet::Packet>(
-        packet: T,
-    ) -> Result<Bytes, TcpConnectError> {
+    pub fn build_send_packet<T: qexed_packet::Packet>(packet: T) -> Result<Bytes, TcpConnectError> {
         let mut buf = BytesMut::new();
         let mut writer = qexed_packet::PacketWriter::new(&mut buf);
         qexed_packet::net_types::VarInt(T::ID).serialize(&mut writer)?;

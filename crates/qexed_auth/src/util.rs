@@ -18,7 +18,6 @@ pub(super) fn parse_mojang_uuid(value: &str) -> Result<uuid::Uuid, AuthError> {
     Ok(uuid::Uuid::parse_str(value)?)
 }
 
-
 pub(super) fn minecraft_server_hash(
     server_id: &str,
     shared_secret: &[u8],

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use qexed_packet::{PacketCodec, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{PacketCodec, net_types::VarInt};
 
 #[qexed_packet_macros::packet(id = 0x12)]
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -147,7 +147,11 @@ fn read_bounded_len(
     }
     let len = len.0 as usize;
     if len > max {
-        return Err(PacketError::LengthExceedsMax { name, count: len, max });
+        return Err(PacketError::LengthExceedsMax {
+            name,
+            count: len,
+            max,
+        });
     }
     Ok(len)
 }
@@ -159,7 +163,11 @@ fn write_bounded_len(
     w: &mut qexed_packet::PacketWriter,
 ) -> Result<(), PacketError> {
     if len > max {
-        return Err(PacketError::LengthExceedsMax { name, count: len, max });
+        return Err(PacketError::LengthExceedsMax {
+            name,
+            count: len,
+            max,
+        });
     }
     VarInt(len as i32).serialize(w)
 }

@@ -91,7 +91,8 @@ mod tests {
                 .enable_all()
                 .build()
                 .expect("tokio runtime");
-            rt.block_on(qexed_mojang_data::init()).expect("mojang data init");
+            rt.block_on(qexed_mojang_data::init())
+                .expect("mojang data init");
         }
     }
 

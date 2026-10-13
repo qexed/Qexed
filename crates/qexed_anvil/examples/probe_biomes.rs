@@ -3,13 +3,23 @@ fn main() {
     let bytes = std::fs::read(".tmp/anvil_fixtures/1.17.1.chunk").unwrap();
     let (_, root) = qexed_nbt::from_slice_lossy(&bytes).unwrap();
     let fields = qexed_anvil::chunk::root_compound(&root).unwrap();
-    let Tag::Compound(level) = fields.get("Level").unwrap() else { panic!() };
+    let Tag::Compound(level) = fields.get("Level").unwrap() else {
+        panic!()
+    };
     match level.get("Biomes") {
         Some(qexed_nbt::Tag::ByteArray(b)) => {
-            eprintln!("Biomes: byte[{}] first 16: {:?}", b.len(), &b[..16.min(b.len())]);
+            eprintln!(
+                "Biomes: byte[{}] first 16: {:?}",
+                b.len(),
+                &b[..16.min(b.len())]
+            );
         }
         Some(qexed_nbt::Tag::IntArray(a)) => {
-            eprintln!("Biomes: int[{}] first 16: {:?}", a.len(), &a[..16.min(a.len())]);
+            eprintln!(
+                "Biomes: int[{}] first 16: {:?}",
+                a.len(),
+                &a[..16.min(a.len())]
+            );
         }
         other => eprintln!("Biomes: {other:?}"),
     }

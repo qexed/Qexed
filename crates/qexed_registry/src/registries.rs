@@ -9,9 +9,7 @@ use crate::error::RegistryError;
 
 use super::{
     SYNCHRONIZED_REGISTRIES,
-    util::{
-        entry_id_from_path, json_files, json_to_nbt, normalize_identifier, read_json,
-    },
+    util::{entry_id_from_path, json_files, json_to_nbt, normalize_identifier, read_json},
 };
 
 pub fn load_registry_packets(include_contents: bool) -> Result<Vec<RegistryData>, RegistryError> {
@@ -70,8 +68,7 @@ pub fn load_dynamic_registry_id_map(
     let registry_dir = if registry_dir.exists() {
         registry_dir.to_path_buf()
     } else {
-        let data_root =
-            qexed_mojang_data::data_dir()?;
+        let data_root = qexed_mojang_data::data_dir()?;
         let dir = data_root.join(registry);
         if !dir.exists() {
             return Ok(ids);
@@ -91,8 +88,8 @@ pub fn load_dynamic_registry_id_map(
     Ok(ids)
 }
 
-pub(super) fn load_static_registry_id_maps(
-) -> Result<HashMap<String, HashMap<String, i32>>, RegistryError> {
+pub(super) fn load_static_registry_id_maps()
+-> Result<HashMap<String, HashMap<String, i32>>, RegistryError> {
     let value = load_registry_report()?;
     let registries = value
         .as_object()
@@ -124,14 +121,12 @@ pub fn load_registry_id_map(registry_id: &str) -> Result<HashMap<String, i32>, R
 }
 
 pub fn load_blocks_report() -> Result<Value, RegistryError> {
-    let reports_dir =
-        qexed_mojang_data::reports_dir()?;
+    let reports_dir = qexed_mojang_data::reports_dir()?;
     read_json(&reports_dir.join("blocks.json"))
 }
 
 fn load_registry_report() -> Result<Value, RegistryError> {
-    let reports_dir =
-        qexed_mojang_data::reports_dir()?;
+    let reports_dir = qexed_mojang_data::reports_dir()?;
     read_json(&reports_dir.join("registries.json"))
 }
 

@@ -40,8 +40,10 @@ impl LanguageRoot {
         // 路径段安全校验：拒绝空段、相对引用与非法字符，防目录穿越。
         let ok = segments.iter().all(|s| {
             !s.is_empty()
-                && *s != "." && *s != ".."
-                && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+                && *s != "."
+                && *s != ".."
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
         });
         if !ok {
             return None;
@@ -80,7 +82,11 @@ impl IntoResponse for ApiError {
             ApiError::CommitNotFound => StatusCode::NOT_FOUND,
             ApiError::Io(_) | ApiError::InvalidJson(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        (status, Json(serde_json::json!({ "error": self.to_string() }))).into_response()
+        (
+            status,
+            Json(serde_json::json!({ "error": self.to_string() })),
+        )
+            .into_response()
     }
 }
 
@@ -99,10 +105,12 @@ async fn read_json(path: Option<PathBuf>) -> ApiResult {
 
 /// 语言支持列表：目录内除 language.json 外的全部 json 文件名（不含扩展名），排序输出。
 async fn language_list(dir: PathBuf) -> ApiResult {
-    let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => ApiError::CommitNotFound,
-        _ => ApiError::Io(e),
-    })?;
+    let mut entries = tokio::fs::read_dir(&dir)
+        .await
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ApiError::CommitNotFound,
+            _ => ApiError::Io(e),
+        })?;
     let mut languages = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -151,10 +159,22 @@ async fn plugin_language_file(
 /// 构建语言服务器 Router。
 pub fn router(root: LanguageRoot) -> Router {
     Router::new()
-        .route("/api/v1/qexed/{commit}/language.json", get(qexed_language_list))
-        .route("/api/v1/qexed/{commit}/{language}", get(qexed_language_file))
-        .route("/api/v1/{author}/{plugin}/{commit}/language.json", get(plugin_language_list))
-        .route("/api/v1/{author}/{plugin}/{commit}/{language}", get(plugin_language_file))
+        .route(
+            "/api/v1/qexed/{commit}/language.json",
+            get(qexed_language_list),
+        )
+        .route(
+            "/api/v1/qexed/{commit}/{language}",
+            get(qexed_language_file),
+        )
+        .route(
+            "/api/v1/{author}/{plugin}/{commit}/language.json",
+            get(plugin_language_list),
+        )
+        .route(
+            "/api/v1/{author}/{plugin}/{commit}/{language}",
+            get(plugin_language_file),
+        )
         .with_state(root)
 }
 
@@ -162,11 +182,18 @@ pub fn router(root: LanguageRoot) -> Router {
 ///
 /// commit_filter 传 None 导出全部 commit；传 Some 前缀集合只导出匹配项。
 /// 导出产物可直接交给 nginx / 对象存储托管。
-pub async fn export(root: &LanguageRoot, out_dir: &std::path::Path) -> Result<(), error::ServerError> {
+pub async fn export(
+    root: &LanguageRoot,
+    out_dir: &std::path::Path,
+) -> Result<(), error::ServerError> {
     copy_tree(&root.0, out_dir).await
 }
 
-fn copy_tree<'a>(src: &'a std::path::Path, dst: &'a std::path::Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), error::ServerError>> + Send + 'a>> {
+fn copy_tree<'a>(
+    src: &'a std::path::Path,
+    dst: &'a std::path::Path,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), error::ServerError>> + Send + 'a>>
+{
     Box::pin(async move {
         tokio::fs::create_dir_all(dst).await?;
         let mut entries = tokio::fs::read_dir(src).await?;

@@ -32,12 +32,18 @@ pub fn verify_manifest(page_path: &Path) -> Result<VerifyOutcome> {
 
     let api_actual = crate::manifest::hash_value(&json!({ "symbols": manifest.api.symbols }));
     if manifest.api.hash != api_actual {
-        bail!("api.hash 与 symbols 重算不符: 声明 {}，重算 {api_actual}", manifest.api.hash);
+        bail!(
+            "api.hash 与 symbols 重算不符: 声明 {}，重算 {api_actual}",
+            manifest.api.hash
+        );
     }
 
     let result_actual = crate::manifest::hash_value(&json!({ "value": manifest.result.value }));
     if manifest.result.hash != result_actual {
-        bail!("result.hash 与 result.value 重算不符: 声明 {}，重算 {result_actual}", manifest.result.hash);
+        bail!(
+            "result.hash 与 result.value 重算不符: 声明 {}，重算 {result_actual}",
+            manifest.result.hash
+        );
     }
 
     let snippet = first_rust_fence(&mdx)
@@ -114,8 +120,8 @@ fn reproduce_page_inner(page_path: &Path, skip_hash_gate: bool) -> Result<Reprod
     let (frontmatter, _) = crate::manifest::split_frontmatter(&mdx)?;
     let verify_hash = crate::manifest::extract_plain_field(&frontmatter, "verify_hash")?;
     let manifest = VerifyManifest::parse_page(&mdx)?;
-    let snippet = first_rust_fence(&mdx)
-        .ok_or_else(|| anyhow::anyhow!("页面没有 rust 代码块，无法复现"))?;
+    let snippet =
+        first_rust_fence(&mdx).ok_or_else(|| anyhow::anyhow!("页面没有 rust 代码块，无法复现"))?;
     let snippet_hash = crate::manifest::hash_bytes(snippet.as_bytes());
     let cache_key = cache_key(&snippet_hash, &verify_hash);
     let image = manifest.docker_image();
@@ -128,13 +134,20 @@ fn reproduce_page_inner(page_path: &Path, skip_hash_gate: bool) -> Result<Reprod
         .to_path_buf();
     let host_root = workspace.join(MATERIALIZE_ROOT);
     std::fs::create_dir_all(host_root.join(&page_stem).join("src"))?;
-    let cargo_toml = manifest.cargo_toml.replace("{{WORKSPACE}}", CONTAINER_WORKSPACE);
+    let cargo_toml = manifest
+        .cargo_toml
+        .replace("{{WORKSPACE}}", CONTAINER_WORKSPACE);
     std::fs::write(host_root.join(&page_stem).join("Cargo.toml"), cargo_toml)?;
     std::fs::write(host_root.join(&page_stem).join("src/main.rs"), &snippet)?;
 
     ensure_image(&image)?;
     let command = "cargo run --quiet 2>stderr.log; code=$?; tail -n 50 stderr.log >&2; exit $code";
-    let (code, output) = docker_run(&image, &host_root, &format!("/doc-verify/{page_stem}"), command)?;
+    let (code, output) = docker_run(
+        &image,
+        &host_root,
+        &format!("/doc-verify/{page_stem}"),
+        command,
+    )?;
     let output_tail = output
         .lines()
         .rev()
@@ -290,9 +303,8 @@ mod tests {
     /// 构造一页自洽的合成页面。
     fn synthetic_page() -> String {
         let snippet = "println!(\"log ready\");".to_string();
-        let symbols = vec![
-            "qexed_log::init() -> Result<(), qexed_log::error::LogError>".to_string(),
-        ];
+        let symbols =
+            vec!["qexed_log::init() -> Result<(), qexed_log::error::LogError>".to_string()];
         let api_hash = hash_value(&json!({ "symbols": symbols }));
         let result_value = json!({ "exit": 0, "stderr": [], "stdout": ["log ready"] });
         let result_hash = hash_value(&json!({ "value": result_value }));

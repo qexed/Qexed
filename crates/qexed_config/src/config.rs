@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{config_path::config_file_at, error::ConfigError};
 #[cfg(feature = "global-root")]
 use crate::config_path::config_path;
+use crate::{config_path::config_file_at, error::ConfigError};
 
 /// 确保路径的父目录存在（相当于 `mkdir -p $(dirname path)`）。
 fn ensure_parent(path: &std::path::Path) -> Result<(), ConfigError> {
@@ -221,7 +221,7 @@ pub trait Config: Serialize + for<'de> Deserialize<'de> + Default + Sized {
     }
 
     // 将结构体转换为toml字符串
-    fn to_toml_string(config: &Self)->Result<String,ConfigError>{
+    fn to_toml_string(config: &Self) -> Result<String, ConfigError> {
         Ok(qexed_toml::to_document(config)?.to_string())
     }
 }

@@ -3,10 +3,16 @@
 pub struct NullPacket {}
 impl qexed_packet::Packet for NullPacket {
     const ID: i32 = 0xfff;
-    fn serialize(&self, _w: &mut qexed_packet::PacketWriter) -> Result<(),qexed_packet::error::PacketError> {
+    fn serialize(
+        &self,
+        _w: &mut qexed_packet::PacketWriter,
+    ) -> Result<(), qexed_packet::error::PacketError> {
         Ok(())
     }
-    fn deserialize(&mut self, _r: &mut qexed_packet::PacketReader) -> Result<(),qexed_packet::error::PacketError> {
+    fn deserialize(
+        &mut self,
+        _r: &mut qexed_packet::PacketReader,
+    ) -> Result<(), qexed_packet::error::PacketError> {
         Ok(())
     }
 }

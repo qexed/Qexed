@@ -20,4 +20,7 @@ pub mod manifest;
 pub mod verify;
 
 pub use manifest::VerifyManifest;
-pub use verify::{ReproduceReport, VerifyOutcome, collect_mdx_pages, reproduce_page, reproduce_page_opts, run_pages, verify_manifest, verify_page_in_docker};
+pub use verify::{
+    ReproduceReport, VerifyOutcome, collect_mdx_pages, reproduce_page, reproduce_page_opts,
+    run_pages, verify_manifest, verify_page_in_docker,
+};

@@ -82,8 +82,10 @@ impl AnvilRegion {
     /// 读取整个区域文件到内存。
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, AnvilError> {
         let path = path.as_ref();
-        let mut file = File::open(path)
-            .map_err(|e| AnvilError::OpenFailed { path: path.display().to_string(), source: e })?;
+        let mut file = File::open(path).map_err(|e| AnvilError::OpenFailed {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         // 空文件 = 空区域（真实存档存在这种占位文件；游戏同样按空区域处理）
@@ -154,7 +156,12 @@ impl AnvilRegion {
     }
 
     /// 写入区块（替换同位置旧数据；小数据可复用既有扇区）。
-    pub fn write_chunk(&mut self, chunk_x: i32, chunk_z: i32, chunk: ChunkData) -> Result<(), AnvilError> {
+    pub fn write_chunk(
+        &mut self,
+        chunk_x: i32,
+        chunk_z: i32,
+        chunk: ChunkData,
+    ) -> Result<(), AnvilError> {
         let mut payload = BytesMut::new();
         payload.put_u32((chunk.data.len() + 1) as u32);
         payload.put_u8(chunk.compression);
@@ -195,8 +202,10 @@ impl AnvilRegion {
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut file = File::create(&self.path)
-            .map_err(|e| AnvilError::OpenFailed { path: self.path.display().to_string(), source: e })?;
+        let mut file = File::create(&self.path).map_err(|e| AnvilError::OpenFailed {
+            path: self.path.display().to_string(),
+            source: e,
+        })?;
         self.header.write(&mut file)?;
         file.write_all(&self.data)?;
         file.flush()?;

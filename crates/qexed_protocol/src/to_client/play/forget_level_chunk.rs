@@ -1,5 +1,5 @@
-use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter};
 use qexed_packet::error::PacketError;
+use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ForgetLevelChunk {

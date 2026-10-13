@@ -6,7 +6,10 @@ impl PacketCodec for String {
     fn serialize(&self, w: &mut crate::PacketWriter) -> Result<(), PacketError> {
         let len = self.len();
         if len > i32::MAX as usize {
-            return Err(PacketError::LengthExceedsVarIntMax { name: "string", len });
+            return Err(PacketError::LengthExceedsVarIntMax {
+                name: "string",
+                len,
+            });
         }
 
         VarInt(len as i32).serialize(w)?;

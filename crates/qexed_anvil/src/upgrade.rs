@@ -9,9 +9,7 @@ use std::sync::Arc;
 
 use qexed_nbt::{Tag, tag_id};
 
-use crate::chunk::{
-    self, BlockStateRef, block_states_tag, int_field, list_tag,
-};
+use crate::chunk::{self, BlockStateRef, block_states_tag, int_field, list_tag};
 use crate::error::AnvilError;
 
 /// 1.12 扁平 ID（id<<4 | meta）-> 现代方块状态。
@@ -21,7 +19,12 @@ pub fn flatten_state(id: u8, meta: u8) -> Option<BlockStateRef> {
     use BlockStateRef as B;
     let b = |name: &str| B::new(name);
     let bp = |name: &str, props: &[(&str, &str)]| {
-        B::new(name).with_properties(props.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+        B::new(name).with_properties(
+            props
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
     };
     let key = (u16::from(id) << 4) | u16::from(meta);
     Some(match (u16::from(id), u16::from(meta)) {
@@ -35,8 +38,16 @@ pub fn flatten_state(id: u8, meta: u8) -> Option<BlockStateRef> {
         (3, 1) => b("minecraft:coarse_dirt"),
         (3, 2) => b("minecraft:podzol"),
         (4, _) => b("minecraft:cobblestone"),
-        (5, m) => { // wood planks
-            let kind = match m { 1 => "spruce", 2 => "birch", 3 => "jungle", 4 => "acacia", 5 => "dark_oak", _ => "oak" };
+        (5, m) => {
+            // wood planks
+            let kind = match m {
+                1 => "spruce",
+                2 => "birch",
+                3 => "jungle",
+                4 => "acacia",
+                5 => "dark_oak",
+                _ => "oak",
+            };
             B::new(format!("minecraft:{kind}_planks").leak())
         }
         (7, _) => b("minecraft:bedrock"),
@@ -48,30 +59,77 @@ pub fn flatten_state(id: u8, meta: u8) -> Option<BlockStateRef> {
         (15, 0) => b("minecraft:iron_ore"),
         (16, 0) => b("minecraft:coal_ore"),
         (17, m) => {
-            let kind = match m & 0b11 { 1 => "spruce", 2 => "birch", 3 => "jungle", _ => "oak" };
-            let axis = match (m >> 2) & 0b11 { 1 => "x", 2 => "z", 3 => "y", _ => "y" };
+            let kind = match m & 0b11 {
+                1 => "spruce",
+                2 => "birch",
+                3 => "jungle",
+                _ => "oak",
+            };
+            let axis = match (m >> 2) & 0b11 {
+                1 => "x",
+                2 => "z",
+                3 => "y",
+                _ => "y",
+            };
             bp(&format!("minecraft:{kind}_log"), &[("axis", axis)])
         }
         (18, m) => {
-            let kind = match m & 0b11 { 1 => "spruce", 2 => "birch", 3 => "jungle", _ => "oak" };
+            let kind = match m & 0b11 {
+                1 => "spruce",
+                2 => "birch",
+                3 => "jungle",
+                _ => "oak",
+            };
             B::new(format!("minecraft:{kind}_leaves").leak())
         }
         (19, _) => b("minecraft:sponge"),
         (20, _) => b("minecraft:glass"),
         (21, _) => b("minecraft:lapis_ore"),
         (22, _) => b("minecraft:lapis_block"),
-        (24, m) => if m & 1 == 1 { b("minecraft:chiseled_sandstone") } else { b("minecraft:sandstone") },
+        (24, m) => {
+            if m & 1 == 1 {
+                b("minecraft:chiseled_sandstone")
+            } else {
+                b("minecraft:sandstone")
+            }
+        }
         (31, 1) => b("minecraft:grass"),
         (31, 2) => b("minecraft:fern"),
         (35, m) => {
-            let color = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
-                "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"][m as usize % 16];
+            let color = [
+                "white",
+                "orange",
+                "magenta",
+                "light_blue",
+                "yellow",
+                "lime",
+                "pink",
+                "gray",
+                "light_gray",
+                "cyan",
+                "purple",
+                "blue",
+                "brown",
+                "green",
+                "red",
+                "black",
+            ][m as usize % 16];
             B::new(format!("minecraft:{color}_wool").leak())
         }
         (37, _) => b("minecraft:dandelion"),
-        (38, m) => B::new(["minecraft:poppy", "minecraft:blue_orchid", "minecraft:allium",
-            "minecraft:azure_bluet", "minecraft:red_tulip", "minecraft:orange_tulip", "minecraft:white_tulip",
-            "minecraft:pink_tulip", "minecraft:oxeye_daisy"][m as usize % 9]),
+        (38, m) => B::new(
+            [
+                "minecraft:poppy",
+                "minecraft:blue_orchid",
+                "minecraft:allium",
+                "minecraft:azure_bluet",
+                "minecraft:red_tulip",
+                "minecraft:orange_tulip",
+                "minecraft:white_tulip",
+                "minecraft:pink_tulip",
+                "minecraft:oxeye_daisy",
+            ][m as usize % 9],
+        ),
         (41, _) => b("minecraft:gold_block"),
         (42, _) => b("minecraft:iron_block"),
         (45, _) => b("minecraft:bricks"),
@@ -79,16 +137,37 @@ pub fn flatten_state(id: u8, meta: u8) -> Option<BlockStateRef> {
         (47, _) => b("minecraft:bookshelf"),
         (48, _) => b("minecraft:mossy_cobblestone"),
         (50, m) => {
-            let facing = match m & 0b111 { 1 => "west", 2 => "east", 3 => "north", 4 => "south", 5 => "up", _ => "down" };
+            let facing = match m & 0b111 {
+                1 => "west",
+                2 => "east",
+                3 => "north",
+                4 => "south",
+                5 => "up",
+                _ => "down",
+            };
             match facing {
-                "west" | "east" | "north" | "south" => bp("minecraft:wall_torch", &[("facing", facing)]),
+                "west" | "east" | "north" | "south" => {
+                    bp("minecraft:wall_torch", &[("facing", facing)])
+                }
                 _ => b("minecraft:torch"),
             }
         }
         (52, _) => b("minecraft:spawner"),
         (54, m) => {
-            let facing = match m & 0b111 { 2 => "north", 3 => "south", 4 => "west", 5 => "east", _ => "up" };
-            bp("minecraft:chest", &[("facing", facing), ("type", if m & 0x8 != 0 { "right" } else { "single" })])
+            let facing = match m & 0b111 {
+                2 => "north",
+                3 => "south",
+                4 => "west",
+                5 => "east",
+                _ => "up",
+            };
+            bp(
+                "minecraft:chest",
+                &[
+                    ("facing", facing),
+                    ("type", if m & 0x8 != 0 { "right" } else { "single" }),
+                ],
+            )
         }
         (56, _) => b("minecraft:diamond_ore"),
         (57, _) => b("minecraft:diamond_block"),
@@ -103,7 +182,12 @@ pub fn flatten_state(id: u8, meta: u8) -> Option<BlockStateRef> {
         (82, _) => b("minecraft:clay"),
         (86, 0) => b("minecraft:carved_pumpkin"),
         (91, 0) => b("minecraft:jack_o_lantern"),
-        (98, m) => match m { 1 => b("minecraft:mossy_stone_bricks"), 2 => b("minecraft:cracked_stone_bricks"), 3 => b("minecraft:chiseled_stone_bricks"), _ => b("minecraft:stone_bricks") },
+        (98, m) => match m {
+            1 => b("minecraft:mossy_stone_bricks"),
+            2 => b("minecraft:cracked_stone_bricks"),
+            3 => b("minecraft:chiseled_stone_bricks"),
+            _ => b("minecraft:stone_bricks"),
+        },
         (102, _) => b("minecraft:glass_pane"),
         (103, _) => b("minecraft:melon"),
         (110, _) => b("minecraft:mycelium"),
@@ -116,15 +200,48 @@ pub fn flatten_state(id: u8, meta: u8) -> Option<BlockStateRef> {
         (152, _) => b("minecraft:redstone_block"),
         (153, _) => b("minecraft:quartz_block"),
         (159, m) => {
-            let color = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
-                "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"][m as usize % 16];
+            let color = [
+                "white",
+                "orange",
+                "magenta",
+                "light_blue",
+                "yellow",
+                "lime",
+                "pink",
+                "gray",
+                "light_gray",
+                "cyan",
+                "purple",
+                "blue",
+                "brown",
+                "green",
+                "red",
+                "black",
+            ][m as usize % 16];
             B::new(format!("minecraft:{color}_terracotta").leak())
         }
         (165, _) => b("minecraft:slime_block"),
-        (168, m) => match m { 1 => b("minecraft:polished_prismarine"), 2 => b("minecraft:prismarine_bricks"), 3 => b("minecraft:dark_prismarine"), _ => b("minecraft:prismarine") },
-        (170, m) => if m == 0 { b("minecraft:hay_block") } else { bp("minecraft:hay_block", &[("axis", if m == 8 { "x" } else { "z" })]) },
+        (168, m) => match m {
+            1 => b("minecraft:polished_prismarine"),
+            2 => b("minecraft:prismarine_bricks"),
+            3 => b("minecraft:dark_prismarine"),
+            _ => b("minecraft:prismarine"),
+        },
+        (170, m) => {
+            if m == 0 {
+                b("minecraft:hay_block")
+            } else {
+                bp(
+                    "minecraft:hay_block",
+                    &[("axis", if m == 8 { "x" } else { "z" })],
+                )
+            }
+        }
         (179, m) => {
-            let kind = match m { 1 => "red_sandstone".to_string(), _ => "red_sandstone".to_string() };
+            let kind = match m {
+                1 => "red_sandstone".to_string(),
+                _ => "red_sandstone".to_string(),
+            };
             let _ = kind;
             b("minecraft:red_sandstone")
         }
@@ -158,13 +275,24 @@ pub fn upgrade_chunk_1_12(
     for (key, value) in level {
         match key.as_str() {
             "Sections" | "Biomes" | "Entities" => {}
-            "TileEntities" => { out.insert("block_entities".to_string(), value.clone()); }
-            "TileTicks" => { out.insert("block_ticks".to_string(), value.clone()); }
-            "LiquidTicks" => { out.insert("fluid_ticks".to_string(), value.clone()); }
-            "Status" => {
-                out.insert("Status".to_string(), Tag::String(Arc::from("minecraft:full")));
+            "TileEntities" => {
+                out.insert("block_entities".to_string(), value.clone());
             }
-            _ => { out.insert(key.clone(), value.clone()); }
+            "TileTicks" => {
+                out.insert("block_ticks".to_string(), value.clone());
+            }
+            "LiquidTicks" => {
+                out.insert("fluid_ticks".to_string(), value.clone());
+            }
+            "Status" => {
+                out.insert(
+                    "Status".to_string(),
+                    Tag::String(Arc::from("minecraft:full")),
+                );
+            }
+            _ => {
+                out.insert(key.clone(), value.clone());
+            }
         }
     }
     out.entry("xPos".to_string()).or_insert(Tag::Int(0));
@@ -175,11 +303,16 @@ pub fn upgrade_chunk_1_12(
     let mut modern_sections = Vec::new();
     if let Some(Tag::List(_, items)) = level.get("Sections") {
         for item in items.iter() {
-            let Tag::Compound(section) = item else { continue };
-            let Some(section_y) = int_field(section, "Y") else { continue };
+            let Tag::Compound(section) = item else {
+                continue;
+            };
+            let Some(section_y) = int_field(section, "Y") else {
+                continue;
+            };
 
             let (Some(Tag::ByteArray(blocks)), Some(Tag::ByteArray(data))) =
-                (section.get("Blocks"), section.get("Data")) else {
+                (section.get("Blocks"), section.get("Data"))
+            else {
                 continue; // 空光照 section
             };
 
@@ -198,7 +331,9 @@ pub fn upgrade_chunk_1_12(
                 let state = match flatten_state(id, meta) {
                     Some(state) => state,
                     None => {
-                        stats.unknown_block_ids.insert(u16::from(id) << 4 | u16::from(meta));
+                        stats
+                            .unknown_block_ids
+                            .insert(u16::from(id) << 4 | u16::from(meta));
                         BlockStateRef::new("minecraft:air")
                     }
                 };
@@ -214,15 +349,23 @@ pub fn upgrade_chunk_1_12(
                 indices.push(index);
             }
 
-            if palette.is_empty() { continue }
+            if palette.is_empty() {
+                continue;
+            }
             let mut modern = HashMap::new();
             modern.insert("Y".to_string(), Tag::Byte(section_y as i8));
-            modern.insert("block_states".to_string(), block_states_tag(&palette, &indices)?);
+            modern.insert(
+                "block_states".to_string(),
+                block_states_tag(&palette, &indices)?,
+            );
             modern_sections.push(Tag::Compound(Arc::new(modern)));
             stats.sections_upgraded += 1;
         }
     }
-    out.insert("sections".to_string(), list_tag(tag_id::COMPOUND, modern_sections));
+    out.insert(
+        "sections".to_string(),
+        list_tag(tag_id::COMPOUND, modern_sections),
+    );
 
     Ok((Tag::Compound(Arc::new(out)), stats))
 }

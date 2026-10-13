@@ -30,7 +30,6 @@ pub enum AnvilError {
     ChunkTooLarge,
 
     // ---- chunk NBT ----
-
     #[error("chunk NBT error: {0}")]
     Nbt(#[from] qexed_nbt::NbtError),
 

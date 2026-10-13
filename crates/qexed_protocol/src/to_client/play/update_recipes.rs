@@ -1,5 +1,5 @@
-use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 
 use crate::types::{IDSet, SlotDisplay};
 

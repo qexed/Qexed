@@ -7,9 +7,7 @@
 
 use std::path::PathBuf;
 
-use qexed_server_legacy::registry_sync::{
-    load_registry_id_map, load_registry_packets,
-};
+use qexed_server_legacy::registry_sync::{load_registry_id_map, load_registry_packets};
 
 fn ensure_cache() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -56,8 +54,7 @@ fn synchronized_registries_match_report_where_applicable() {
             assert!(
                 in_report,
                 "entry {} not present in report registry {}",
-                name,
-                packet.id
+                name, packet.id
             );
         }
     }

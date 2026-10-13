@@ -1,5 +1,5 @@
-use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct DamageEvent {
@@ -21,9 +21,12 @@ impl Packet for DamageEvent {
         self.source_direct_id.serialize(w)?;
         self.has_source_position.serialize(w)?;
         if self.has_source_position {
-            let position = self.source_position.as_ref().ok_or(PacketError::MissingRequired {
-                what: "source position (required when has_source_position is set)",
-            })?;
+            let position = self
+                .source_position
+                .as_ref()
+                .ok_or(PacketError::MissingRequired {
+                    what: "source position (required when has_source_position is set)",
+                })?;
             position.serialize(w)?;
         }
         Ok(())

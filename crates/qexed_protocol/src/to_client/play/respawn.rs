@@ -1,8 +1,8 @@
+use qexed_packet::error::PacketError;
 use qexed_packet::{
     Packet, PacketCodec, PacketReader, PacketWriter,
     net_types::{Position, VarInt},
 };
-use qexed_packet::error::PacketError;
 
 pub const KEEP_ATTRIBUTE_MODIFIERS: i8 = 1;
 pub const KEEP_ENTITY_DATA: i8 = 2;

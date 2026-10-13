@@ -1,3 +1,3 @@
 mod args;
 
-pub use args::{arg_fields, ArgField, ServerArgs};
+pub use args::{ArgField, ServerArgs, arg_fields};

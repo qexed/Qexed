@@ -1,5 +1,5 @@
-pub mod error;
 pub mod config;
+pub mod error;
 mod nullpacket;
 pub mod raw_packet;
 pub mod to_client;

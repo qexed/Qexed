@@ -1,5 +1,5 @@
-use qexed_packet::{PacketCodec, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{PacketCodec, net_types::VarInt};
 
 use crate::types::Slot;
 #[qexed_packet_macros::packet(id = 0x82)]

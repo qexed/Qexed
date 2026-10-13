@@ -1,5 +1,5 @@
-use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 
 pub const METHOD_ADD: i8 = 0;
 pub const METHOD_REMOVE: i8 = 1;

@@ -1,5 +1,7 @@
 use crate::{
-    PacketCodec, error::PacketError, net_types::{VarInt, VarLong},
+    PacketCodec,
+    error::PacketError,
+    net_types::{VarInt, VarLong},
 };
 
 impl PacketCodec for VarInt {

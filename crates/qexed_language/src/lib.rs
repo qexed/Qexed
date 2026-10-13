@@ -3,7 +3,7 @@ pub mod error;
 pub mod service;
 
 use qexed_config::Config;
-use qexed_doc::{interpolate, DocField, DocSchema};
+use qexed_doc::{DocField, DocSchema, interpolate};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -65,7 +65,9 @@ pub struct Translations {
 impl Translations {
     /// 解析翻译 json（形如 { "key": "文本", ... }）。
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        Ok(Self { map: serde_json::from_str(json)? })
+        Ok(Self {
+            map: serde_json::from_str(json)?,
+        })
     }
 
     /// 查翻译；命中返回文本，未命中返回 None（调用方决定是否回退显示 key）。
@@ -76,7 +78,10 @@ impl Translations {
     /// 查翻译，未命中回退返回 key 本身（与 LanguageConfig.server_url 缺失时的约定一致）。
     /// 返回 String：命中时克隆表内文本，未命中时归还 key，避免生命周期纠缠。
     pub fn t(&self, key: &str) -> String {
-        self.map.get(key).cloned().unwrap_or_else(|| key.to_string())
+        self.map
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.to_string())
     }
 
     pub fn len(&self) -> usize {
@@ -219,7 +224,10 @@ mod tests {
     fn embedded_zh_cn_parses_and_translates() {
         let table = Translations::from_json(ZH_CN_JSON).unwrap();
         assert!(!table.is_empty());
-        assert_eq!(table.get("qexed.server.started"), Some("Qexed 服务器已启动，监听 %{addr}"));
+        assert_eq!(
+            table.get("qexed.server.started"),
+            Some("Qexed 服务器已启动，监听 %{addr}")
+        );
         // 回退语义:未命中原样返回 key
         assert_eq!(table.t("qexed.not.exist.key"), "qexed.not.exist.key");
     }
@@ -241,7 +249,10 @@ mod tests {
         assert!(table.get(&key_layout::check_error(k)).is_some());
         // 回退链:未派生的字段 desc 缺失 → 调用方回退显示名
         assert!(table.get(&key_layout::desc("qexed.nope.field")).is_none());
-        assert_eq!(table.t(&key_layout::name("qexed.nope.field")), "qexed.nope.field");
+        assert_eq!(
+            table.t(&key_layout::name("qexed.nope.field")),
+            "qexed.nope.field"
+        );
     }
 
     #[test]
@@ -252,7 +263,10 @@ mod tests {
         let out = template
             .replace("%{default}", "Info")
             .replace("%{variants}", "追踪/调试/信息/警告/错误/关闭");
-        assert_eq!(out, "日志级别，默认 Info，可选：追踪/调试/信息/警告/错误/关闭");
+        assert_eq!(
+            out,
+            "日志级别，默认 Info，可选：追踪/调试/信息/警告/错误/关闭"
+        );
     }
 
     #[test]
@@ -325,8 +339,7 @@ mod tests {
     fn translate_schema_interpolates_field_values() {
         // 直接构造一个 key 落在 `.desc` 上的字段，验证 %{default}/%{variants} 插值。
         let mut schema = sample_schema();
-        schema.fields[0].key =
-            "qexed.crates.log.config.LogConfig.level.desc".to_string();
+        schema.fields[0].key = "qexed.crates.log.config.LogConfig.level.desc".to_string();
 
         translate_schema_with(&mut schema, &embedded_t);
 

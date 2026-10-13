@@ -80,13 +80,3 @@ pub(crate) fn string_payload(value: &str) -> Result<Vec<u8>, ServerError> {
         .map_err(|err| ServerError::Protocol(err.to_string()))?;
     Ok(payload.to_vec())
 }
-
-/// 构造 `{"text": ...}` 的 NBT 文本组件。
-pub(crate) fn text_component(text: impl Into<String>) -> qexed_protocol::types::TextComponent {
-    let mut map = std::collections::HashMap::new();
-    map.insert(
-        "text".to_string(),
-        qexed_nbt::Tag::String(std::sync::Arc::from(text.into())),
-    );
-    qexed_nbt::Tag::Compound(std::sync::Arc::new(map))
-}

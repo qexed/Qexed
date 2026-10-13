@@ -10,8 +10,8 @@ use std::sync::Arc;
 use qexed_nbt::{Tag, tag_id};
 
 use crate::chunk::{
-    self, SectionBlocks, biome_states_tag, block_states_tag, int_field,
-    data_version, list_tag, section_blocks_spanning, string_field,
+    self, SectionBlocks, biome_states_tag, block_states_tag, data_version, int_field, list_tag,
+    section_blocks_spanning, string_field,
 };
 use crate::error::AnvilError;
 
@@ -126,10 +126,7 @@ pub fn migrate_chunk(
 
     let Some(Tag::Compound(level)) = fields.get("Level") else {
         // 现代布局
-        return Ok((
-            root.clone(),
-            MigrationOutcome::AlreadyModern,
-        ));
+        return Ok((root.clone(), MigrationOutcome::AlreadyModern));
     };
     let level = level.as_ref();
     // 1.13–1.15（DataVersion < 2529）：调色板索引跨 long 打包
@@ -177,19 +174,19 @@ pub fn migrate_chunk(
     out.entry("zPos".to_string()).or_insert(Tag::Int(0));
     // yPos：现代格式必需。旧版没有整体 yPos，取 section 列表的最小 Y。
     let sections = legacy_sections(level);
-    let min_section_y = sections
-        .iter()
-        .filter_map(|(y, _)| *y)
-        .min()
-        .unwrap_or(-4);
+    let min_section_y = sections.iter().filter_map(|(y, _)| *y).min().unwrap_or(-4);
     out.insert("yPos".to_string(), Tag::Int(min_section_y));
 
     // 迁移 sections
     let biomes = legacy_biomes(level, &sections);
     let mut modern_sections = Vec::with_capacity(sections.len());
     for (section_y, section) in &sections {
-        let Some(section_y) = *section_y else { continue };
-        modern_sections.push(migrate_section(section_y, section, &biomes, spanning, options)?);
+        let Some(section_y) = *section_y else {
+            continue;
+        };
+        modern_sections.push(migrate_section(
+            section_y, section, &biomes, spanning, options,
+        )?);
     }
     modern_sections.sort_by_key(|section: &Tag| match section {
         Tag::Compound(fields) => int_field(fields, "Y").unwrap_or(i32::MAX),
@@ -253,7 +250,10 @@ struct LegacyBiomes {
 }
 
 impl LegacyBiomes {
-    fn from_level(level: &HashMap<String, Tag>, sections: &[(Option<i32>, &HashMap<String, Tag>)]) -> Self {
+    fn from_level(
+        level: &HashMap<String, Tag>,
+        sections: &[(Option<i32>, &HashMap<String, Tag>)],
+    ) -> Self {
         let data = match level.get("Biomes") {
             Some(Tag::IntArray(values)) => values.to_vec(),
             // 1.13-1.14 用 byte[256]（每列一个）
@@ -282,7 +282,8 @@ impl LegacyBiomes {
         let height = (self.max_y - self.min_y).max(1) as usize;
         let cell_height = (height / cells).max(1);
         let center_y = section_y * 16 + 8;
-        let layer = ((center_y - self.min_y).clamp(0, height as i32 - 1) as usize / cell_height).min(cells - 1);
+        let layer = ((center_y - self.min_y).clamp(0, height as i32 - 1) as usize / cell_height)
+            .min(cells - 1);
         let mut counts: HashMap<i32, usize> = HashMap::new();
         for z in 0..16usize {
             for x in 0..16usize {
@@ -298,7 +299,10 @@ impl LegacyBiomes {
             .map(|(id, _)| id)
     }
 }
-fn legacy_biomes(level: &HashMap<String, Tag>, sections: &[(Option<i32>, &HashMap<String, Tag>)]) -> LegacyBiomes {
+fn legacy_biomes(
+    level: &HashMap<String, Tag>,
+    sections: &[(Option<i32>, &HashMap<String, Tag>)],
+) -> LegacyBiomes {
     LegacyBiomes::from_level(level, sections)
 }
 
@@ -364,7 +368,9 @@ pub fn migrate_region_file(
     let mut stats = MigrationStats::default();
 
     for (lx, lz) in region.chunk_coords() {
-        let Some(data) = region.read_chunk(lx, lz)? else { continue };
+        let Some(data) = region.read_chunk(lx, lz)? else {
+            continue;
+        };
         let Ok(raw) = data.decompress() else {
             stats.failed += 1;
             continue;

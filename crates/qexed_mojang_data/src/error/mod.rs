@@ -34,9 +34,13 @@ pub enum MojangDataError {
     LockTimeout(PathBuf),
     #[error("后台下载任务失败: {0}")]
     Join(String),
-    #[error("当前平台无 Temurin JRE 构建或不被支持，请手动安装 Java {required_major}+ 并配置 java_path")]
+    #[error(
+        "当前平台无 Temurin JRE 构建或不被支持，请手动安装 Java {required_major}+ 并配置 java_path"
+    )]
     JavaNotFound { required_major: u32 },
-    #[error("当前编译目标平台无 Temurin JRE 构建（windows/aarch64 等），请手动安装 Java 并配置 java_path")]
+    #[error(
+        "当前编译目标平台无 Temurin JRE 构建（windows/aarch64 等），请手动安装 Java 并配置 java_path"
+    )]
     JdkPlatformUnsupported,
     #[error("当前平台无 Temurin JRE 构建: {0}，请手动安装 Java 并配置 java_path")]
     JdkPlatformUnsupportedDetail(String),
@@ -51,7 +55,10 @@ pub enum MojangDataError {
     #[error("解析 Adoptium 下载跳转失败: {0}")]
     JdkRedirect(String),
     #[error("JRE 全部下载源失败，最后尝试: {url}: {source}")]
-    JdkDownloadAllFailed { url: String, source: Box<MojangDataError> },
+    JdkDownloadAllFailed {
+        url: String,
+        source: Box<MojangDataError>,
+    },
     #[error("Mojang 数据生成器失败: status={status}, stderr={stderr}, stdout={stdout}")]
     DatagenFailed {
         status: String,

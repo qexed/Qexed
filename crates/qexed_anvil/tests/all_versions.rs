@@ -29,9 +29,13 @@ fn version_key(name: &str) -> Vec<u64> {
 }
 
 fn list_versions() -> Vec<(String, PathBuf)> {
-    let Some(root) = saves_dir() else { return Vec::new() };
+    let Some(root) = saves_dir() else {
+        return Vec::new();
+    };
     let mut versions: Vec<(String, PathBuf)> = std::fs::read_dir(&root)
-        .into_iter().flatten().flatten()
+        .into_iter()
+        .flatten()
+        .flatten()
         .filter(|e| e.path().is_dir())
         .map(|e| (e.file_name().to_string_lossy().to_string(), e.path()))
         .collect();
@@ -43,12 +47,16 @@ fn region_mcas(world: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut stack = vec![world.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name == "entities" || name == "poi" { continue }
+                if name == "entities" || name == "poi" {
+                    continue;
+                }
                 stack.push(path);
             } else if path.extension().and_then(|e| e.to_str()) == Some("mca") {
                 files.push(path);
@@ -66,7 +74,11 @@ fn all_version_saves_parse() {
         eprintln!("mc-saves fixture not found, skipping");
         return;
     }
-    assert!(versions.len() >= 40, "expected ~48 versions, got {}", versions.len());
+    assert!(
+        versions.len() >= 40,
+        "expected ~48 versions, got {}",
+        versions.len()
+    );
 
     let mut total_chunks = 0usize;
     let mut failures: Vec<String> = Vec::new();
@@ -87,7 +99,9 @@ fn all_version_saves_parse() {
                 continue;
             };
             for (lx, lz) in region.chunk_coords() {
-                let Ok(Some(data)) = region.read_chunk(lx, lz) else { continue };
+                let Ok(Some(data)) = region.read_chunk(lx, lz) else {
+                    continue;
+                };
                 chunks += 1;
                 let Ok(raw) = data.decompress() else {
                     version_failures.push(format!("decompress failed ({lx},{lz})"));
@@ -99,27 +113,43 @@ fn all_version_saves_parse() {
                 };
                 if let Ok(secs) = chunk::all_section_blocks(&root) {
                     sections += secs.len();
-                    for s in &secs { blocks += s.indices.len(); }
+                    for s in &secs {
+                        blocks += s.indices.len();
+                    }
                 }
             }
         }
 
-        eprintln!("{name}: {} files, {} chunks, {} sections, {} blocks{}",
-            files.len(), chunks, sections, blocks,
-            if version_failures.is_empty() { String::new() }
-            else { format!(" !! {} FAILURES", version_failures.len()) });
+        eprintln!(
+            "{name}: {} files, {} chunks, {} sections, {} blocks{}",
+            files.len(),
+            chunks,
+            sections,
+            blocks,
+            if version_failures.is_empty() {
+                String::new()
+            } else {
+                format!(" !! {} FAILURES", version_failures.len())
+            }
+        );
         failures.extend(version_failures.into_iter().map(|f| format!("{name}: {f}")));
         total_chunks += chunks;
     }
 
     assert!(total_chunks > 1000, "too few total chunks: {total_chunks}");
-    assert!(failures.is_empty(), "failures: {:#?}", &failures[..failures.len().min(10)]);
+    assert!(
+        failures.is_empty(),
+        "failures: {:#?}",
+        &failures[..failures.len().min(10)]
+    );
 }
 
 #[test]
 fn world_probe_recognizes_all_layouts() {
     let versions = list_versions();
-    if versions.is_empty() { return }
+    if versions.is_empty() {
+        return;
+    }
 
     for (name, world) in &versions {
         let layout: WorldLayout = match world::probe(world) {
@@ -128,9 +158,16 @@ fn world_probe_recognizes_all_layouts() {
         };
         assert!(layout.has_level_dat, "{name}: level.dat missing");
         assert!(
-            layout.dimensions.iter().any(|(d, _)| d == "minecraft:overworld"),
+            layout
+                .dimensions
+                .iter()
+                .any(|(d, _)| d == "minecraft:overworld"),
             "{name}: overworld not detected (dims: {:?})",
-            layout.dimensions.iter().map(|(d, _)| d.as_str()).collect::<Vec<_>>(),
+            layout
+                .dimensions
+                .iter()
+                .map(|(d, _)| d.as_str())
+                .collect::<Vec<_>>(),
         );
         if let Some(v) = layout.data_version {
             assert!(v > 0 && v < 100000, "{name}: weird DataVersion {v}");
@@ -141,12 +178,20 @@ fn world_probe_recognizes_all_layouts() {
 #[test]
 fn migration_end_to_end_pre_1_18() {
     let versions = list_versions();
-    if versions.is_empty() { return }
+    if versions.is_empty() {
+        return;
+    }
 
     for (name, world) in &versions {
-        let Some(dv) = world::probe(world).ok().and_then(|l| l.data_version) else { continue };
-        if dv >= 2860 { continue }
-        if dv < 1519 { continue }
+        let Some(dv) = world::probe(world).ok().and_then(|l| l.data_version) else {
+            continue;
+        };
+        if dv >= 2860 {
+            continue;
+        }
+        if dv < 1519 {
+            continue;
+        }
 
         let tmp = tempfile::tempdir().unwrap();
         let copy = tmp.path().join("world");
@@ -171,13 +216,16 @@ fn migration_end_to_end_pre_1_18() {
 fn upgrade_1_12_world_end_to_end() {
     let Some(dir) = saves_dir() else { return };
     let world = dir.join("1.12.2");
-    if !world.is_dir() { return }
+    if !world.is_dir() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let copy = tmp.path().join("world");
     copy_region_only(&world, &copy);
 
-    let report = world::migrate_world(&copy, &qexed_anvil::migrate::MigrateOptions::default()).unwrap();
+    let report =
+        world::migrate_world(&copy, &qexed_anvil::migrate::MigrateOptions::default()).unwrap();
     let migrated: usize = report.dimensions.iter().map(|(_, s)| s.migrated).sum();
     let failed: usize = report.dimensions.iter().map(|(_, s)| s.failed).sum();
     assert_eq!(failed, 0);
@@ -191,12 +239,18 @@ fn copy_region_only(src: &Path, dst: &Path) {
         std::fs::copy(src.join("level.dat"), dst.join("level.dat")).unwrap();
     }
     fn copy_with_region(src: &Path, dst: &Path) {
-        let Ok(entries) = std::fs::read_dir(src) else { return };
+        let Ok(entries) = std::fs::read_dir(src) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if !path.is_dir() { continue }
-            if name == "entities" || name == "poi" || name == "playerdata" || name == "players" { continue }
+            if !path.is_dir() {
+                continue;
+            }
+            if name == "entities" || name == "poi" || name == "playerdata" || name == "players" {
+                continue;
+            }
             if name == "region" {
                 let target = dst.join(&name);
                 std::fs::create_dir_all(&target).unwrap();

@@ -1,0 +1,40 @@
+[package]
+name = "qexed_world"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# 集成验证：对照 .tmp/vanilla-light 原版存档的全量逐格对比
+vanilla-verify = []
+
+[dependencies]
+# 协议层（区块包构造）
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+bytes.workspace = true
+
+# 注册表 id（biome 序号必须与 configuration 阶段发送顺序一致）
+qexed_registry.workspace = true
+qexed_mojang_data.workspace = true
+qexed_tcp_connect.workspace = true
+
+# 真实存档区块：anvil 读取 + 光照计算（MIGRATION-PLAN：world → light / anvil）
+qexed_anvil.workspace = true
+qexed_light.workspace = true
+qexed_nbt.workspace = true
+
+# 远程地形来源（原版区块召唤服务，qexed 作为客户端）
+qexed_chunk_by_tcp.workspace = true
+
+# 采样剖析（/profile 热路径埋点）
+qexed_profiler.workspace = true
+
+serde_json.workspace = true
+
+tokio.workspace = true
+
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+qexed_nbt.workspace = true

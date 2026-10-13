@@ -113,5 +113,19 @@
   "qexed.crates.light.config.LightConfig.algorithm.Fast": "Fast",
   "qexed.crates.light.config.LightConfig.algorithm.RayTrace": "Ray trace",
   "qexed.crates.light.config.LightConfig.fixed_level": "Fixed light level",
-  "qexed.crates.light.config.LightConfig.fixed_level.desc": "Light level used in Fixed mode (0-15), default %{default}"
+  "qexed.crates.light.config.LightConfig.fixed_level.desc": "Light level used in Fixed mode (0-15), default %{default}",
+
+  "qexed.crates.play.config.PlayConfig": "Play Phase",
+  "qexed.crates.play.config.PlayConfig.view_distance": "View distance",
+  "qexed.crates.play.config.PlayConfig.view_distance.desc": "View distance (in chunks) sent to the client, default %{default}",
+  "qexed.crates.play.config.PlayConfig.simulation_distance": "Simulation distance",
+  "qexed.crates.play.config.PlayConfig.simulation_distance.desc": "Simulation distance (in chunks) sent to the client, default %{default}",
+  "qexed.crates.play.config.PlayConfig.dimension_name": "Dimension name",
+  "qexed.crates.play.config.PlayConfig.dimension_name.desc": "Dimension the player enters in the play phase, default %{default}",
+  "qexed.crates.play.config.PlayConfig.dimension_type": "Dimension type",
+  "qexed.crates.play.config.PlayConfig.dimension_type.desc": "Dimension type registry id (protocol_id of dimension_type), default %{default}",
+  "qexed.crates.play.config.PlayConfig.hashed_seed": "Hashed world seed",
+  "qexed.crates.play.config.PlayConfig.hashed_seed.desc": "Hashed world seed sent to the client (affects terrain rendering), default %{default}",
+  "qexed.crates.play.config.PlayConfig.game_mode": "Default game mode",
+  "qexed.crates.play.config.PlayConfig.game_mode.desc": "Game mode assigned on join: 0 survival, 1 creative, 2 adventure, 3 spectator, default %{default}"
 }

@@ -29,7 +29,12 @@ pub const CONTAINER_WORKSPACE: &str = "/workspace";
 /// `docker run --rm`：返回 (退出码, 合并输出尾部)。
 /// 不用 login shell（-l）：/etc/profile 会重置 PATH，丢掉镜像 ENV 里的 cargo 路径。
 /// stdout/stderr 都必须排空，否则子进程写满管道缓冲区会死锁。
-pub fn docker_run(image: &str, host_dir: &Path, workdir: &str, command: &str) -> Result<(i32, String)> {
+pub fn docker_run(
+    image: &str,
+    host_dir: &Path,
+    workdir: &str,
+    command: &str,
+) -> Result<(i32, String)> {
     let host = host_dir.to_string_lossy().replace('\\', "/");
     let mut child = std::process::Command::new("docker")
         .args([
@@ -102,7 +107,10 @@ mod tests {
     #[test]
     fn host_workspace_root_points_at_repo_root() {
         let root = host_workspace_root();
-        assert!(!root.contains("/crates"), "workspace root 误指到 crates: {root}");
+        assert!(
+            !root.contains("/crates"),
+            "workspace root 误指到 crates: {root}"
+        );
         let ok = root.ends_with("qexed-v6") || root.ends_with("Qexed") || root.ends_with("qexed");
         assert!(ok, "workspace root 不对: {root}");
     }

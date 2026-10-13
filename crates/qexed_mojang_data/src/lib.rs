@@ -1,6 +1,6 @@
 pub mod config;
-pub mod error;
 mod download;
+pub mod error;
 mod extract;
 mod jdk;
 mod lock;
@@ -69,7 +69,8 @@ fn sync_data(config: &MojangDataConfig) -> Result<std::path::PathBuf, MojangData
     let data_root = cache_root.join("data/minecraft");
 
     let need_data = !data_root_ready(&data_root);
-    let need_reports = config.datagen && !reports::reports_ready_for_api(&cache_root.join("reports"));
+    let need_reports =
+        config.datagen && !reports::reports_ready_for_api(&cache_root.join("reports"));
 
     if !need_data && !need_reports {
         return Ok(data_root);
@@ -136,8 +137,7 @@ fn sync_data(config: &MojangDataConfig) -> Result<std::path::PathBuf, MojangData
                 if jar.is_file() {
                     jar
                 } else {
-                    let assets =
-                        resolve_assets(&client, &config.version_manifest_url, version)?;
+                    let assets = resolve_assets(&client, &config.version_manifest_url, version)?;
                     let server = assets
                         .into_iter()
                         .find(|(kind, _)| *kind == "server")
@@ -150,11 +150,7 @@ fn sync_data(config: &MojangDataConfig) -> Result<std::path::PathBuf, MojangData
         };
 
         // Java 就绪（发现 → 校验 → 下载 Temurin）
-        let java_major = resolve_java_major(
-            &client,
-            &config.version_manifest_url,
-            version,
-        )?;
+        let java_major = resolve_java_major(&client, &config.version_manifest_url, version)?;
         let java = jdk::ensure_java(
             &config.java_path,
             config.jdk_download,

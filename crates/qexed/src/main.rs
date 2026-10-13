@@ -1,7 +1,7 @@
 use clap::Parser;
-use qexed_club::{arg_fields, ServerArgs};
-use shadow_rs::shadow;
+use qexed_club::{ServerArgs, arg_fields};
 use serde::Serialize;
+use shadow_rs::shadow;
 
 shadow!(shadow);
 
@@ -83,7 +83,10 @@ async fn run() -> anyhow::Result<()> {
             build_date: build_date_of(shadow::COMMIT_DATE),
             args: arg_fields(),
         };
-        println!("{}", serde_json::to_string(&payload).expect("doc api version json"));
+        println!(
+            "{}",
+            serde_json::to_string(&payload).expect("doc api version json")
+        );
         return Ok(());
     }
     // 初始化
@@ -92,6 +95,8 @@ async fn run() -> anyhow::Result<()> {
     qexed_language::init(shadow::SHORT_COMMIT, args.language.as_deref()).await?;
     qexed_mojang_data::init().await?;
     qexed_auth::init()?;
+    // 全局采样剖析器（/profile start|stop|report）：未启用时 span 零统计开销
+    qexed_profiler::init_global(qexed_profiler::Profiler::new());
     // 启动服务器
     let handle = qexed_server::init().await?;
 

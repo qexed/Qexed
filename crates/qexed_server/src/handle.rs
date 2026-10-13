@@ -42,5 +42,8 @@ impl ServerHandle {
 pub struct ServerContext {
     pub config: std::sync::Arc<config::ServerConfig>,
     pub authenticator: std::sync::Arc<qexed_auth::Authenticator>,
+    /// PLAY 阶段行为 crate 的配置：启动时加载一次，进服时零开销共享。
+    pub play_config: std::sync::Arc<qexed_play::config::PlayConfig>,
+    pub chat_config: std::sync::Arc<qexed_chat::config::ChatConfig>,
     pub shutdown: ServerHandle,
 }

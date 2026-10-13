@@ -55,7 +55,12 @@ async fn full_login_flow_over_tcp() {
     .await
     .unwrap();
 
-    conn.send(&LoginStart { username: "tester".to_string(), player_uuid: uuid::Uuid::nil() }).await.unwrap();
+    conn.send(&LoginStart {
+        username: "tester".to_string(),
+        player_uuid: uuid::Uuid::nil(),
+    })
+    .await
+    .unwrap();
 
     let compress: s2c::login::compress::Compress = read_packet(&mut conn, "compress").await;
     assert_eq!(compress.threshold.0, 16);
@@ -66,21 +71,26 @@ async fn full_login_flow_over_tcp() {
 
     conn.send(&LoginAcknowledged::default()).await.unwrap();
 
-    let brand: s2c::configuration::custom_payload::CustomPayload = read_packet(&mut conn, "brand").await;
+    let brand: s2c::configuration::custom_payload::CustomPayload =
+        read_packet(&mut conn, "brand").await;
     assert_eq!(brand.channel, "minecraft:brand");
 
-    let flags: s2c::configuration::feature_flags::FeatureFlags = read_packet(&mut conn, "feature flags").await;
+    let flags: s2c::configuration::feature_flags::FeatureFlags =
+        read_packet(&mut conn, "feature flags").await;
     assert!(flags.features.iter().any(|f| f == "minecraft:vanilla"));
 
-    let _packs: s2c::configuration::select_known_packs::SelectKnownPacks = read_packet(&mut conn, "known packs").await;
+    let _packs: s2c::configuration::select_known_packs::SelectKnownPacks =
+        read_packet(&mut conn, "known packs").await;
     // 模拟原版客户端：已带 vanilla core 数据 → 服务器发送省略内容的 registry 包
-    conn.send(&qexed_protocol::to_server::configuration::select_known_packs::SelectKnownPacks {
-        entries: vec![qexed_protocol::types::KnownPacks {
-            namespace: "minecraft".to_string(),
-            id: "core".to_string(),
-            version: qexed_mojang_data::MC_VERSION.to_string(),
-        }],
-    })
+    conn.send(
+        &qexed_protocol::to_server::configuration::select_known_packs::SelectKnownPacks {
+            entries: vec![qexed_protocol::types::KnownPacks {
+                namespace: "minecraft".to_string(),
+                id: "core".to_string(),
+                version: qexed_mojang_data::MC_VERSION.to_string(),
+            }],
+        },
+    )
     .await
     .unwrap();
 
@@ -126,7 +136,9 @@ async fn status_ping_flow() {
         ..Default::default()
     };
     let handle = qexed_server_legacy::serve(config).await.unwrap();
-    let socket = tokio::net::TcpStream::connect(handle.local_addr).await.unwrap();
+    let socket = tokio::net::TcpStream::connect(handle.local_addr)
+        .await
+        .unwrap();
     let (rh, wh) = socket.into_split();
     let mut conn = Connection::new(rh, wh);
 
@@ -143,7 +155,12 @@ async fn status_ping_flow() {
     let info: s2c::status::server_info::ServerInfo = read_packet(&mut conn, "server info").await;
     let json = info.response.0;
     assert_eq!(json["version"]["protocol"], 775);
-    assert!(json["description"]["text"].as_str().unwrap().contains("qexed"));
+    assert!(
+        json["description"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("qexed")
+    );
 
     handle.shutdown();
 }

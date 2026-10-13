@@ -29,7 +29,11 @@ pub fn dimension_region_dir(save_root: &Path, dimension: &str) -> PathBuf {
 
 /// 区块坐标对应的区域文件名（`r.<x/32>.<z/32>.mca`，向下取整）。
 pub fn region_file_name(chunk_x: i32, chunk_z: i32) -> String {
-    format!("r.{}.{}.mca", floor_div(chunk_x, 32), floor_div(chunk_z, 32))
+    format!(
+        "r.{}.{}.mca",
+        floor_div(chunk_x, 32),
+        floor_div(chunk_z, 32)
+    )
 }
 
 /// 区块坐标对应的区域文件完整路径。

@@ -49,5 +49,3 @@ pub fn has_file(path: &std::path::Path) -> Result<bool, TomlError> {
         Err(e) => Err(e.into()),
     }
 }
-
-

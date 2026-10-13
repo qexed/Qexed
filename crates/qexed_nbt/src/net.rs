@@ -1,5 +1,5 @@
 //! Network (Java edition protocol) NBT codec: root without a name.
-use crate::{NbtError, Tag, tag_id, ListHeader};
+use crate::{ListHeader, NbtError, Tag, tag_id};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -15,11 +15,18 @@ impl NetNbtIo {
     }
 
     /// [`NetNbtIo::from_reader`] 的宽松版本（非法 UTF-8 字符串以 U+FFFD 替换）。
-    pub fn from_reader_lossy<R: Read>(reader: R, _has_length_prefix: bool) -> Result<Tag, NbtError> {
+    pub fn from_reader_lossy<R: Read>(
+        reader: R,
+        _has_length_prefix: bool,
+    ) -> Result<Tag, NbtError> {
         Self::from_reader_impl(reader, _has_length_prefix, true)
     }
 
-    fn from_reader_impl<R: Read>(mut reader: R, _has_length_prefix: bool, lossy: bool) -> Result<Tag, NbtError> {
+    fn from_reader_impl<R: Read>(
+        mut reader: R,
+        _has_length_prefix: bool,
+        lossy: bool,
+    ) -> Result<Tag, NbtError> {
         let id = reader.read_u8()?;
         match id {
             tag_id::END => Ok(Tag::End),
@@ -29,12 +36,17 @@ impl NetNbtIo {
                 read_compound_content(&mut reader)?
             }))),
             other => Err(NbtError::Deserialize(format!(
-                "network NBT root must be Compound or END, got 0x{other:02X}"))),
+                "network NBT root must be Compound or END, got 0x{other:02X}"
+            ))),
         }
     }
 
     /// Writes a network NBT root (nameless compound, or END for null).
-    pub fn to_writer<W: Write>(mut writer: W, tag: &Tag, _has_length_prefix: bool) -> Result<(), NbtError> {
+    pub fn to_writer<W: Write>(
+        mut writer: W,
+        tag: &Tag,
+        _has_length_prefix: bool,
+    ) -> Result<(), NbtError> {
         match tag {
             Tag::End => writer.write_u8(tag_id::END).map_err(Into::into),
             Tag::Compound(map) => {
@@ -42,7 +54,8 @@ impl NetNbtIo {
                 write_compound_content(&mut writer, map)
             }
             _ => Err(NbtError::Serialize(
-                "network NBT root must be Compound or END".into())),
+                "network NBT root must be Compound or END".into(),
+            )),
         }
     }
 }
@@ -64,14 +77,18 @@ fn read_string_impl<R: Read>(r: &mut R, lossy: bool) -> Result<String, NbtError>
     if lossy {
         Ok(String::from_utf8_lossy(&buf).into_owned())
     } else {
-        String::from_utf8(buf).map_err(|e| NbtError::Deserialize(format!("invalid UTF-8 string: {e}")))
+        String::from_utf8(buf)
+            .map_err(|e| NbtError::Deserialize(format!("invalid UTF-8 string: {e}")))
     }
 }
 
 pub(crate) fn write_string<W: Write>(w: &mut W, s: &str) -> Result<(), NbtError> {
     let bytes = s.as_bytes();
     if bytes.len() > u16::MAX as usize {
-        return Err(NbtError::Serialize(format!("string too long: {} bytes", bytes.len())));
+        return Err(NbtError::Serialize(format!(
+            "string too long: {} bytes",
+            bytes.len()
+        )));
     }
     w.write_u16::<BigEndian>(bytes.len() as u16)?;
     w.write_all(bytes)?;
@@ -82,18 +99,27 @@ pub(crate) fn read_compound_content<R: Read>(r: &mut R) -> Result<HashMap<String
     read_compound_content_impl(r, false)
 }
 
-pub(crate) fn read_compound_content_lossy<R: Read>(r: &mut R) -> Result<HashMap<String, Tag>, NbtError> {
+pub(crate) fn read_compound_content_lossy<R: Read>(
+    r: &mut R,
+) -> Result<HashMap<String, Tag>, NbtError> {
     read_compound_content_impl(r, true)
 }
 
-fn read_compound_content_impl<R: Read>(r: &mut R, lossy: bool) -> Result<HashMap<String, Tag>, NbtError> {
+fn read_compound_content_impl<R: Read>(
+    r: &mut R,
+    lossy: bool,
+) -> Result<HashMap<String, Tag>, NbtError> {
     let mut map = HashMap::new();
     loop {
         let id = r.read_u8()?;
         if id == tag_id::END {
             return Ok(map);
         }
-        let name = if lossy { read_string_lossy(r)? } else { read_string(r)? };
+        let name = if lossy {
+            read_string_lossy(r)?
+        } else {
+            read_string(r)?
+        };
         map.insert(name, read_value_impl(r, id, lossy)?);
     }
 }
@@ -128,7 +154,11 @@ fn read_value_impl<R: Read>(r: &mut R, id: u8, lossy: bool) -> Result<Tag, NbtEr
             }
             Tag::ByteArray(Arc::from(v))
         }
-        tag_id::STRING => Tag::String(Arc::from(if lossy { read_string_lossy(r)? } else { read_string(r)? })),
+        tag_id::STRING => Tag::String(Arc::from(if lossy {
+            read_string_lossy(r)?
+        } else {
+            read_string(r)?
+        })),
         tag_id::LIST => {
             let elem = r.read_u8()?;
             let len = r.read_i32::<BigEndian>()?;
@@ -136,7 +166,13 @@ fn read_value_impl<R: Read>(r: &mut R, id: u8, lossy: bool) -> Result<Tag, NbtEr
             for _ in 0..len {
                 items.push(read_value_impl(r, elem, lossy)?);
             }
-            Tag::List(ListHeader { tag_id: elem, length: len }, Arc::from(items))
+            Tag::List(
+                ListHeader {
+                    tag_id: elem,
+                    length: len,
+                },
+                Arc::from(items),
+            )
         }
         tag_id::COMPOUND => Tag::Compound(Arc::new(read_compound_content_impl(r, lossy)?)),
         tag_id::INT_ARRAY => {
@@ -156,7 +192,9 @@ fn read_value_impl<R: Read>(r: &mut R, id: u8, lossy: bool) -> Result<Tag, NbtEr
             Tag::LongArray(Arc::from(v))
         }
         other => {
-            return Err(NbtError::Deserialize(format!("unknown tag id 0x{other:02X}")))
+            return Err(NbtError::Deserialize(format!(
+                "unknown tag id 0x{other:02X}"
+            )));
         }
     })
 }
@@ -207,7 +245,9 @@ pub(crate) fn write_value<W: Write>(w: &mut W, tag: &Tag) -> Result<(), NbtError
 fn read_len<R: Read>(r: &mut R) -> Result<usize, NbtError> {
     let len = r.read_i32::<BigEndian>()?;
     if len < 0 {
-        return Err(NbtError::Deserialize(format!("negative array length: {len}")));
+        return Err(NbtError::Deserialize(format!(
+            "negative array length: {len}"
+        )));
     }
     Ok(len as usize)
 }

@@ -22,21 +22,35 @@ fn fixtures_dir() -> Option<PathBuf> {
 fn legacy_chunk_survives_region_file_roundtrip() {
     let Some(dir) = fixtures_dir() else { return };
     let src = dir.join("1.17.1.chunk");
-    if !src.exists() { return };
+    if !src.exists() {
+        return;
+    };
     let bytes = std::fs::read(&src).unwrap();
     let root = qexed_nbt::from_slice_lossy(&bytes).unwrap().1;
 
     // 修改两个方块（已有 section + 新建 section 各一）
     let gold = BlockStateRef::new("minecraft:gold_block");
     let updated = chunk::set_block_state(
-        &root, 8, 40, 8, &gold,
-        &BlockStateRef::new("minecraft:stone"), "minecraft:plains",
-    ).unwrap();
+        &root,
+        8,
+        40,
+        8,
+        &gold,
+        &BlockStateRef::new("minecraft:stone"),
+        "minecraft:plains",
+    )
+    .unwrap();
     let bedrock = BlockStateRef::new("minecraft:bedrock");
     let updated = chunk::set_block_state(
-        &updated, 3, 500, 3, &bedrock,   // section 31：原区块没有
-        &BlockStateRef::new("minecraft:stone"), "minecraft:plains",
-    ).unwrap();
+        &updated,
+        3,
+        500,
+        3,
+        &bedrock, // section 31：原区块没有
+        &BlockStateRef::new("minecraft:stone"),
+        "minecraft:plains",
+    )
+    .unwrap();
 
     // 序列化 -> 压缩 -> 写入区域文件
     let out_nbt = qexed_nbt::to_vec("", &updated).unwrap();
@@ -55,12 +69,21 @@ fn legacy_chunk_survives_region_file_roundtrip() {
 
     // 布局仍是旧版
     let fields = chunk::root_compound(&back).unwrap();
-    assert!(fields.get("Level").is_some(), "legacy layout preserved through region file");
+    assert!(
+        fields.get("Level").is_some(),
+        "legacy layout preserved through region file"
+    );
     assert!(fields.get("sections").is_none());
 
     // 两处方块都读得回来
-    assert_eq!(chunk::block_state_at(&back, 8, 40, 8).unwrap().unwrap(), gold);
-    assert_eq!(chunk::block_state_at(&back, 3, 500, 3).unwrap().unwrap(), bedrock);
+    assert_eq!(
+        chunk::block_state_at(&back, 8, 40, 8).unwrap().unwrap(),
+        gold
+    );
+    assert_eq!(
+        chunk::block_state_at(&back, 3, 500, 3).unwrap().unwrap(),
+        bedrock
+    );
 
     // 语义等价（幂等）
     assert_eq!(back, updated);

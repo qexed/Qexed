@@ -27,7 +27,8 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            session_server_url: "https://sessionserver.mojang.com/session/minecraft/hasJoined".to_string(),
+            session_server_url: "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+                .to_string(),
             services_public_keys_url: "https://api.minecraftservices.com/publickeys".to_string(),
         }
     }

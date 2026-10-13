@@ -22,6 +22,11 @@ qexed_registry.workspace = true
 qexed_tcp_connect.workspace = true
 qexed_mojang_data.workspace = true
 qexed_auth.workspace = true
+qexed_play.workspace = true
+qexed_chat.workspace = true
+qexed_jev.workspace = true
+qexed_plugin_api.workspace = true
+qexed_plugin.workspace = true
 
 serde_json.workspace = true
 log.workspace = true
@@ -31,3 +36,4 @@ rand.workspace = true
 [dev-dependencies]
 qexed_toml.workspace = true
 qexed_config.workspace = true
+uuid.workspace = true

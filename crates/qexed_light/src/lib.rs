@@ -43,7 +43,9 @@ pub mod output;
 
 pub use config::algorithm::LightAlgorithm;
 pub use config::mode::LightMode;
-pub use data::{BlockLightProps, ChunkLightData, ChunkOpacity, LightNeighborhood, OpacityNeighborhood};
+pub use data::{
+    BlockLightProps, ChunkLightData, ChunkOpacity, LightNeighborhood, OpacityNeighborhood,
+};
 pub use engine::{LightEngine, SkyLightAlgorithm};
 pub use error::LightError;
 pub use geometry::{DimensionGeometry, LightGeometry};

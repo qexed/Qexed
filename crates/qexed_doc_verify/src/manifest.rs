@@ -68,7 +68,9 @@ impl VerifyManifest {
         let declared = extract_plain_field(&frontmatter, "verify_hash")?;
         let actual = canonical_hash(&verify_raw)?;
         if declared != actual {
-            bail!("verify_hash 不匹配: 声明 {declared}，按内容重算为 {actual}（清单被手改或哈希未回填）");
+            bail!(
+                "verify_hash 不匹配: 声明 {declared}，按内容重算为 {actual}（清单被手改或哈希未回填）"
+            );
         }
         Ok(manifest)
     }
@@ -76,7 +78,12 @@ impl VerifyManifest {
     /// 校验用镜像名。
     pub fn docker_image(&self) -> String {
         self.image.clone().unwrap_or_else(|| {
-            let minor = self.toolchain.split('.').take(2).collect::<Vec<_>>().join(".");
+            let minor = self
+                .toolchain
+                .split('.')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(".");
             format!("rust:{minor}")
         })
     }

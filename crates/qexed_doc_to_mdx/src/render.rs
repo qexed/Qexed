@@ -5,8 +5,8 @@
 //! 元数据合并为一个连续列表放在描述之前——段落插进列表中间会把列表截断，
 //! 尾部的孤项（如单独的"默认值"）会以大间距漂浮，观感即"换行没处理好"。
 
-use qexed_doc::{interpolate, DocI18nText, DocSchema, I18nTextKind};
-use qexed_language::{key_layout, Translations};
+use qexed_doc::{DocI18nText, DocSchema, I18nTextKind, interpolate};
+use qexed_language::{Translations, key_layout};
 use std::collections::BTreeMap;
 
 /// 渲染期固定文案按语言给两套（zh 系 / 其它），避免散落硬编码中文。
@@ -146,7 +146,12 @@ pub fn render_field(field: &qexed_doc::DocField, table: &Translations, lang: &st
     let mark = untranslated_mark(table, &field.key);
     let display = match table.get(&field.key) {
         Some(name) => esc(name),
-        None => field.path.rsplit('.').next().unwrap_or(&field.path).to_string(),
+        None => field
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&field.path)
+            .to_string(),
     };
     sections.push(format!("## {display}{mark}"));
 
@@ -209,7 +214,11 @@ pub fn render_field(field: &qexed_doc::DocField, table: &Translations, lang: &st
     };
     if !variants.is_empty() {
         let mut lines = vec![
-            format!("| {} | {} |", ui_label(lang, "value"), ui_label(lang, "display_name")),
+            format!(
+                "| {} | {} |",
+                ui_label(lang, "value"),
+                ui_label(lang, "display_name")
+            ),
             "| --- | --- |".to_string(),
         ];
         for v in variants {
@@ -223,7 +232,10 @@ pub fn render_field(field: &qexed_doc::DocField, table: &Translations, lang: &st
 
     // 警告 / 补充说明 / 校验失败提示：各自独立引用块。
     if let Some(warn) = &field.warn {
-        sections.push(format!("> [!WARNING]\n> {}", esc(&resolve_i18n(warn, table))));
+        sections.push(format!(
+            "> [!WARNING]\n> {}",
+            esc(&resolve_i18n(warn, table))
+        ));
     }
     if let Some(tip) = &field.tip {
         sections.push(format!("> [!TIP]\n> {}", esc(&resolve_i18n(tip, table))));
@@ -289,7 +301,10 @@ pub fn render_mdx(
         Some(t) => esc(t),
         None => schema.name.clone(),
     };
-    sections.push(format!("# {title}{}", untranslated_mark(table, &schema.key)));
+    sections.push(format!(
+        "# {title}{}",
+        untranslated_mark(table, &schema.key)
+    ));
 
     // 默认配置文件（toml）+ 生成时间；围栏与标题同块，闭合后由分块接空行。
     let offset = chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap();
@@ -342,7 +357,10 @@ mod tests {
         assert_eq!(map["variants"], "追踪/调试/信息/警告/错误/关闭");
         let template = table.get(&key_layout::desc(&level.key)).unwrap();
         let out = interpolate(template, &map);
-        assert_eq!(out, "日志级别，默认 Info，可选：追踪/调试/信息/警告/错误/关闭");
+        assert_eq!(
+            out,
+            "日志级别，默认 Info，可选：追踪/调试/信息/警告/错误/关闭"
+        );
     }
 
     #[test]
@@ -396,7 +414,10 @@ mod tests {
             untranslated_mark(&table, "qexed.missing.key.for.test"),
             " <!-- TODO: translate -->"
         );
-        assert_eq!(untranslated_mark(&table, "qexed.crates.log.config.LogConfig"), "");
+        assert_eq!(
+            untranslated_mark(&table, "qexed.crates.log.config.LogConfig"),
+            ""
+        );
     }
 
     #[test]
@@ -424,7 +445,10 @@ mod tests {
     #[test]
     fn strip_leftover_placeholders_basics() {
         assert_eq!(strip_leftover_placeholders("a %{x} b"), "a  b");
-        assert_eq!(strip_leftover_placeholders("no placeholder"), "no placeholder");
+        assert_eq!(
+            strip_leftover_placeholders("no placeholder"),
+            "no placeholder"
+        );
         assert_eq!(strip_leftover_placeholders("unclosed %{x"), "unclosed %{x");
     }
 

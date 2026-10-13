@@ -2,12 +2,15 @@
 
 use crate::config::LanguageConfig;
 use crate::error::LanguageError;
-use crate::{embedded_json, storage_dir, Translations, CURRENT, ZH_CN_JSON};
+use crate::{CURRENT, Translations, ZH_CN_JSON, embedded_json, storage_dir};
 use std::path::{Path, PathBuf};
 
 /// 本体语言文件的缓存路径：`<config>/languages/qexed/{commit}/{language}.json`。
 pub fn qexed_cache_path(commit: &str, language: &str) -> Result<PathBuf, LanguageError> {
-    Ok(storage_dir()?.join("qexed").join(commit).join(format!("{language}.json")))
+    Ok(storage_dir()?
+        .join("qexed")
+        .join(commit)
+        .join(format!("{language}.json")))
 }
 
 /// 插件语言文件的缓存路径：`<config>/languages/{author}/{plugin}/{commit}/{language}.json`。
@@ -167,6 +170,6 @@ pub async fn run(
             *CURRENT.write().unwrap() = Some(table);
         }
     }
-    
+
     Ok(())
 }

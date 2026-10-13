@@ -1,7 +1,7 @@
 use crate::types::Slot;
 use bytes::{Buf as _, BufMut as _};
-use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{Packet, PacketCodec, PacketReader, PacketWriter, net_types::VarInt};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SetCreativeModeSlot {
@@ -156,7 +156,10 @@ fn read_count(name: &'static str, r: &mut PacketReader) -> Result<usize, PacketE
     let mut count = VarInt::default();
     count.deserialize(r)?;
     if count.0 < 0 {
-        return Err(PacketError::NegativeLength { name, value: count.0 });
+        return Err(PacketError::NegativeLength {
+            name,
+            value: count.0,
+        });
     }
     if count.0 > 65_536 {
         return Err(PacketError::LengthExceedsMax {

@@ -45,7 +45,9 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
                 if self.buffer.is_empty() {
                     return Ok(None);
                 }
-                return Err(ServerError::ConnectionClosed { what: "incomplete packet" });
+                return Err(ServerError::ConnectionClosed {
+                    what: "incomplete packet",
+                });
             }
             self.buffer.extend_from_slice(&tmp[..n]);
         }
@@ -60,7 +62,10 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         }
         let packet_len = packet_len as usize;
         if packet_len > self.max_packet_size {
-            return Err(ServerError::PacketTooLarge { len: packet_len, max: self.max_packet_size });
+            return Err(ServerError::PacketTooLarge {
+                len: packet_len,
+                max: self.max_packet_size,
+            });
         }
         let frame_len = header_len + packet_len;
         if self.buffer.len() < frame_len {
@@ -77,24 +82,34 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         };
         // 压缩帧：数据长度 varint + zlib 数据（0 = 未压缩）
         let mut cursor = std::io::Cursor::new(frame.as_ref());
-        let data_len = read_varint_sync(&mut cursor)
-            .map_err(|e| ServerError::Compression(e.to_string()))?;
+        let data_len =
+            read_varint_sync(&mut cursor).map_err(|e| ServerError::Compression(e.to_string()))?;
         let header_len = cursor.position() as usize;
         if data_len == 0 {
             return Ok(BytesMut::from(&frame[header_len..]));
         }
         if data_len < 0 {
-            return Err(ServerError::Compression(format!("negative data length {data_len}")));
+            return Err(ServerError::Compression(format!(
+                "negative data length {data_len}"
+            )));
         }
         if (data_len as usize) > self.max_packet_size {
-            return Err(ServerError::PacketTooLarge { len: data_len as usize, max: self.max_packet_size });
+            return Err(ServerError::PacketTooLarge {
+                len: data_len as usize,
+                max: self.max_packet_size,
+            });
         }
         let mut decoder = ZlibDecoder::new(&frame[header_len..]);
         let mut out = Vec::with_capacity(data_len as usize);
-        decoder.read_to_end(&mut out)
+        decoder
+            .read_to_end(&mut out)
             .map_err(|e| ServerError::Compression(e.to_string()))?;
         if out.len() != data_len as usize {
-            return Err(ServerError::Compression(format!("decompressed size mismatch: {} != {}", out.len(), data_len)));
+            return Err(ServerError::Compression(format!(
+                "decompressed size mismatch: {} != {}",
+                out.len(),
+                data_len
+            )));
         }
         Ok(BytesMut::from(&out[..]))
     }
@@ -103,7 +118,9 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
 fn read_varint_prefix(buf: &[u8]) -> Result<Option<(i32, usize)>, ServerError> {
     let mut value = 0i32;
     for position in 0..5 {
-        let Some(&byte) = buf.get(position) else { return Ok(None) };
+        let Some(&byte) = buf.get(position) else {
+            return Ok(None);
+        };
         value |= ((byte & 0x7F) as i32) << (7 * position);
         if byte & 0x80 == 0 {
             return Ok(Some((value, position + 1)));
@@ -122,7 +139,10 @@ fn read_varint_sync(r: &mut impl std::io::Read) -> std::io::Result<i32> {
             return Ok(value);
         }
     }
-    Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "varint too long"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "varint too long",
+    ))
 }
 
 /// 连接的写侧：封帧（+ 压缩）。
@@ -134,7 +154,11 @@ pub struct PacketWriter<W> {
 
 impl<W: AsyncWrite + Unpin> PacketWriter<W> {
     pub fn new(inner: W) -> Self {
-        Self { inner, compression_threshold: None, max_packet_size: MAX_PACKET_SIZE }
+        Self {
+            inner,
+            compression_threshold: None,
+            max_packet_size: MAX_PACKET_SIZE,
+        }
     }
 
     pub fn set_compression_threshold(&mut self, threshold: i32) {
@@ -182,7 +206,9 @@ fn varint_len(value: i32) -> usize {
     let mut len = 1;
     loop {
         val >>= 7;
-        if val == 0 { return len; }
+        if val == 0 {
+            return len;
+        }
         len += 1;
     }
 }
@@ -192,9 +218,13 @@ fn write_varint_buf(buf: &mut BytesMut, value: i32) {
     loop {
         let mut temp = (val & 0x7F) as u8;
         val >>= 7;
-        if val != 0 { temp |= 0x80; }
+        if val != 0 {
+            temp |= 0x80;
+        }
         buf.put_u8(temp);
-        if val == 0 { break; }
+        if val == 0 {
+            break;
+        }
     }
 }
 
@@ -206,7 +236,10 @@ pub struct Connection<R, W> {
 
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Connection<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
-        Self { reader: PacketReader::new(reader), writer: PacketWriter::new(writer) }
+        Self {
+            reader: PacketReader::new(reader),
+            writer: PacketWriter::new(writer),
+        }
     }
 
     pub fn set_compression(&mut self, threshold: i32) {
@@ -215,19 +248,28 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Connection<R, W> {
     }
 
     /// 读一个包并解析为指定类型（校验包 ID）。
-    pub async fn read_packet<T: qexed_packet::Packet>(&mut self, what: &'static str) -> Result<T, ServerError> {
+    pub async fn read_packet<T: qexed_packet::Packet>(
+        &mut self,
+        what: &'static str,
+    ) -> Result<T, ServerError> {
         let Some(mut payload) = self.reader.read_packet().await? else {
             return Err(ServerError::ConnectionClosed { what });
         };
         let actual = read_packet_id(&mut payload)?;
         if actual != T::ID {
-            return Err(ServerError::PacketIdMismatch { expected: T::ID, actual });
+            return Err(ServerError::PacketIdMismatch {
+                expected: T::ID,
+                actual,
+            });
         }
         decode_payload::<T>(&mut payload)
     }
 
     /// 读一个包，返回 (包 ID, 负载)（状态机内分发用）。
-    pub async fn read_any(&mut self, what: &'static str) -> Result<Option<(i32, BytesMut)>, ServerError> {
+    pub async fn read_any(
+        &mut self,
+        what: &'static str,
+    ) -> Result<Option<(i32, BytesMut)>, ServerError> {
         match self.reader.read_packet().await? {
             None => Err(ServerError::ConnectionClosed { what }),
             Some(mut payload) => {

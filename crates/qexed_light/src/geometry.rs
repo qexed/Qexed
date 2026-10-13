@@ -80,7 +80,6 @@ impl LightGeometry {
         debug_assert!((self.world_min_y..=self.world_max_y).contains(&y));
         ((y - self.world_min_y) as usize * 16 + z) * 16 + x
     }
-
 }
 
 /// 维度的光照几何与天光语义，来自 26.1.2 的 dimension_type。
@@ -98,9 +97,21 @@ pub struct DimensionGeometry {
 
 impl DimensionGeometry {
     /// 由 min_y / height / has_skylight 构造（min_y 必须是 16 的倍数）。
-    pub fn new(name: &'static str, min_y: i32, height: i32, has_skylight: bool, ambient_light: f32) -> Self {
-        assert!(height > 0 && height % SECTION_HEIGHT == 0, "height must be a positive multiple of 16");
-        assert!(min_y % SECTION_HEIGHT == 0, "min_y must be a multiple of 16");
+    pub fn new(
+        name: &'static str,
+        min_y: i32,
+        height: i32,
+        has_skylight: bool,
+        ambient_light: f32,
+    ) -> Self {
+        assert!(
+            height > 0 && height % SECTION_HEIGHT == 0,
+            "height must be a positive multiple of 16"
+        );
+        assert!(
+            min_y % SECTION_HEIGHT == 0,
+            "min_y must be a multiple of 16"
+        );
         let world_section_count = (height / SECTION_HEIGHT) as usize;
         let min_light_section_y = min_y / SECTION_HEIGHT - 1;
         let geometry = LightGeometry {
@@ -112,7 +123,12 @@ impl DimensionGeometry {
             max_light_section_y: (min_y + height) / SECTION_HEIGHT,
             chunk_light_len: 16 * world_section_count * 16 * 16,
         };
-        Self { geometry, has_skylight, ambient_light, name }
+        Self {
+            geometry,
+            has_skylight,
+            ambient_light,
+            name,
+        }
     }
 
     /// 26.1.2 主世界：min_y=-64 height=384 has_skylight=true。

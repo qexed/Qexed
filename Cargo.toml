@@ -42,11 +42,66 @@ members = [
     "crates/qexed_tcp_connect",
     "crates/qexed_auth",
     "crates/qexed_chat",
+    "crates/qexed_jev",
     "crates/qexed_light",
+    "crates/qexed_play",
+    "crates/qexed_command",
+    "crates/qexed_scoreboard",
+    "crates/qexed_plugin_api",
+    "crates/qexed_plugin",
+    "crates/plugins/sample",
+    "crates/plugins/pve_entity",
+    "crates/plugins/command_npc_demo",
+    "crates/plugins/slime_jump",
+    "crates/plugins/lobby_services",
+    "crates/plugins/backpack",
+    "crates/plugins/tiankeng",
+    "crates/plugins/creature_game",
+    "crates/plugins/murder_mystery",
+    "crates/plugins/digfight",
+    "crates/plugins/pvp_arena",
+    "crates/plugins/tictactoe",
+    "crates/plugins/gobang",
+    "crates/plugins/prison_mine_selector",
+    "crates/plugins/weiqi",
+    "crates/plugins/chess",
+    "crates/plugins/minesweeper",
+    "crates/plugins/xiangqi",
+    "crates/plugins/maze_runner",
+    "crates/plugins/temple_run",
+    "crates/plugins/parkour",
+    "crates/qexed_plugin_sdk",
+    "crates/plugins/hello_world",
+    "crates/plugins/player_audit",
+    "crates/plugins/chunk_trace",
+    "crates/plugins/skyblock",
+    "crates/plugins/api_provider_demo",
+    "crates/plugins/api_consumer_demo",
+    "crates/plugins/enchanting_lab",
+    "crates/plugins/double_jump",
+    "crates/plugins/skip_death_respawn",
+    # 世界行为（区块流送）
+    "crates/qexed_world",
+    "crates/qexed_stat",
+    # 采样剖析器（/profile 指令，HTML 报告）
+    "crates/qexed_profiler",
+    # 区块按需拉取（TCP chunk-summon 客户端）
+    "crates/qexed_chunk_by_tcp",
 ]
 [workspace.dependencies]
+qexed_stat.path = "crates/qexed_stat"
+qexed_chunk_by_tcp.path = "crates/qexed_chunk_by_tcp"
+qexed_play.path = "crates/qexed_play"
+qexed_command.path = "crates/qexed_command"
+qexed_scoreboard.path = "crates/qexed_scoreboard"
+qexed_plugin_api.path = "crates/qexed_plugin_api"
+qexed_plugin_sdk.path = "crates/qexed_plugin_sdk"
+qexed_plugin.path = "crates/qexed_plugin"
+qexed_world.path = "crates/qexed_world"
+qexed_profiler.path = "crates/qexed_profiler"
 qexed_light.path = "crates/qexed_light"
 qexed_chat.path = "crates/qexed_chat"
+qexed_jev.path = "crates/qexed_jev"
 qexed_auth.path = "crates/qexed_auth"
 qexed_tcp_connect.path = "crates/qexed_tcp_connect"
 qexed_registry.path = "crates/qexed_registry"
@@ -100,4 +155,20 @@ tar = "0.4"
 tempfile = "3"
 zip = { version = "2.4", default-features = false }
 async-stream = "0.3.6"
+libloading = "0.9"
+async-trait = "0.1"
+futures = "0.3"
 tokio-stream = "0.1.19"
+
+# 性能:光照 BFS / 区块解码在 dev(无优化)下比优化后慢 10-30 倍,
+# dev 开 2 级优化 + 真符号回溯,重编译成本可接受;release 全量优化。
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

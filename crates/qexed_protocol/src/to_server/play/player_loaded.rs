@@ -1,5 +1,5 @@
-use qexed_packet::{Packet, PacketReader, PacketWriter};
 use qexed_packet::error::PacketError;
+use qexed_packet::{Packet, PacketReader, PacketWriter};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct PlayerLoaded;

@@ -81,7 +81,10 @@ pub fn unpack_indices_spanning(
         // 位流跨界：整体是 ceil(bits * count / 64) 个 long 的连续位流
         let required_len = (bits * entry_count).div_ceil(64);
         if data.len() != required_len {
-            return Err(AnvilError::PaletteDataLength { got: data.len(), expected: required_len });
+            return Err(AnvilError::PaletteDataLength {
+                got: data.len(),
+                expected: required_len,
+            });
         }
         let mut values = Vec::with_capacity(entry_count);
         for index in 0..entry_count {
@@ -92,12 +95,19 @@ pub fn unpack_indices_spanning(
             // 跨界时拼接下一个 long（最后一个不会越界：required_len 已含它）
             let mut value = word >> shift;
             if shift + bits > 64 {
-                let next = if cell + 1 < data.len() { data[cell + 1] as u64 } else { 0 };
+                let next = if cell + 1 < data.len() {
+                    data[cell + 1] as u64
+                } else {
+                    0
+                };
                 value |= next << (64 - shift);
             }
             let value = (value & mask) as usize;
             if value >= palette_len {
-                return Err(AnvilError::PaletteIndexOutOfRange { index: value, palette_len });
+                return Err(AnvilError::PaletteIndexOutOfRange {
+                    index: value,
+                    palette_len,
+                });
             }
             values.push(value);
         }
@@ -107,7 +117,10 @@ pub fn unpack_indices_spanning(
     let values_per_long = 64 / bits;
     let required_len = entry_count.div_ceil(values_per_long);
     if data.len() != required_len {
-        return Err(AnvilError::PaletteDataLength { got: data.len(), expected: required_len });
+        return Err(AnvilError::PaletteDataLength {
+            got: data.len(),
+            expected: required_len,
+        });
     }
 
     let mut values = Vec::with_capacity(entry_count);
@@ -117,7 +130,10 @@ pub fn unpack_indices_spanning(
         let value = ((data[cell] as u64) >> bit_offset) & mask;
         let value = usize::try_from(value).expect("masked value fits usize");
         if value >= palette_len {
-            return Err(AnvilError::PaletteIndexOutOfRange { index: value, palette_len });
+            return Err(AnvilError::PaletteIndexOutOfRange {
+                index: value,
+                palette_len,
+            });
         }
         values.push(value);
     }

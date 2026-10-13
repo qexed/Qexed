@@ -6,7 +6,10 @@ fn main() {
         let data = region.read_chunk(lx, lz).unwrap().unwrap();
         let raw = data.decompress().unwrap();
         let (_, root) = qexed_nbt::from_slice_lossy(&raw).unwrap();
-        match qexed_anvil::migrate::migrate_chunk(&root, &qexed_anvil::migrate::MigrateOptions::default()) {
+        match qexed_anvil::migrate::migrate_chunk(
+            &root,
+            &qexed_anvil::migrate::MigrateOptions::default(),
+        ) {
             Ok(_) => ok += 1,
             Err(e) => eprintln!("chunk ({lx},{lz}): {e}"),
         }

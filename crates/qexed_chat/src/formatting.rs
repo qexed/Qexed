@@ -11,10 +11,7 @@ pub fn text_component(text: impl Into<String>) -> TextComponent {
 }
 
 /// 构造 `{"translate": "...", "with": [...]}` 形式的可翻译文本组件。
-pub fn translatable_component(
-    key: impl Into<String>,
-    with: Vec<TextComponent>,
-) -> TextComponent {
+pub fn translatable_component(key: impl Into<String>, with: Vec<TextComponent>) -> TextComponent {
     let mut map = std::collections::HashMap::new();
     map.insert(
         "translate".to_string(),

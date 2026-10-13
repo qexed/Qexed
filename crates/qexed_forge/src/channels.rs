@@ -10,10 +10,17 @@ pub const LOGIN_DISCRIMINATOR_ACK: i32 = 0x02;
 /// forge:login 通道内部帧（discriminator varint + payload）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForgeLoginMessage {
-    Ready { channels: Vec<String> },
-    RegistryData { payload: Vec<u8> },
+    Ready {
+        channels: Vec<String>,
+    },
+    RegistryData {
+        payload: Vec<u8>,
+    },
     Ack,
-    Unknown { discriminator: i32, payload: Vec<u8> },
+    Unknown {
+        discriminator: i32,
+        payload: Vec<u8>,
+    },
 }
 
 impl ForgeLoginMessage {
@@ -44,7 +51,10 @@ impl ForgeLoginMessage {
             }
             LOGIN_DISCRIMINATOR_REGISTRY => Ok(Self::RegistryData { payload: rest }),
             LOGIN_DISCRIMINATOR_ACK => Ok(Self::Ack),
-            other => Ok(Self::Unknown { discriminator: other, payload: rest }),
+            other => Ok(Self::Unknown {
+                discriminator: other,
+                payload: rest,
+            }),
         }
     }
 
@@ -57,21 +67,32 @@ impl ForgeLoginMessage {
         let mut w = qexed_packet::PacketWriter::new(&mut buf);
         match self {
             Self::Ready { channels } => {
-                VarInt(LOGIN_DISCRIMINATOR_READY).serialize(&mut w).expect("varint");
-                VarInt(channels.len() as i32).serialize(&mut w).expect("varint");
+                VarInt(LOGIN_DISCRIMINATOR_READY)
+                    .serialize(&mut w)
+                    .expect("varint");
+                VarInt(channels.len() as i32)
+                    .serialize(&mut w)
+                    .expect("varint");
                 for c in channels {
                     VarInt(c.len() as i32).serialize(&mut w).expect("varint");
                     w.buf.put_slice(c.as_bytes());
                 }
             }
             Self::RegistryData { payload } => {
-                VarInt(LOGIN_DISCRIMINATOR_REGISTRY).serialize(&mut w).expect("varint");
+                VarInt(LOGIN_DISCRIMINATOR_REGISTRY)
+                    .serialize(&mut w)
+                    .expect("varint");
                 w.buf.extend_from_slice(payload);
             }
             Self::Ack => {
-                VarInt(LOGIN_DISCRIMINATOR_ACK).serialize(&mut w).expect("varint");
+                VarInt(LOGIN_DISCRIMINATOR_ACK)
+                    .serialize(&mut w)
+                    .expect("varint");
             }
-            Self::Unknown { discriminator, payload } => {
+            Self::Unknown {
+                discriminator,
+                payload,
+            } => {
                 VarInt(*discriminator).serialize(&mut w).expect("varint");
                 w.buf.extend_from_slice(payload);
             }

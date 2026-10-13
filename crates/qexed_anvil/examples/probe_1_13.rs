@@ -6,7 +6,11 @@ fn main() {
     let raw = data.decompress().unwrap();
     let (_, root) = qexed_nbt::from_slice_lossy(&raw).unwrap();
     let fields = qexed_anvil::chunk::root_compound(&root).unwrap();
-    eprintln!("compression={} root keys: {:?}", data.compression, fields.keys().collect::<Vec<_>>());
+    eprintln!(
+        "compression={} root keys: {:?}",
+        data.compression,
+        fields.keys().collect::<Vec<_>>()
+    );
     if let Some(qexed_nbt::Tag::Compound(level)) = fields.get("Level") {
         eprintln!("Level keys: {:?}", level.keys().collect::<Vec<_>>());
         if let Some(qexed_nbt::Tag::List(_, sections)) = level.get("Sections") {

@@ -25,18 +25,31 @@ pub enum I18nTextKind {
 pub fn classify_i18n_text(raw: &str) -> DocI18nText {
     let value = raw.trim();
     if let Some(rest) = value.strip_prefix("i18n:") {
-        return DocI18nText { kind: I18nTextKind::I18n, value: rest.trim().to_string() };
+        return DocI18nText {
+            kind: I18nTextKind::I18n,
+            value: rest.trim().to_string(),
+        };
     }
     if let Some(rest) = value.strip_prefix("text:") {
-        return DocI18nText { kind: I18nTextKind::Text, value: rest.trim().to_string() };
+        return DocI18nText {
+            kind: I18nTextKind::Text,
+            value: rest.trim().to_string(),
+        };
     }
-    let looks_like_key =
-        !value.is_empty() && value.contains('.') && value.split('.').all(|seg| {
-            !seg.is_empty()
-                && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    let looks_like_key = !value.is_empty()
+        && value.contains('.')
+        && value.split('.').all(|seg| {
+            !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
-    let kind = if looks_like_key { I18nTextKind::I18n } else { I18nTextKind::Text };
-    DocI18nText { kind, value: value.to_string() }
+    let kind = if looks_like_key {
+        I18nTextKind::I18n
+    } else {
+        I18nTextKind::Text
+    };
+    DocI18nText {
+        kind,
+        value: value.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
@@ -275,6 +288,24 @@ impl<V: DocValue> DocValue for std::collections::BTreeMap<String, V> {
     }
 }
 
+/// 字符串等值列表：schema 的 value_type 为 list<T>，可写值校验逐项穿透。
+impl<V: DocValue> DocValue for Vec<V> {
+    const TYPE: &'static str = "list";
+    const VARIANTS: &'static [&'static str] = V::VARIANTS;
+    fn type_label() -> String {
+        format!("list<{}>", V::type_label())
+    }
+    fn validate(value: &Value) -> Result<(), String> {
+        let Some(arr) = value.as_array() else {
+            return Err(format!("expected list<{}>", V::TYPE));
+        };
+        for (i, v) in arr.iter().enumerate() {
+            V::validate(v).map_err(|e| format!("list[{i}]: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
 /// 类型元数据由宏按字段种类传入：普通字段来自 DocValue，嵌套字段为
 /// 类型名 + 空变体表（schema 详情在其 sub 里）。
 #[doc(hidden)]
@@ -346,7 +377,10 @@ impl DocField {
     /// <Select> 候选值。
     #[doc(hidden)]
     pub fn with_select(self, select: &'static [&'static str]) -> Self {
-        Self { select: select.iter().map(|s| s.to_string()).collect(), ..self }
+        Self {
+            select: select.iter().map(|s| s.to_string()).collect(),
+            ..self
+        }
     }
 
     /// <Min>/<Max> 数值边界（含端点）。

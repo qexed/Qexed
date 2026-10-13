@@ -46,7 +46,9 @@ impl BlockStateRef {
     }
 
     fn from_nbt(entry: &HashMap<String, Tag>) -> Self {
-        let name = string_field(entry, "Name").unwrap_or("minecraft:air").to_string();
+        let name = string_field(entry, "Name")
+            .unwrap_or("minecraft:air")
+            .to_string();
         let properties = entry
             .get("Properties")
             .and_then(|tag| match tag {
@@ -70,13 +72,15 @@ impl BlockStateRef {
 
     fn to_nbt(&self) -> Tag {
         let mut fields = HashMap::new();
-        fields.insert("Name".to_string(), Tag::String(Arc::from(self.name.as_str())));
+        fields.insert(
+            "Name".to_string(),
+            Tag::String(Arc::from(self.name.as_str())),
+        );
         if !self.properties.is_empty() {
             fields.insert(
                 "Properties".to_string(),
                 Tag::Compound(Arc::new(
-                    self
-                        .properties
+                    self.properties
                         .iter()
                         .cloned()
                         .map(|(name, value)| (name, Tag::String(Arc::from(value))))
@@ -124,9 +128,7 @@ pub fn root_compound(root: &Tag) -> Result<&HashMap<String, Tag>, AnvilError> {
 ///
 /// 同时支持两种布局：1.18+ 的根级 `sections`，与 1.13~1.17 的
 /// `Level.Sections`（旧版区块根外层包一个 "Level" compound）。
-pub fn sections_by_y<'a>(
-    root: &'a HashMap<String, Tag>,
-) -> HashMap<i32, &'a HashMap<String, Tag>> {
+pub fn sections_by_y<'a>(root: &'a HashMap<String, Tag>) -> HashMap<i32, &'a HashMap<String, Tag>> {
     let mut sections = HashMap::new();
     let list = root
         .get("sections")
@@ -175,9 +177,7 @@ pub fn block_index(x: i32, y: i32, z: i32) -> usize {
 /// 同时支持两种存储：1.18+ 的 `block_states: {palette, data}`
 /// 容器，与 1.13~1.17 的 section 内 `Palette` + `BlockStates` 并列字段。
 /// 位打包按现代（非跨界）约定；旧版区块用 [`section_blocks_spanning`]。
-pub fn section_blocks(
-    section: &HashMap<String, Tag>,
-) -> Result<SectionBlocks, AnvilError> {
+pub fn section_blocks(section: &HashMap<String, Tag>) -> Result<SectionBlocks, AnvilError> {
     section_blocks_spanning(section, false)
 }
 
@@ -197,7 +197,11 @@ pub fn section_blocks_spanning(
             PaletteKind::Block,
             spanning,
         )?;
-        return Ok(SectionBlocks { section_y, palette, indices });
+        return Ok(SectionBlocks {
+            section_y,
+            palette,
+            indices,
+        });
     }
 
     // 旧版：Palette / BlockStates 直接在 section 里
@@ -211,7 +215,11 @@ pub fn section_blocks_spanning(
             PaletteKind::Block,
             spanning,
         )?;
-        return Ok(SectionBlocks { section_y, palette, indices });
+        return Ok(SectionBlocks {
+            section_y,
+            palette,
+            indices,
+        });
     }
 
     Ok(SectionBlocks {
@@ -270,7 +278,12 @@ fn is_spanning_chunk(root: &HashMap<String, Tag>) -> bool {
 }
 
 /// 取某个世界坐标的方块引用。
-pub fn block_state_at(root: &Tag, x: i32, y: i32, z: i32) -> Result<Option<BlockStateRef>, AnvilError> {
+pub fn block_state_at(
+    root: &Tag,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> Result<Option<BlockStateRef>, AnvilError> {
     let root = root_compound(root)?;
     let section_y = y.div_euclid(SECTION_HEIGHT);
     let spanning = is_spanning_chunk(root);
@@ -357,10 +370,7 @@ pub fn set_block_state(
         let Some(Tag::Compound(level)) = root.get_mut("Level") else {
             return Err(AnvilError::NotACompound);
         };
-        Arc::make_mut(level).insert(
-            "Sections".to_string(),
-            list_tag(tag_id::COMPOUND, sections),
-        );
+        Arc::make_mut(level).insert("Sections".to_string(), list_tag(tag_id::COMPOUND, sections));
     } else {
         root.insert("sections".to_string(), list_tag(tag_id::COMPOUND, sections));
     }
@@ -418,7 +428,12 @@ fn write_section_storage(
             pack_values(&blocks.indices, bits)
         })
         .transpose()?
-        .map(|values| values.into_iter().map(|value| value as i64).collect::<Vec<_>>());
+        .map(|values| {
+            values
+                .into_iter()
+                .map(|value| value as i64)
+                .collect::<Vec<_>>()
+        });
     if let Some(data) = data {
         section.insert("BlockStates".to_string(), Tag::LongArray(Arc::from(data)));
     } else {
@@ -437,11 +452,8 @@ pub fn empty_section(
         ("Y".to_string(), Tag::Byte(section_y as i8)),
         (
             "block_states".to_string(),
-            block_states_tag(
-                &[fallback_block.clone()],
-                &vec![0; BLOCK_ENTRY_COUNT],
-            )
-            .expect("single-entry palette is always valid"),
+            block_states_tag(&[fallback_block.clone()], &vec![0; BLOCK_ENTRY_COUNT])
+                .expect("single-entry palette is always valid"),
         ),
         (
             "biomes".to_string(),
@@ -451,10 +463,7 @@ pub fn empty_section(
 }
 
 /// 由 palette + 索引构造 block_states 标签（索引超调时重新打包位宽）。
-pub fn block_states_tag(
-    palette: &[BlockStateRef],
-    indices: &[usize],
-) -> Result<Tag, AnvilError> {
+pub fn block_states_tag(palette: &[BlockStateRef], indices: &[usize]) -> Result<Tag, AnvilError> {
     if indices.len() != BLOCK_ENTRY_COUNT {
         return Err(AnvilError::BlockStateCount {
             got: indices.len(),
@@ -462,14 +471,22 @@ pub fn block_states_tag(
         });
     }
 
-    let palette_tags = palette.iter().map(BlockStateRef::to_nbt).collect::<Vec<_>>();
+    let palette_tags = palette
+        .iter()
+        .map(BlockStateRef::to_nbt)
+        .collect::<Vec<_>>();
     let data = (palette.len() > 1)
         .then(|| {
             let bits = storage_bits(PaletteKind::Block, palette.len());
             pack_values(indices, bits)
         })
         .transpose()?
-        .map(|values| values.into_iter().map(|value| value as i64).collect::<Vec<_>>());
+        .map(|values| {
+            values
+                .into_iter()
+                .map(|value| value as i64)
+                .collect::<Vec<_>>()
+        });
 
     Ok(paletted_container_tag(palette_tags, data))
 }
@@ -480,17 +497,16 @@ pub fn biome_states_tag(palette: &[String], indices: Option<&[usize]>) -> Tag {
         .iter()
         .map(|name| Tag::String(Arc::from(name.as_str())))
         .collect::<Vec<_>>();
-    let data = indices
-        .and_then(|indices| {
-            (palette.len() > 1).then(|| {
-                let bits = storage_bits(PaletteKind::Biome, palette.len());
-                pack_values(indices, bits)
-                    .expect("validated indices fit storage bits")
-                    .into_iter()
-                    .map(|value| value as i64)
-                    .collect::<Vec<_>>()
-            })
-        });
+    let data = indices.and_then(|indices| {
+        (palette.len() > 1).then(|| {
+            let bits = storage_bits(PaletteKind::Biome, palette.len());
+            pack_values(indices, bits)
+                .expect("validated indices fit storage bits")
+                .into_iter()
+                .map(|value| value as i64)
+                .collect::<Vec<_>>()
+        })
+    });
     paletted_container_tag(palette_tags, data)
 }
 
@@ -573,10 +589,7 @@ fn biome_palette(container: &HashMap<String, Tag>) -> Vec<String> {
     }
 }
 
-pub(crate) fn string_field<'a>(
-    compound: &'a HashMap<String, Tag>,
-    name: &str,
-) -> Option<&'a str> {
+pub(crate) fn string_field<'a>(compound: &'a HashMap<String, Tag>, name: &str) -> Option<&'a str> {
     match compound.get(name) {
         Some(Tag::String(value)) => Some(value),
         _ => None,

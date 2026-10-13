@@ -1,6 +1,6 @@
 // 配置文件错误
 #[derive(Debug, thiserror::Error)]
-pub enum ConfigError{
+pub enum ConfigError {
     #[error("toml error: {0}")]
     TomlError(#[from] qexed_toml::TomlError),
 

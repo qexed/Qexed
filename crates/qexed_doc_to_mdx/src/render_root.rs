@@ -6,7 +6,9 @@ pub fn render_root_page(langs: &[&str]) -> String {
     let mut out = String::new();
     out.push_str("import CommitToGithubHref from \"@components/CommitToGithubHref\";\n\n");
     out.push_str("# Qexed 配置文档\n\n");
-    out.push_str(&format!("- 提交: <CommitToGithubHref commit=\"{commit}\"/>\n\n"));
+    out.push_str(&format!(
+        "- 提交: <CommitToGithubHref commit=\"{commit}\"/>\n\n"
+    ));
     for lang in langs {
         out.push_str(&format!("- [{lang}](./{lang})\n"));
     }

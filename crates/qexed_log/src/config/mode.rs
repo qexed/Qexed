@@ -17,9 +17,9 @@ impl Default for MODE {
 impl MODE {
     pub fn as_tklog(self) -> tklog::MODE {
         match self {
-            Self::HOUR  =>tklog::MODE::HOUR ,
-            Self::DAY  => tklog::MODE::DAY  ,
-            Self::MONTH =>tklog::MODE::MONTH,
+            Self::HOUR => tklog::MODE::HOUR,
+            Self::DAY => tklog::MODE::DAY,
+            Self::MONTH => tklog::MODE::MONTH,
         }
     }
 }

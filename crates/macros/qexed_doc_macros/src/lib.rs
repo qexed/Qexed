@@ -5,7 +5,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 #[proc_macro_derive(Doc)]
 pub fn derive_doc(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    match expand(input) { 
+    match expand(input) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
     }
@@ -53,16 +53,20 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         .values
         .iter()
         .map(|(value_name, expr_text)| -> syn::Result<_> {
-            let expr: syn::Expr = syn::parse_str(expr_text).map_err(|e| {
-                syn::Error::new_spanned(name, format!("invalid <Value> expr: {e}"))
-            })?;
-    Ok(quote! { (#value_name.to_string(), qexed_doc::eval_default(&#expr)) })
+            let expr: syn::Expr = syn::parse_str(expr_text)
+                .map_err(|e| syn::Error::new_spanned(name, format!("invalid <Value> expr: {e}")))?;
+            Ok(quote! { (#value_name.to_string(), qexed_doc::eval_default(&#expr)) })
         })
         .collect::<syn::Result<Vec<_>>>()?;
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
-            _ => return Err(syn::Error::new_spanned(name, "Doc only supports named fields")),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "Doc only supports named fields",
+                ));
+            }
         },
         _ => return Err(syn::Error::new_spanned(name, "Doc only supports structs")),
     };
@@ -72,9 +76,8 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     for field in fields {
         let field_name = field.ident.as_ref().unwrap();
         let field_docs = doc_attrs(&field.attrs);
-        let field_doc = parse_doc(&field_docs).map_err(|e| {
-            syn::Error::new_spanned(field_name, e)
-        })?;
+        let field_doc =
+            parse_doc(&field_docs).map_err(|e| syn::Error::new_spanned(field_name, e))?;
         let field_key = field_doc.key.ok_or_else(|| {
             syn::Error::new_spanned(field_name, "missing <Name> tag in autodoc block")
         })?;
@@ -89,9 +92,8 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         let serde_name = match &serde_field.rename {
             Some(explicit) => explicit.clone(),
             None => match &serde_container.rename_all {
-                Some(rule) => apply_case(&field_name.to_string(), rule).map_err(|e| {
-                    syn::Error::new_spanned(field_name, e)
-                })?,
+                Some(rule) => apply_case(&field_name.to_string(), rule)
+                    .map_err(|e| syn::Error::new_spanned(field_name, e))?,
                 None => field_name.to_string(),
             },
         };
@@ -165,9 +167,7 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         // 非枚举（VARIANTS 空）不推 tip。
         let check_error_tip: syn::Expr = if is_sub {
             syn::parse_quote!(None)
-        } else if field_doc.check.is_none()
-            && field_doc.check_error_tip.is_none()
-        {
+        } else if field_doc.check.is_none() && field_doc.check_error_tip.is_none() {
             syn::parse_quote!({
                 let variants = <#meta_ty as qexed_doc::DocValue>::VARIANTS;
                 if variants.is_empty() {
@@ -470,7 +470,12 @@ fn expand_doc_value(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream>
     let name = &input.ident;
     let variants = match &input.data {
         Data::Enum(data) => &data.variants,
-        _ => return Err(syn::Error::new_spanned(name, "DocValue only supports enums")),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "DocValue only supports enums",
+            ));
+        }
     };
     let container = serde_container_attrs(&input.attrs)?;
     let mut names: Vec<String> = Vec::new();
@@ -481,7 +486,7 @@ fn expand_doc_value(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream>
                 return Err(syn::Error::new_spanned(
                     variant,
                     "DocValue only supports unit variants",
-                ))
+                ));
             }
         }
         // #[serde(skip)] 的变体不参与序列化，也不进文档取值表。
@@ -511,21 +516,22 @@ fn expand_doc_value(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream>
         let serde_name = match explicit_rename {
             Some(renamed) => renamed,
             None => match &container.rename_all {
-                Some(rule) => {
-                    apply_case(&variant.ident.to_string(), rule)
-                        .map_err(|e| syn::Error::new_spanned(variant, e))?
-                }
+                Some(rule) => apply_case(&variant.ident.to_string(), rule)
+                    .map_err(|e| syn::Error::new_spanned(variant, e))?,
                 None => variant.ident.to_string(),
             },
         };
         names.push(serde_name);
     }
     // 注意：匹配必须用字符串字面量模式；裸标识符模式会绑定任意输入。
-    let match_idents = variants.iter().zip(names.iter()).map(|(variant, serde_name)| {
-        let lit = syn::LitStr::new(serde_name, proc_macro2::Span::call_site());
-        let ident = &variant.ident;
-        quote! { #lit => Some(Self::#ident) }
-    });
+    let match_idents = variants
+        .iter()
+        .zip(names.iter())
+        .map(|(variant, serde_name)| {
+            let lit = syn::LitStr::new(serde_name, proc_macro2::Span::call_site());
+            let ident = &variant.ident;
+            quote! { #lit => Some(Self::#ident) }
+        });
     Ok(quote! {
         impl qexed_doc::DocValue for #name {
             const TYPE: &'static str = stringify!(#name);
@@ -608,11 +614,17 @@ fn serde_field_attrs(attrs: &[syn::Attribute]) -> syn::Result<SerdeField> {
         for meta in nested {
             match &meta {
                 syn::Meta::Path(p) => {
-                    if p.is_ident("skip") { out.skip = true; }
-                    else if p.is_ident("flatten") { out.flatten = true; }
-                    else if p.is_ident("default") { out.default = true; }
-                    else if p.is_ident("skip_serializing") { out.skip_serializing = true; }
-                    else if p.is_ident("skip_deserializing") { out.skip_deserializing = true; }
+                    if p.is_ident("skip") {
+                        out.skip = true;
+                    } else if p.is_ident("flatten") {
+                        out.flatten = true;
+                    } else if p.is_ident("default") {
+                        out.default = true;
+                    } else if p.is_ident("skip_serializing") {
+                        out.skip_serializing = true;
+                    } else if p.is_ident("skip_deserializing") {
+                        out.skip_deserializing = true;
+                    }
                 }
                 syn::Meta::NameValue(nv) => {
                     let value = |nv: &syn::MetaNameValue| -> Option<String> {
@@ -626,7 +638,9 @@ fn serde_field_attrs(attrs: &[syn::Attribute]) -> syn::Result<SerdeField> {
                     if nv.path.is_ident("rename") {
                         out.rename = value(nv);
                     } else if nv.path.is_ident("alias") {
-                        if let Some(a) = value(nv) { out.aliases.push(a); }
+                        if let Some(a) = value(nv) {
+                            out.aliases.push(a);
+                        }
                     } else if nv.path.is_ident("default") {
                         out.default_fn = value(nv);
                     }
@@ -645,7 +659,9 @@ fn option_inner(ty: &syn::Type) -> Option<&syn::Type> {
     if segment.ident != "Option" {
         return None;
     }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else { return None };
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
     if args.args.len() != 1 {
         return None;
     }
@@ -655,10 +671,11 @@ fn option_inner(ty: &syn::Type) -> Option<&syn::Type> {
     }
 }
 
-
 /// 数值基本类型的全范围边界（含端点）；非整数类型返回 None（浮点不推边界）。
 fn numeric_bounds_of(ty: &syn::Type) -> Option<(f64, f64)> {
-    let syn::Type::Path(path) = ty else { return None };
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
     let last = path.path.segments.last()?;
     let ident = last.ident.to_string();
     let bounds: (f64, f64) = match ident.as_str() {
@@ -684,9 +701,7 @@ fn secret_pattern_matches(pattern: &str, path: &str) -> bool {
     if pat.len() != seg.len() {
         return false;
     }
-    pat.iter()
-        .zip(seg.iter())
-        .all(|(p, s)| *p == "*" || p == s)
+    pat.iter().zip(seg.iter()).all(|(p, s)| *p == "*" || p == s)
 }
 
 /// serde rename_all 大小写规则。输入是 Rust 蛇形命名字段名或帕斯卡变体名。
@@ -700,7 +715,8 @@ fn apply_case(ident: &str, rule: &str) -> Result<String, String> {
             for (i, ch) in chars.iter().enumerate() {
                 if ch.is_uppercase()
                     && i > 0
-                    && (!chars[i - 1].is_uppercase() || chars.get(i + 1).map_or(false, |n| n.is_lowercase()))
+                    && (!chars[i - 1].is_uppercase()
+                        || chars.get(i + 1).map_or(false, |n| n.is_lowercase()))
                 {
                     out.push(cur.clone());
                     cur.clear();
@@ -717,19 +733,35 @@ fn apply_case(ident: &str, rule: &str) -> Result<String, String> {
     match rule {
         "lowercase" => Ok(ident.to_lowercase()),
         "UPPERCASE" => Ok(ident.to_uppercase()),
-        "snake_case" => Ok(ws.iter().map(|w| w.to_lowercase())
-            .collect::<Vec<_>>().join("_")),
-        "SCREAMING_SNAKE_CASE" => Ok(ws.iter().map(|w| w.to_uppercase())
-            .collect::<Vec<_>>().join("_")),
-        "kebab-case" => Ok(ws.iter().map(|w| w.to_lowercase())
-            .collect::<Vec<_>>().join("-")),
-        "camelCase" => Ok(ws.iter().enumerate().map(|(i, w)| {
-            let lower = w.to_lowercase();
-            if i == 0 { lower }
-            else { capital(&lower) }
-        }).collect::<Vec<_>>().join("")),
-        "PascalCase" => Ok(ws.iter().map(|w| capital(&w.to_lowercase()))
-            .collect::<Vec<_>>().join("")),
+        "snake_case" => Ok(ws
+            .iter()
+            .map(|w| w.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("_")),
+        "SCREAMING_SNAKE_CASE" => Ok(ws
+            .iter()
+            .map(|w| w.to_uppercase())
+            .collect::<Vec<_>>()
+            .join("_")),
+        "kebab-case" => Ok(ws
+            .iter()
+            .map(|w| w.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("-")),
+        "camelCase" => Ok(ws
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let lower = w.to_lowercase();
+                if i == 0 { lower } else { capital(&lower) }
+            })
+            .collect::<Vec<_>>()
+            .join("")),
+        "PascalCase" => Ok(ws
+            .iter()
+            .map(|w| capital(&w.to_lowercase()))
+            .collect::<Vec<_>>()
+            .join("")),
         other => Err(format!("不支持的 serde rename_all 规则: {other}")),
     }
 }
@@ -753,9 +785,15 @@ fn doc_attrs(attrs: &[syn::Attribute]) -> String {
             if !attr.path().is_ident("doc") {
                 return None;
             }
-            let syn::Meta::NameValue(value) = &attr.meta else { return None; };
-            let syn::Expr::Lit(expr) = &value.value else { return None; };
-            let syn::Lit::Str(text) = &expr.lit else { return None; };
+            let syn::Meta::NameValue(value) = &attr.meta else {
+                return None;
+            };
+            let syn::Expr::Lit(expr) = &value.value else {
+                return None;
+            };
+            let syn::Lit::Str(text) = &expr.lit else {
+                return None;
+            };
             Some(text.value())
         })
         .collect::<Vec<_>>()
@@ -847,7 +885,11 @@ fn parse_doc(docs: &str) -> Result<AutoDoc, String> {
             }
             found
         },
-        writable: if attr_flag(&body, "writable") { Some(true) } else { None },
+        writable: if attr_flag(&body, "writable") {
+            Some(true)
+        } else {
+            None
+        },
         tip: value_tag(&body, "Tip"),
         warn: value_tag(&body, "Warn"),
     })
@@ -876,7 +918,9 @@ fn parse_select(block: &str) -> Vec<String> {
     let mut rest = &inner[..];
     while let Some(pos) = rest.find("<Select.Value>") {
         let after = &rest[pos + "<Select.Value>".len()..];
-        let Some(end) = after.find("</Select.Value>") else { break };
+        let Some(end) = after.find("</Select.Value>") else {
+            break;
+        };
         out.push(after[..end].trim().to_string());
         rest = &after[end + "</Select.Value>".len()..];
     }
@@ -889,11 +933,17 @@ fn parse_values(block: &str) -> Vec<(String, String)> {
     let mut rest = block;
     while let Some(pos) = rest.find("<Value") {
         let after = &rest[pos..];
-        let Some(open_end) = after.find('>') else { break };
+        let Some(open_end) = after.find('>') else {
+            break;
+        };
         let open_tag = &after[..open_end];
-        let Some(value_name) = attr_value(open_tag, "name").unwrap_or(None) else { break };
+        let Some(value_name) = attr_value(open_tag, "name").unwrap_or(None) else {
+            break;
+        };
         let body_start = &after[open_end + 1..];
-        let Some(close) = body_start.find("</Value>") else { break };
+        let Some(close) = body_start.find("</Value>") else {
+            break;
+        };
         out.push((value_name, body_start[..close].trim().to_string()));
         rest = &body_start[close + "</Value>".len()..];
     }
@@ -921,7 +971,9 @@ fn tag_text(block: &str, tag: &str) -> Option<String> {
 /// 无该属性返回 Ok(None)，裸值返回 Err（编译期报错，避免静默失效）。
 fn attr_value(tag: &str, attr: &str) -> Result<Option<String>, String> {
     let pattern = format!("{attr}=");
-    let Some(idx) = tag.find(&pattern) else { return Ok(None) };
+    let Some(idx) = tag.find(&pattern) else {
+        return Ok(None);
+    };
     let rest = &tag[idx + pattern.len()..];
     let first = rest.chars().next();
     let quotes = ['"', '\''];
@@ -931,9 +983,7 @@ fn attr_value(tag: &str, attr: &str) -> Result<Option<String>, String> {
             let body = &rest[1..];
             match body.find(q) {
                 Some(end) => Ok(Some(body[..end].to_string())),
-                None => Err(format!(
-                    "属性 {attr} 的引号不配对：<xxx {attr}={rest}>"
-                )),
+                None => Err(format!("属性 {attr} 的引号不配对：<xxx {attr}={rest}>")),
             }
         }
         // 裸值：普通字符串必须带引号
@@ -953,7 +1003,9 @@ fn check_attr_values(block: &str) -> Result<(), String> {
     let mut rest = block;
     while let Some(pos) = rest.find('<') {
         let after = &rest[pos..];
-        let Some(open_end) = after.find('>') else { break };
+        let Some(open_end) = after.find('>') else {
+            break;
+        };
         let tag = &after[..open_end + 1];
         if tag.starts_with("<Attr") || tag.starts_with("<Value") {
             // name 是当前唯二的属性；attr_value 内部强制引号规范

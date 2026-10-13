@@ -2,7 +2,9 @@
 
 use qexed_light::config::algorithm::LightAlgorithm;
 use qexed_light::config::mode::LightMode;
-use qexed_light::data::{BlockLightProps, ChunkLightData, ChunkOpacity, LightNeighborhood, OpacityNeighborhood};
+use qexed_light::data::{
+    BlockLightProps, ChunkLightData, ChunkOpacity, LightNeighborhood, OpacityNeighborhood,
+};
 use qexed_light::engine::LightEngine;
 use qexed_light::geometry::DimensionGeometry;
 use qexed_light::output::LightPayload;
@@ -54,7 +56,10 @@ fn solid_block_shades_below() {
 fn water_dampens_progressively() {
     let dim = air_geometry();
     let mut opacity = ChunkOpacity::filled(&dim.geometry, BlockLightProps::AIR);
-    let water = BlockLightProps { opacity: 1, luminance: 0 };
+    let water = BlockLightProps {
+        opacity: 1,
+        luminance: 0,
+    };
     // 水柱四周+底部全封闭（隔离侧向/底部空气的补光，纯测列衰减）
     for y in 90..100 {
         for (wx, wz) in [(7, 8), (9, 8), (8, 7), (8, 9)] {
@@ -77,7 +82,10 @@ fn water_dampens_progressively() {
 fn block_light_from_torch_spreads() {
     let dim = air_geometry();
     let mut opacity = ChunkOpacity::filled(&dim.geometry, BlockLightProps::AIR);
-    let torch = BlockLightProps { opacity: 0, luminance: 14 };
+    let torch = BlockLightProps {
+        opacity: 0,
+        luminance: 14,
+    };
     opacity.set(8, 64, 8, torch).unwrap();
     let neighborhood = OpacityNeighborhood::single(opacity);
     let engine = LightEngine::new(dim, LightAlgorithm::Fast.into());
@@ -107,7 +115,15 @@ fn nether_has_no_sky_light() {
     // 邻居格 opacity 计代价。此处邻居是空气（opacity 0 → cost 1）→ 14。
     let mut opacity = ChunkOpacity::filled(&dim.geometry, BlockLightProps::AIR);
     opacity
-        .set(4, 40, 4, BlockLightProps { opacity: 15, luminance: 15 })
+        .set(
+            4,
+            40,
+            4,
+            BlockLightProps {
+                opacity: 15,
+                luminance: 15,
+            },
+        )
         .unwrap();
     let neighborhood = OpacityNeighborhood::single(opacity);
     let light = engine.compute_block_light(&neighborhood, None);
@@ -192,7 +208,12 @@ fn payload_masks_and_section_arrays() {
     );
     assert_eq!(payload.sky_light_arrays.len(), g.world_section_count + 1);
     // 每个 2048 字节且全 ff（15）
-    assert!(payload.sky_light_arrays.iter().all(|a| a.iter().all(|&b| b == 0xff)));
+    assert!(
+        payload
+            .sky_light_arrays
+            .iter()
+            .all(|a| a.iter().all(|&b| b == 0xff))
+    );
     // 方块光全 0 → 空
     assert!(payload.block_light_arrays.is_empty());
     assert_eq!(
@@ -203,8 +224,8 @@ fn payload_masks_and_section_arrays() {
 
 #[test]
 fn config_defaults_and_conversion() {
-    use qexed_light::config::LightConfig;
     use qexed_light::SkyLightAlgorithm;
+    use qexed_light::config::LightConfig;
 
     let config = LightConfig::default();
     assert!(config.enable);
@@ -212,8 +233,14 @@ fn config_defaults_and_conversion() {
     assert_eq!(config.algorithm, LightAlgorithm::Fast);
     assert_eq!(config.fixed_level, 15);
 
-    assert_eq!(SkyLightAlgorithm::from(LightAlgorithm::Fast), SkyLightAlgorithm::Fast);
-    assert_eq!(SkyLightAlgorithm::from(LightAlgorithm::RayTrace), SkyLightAlgorithm::RayTrace);
+    assert_eq!(
+        SkyLightAlgorithm::from(LightAlgorithm::Fast),
+        SkyLightAlgorithm::Fast
+    );
+    assert_eq!(
+        SkyLightAlgorithm::from(LightAlgorithm::RayTrace),
+        SkyLightAlgorithm::RayTrace
+    );
 }
 
 #[test]

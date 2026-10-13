@@ -26,7 +26,9 @@ fn fixtures_dir() -> Option<PathBuf> {
 
 /// 统计一个区域文件：区块数、可解压数、NBT 可解析数、section 可解码数。
 fn probe_region(path: &Path) -> (usize, usize, usize, usize, usize) {
-    let Ok(region) = AnvilRegion::from_file(path) else { return (0, 0, 0, 0, 0); };
+    let Ok(region) = AnvilRegion::from_file(path) else {
+        return (0, 0, 0, 0, 0);
+    };
     let mut chunks = 0;
     let mut decompressed = 0;
     let mut parsed = 0;
@@ -39,9 +41,13 @@ fn probe_region(path: &Path) -> (usize, usize, usize, usize, usize) {
         chunks += 1;
         let Ok(raw) = data.decompress() else { continue };
         decompressed += 1;
-        let Ok((_, root)) = qexed_nbt::from_slice_lossy(&raw) else { continue };
+        let Ok((_, root)) = qexed_nbt::from_slice_lossy(&raw) else {
+            continue;
+        };
         parsed += 1;
-        let Ok(all) = chunk::all_section_blocks(&root) else { continue };
+        let Ok(all) = chunk::all_section_blocks(&root) else {
+            continue;
+        };
         sections += all.len();
         for section in &all {
             // 遍历 4096 个条目验证索引都在 palette 范围内
@@ -67,7 +73,9 @@ fn probe_region(path: &Path) -> (usize, usize, usize, usize, usize) {
 fn go_mc_world_region_files_parse_fully() {
     let Some(dir) = fixtures_dir() else { return };
     let world = dir.join("goworld");
-    if !world.exists() { return };
+    if !world.exists() {
+        return;
+    };
 
     let mut total_chunks = 0;
     let mut total_blocks = 0;
@@ -86,12 +94,16 @@ fn go_mc_world_region_files_parse_fully() {
             if sub == "region" {
                 assert!(chunks > 0, "no chunks in {}", file.display());
                 assert_eq!(
-                    chunks, decompressed,
-                    "decompression failed in {}", file.display()
+                    chunks,
+                    decompressed,
+                    "decompression failed in {}",
+                    file.display()
                 );
                 assert_eq!(
-                    decompressed, parsed,
-                    "NBT parse failed in {}", file.display()
+                    decompressed,
+                    parsed,
+                    "NBT parse failed in {}",
+                    file.display()
                 );
                 assert!(sections > 0);
                 total_chunks += chunks;
@@ -111,7 +123,9 @@ fn go_mc_world_region_files_parse_fully() {
 fn go_mc_world_level_dat_parses() {
     let Some(dir) = fixtures_dir() else { return };
     let level = dir.join("goworld/level.dat");
-    if !level.exists() { return };
+    if !level.exists() {
+        return;
+    };
 
     // level.dat 是 gzip 的 named NBT，验证 qexed_nbt 链路
     let (name, root) = qexed_nbt::from_file(&level).expect("parse level.dat");
@@ -135,7 +149,9 @@ fn go_mc_world_level_dat_parses() {
 fn fastnbt_1_19_4_region_parses_fully() {
     let Some(dir) = fixtures_dir() else { return };
     let path = dir.join("1.19.4.mca");
-    if !path.exists() { return };
+    if !path.exists() {
+        return;
+    };
 
     let (chunks, decompressed, parsed, sections, blocks) = probe_region(&path);
     eprintln!("1.19.4.mca: {chunks} chunks, {sections} sections, {blocks} blocks");
@@ -186,7 +202,9 @@ fn single_chunk_fixtures_parse() {
                 use std::io::Read;
                 let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
                 let mut raw = Vec::new();
-                decoder.read_to_end(&mut raw).expect("fixture is NBT or gzip NBT");
+                decoder
+                    .read_to_end(&mut raw)
+                    .expect("fixture is NBT or gzip NBT");
                 qexed_nbt::from_slice(&raw)
                     .expect("fixture parses as NBT")
                     .1
@@ -210,7 +228,10 @@ fn single_chunk_fixtures_parse() {
             );
         } else {
             // 1.12 旧格式：明确不支持，sections 应为空而不是崩溃
-            assert!(sections.is_empty(), "{name}: unsupported/empty fixture should report no sections");
+            assert!(
+                sections.is_empty(),
+                "{name}: unsupported/empty fixture should report no sections"
+            );
         }
     }
 }

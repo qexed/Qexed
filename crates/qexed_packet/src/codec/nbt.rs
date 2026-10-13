@@ -207,10 +207,7 @@ fn write_len_i32(
 fn read_len_i32(buf: &mut dyn Buf, name: &'static str) -> Result<usize, PacketError> {
     let len = buf.get_i32();
     if len < 0 {
-        return Err(PacketError::NegativeLength {
-            name,
-            value: len,
-        });
+        return Err(PacketError::NegativeLength { name, value: len });
     }
 
     Ok(len as usize)

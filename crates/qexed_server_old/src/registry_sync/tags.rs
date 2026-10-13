@@ -134,9 +134,7 @@ enum TagValue {
     Tag(String),
 }
 
-fn load_tag_definitions(
-    tags_dir: &std::path::Path,
-) -> Result<HashMap<String, Vec<TagValue>>> {
+fn load_tag_definitions(tags_dir: &std::path::Path) -> Result<HashMap<String, Vec<TagValue>>> {
     let mut definitions = HashMap::new();
 
     for path in json_files(tags_dir)? {

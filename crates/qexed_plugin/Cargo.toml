@@ -1,0 +1,28 @@
+[package]
+name = "qexed_plugin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qexed_plugin_api.workspace = true
+qexed_packet.workspace = true
+qexed_protocol.workspace = true
+qexed_registry.workspace = true
+qexed_chat.workspace = true
+qexed_tcp_connect.workspace = true
+bytes.workspace = true
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["v5"] }
+rand.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+qexed_config.workspace = true
+libloading.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+log.workspace = true
+
+[dev-dependencies]
+qexed_toml.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

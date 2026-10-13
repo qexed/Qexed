@@ -43,10 +43,7 @@ impl SecureChatSession {
         profile_id: uuid::Uuid,
         chat: &ChatMessage,
     ) -> Result<VerifiedChatMessage, ChatError> {
-        let signature = chat
-            .signature
-            .as_ref()
-            .ok_or(ChatError::MissingSignature)?;
+        let signature = chat.signature.as_ref().ok_or(ChatError::MissingSignature)?;
 
         validate_last_seen_update(chat)?;
         if chat.timestamp < self.last_timestamp {

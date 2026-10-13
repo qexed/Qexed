@@ -10,9 +10,9 @@
 //! 许可：本 crate 为 MIT，独立于 Forge 本体（LGPLv3）实现的干净房间
 //! 重新实现——只实现线上的字节格式，不包含任何 Forge 代码。
 
-pub mod handshake;
 pub mod channels;
 pub mod error;
+pub mod handshake;
 
 pub use error::ForgeError;
 pub use handshake::{ModEntry, ModList};

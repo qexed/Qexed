@@ -1,6 +1,6 @@
+use crate::TomlError;
 use serde::Serialize;
-use toml_edit::DocumentMut;
-use crate::TomlError; // 加上 Item、Value
+use toml_edit::DocumentMut; // 加上 Item、Value
 // toml_edit的to_document的封装，没啥特殊含义
 pub fn to_document<T>(value: &T) -> Result<DocumentMut, TomlError>
 where

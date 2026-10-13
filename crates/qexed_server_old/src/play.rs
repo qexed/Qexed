@@ -68,7 +68,8 @@ where
     .await?;
 
     // 2. 位置同步
-    conn.send(&to_client::play::position::Position::default()).await?;
+    conn.send(&to_client::play::position::Position::default())
+        .await?;
 
     // 3. keepalive 循环 + 基础包处理
     let mut keepalive_counter = 0i64;

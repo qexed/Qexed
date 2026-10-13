@@ -1,0 +1,12 @@
+[package]
+name = "qexed_plugin_sdk"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+qexed_plugin.workspace = true
+qexed_plugin_api.workspace = true
+async-trait.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

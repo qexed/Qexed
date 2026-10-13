@@ -11,8 +11,8 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::punctuated::Punctuated;
 use syn::parse::Parser;
+use syn::punctuated::Punctuated;
 use syn::{LitStr, Token};
 
 #[proc_macro_attribute]
@@ -24,7 +24,6 @@ pub fn app_config(args: TokenStream, input: TokenStream) -> TokenStream {
         Err(error) => error.to_compile_error().into(),
     }
 }
-
 
 fn expand(
     arg_tokens: proc_macro2::TokenStream,
@@ -38,7 +37,7 @@ fn expand(
             return Err(syn::Error::new(
                 proc_macro2::Span::call_site(),
                 "app_config only works on structs",
-            ))
+            ));
         }
     };
     let name = &item_struct.ident;
@@ -125,8 +124,6 @@ fn parse_args(tokens: proc_macro2::TokenStream) -> syn::Result<(String, String)>
     }
 }
 
-
-
 /// 取标签内文（<Tag>...</Tag>），跨行有效。
 fn tag_inner(text: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
@@ -147,9 +144,9 @@ fn serde_rename_of(field: &syn::Field) -> Option<String> {
         if !attr.path().is_ident("serde") {
             continue;
         }
-        if let Ok(nested) = attr.parse_args_with(
-            Punctuated::<syn::Meta, Token![,]>::parse_terminated,
-        ) {
+        if let Ok(nested) =
+            attr.parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated)
+        {
             for meta in nested {
                 if let syn::Meta::NameValue(nv) = meta {
                     if nv.path.is_ident("rename") {

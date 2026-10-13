@@ -37,10 +37,8 @@ where
 
     // 3. known packs（vanilla core 一个）
     let known_packs = sync::known_packs();
-    conn.send(&to_client::configuration::select_known_packs::SelectKnownPacks {
-        known_packs,
-    })
-    .await?;
+    conn.send(&to_client::configuration::select_known_packs::SelectKnownPacks { known_packs })
+        .await?;
 
     // 客户端回 select_known_packs：若客户端已带 vanilla core 数据，则 registry 内容可省略。
     // 等待期间跳过客户端的自发包（settings / custom_payload register 等）。
@@ -57,8 +55,8 @@ where
     }
 
     // 5. tags（单包，按注册表分组）
-    let tag_packet = sync::load_tag_packet()
-        .map_err(|err| ServerError::RegistrySync(err.to_string()))?;
+    let tag_packet =
+        sync::load_tag_packet().map_err(|err| ServerError::RegistrySync(err.to_string()))?;
     log::debug!("sending tags: {} registries", tag_packet.tags.len());
     conn.send(&tag_packet).await?;
 
@@ -99,9 +97,7 @@ where
 }
 
 /// 等待客户端的 finish_configuration，跳过其它 configuration 包。
-async fn wait_for_finish_configuration<R, W>(
-    conn: &mut Connection<R, W>,
-) -> Result<(), ServerError>
+async fn wait_for_finish_configuration<R, W>(conn: &mut Connection<R, W>) -> Result<(), ServerError>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,

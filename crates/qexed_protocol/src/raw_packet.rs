@@ -8,11 +8,14 @@ pub struct RawPacket<const ID_VALUE: i32> {
 impl<const ID_VALUE: i32> Packet for RawPacket<ID_VALUE> {
     const ID: i32 = ID_VALUE;
 
-    fn serialize(&self, w: &mut PacketWriter) -> Result<(),qexed_packet::error::PacketError> {
+    fn serialize(&self, w: &mut PacketWriter) -> Result<(), qexed_packet::error::PacketError> {
         self.data.serialize(w)
     }
 
-    fn deserialize(&mut self, r: &mut PacketReader) -> Result<(),qexed_packet::error::PacketError> {
+    fn deserialize(
+        &mut self,
+        r: &mut PacketReader,
+    ) -> Result<(), qexed_packet::error::PacketError> {
         self.data.deserialize(r)
     }
 }

@@ -1,13 +1,12 @@
-
-mod merge;
 mod document;
-mod file;
 mod error;
+mod file;
+mod merge;
 mod secrets;
 
-pub use error::TomlError;
 pub use document::from_document;
 pub use document::to_document;
+pub use error::TomlError;
 pub use file::create_file;
 pub use file::has_file;
 pub use file::load_file;

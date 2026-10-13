@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use qexed_anvil::chunk::{
-    self, BlockStateRef, empty_section, section_blocks, set_block_state,
-};
+use qexed_anvil::chunk::{self, BlockStateRef, empty_section, section_blocks, set_block_state};
 use qexed_nbt::Tag;
 
 fn root_with_section(section_y: i32) -> Tag {
@@ -85,9 +83,7 @@ fn set_in_missing_section_creates_it() {
     .unwrap();
 
     assert_eq!(
-        chunk::block_state_at(&updated, 0, -64, 0)
-            .unwrap()
-            .unwrap(),
+        chunk::block_state_at(&updated, 0, -64, 0).unwrap().unwrap(),
         deep
     );
     // 原 section 0 仍在
@@ -109,10 +105,7 @@ fn sections_sorted_after_creation() {
     .unwrap();
 
     let sections = chunk::root_compound(&updated).unwrap();
-    let ys: Vec<i32> = chunk::sections_by_y(sections)
-        .keys()
-        .copied()
-        .collect();
+    let ys: Vec<i32> = chunk::sections_by_y(sections).keys().copied().collect();
     let mut sorted = ys.clone();
     sorted.sort();
     assert_eq!(ys.len(), 2);
@@ -122,7 +115,9 @@ fn sections_sorted_after_creation() {
     };
     let mut list_ys = Vec::new();
     for item in items.iter() {
-        let Tag::Compound(fields) = item else { continue };
+        let Tag::Compound(fields) = item else {
+            continue;
+        };
         if let Some(Tag::Byte(y)) = fields.get("Y") {
             list_ys.push(i32::from(*y));
         }

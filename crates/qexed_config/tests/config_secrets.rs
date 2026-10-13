@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use qexed_config::{config_path, init_config_path, Config};
+use qexed_config::{Config, config_path, init_config_path};
 
 const PLACEHOLDER: &str = "<stored in .secrets>";
 
@@ -34,7 +34,10 @@ fn setup() -> &'static PathBuf {
 
 /// 复刻 `config_file` 的路径推导逻辑（它不对外，这里是测试私有副本）。
 fn main_file(path: &str, name: &str) -> PathBuf {
-    config_path().unwrap().join(path).join(format!("{name}.toml"))
+    config_path()
+        .unwrap()
+        .join(path)
+        .join(format!("{name}.toml"))
 }
 
 /// secrets 文件路径：与主文件同模块目录，位于 `<PATH>/.secrets/<NAME>.toml`。
@@ -69,7 +72,10 @@ fn roundtrip_basic_secret() {
         const SECRETS: &'static [&'static str] = &["token"];
     }
 
-    let cfg = Cfg { token: "sk-abc".into(), name: "alice".into() };
+    let cfg = Cfg {
+        token: "sk-abc".into(),
+        name: "alice".into(),
+    };
     Cfg::create_file(Some(&cfg)).unwrap();
 
     let main = read(&main_file(Cfg::PATH, Cfg::NAME)).expect("main file exists");
@@ -91,16 +97,26 @@ fn roundtrip_nested_secret() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Auth { username: String, password: String }
+    struct Auth {
+        username: String,
+        password: String,
+    }
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { auth: Auth }
+    struct Cfg {
+        auth: Auth,
+    }
     impl Config for Cfg {
         const PATH: &'static str = "roundtrip_nested_secret";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &["auth.password"];
     }
 
-    let cfg = Cfg { auth: Auth { username: "alice".into(), password: "hunter2".into() } };
+    let cfg = Cfg {
+        auth: Auth {
+            username: "alice".into(),
+            password: "hunter2".into(),
+        },
+    };
     Cfg::create_file(Some(&cfg)).unwrap();
 
     let main = read(&main_file(Cfg::PATH, Cfg::NAME)).unwrap();
@@ -120,9 +136,14 @@ fn roundtrip_array_wildcard_secret() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Server { host: String, api_key: String }
+    struct Server {
+        host: String,
+        api_key: String,
+    }
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { servers: Vec<Server> }
+    struct Cfg {
+        servers: Vec<Server>,
+    }
     impl Config for Cfg {
         const PATH: &'static str = "roundtrip_array_wildcard_secret";
         const NAME: &'static str = "config";
@@ -131,8 +152,14 @@ fn roundtrip_array_wildcard_secret() {
 
     let cfg = Cfg {
         servers: vec![
-            Server { host: "a.example.com".into(), api_key: "key-a".into() },
-            Server { host: "b.example.com".into(), api_key: "key-b".into() },
+            Server {
+                host: "a.example.com".into(),
+                api_key: "key-a".into(),
+            },
+            Server {
+                host: "b.example.com".into(),
+                api_key: "key-b".into(),
+            },
         ],
     };
     Cfg::create_file(Some(&cfg)).unwrap();
@@ -161,8 +188,10 @@ fn load_and_create_default_creates_files() {
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
     struct Cfg {
-        #[serde(default)] token: String,
-        #[serde(default)] name: String,
+        #[serde(default)]
+        token: String,
+        #[serde(default)]
+        name: String,
     }
     impl Config for Cfg {
         const PATH: &'static str = "load_and_create_default_creates_files";
@@ -183,14 +212,18 @@ fn no_secret_fields_no_secret_file() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { name: String }
+    struct Cfg {
+        name: String,
+    }
     impl Config for Cfg {
         const PATH: &'static str = "no_secret_fields_no_secret_file";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &[];
     }
 
-    let cfg = Cfg { name: "alice".into() };
+    let cfg = Cfg {
+        name: "alice".into(),
+    };
     Cfg::create_file(Some(&cfg)).unwrap();
 
     assert!(
@@ -212,14 +245,20 @@ fn save_preserves_unknown_fields_in_main_file() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { token: String, name: String }
+    struct Cfg {
+        token: String,
+        name: String,
+    }
     impl Config for Cfg {
         const PATH: &'static str = "save_preserves_unknown_fields_in_main_file";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &["token"];
     }
 
-    let cfg = Cfg { token: "sk-abc".into(), name: "alice".into() };
+    let cfg = Cfg {
+        token: "sk-abc".into(),
+        name: "alice".into(),
+    };
     Cfg::create_file(Some(&cfg)).unwrap();
 
     let main_path = main_file(Cfg::PATH, Cfg::NAME);
@@ -242,14 +281,20 @@ fn previously_secret_field_stays_secret_after_rule_change() {
 
     // 阶段一：token 在 SECRETS 中
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct CfgA { token: String, name: String }
+    struct CfgA {
+        token: String,
+        name: String,
+    }
     impl Config for CfgA {
         const PATH: &'static str = "previously_secret_field_stays_secret_after_rule_change";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &["token"];
     }
 
-    let a = CfgA { token: "sk-abc".into(), name: "alice".into() };
+    let a = CfgA {
+        token: "sk-abc".into(),
+        name: "alice".into(),
+    };
     CfgA::create_file(Some(&a)).unwrap();
     assert!(main_file(CfgA::PATH, CfgA::NAME).exists());
     assert!(secret_file(CfgA::PATH, CfgA::NAME).exists());
@@ -257,21 +302,32 @@ fn previously_secret_field_stays_secret_after_rule_change() {
     // 阶段二：SECRETS 不再声明 token，但旧 secrets 里存在 token →
     // "一旦机密，永远是机密"，仍被抽出。
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct CfgB { token: String, name: String }
+    struct CfgB {
+        token: String,
+        name: String,
+    }
     impl Config for CfgB {
-        const PATH: &'static str =
-            "previously_secret_field_stays_secret_after_rule_change";
+        const PATH: &'static str = "previously_secret_field_stays_secret_after_rule_change";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &[];
     }
 
-    let b = CfgB { token: "sk-abc".into(), name: "alice".into() };
+    let b = CfgB {
+        token: "sk-abc".into(),
+        name: "alice".into(),
+    };
     CfgB::save_file(&b).unwrap();
 
     let main = read(&main_file(CfgB::PATH, CfgB::NAME)).unwrap();
     let secret = read(&secret_file(CfgB::PATH, CfgB::NAME)).unwrap();
-    assert!(main.contains(PLACEHOLDER), "token should still be a placeholder: {main}");
-    assert!(secret.contains("sk-abc"), "token should still be in secrets: {secret}");
+    assert!(
+        main.contains(PLACEHOLDER),
+        "token should still be a placeholder: {main}"
+    );
+    assert!(
+        secret.contains("sk-abc"),
+        "token should still be in secrets: {secret}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -283,14 +339,20 @@ fn load_with_placeholder_but_missing_secret_file_does_not_panic() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { token: String, name: String }
+    struct Cfg {
+        token: String,
+        name: String,
+    }
     impl Config for Cfg {
         const PATH: &'static str = "load_with_placeholder_but_missing_secret_file_does_not_panic";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &["token"];
     }
 
-    let cfg = Cfg { token: "sk-abc".into(), name: "alice".into() };
+    let cfg = Cfg {
+        token: "sk-abc".into(),
+        name: "alice".into(),
+    };
     Cfg::create_file(Some(&cfg)).unwrap();
 
     std::fs::remove_file(secret_file(Cfg::PATH, Cfg::NAME)).unwrap();
@@ -307,18 +369,28 @@ fn load_overrides_placeholder_with_secret_value() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { token: String, name: String }
+    struct Cfg {
+        token: String,
+        name: String,
+    }
     impl Config for Cfg {
         const PATH: &'static str = "load_overrides_placeholder_with_secret_value";
         const NAME: &'static str = "config";
         const SECRETS: &'static [&'static str] = &["token"];
     }
 
-    let cfg = Cfg { token: "sk-abc".into(), name: "alice".into() };
+    let cfg = Cfg {
+        token: "sk-abc".into(),
+        name: "alice".into(),
+    };
     Cfg::create_file(Some(&cfg)).unwrap();
 
     // 主文件落盘的是占位符
-    assert!(read(&main_file(Cfg::PATH, Cfg::NAME)).unwrap().contains(PLACEHOLDER));
+    assert!(
+        read(&main_file(Cfg::PATH, Cfg::NAME))
+            .unwrap()
+            .contains(PLACEHOLDER)
+    );
 
     // 加载后被 secrets 覆盖为真值
     assert_eq!(Cfg::load_file(false).unwrap().token, "sk-abc");
@@ -333,18 +405,24 @@ fn root_const_override_writes_to_own_directory() {
     setup();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct Cfg { name: String }
+    struct Cfg {
+        name: String,
+    }
     impl Config for Cfg {
         const ROOT: Option<&'static str> = Some("root_override_dir");
         const PATH: &'static str = "sub";
         const NAME: &'static str = "config";
     }
 
-    let cfg = Cfg { name: "own-root".into() };
+    let cfg = Cfg {
+        name: "own-root".into(),
+    };
     Cfg::save_file(&cfg).unwrap();
 
     // 落在 ROOT 覆写的目录，而不是全局根目录
-    let in_override = std::path::Path::new("root_override_dir").join("sub").join("config.toml");
+    let in_override = std::path::Path::new("root_override_dir")
+        .join("sub")
+        .join("config.toml");
     assert!(in_override.exists());
     let global = config_path().unwrap().join("sub").join("config.toml");
     assert!(!global.exists());
@@ -359,20 +437,21 @@ fn root_const_override_writes_to_own_directory() {
 fn explicit_root_at_apis_do_not_need_init() {
     // 该测试故意不调用 setup()：*_at API 不依赖 init_config_path。
     // 但 OnceLock 是进程级的，其他测试可能已初始化；这里用独立临时目录验证语义即可。
-    let tmp = std::env::temp_dir().join(format!(
-        "qexed_config_at_test_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("qexed_config_at_test_{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-    struct CfgAt { name: String }
+    struct CfgAt {
+        name: String,
+    }
     impl Config for CfgAt {
         const PATH: &'static str = "deep/dir";
         const NAME: &'static str = "config";
     }
 
-    let cfg = CfgAt { name: "at-api".into() };
+    let cfg = CfgAt {
+        name: "at-api".into(),
+    };
     CfgAt::save_file_at(&tmp, &cfg).unwrap();
 
     let expected = tmp.join("deep/dir").join("config.toml");

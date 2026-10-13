@@ -10,7 +10,11 @@ use std::sync::Arc;
 use qexed_chat::profile_key_payload;
 
 use crate::{
-    AuthenticatedProfile, config::AuthConfig, error::AuthError, model::{ServicesPublicKeys, SessionProfile}, util::{current_epoch_millis, minecraft_server_hash},
+    AuthenticatedProfile,
+    config::AuthConfig,
+    error::AuthError,
+    model::{ServicesPublicKeys, SessionProfile},
+    util::{current_epoch_millis, minecraft_server_hash},
 };
 
 /// Minecraft 协议固定的空 server_id（不做 IP 绑定）。
@@ -146,8 +150,7 @@ impl Authenticator {
             .player_certificate_keys
             .into_iter()
             .map(|key| {
-                let der = base64::engine::general_purpose::STANDARD
-                    .decode(key.public_key)?;
+                let der = base64::engine::general_purpose::STANDARD.decode(key.public_key)?;
                 Ok(PKey::public_key_from_der(&der)?)
             })
             .collect::<Result<Vec<_>, AuthError>>()?;

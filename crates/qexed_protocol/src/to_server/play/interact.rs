@@ -1,6 +1,6 @@
 use bytes::BufMut as _;
-use qexed_packet::{PacketCodec, net_types::VarInt};
 use qexed_packet::error::PacketError;
+use qexed_packet::{PacketCodec, net_types::VarInt};
 
 #[qexed_packet_macros::packet(id = 0x1A)]
 #[derive(Debug, Default, PartialEq, Clone)]

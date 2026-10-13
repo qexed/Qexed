@@ -53,7 +53,10 @@ pub async fn serve(config: ServerConfig) -> Result<ServerHandle, ServerError> {
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     let local_addr = listener.local_addr()?;
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-    let handle = ServerHandle { local_addr, shutdown: shutdown_tx };
+    let handle = ServerHandle {
+        local_addr,
+        shutdown: shutdown_tx,
+    };
 
     // 句柄立即返回给调用方；accept 循环在后台
     tokio::spawn(async move {
@@ -77,10 +80,7 @@ pub async fn serve(config: ServerConfig) -> Result<ServerHandle, ServerError> {
 }
 
 /// 单条连接的完整状态机。
-pub async fn handle_connection<S>(
-    socket: S,
-    config: &ServerConfig,
-) -> Result<(), ServerError>
+pub async fn handle_connection<S>(socket: S, config: &ServerConfig) -> Result<(), ServerError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -106,15 +106,21 @@ where
             configuration::handle_configuration(&mut conn).await?;
 
             // 4. 游玩
-            let _session = play::handle_play(&mut conn, &login_outcome, &config.play, |_| {}).await?;
+            let _session =
+                play::handle_play(&mut conn, &login_outcome, &config.play, |_| {}).await?;
             Ok(())
         }
-        other => Err(ServerError::UnexpectedState(format!("handshake next_state {other}"))),
+        other => Err(ServerError::UnexpectedState(format!(
+            "handshake next_state {other}"
+        ))),
     }
 }
 
 /// 状态 ping（服务器列表）。
-async fn handle_status<R, W>(conn: &mut Connection<R, W>, config: &ServerConfig) -> Result<(), ServerError>
+async fn handle_status<R, W>(
+    conn: &mut Connection<R, W>,
+    config: &ServerConfig,
+) -> Result<(), ServerError>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -136,17 +142,17 @@ where
         "description": { "text": config.motd },
     });
 
-    conn.send(&qexed_protocol::to_client::status::server_info::ServerInfo {
-        response: qexed_packet::net_types::JsonValue(response),
-    })
+    conn.send(
+        &qexed_protocol::to_client::status::server_info::ServerInfo {
+            response: qexed_packet::net_types::JsonValue(response),
+        },
+    )
     .await?;
 
     // 客户端可能随后发 ping（延迟测量），回 pong 后连接结束
     if let Ok(ping) = conn.read_packet::<StatusPing>("status ping").await {
-        conn.send(&qexed_protocol::to_client::status::ping::Ping {
-            time: ping.time,
-        })
-        .await?;
+        conn.send(&qexed_protocol::to_client::status::ping::Ping { time: ping.time })
+            .await?;
     }
     Ok(())
 }

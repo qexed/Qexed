@@ -136,7 +136,11 @@ impl AuthenticatorInner {
         let http = reqwest::Client::builder()
             .user_agent(format!("qexed/{}", env!("CARGO_PKG_VERSION")))
             .build()?;
-        Ok(Self { public_key_der, private_key, http })
+        Ok(Self {
+            public_key_der,
+            private_key,
+            http,
+        })
     }
 }
 
@@ -174,14 +178,22 @@ fn parse_mojang_uuid(value: &str) -> anyhow::Result<uuid::Uuid> {
     if value.len() == 32 {
         let hyphenated = format!(
             "{}-{}-{}-{}-{}",
-            &value[0..8], &value[8..12], &value[12..16], &value[16..20], &value[20..32],
+            &value[0..8],
+            &value[8..12],
+            &value[12..16],
+            &value[16..20],
+            &value[20..32],
         );
         return Ok(uuid::Uuid::parse_str(&hyphenated)?);
     }
     Ok(uuid::Uuid::parse_str(value)?)
 }
 
-pub fn minecraft_server_hash(server_id: &str, shared_secret: &[u8], public_key_der: &[u8]) -> String {
+pub fn minecraft_server_hash(
+    server_id: &str,
+    shared_secret: &[u8],
+    public_key_der: &[u8],
+) -> String {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(server_id.as_bytes());

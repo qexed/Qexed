@@ -7,7 +7,7 @@ use thiserror::Error;
 pub mod named;
 pub mod net;
 
-pub use named::{from_file, from_slice, from_slice_lossy, to_file, to_vec, NbtIo};
+pub use named::{NbtIo, from_file, from_slice, from_slice_lossy, to_file, to_vec};
 pub mod nbt_serde;
 
 #[derive(Error, Debug)]
@@ -113,10 +113,16 @@ impl Tag {
         if let Some(first) = items.first() {
             let first_id = first.tag_id();
             if let Some(bad) = items.iter().find(|t| t.tag_id() != first_id) {
-                return Err(NbtError::ListTypeMismatch { expected: first_id, actual: bad.tag_id() });
+                return Err(NbtError::ListTypeMismatch {
+                    expected: first_id,
+                    actual: bad.tag_id(),
+                });
             }
             if first_id != tag_id {
-                return Err(NbtError::ListTypeMismatch { expected: tag_id, actual: first_id });
+                return Err(NbtError::ListTypeMismatch {
+                    expected: tag_id,
+                    actual: first_id,
+                });
             }
         }
         let length = items.len() as i32;
@@ -130,7 +136,10 @@ impl Tag {
     pub fn string_list(strings: Vec<String>) -> Result<Self, NbtError> {
         Self::new_list(
             tag_id::STRING,
-            strings.into_iter().map(|s| Tag::String(Arc::from(s))).collect(),
+            strings
+                .into_iter()
+                .map(|s| Tag::String(Arc::from(s)))
+                .collect(),
         )
     }
 }

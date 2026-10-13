@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use bytes::{Buf as _, BufMut as _};
 
 use crate::{
-    PacketCodec, PacketReader, PacketWriter, error::PacketError, net_types::{RestBuffer, VarInt},
+    PacketCodec, PacketReader, PacketWriter,
+    error::PacketError,
+    net_types::{RestBuffer, VarInt},
 };
 
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -314,12 +316,19 @@ fn read_bounded_count(max: usize, r: &mut PacketReader) -> Result<usize, PacketE
     let mut count = VarInt::default();
     count.deserialize(r)?;
     if count.0 < 0 {
-        return Err(PacketError::NegativeLength { name: "collection", value: count.0 });
+        return Err(PacketError::NegativeLength {
+            name: "collection",
+            value: count.0,
+        });
     }
 
     let count = count.0 as usize;
     if count > max {
-        return Err(PacketError::LengthExceedsMax { name: "collection", count, max });
+        return Err(PacketError::LengthExceedsMax {
+            name: "collection",
+            count,
+            max,
+        });
     }
 
     Ok(count)
@@ -327,10 +336,17 @@ fn read_bounded_count(max: usize, r: &mut PacketReader) -> Result<usize, PacketE
 
 fn write_bounded_count(count: usize, max: usize, w: &mut PacketWriter) -> Result<(), PacketError> {
     if count > max {
-        return Err(PacketError::LengthExceedsMax { name: "collection", count, max });
+        return Err(PacketError::LengthExceedsMax {
+            name: "collection",
+            count,
+            max,
+        });
     }
     if count > i32::MAX as usize {
-        return Err(PacketError::LengthExceedsVarIntMax { name: "collection", len: count });
+        return Err(PacketError::LengthExceedsVarIntMax {
+            name: "collection",
+            len: count,
+        });
     }
 
     VarInt(count as i32).serialize(w)

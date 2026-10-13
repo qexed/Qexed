@@ -50,9 +50,11 @@ where
 
     // 3. 请求客户端选择 known packs
     let known_packs = qexed_registry::known_packs();
-    sink.send(to_client::configuration::select_known_packs::SelectKnownPacks {
-        known_packs: known_packs.clone(),
-    })
+    sink.send(
+        to_client::configuration::select_known_packs::SelectKnownPacks {
+            known_packs: known_packs.clone(),
+        },
+    )
     .await?;
     sink.flush().await?;
 
@@ -91,8 +93,7 @@ where
     sink.flush().await?;
 
     // 9. 等客户端 ack（带超时）
-    read_expected_packet::<ServerboundFinishConfiguration, _>(packets, CONFIG_READ_TIMEOUT)
-        .await?;
+    read_expected_packet::<ServerboundFinishConfiguration, _>(packets, CONFIG_READ_TIMEOUT).await?;
 
     Ok(client)
 }

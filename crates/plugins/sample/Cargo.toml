@@ -1,0 +1,12 @@
+[package]
+name = "qexed-plugin-sample"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+qexed_plugin_api.workspace = true
+async-trait.workspace = true
+tokio.workspace = true

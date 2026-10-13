@@ -42,8 +42,16 @@ impl LightPayload {
 
     /// 从原始一维数组构造（长度必须等于 chunk_light_len）。
     pub fn from_raw(geometry: &LightGeometry, sky: &[u8], block: &[u8]) -> Self {
-        assert_eq!(sky.len(), geometry.chunk_light_len, "sky light length mismatch");
-        assert_eq!(block.len(), geometry.chunk_light_len, "block light length mismatch");
+        assert_eq!(
+            sky.len(),
+            geometry.chunk_light_len,
+            "sky light length mismatch"
+        );
+        assert_eq!(
+            block.len(),
+            geometry.chunk_light_len,
+            "block light length mismatch"
+        );
 
         let (sky_mask, sky_empty, sky_arrays) = split_sections(geometry, sky);
         let (block_mask, block_empty, block_arrays) = split_sections(geometry, block);
@@ -78,7 +86,11 @@ impl LightPayload {
 
     /// 方块光 section 数组视图。
     pub fn block_section(&self, section_index: usize) -> Option<&SectionLightArray> {
-        section_by_mask(&self.block_light_mask, &self.block_light_arrays, section_index)
+        section_by_mask(
+            &self.block_light_mask,
+            &self.block_light_arrays,
+            section_index,
+        )
     }
 
     /// 某坐标的天光等级（section 缺失 = 0；调试/断言用）。
@@ -272,7 +284,10 @@ mod tests {
         let payload = LightPayload::filled(geometry, 15, 0);
         // 天光：26 个 section 全非空
         assert_eq!(payload.sky_light_arrays.len(), geometry.light_section_count);
-        assert_eq!(payload.sky_light_mask[0].count_ones() as usize, geometry.light_section_count);
+        assert_eq!(
+            payload.sky_light_mask[0].count_ones() as usize,
+            geometry.light_section_count
+        );
         assert!(payload.empty_sky_light_mask.iter().all(|&w| w == 0));
         // 方块光：全 0 → 全空掩码
         assert!(payload.block_light_arrays.is_empty());
@@ -281,7 +296,12 @@ mod tests {
             geometry.light_section_count
         );
         // 数组内容检查
-        assert!(payload.sky_light_arrays.iter().all(|a| a.iter().all(|&b| b == 0xff)));
+        assert!(
+            payload
+                .sky_light_arrays
+                .iter()
+                .all(|a| a.iter().all(|&b| b == 0xff))
+        );
     }
 
     #[test]
@@ -297,7 +317,11 @@ mod tests {
         let payload = LightPayload::from_raw(geometry, &sky, &vec![0; geometry.chunk_light_len]);
         // y=0..15 在 section 0 → light index = 0-(-5) = 5
         assert_eq!(payload.sky_at(geometry, 5, 0, 5), 7);
-        assert_eq!(payload.sky_at(geometry, 5, 1, 5), 0, "同 section 内 y=1 未点亮");
+        assert_eq!(
+            payload.sky_at(geometry, 5, 1, 5),
+            0,
+            "同 section 内 y=1 未点亮"
+        );
         assert_eq!(payload.sky_at(geometry, 5, 16, 5), 0, "上一 section 未点亮");
         // 该 section 掩码置位
         assert!(payload.sky_light_mask[0] & (1 << 5) != 0);

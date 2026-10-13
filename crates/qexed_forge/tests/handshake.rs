@@ -6,9 +6,18 @@ use qexed_forge::handshake::{
 
 fn sample_list() -> ModList {
     ModList::new(vec![
-        ModEntry { mod_id: "minecraft".into(), version: "1.20.1".into() },
-        ModEntry { mod_id: "forge".into(), version: "47.2.0".into() },
-        ModEntry { mod_id: "jei".into(), version: "15.2.0.27".into() },
+        ModEntry {
+            mod_id: "minecraft".into(),
+            version: "1.20.1".into(),
+        },
+        ModEntry {
+            mod_id: "forge".into(),
+            version: "47.2.0".into(),
+        },
+        ModEntry {
+            mod_id: "jei".into(),
+            version: "15.2.0.27".into(),
+        },
     ])
 }
 
@@ -56,14 +65,20 @@ fn client_mod_list_decodes() {
 #[test]
 fn ack_roundtrip() {
     let bytes = handshake::encode_ack();
-    assert_eq!(handshake::decode_handshake(&bytes).unwrap(), HandshakeMessage::Ack);
+    assert_eq!(
+        handshake::decode_handshake(&bytes).unwrap(),
+        HandshakeMessage::Ack
+    );
 }
 
 #[test]
 fn unknown_discriminator_is_forward_compatible() {
     let bytes = vec![0x7F, 0xDE, 0xAD];
     match handshake::decode_handshake(&bytes).unwrap() {
-        HandshakeMessage::Unknown { discriminator, payload } => {
+        HandshakeMessage::Unknown {
+            discriminator,
+            payload,
+        } => {
             assert_eq!(discriminator, 0x7F);
             assert_eq!(payload, vec![0xDE, 0xAD]);
         }
@@ -74,14 +89,16 @@ fn unknown_discriminator_is_forward_compatible() {
 #[test]
 fn compatibility_check() {
     let client = sample_list();
-    let server_needs = ModList::new(vec![
-        ModEntry { mod_id: "minecraft".into(), version: "1.20.1".into() },
-    ]);
+    let server_needs = ModList::new(vec![ModEntry {
+        mod_id: "minecraft".into(),
+        version: "1.20.1".into(),
+    }]);
     assert!(client.check_compatibility(&server_needs).is_ok());
 
-    let strict_server = ModList::new(vec![
-        ModEntry { mod_id: "somemod".into(), version: "1.0".into() },
-    ]);
+    let strict_server = ModList::new(vec![ModEntry {
+        mod_id: "somemod".into(),
+        version: "1.0".into(),
+    }]);
     let missing = client.check_compatibility(&strict_server).unwrap_err();
     assert_eq!(missing, vec!["somemod".to_string()]);
 }
@@ -97,7 +114,10 @@ fn server_handshake_state_machine() {
     client_bytes.push(0x01);
     let enc = handshake::encode_server_mod_list(&sample_list());
     client_bytes.extend_from_slice(&enc[1..]);
-    let reply = hs.on_client_response(&client_bytes).unwrap().expect("reply");
+    let reply = hs
+        .on_client_response(&client_bytes)
+        .unwrap()
+        .expect("reply");
     match handshake::decode_handshake(&reply).unwrap() {
         HandshakeMessage::ServerModList(list) => assert_eq!(list, server_mods),
         other => panic!("wrong variant: {other:?}"),

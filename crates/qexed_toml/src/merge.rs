@@ -1,5 +1,5 @@
-use toml_edit::{DocumentMut, Item, Value};
 use crate::TomlError;
+use toml_edit::{DocumentMut, Item, Value};
 
 /// 合并两个 toml 数据
 /// new的数据写入在old上(若old没有则补字段，若有则修改)

@@ -1,7 +1,7 @@
+use crate::error::ForgeError;
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use qexed_packet::PacketCodec;
 use qexed_packet::net_types::VarInt;
-use crate::error::ForgeError;
 
 pub const HANDSHAKE_CHANNEL: &str = "forge:handshake";
 pub const DISCRIMINATOR_SERVER_HELLO: u8 = 0x00;
@@ -22,22 +22,34 @@ pub struct ModList {
 }
 
 impl ModList {
-    pub fn new(entries: Vec<ModEntry>) -> Self { Self { entries } }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn new(entries: Vec<ModEntry>) -> Self {
+        Self { entries }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
     pub fn mod_ids(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().map(|e| e.mod_id.as_str())
     }
     pub fn check_compatibility(&self, server: &ModList) -> Result<(), Vec<String>> {
-        let missing: Vec<String> = server.mod_ids()
+        let missing: Vec<String> = server
+            .mod_ids()
             .filter(|id| !self.mod_ids().any(|c| c == *id))
-            .map(str::to_string).collect();
-        if missing.is_empty() { Ok(()) } else { Err(missing) }
+            .map(str::to_string)
+            .collect();
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(missing)
+        }
     }
 }
 
 fn write_str(buf: &mut BytesMut, s: &str) {
     let mut w = qexed_packet::PacketWriter::new(buf);
-    VarInt(s.len() as i32).serialize(&mut w).expect("length fits varint");
+    VarInt(s.len() as i32)
+        .serialize(&mut w)
+        .expect("length fits varint");
     w.buf.put_slice(s.as_bytes());
 }
 
@@ -46,7 +58,9 @@ fn read_string(r: &mut qexed_packet::PacketReader) -> Result<String, ForgeError>
     len.deserialize(r)?;
     let len = len.0;
     if len < 0 || len > 1_048_576 {
-        return Err(ForgeError::ModListRejected(format!("unreasonable string length")));
+        return Err(ForgeError::ModListRejected(format!(
+            "unreasonable string length"
+        )));
     }
     if r.buf.remaining() < len as usize {
         return Err(ForgeError::ModListRejected("string truncated".into()));
@@ -68,7 +82,9 @@ pub fn encode_server_mod_list(list: &ModList) -> Vec<u8> {
     let mut buf = BytesMut::with_capacity(16 + list.entries.len() * 24);
     buf.put_u8(DISCRIMINATOR_SERVER_MOD_LIST);
     let mut w = qexed_packet::PacketWriter::new(&mut buf);
-    VarInt(list.entries.len() as i32).serialize(&mut w).expect("varint");
+    VarInt(list.entries.len() as i32)
+        .serialize(&mut w)
+        .expect("varint");
     for e in &list.entries {
         write_str(&mut buf, &e.mod_id);
         write_str(&mut buf, &e.version);
@@ -123,7 +139,9 @@ fn read_mod_list(r: &mut qexed_packet::PacketReader) -> Result<ModList, ForgeErr
     count.deserialize(r)?;
     let count = count.0;
     if count < 0 || count > 65536 {
-        return Err(ForgeError::ModListRejected(format!("unreasonable mod count")));
+        return Err(ForgeError::ModListRejected(format!(
+            "unreasonable mod count"
+        )));
     }
     let mut entries = Vec::with_capacity(count as usize);
     for _ in 0..count {
@@ -150,11 +168,21 @@ pub struct ServerHandshake {
 
 impl ServerHandshake {
     pub fn new(server_mods: ModList) -> Self {
-        Self { state: HandshakeState::AwaitingModList, server_mods, client_mods: None }
+        Self {
+            state: HandshakeState::AwaitingModList,
+            server_mods,
+            client_mods: None,
+        }
     }
-    pub fn state(&self) -> HandshakeState { self.state }
-    pub fn client_mods(&self) -> Option<&ModList> { self.client_mods.as_ref() }
-    pub fn server_mods(&self) -> &ModList { &self.server_mods }
+    pub fn state(&self) -> HandshakeState {
+        self.state
+    }
+    pub fn client_mods(&self) -> Option<&ModList> {
+        self.client_mods.as_ref()
+    }
+    pub fn server_mods(&self) -> &ModList {
+        &self.server_mods
+    }
 
     pub fn on_client_response(&mut self, data: &[u8]) -> Result<Option<Vec<u8>>, ForgeError> {
         match self.state {
